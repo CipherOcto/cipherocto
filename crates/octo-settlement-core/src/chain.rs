@@ -183,6 +183,22 @@ pub trait RouterKeyResolver {
     /// The authorised signing key for `router_id`, or `None` if that router is
     /// unknown or has no active key.
     fn router_key(&self, router_id: &str) -> Option<[u8; 32]>;
+
+    /// The algorithm `router_key` speaks.
+    ///
+    /// Beside the key rather than assumed by the verifier, for the same
+    /// reason RFC-0009 BC#13 puts `algorithm_id` on the verification method:
+    /// a verifier that supplies its own algorithm checks the signature
+    /// under a key that may not be the one that signed it, and reports the
+    /// result as authoritative (AC#11).
+    ///
+    /// Defaults to Ed25519 so an existing resolver keeps compiling and
+    /// keeps its current meaning. Override it the moment a router speaks
+    /// anything else — the default is the *documented historical*
+    /// algorithm, not a fallback that silently rescues a mismatch.
+    fn router_algorithm_id(&self, _router_id: &str) -> octo_ident::AlgorithmId {
+        octo_algo_ed25519::ed25519_algorithm_id()
+    }
 }
 
 /// Verify a settlement receipt chain **and** each router's signature.
@@ -218,25 +234,21 @@ pub fn verify_receipt_chain_authenticated(
                 .ok_or(SettlementError::RouterSignatureInvalid {
                     receipt_id: receipt.receipt_id,
                 })?;
-        // ed25519 signatures are exactly 64 bytes; check before parsing so a
-        // short blob cannot reach a panicking slice conversion.
-        let sig: [u8; 64] = receipt.router_sig.as_slice().try_into().map_err(|_| {
-            SettlementError::RouterSignatureInvalid {
-                receipt_id: receipt.receipt_id,
-            }
-        })?;
-        let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&key).map_err(|_| {
-            SettlementError::RouterSignatureInvalid {
-                receipt_id: receipt.receipt_id,
-            }
-        })?;
-        let signature = ed25519_dalek::Signature::from_bytes(&sig);
         let digest = router_signature_digest(receipt);
-        use ed25519_dalek::Verifier as _;
-        verifying_key.verify(&digest, &signature).map_err(|_| {
-            SettlementError::RouterSignatureInvalid {
-                receipt_id: receipt.receipt_id,
-            }
+        // Dispatch on the algorithm the resolver reports for this router
+        // (RFC-0009 AC#11). NO 64-byte pre-filter: an earlier version
+        // coerced the signature to a fixed array, which would refuse every
+        // algorithm whose signatures are not 64 bytes and report it as an
+        // invalid router signature — indistinguishable from a genuinely bad
+        // one. The registered algorithm reports its own length error.
+        octo_algo_ed25519::verify_dispatch(
+            &keys.router_algorithm_id(&receipt.router_id),
+            &key,
+            &digest,
+            &receipt.router_sig,
+        )
+        .map_err(|_| SettlementError::RouterSignatureInvalid {
+            receipt_id: receipt.receipt_id,
         })?;
     }
     Ok(())
@@ -341,6 +353,66 @@ mod tests {
         r.router_sig = sk.sign(&router_signature_digest(&r)).to_bytes().to_vec();
         r.settlement_hash = receipt_id_for(&r);
         r
+    }
+
+    /// A resolver that reports a different algorithm for the same key.
+    struct LyingRouter {
+        inner: OneRouter,
+        algorithm: octo_ident::AlgorithmId,
+    }
+
+    impl RouterKeyResolver for LyingRouter {
+        fn router_key(&self, router_id: &str) -> Option<[u8; 32]> {
+            self.inner.router_key(router_id)
+        }
+
+        fn router_algorithm_id(&self, _router_id: &str) -> octo_ident::AlgorithmId {
+            self.algorithm
+        }
+    }
+
+    #[test]
+    fn a_router_reporting_an_unregistered_algorithm_is_refused() {
+        // The point of moving the algorithm onto the resolver. Before this,
+        // `verify_receipt_chain_authenticated` built an Ed25519 key
+        // unconditionally, so a resolver reporting anything else was checked
+        // as though it were Ed25519 and the verdict was reported as
+        // authoritative.
+        let sk = SigningKey::from_bytes(&[3u8; 32]);
+        let keys = LyingRouter {
+            inner: OneRouter {
+                router_id: "did:oct:router".into(),
+                key: sk.verifying_key().to_bytes(),
+            },
+            algorithm: octo_ident::AlgorithmId::derive("not-a-registered-algorithm"),
+        };
+        let chain = vec![signed_receipt(&sk, 0, [0x01; 32], 1000, "did:oct:router")];
+        assert!(
+            verify_receipt_chain_authenticated(&chain, &keys).is_err(),
+            "a receipt must not verify under an algorithm the deployment \
+             does not implement"
+        );
+    }
+
+    #[test]
+    fn a_genuine_signature_under_the_reported_algorithm_still_verifies() {
+        // The control on the refusal above: refusing everything would also
+        // pass it. The default resolver reports Ed25519 and a real Ed25519
+        // signature must still verify.
+        let sk = SigningKey::from_bytes(&[3u8; 32]);
+        let keys = OneRouter {
+            router_id: "did:oct:router".into(),
+            key: sk.verifying_key().to_bytes(),
+        };
+        assert_eq!(
+            keys.router_algorithm_id("did:oct:router"),
+            octo_algo_ed25519::ed25519_algorithm_id()
+        );
+        let chain = vec![signed_receipt(&sk, 0, [0x01; 32], 1000, "did:oct:router")];
+        assert!(
+            verify_receipt_chain_authenticated(&chain, &keys).is_ok(),
+            "a genuine signature must not be refused by the dispatch path"
+        );
     }
 
     #[test]

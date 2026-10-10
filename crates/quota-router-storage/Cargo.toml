@@ -91,6 +91,14 @@ path = "../octo-cap-macaroon"
 path = "../octo-ident"
 features = ["borsh"]
 
+[dependencies.octo-algo-ed25519]
+# Mission 0009-c2: the Ed25519 `SignatureAlgorithm` implementation, so the
+# ask and settlement-receipt verifiers dispatch through `AlgorithmRegistry`
+# instead of constructing a `VerifyingKey` inline (RFC-0009 AC#11).
+# Layer E per-algorithm extension over the Layer B registry; the arrow never
+# points back.
+path = "../octo-algo-ed25519"
+
 [dependencies.octo-determin]
 # Mission 0862-c9 RETIRED: `MicroOctoW` alias killed project-wide —
 # amount-bearing fields use `octo_determin::Dqa` directly (RFC-0862

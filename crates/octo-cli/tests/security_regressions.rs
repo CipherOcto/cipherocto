@@ -1650,7 +1650,30 @@ const AC11_DISPATCHED: &[&str] = &[
     "crates/quota-router-sm-engine/src",
     "crates/octo-runtime/src",
     "crates/octo-wallet-node/src",
+    // Mission 0009-c2: sites that needed a new registry dependency edge.
+    "crates/quota-router-storage/src",
+    "crates/octo-settlement-core/src",
 ];
+
+/// Crates deliberately **outside** AC#11, with the reason each one is.
+///
+/// AC#11 reaches "holder- or capability-signature verification sites". A
+/// third-party protocol's fixed key format is a different question: nostr
+/// (NIP-01) specifies Ed25519 and offers no alternative, so there is
+/// nothing to select and routing it through `AlgorithmRegistry` would be a
+/// semantic error rather than dispatch. The registry describes algorithms
+/// an *identity document* may declare; a nostr event has no identity
+/// document behind it.
+///
+/// Listed rather than omitted, so that adding a *genuine* holder
+/// signature to this crate later is a deliberate act someone has to notice.
+const AC11_OUT_OF_SCOPE: &[(&str, &str)] = &[(
+    "crates/octo-adapter-nostr/src",
+    "verifies a nostr event signature under NIP-01, which mandates ed25519. \
+     Not a holder or capability signature: no CipherOcto identity document \
+     is involved and no algorithm is selectable. A new holder-signature \
+     site in this crate IS in scope and must be dispatched.",
+)];
 
 /// `VerifyingKey::from_bytes` occurrences that are still legitimate, each
 /// with the reason. An allowlist entry without a reason is
@@ -1788,5 +1811,38 @@ fn no_capability_token_api_names_ed25519_dalek() {
         body.contains("verify_dispatch(") && body.contains("self.holder_sig.algorithm_id()"),
         "AC-11: verify_holder_sig must dispatch on the signature's own \
          algorithm, not on a hardcoded one."
+    );
+}
+
+#[test]
+fn ac11_every_out_of_scope_crate_is_justified_and_disjoint() {
+    // An out-of-scope list that is never read is decoration. Two things
+    // have to hold for it to be honest: each entry carries a real reason,
+    // and no crate is both dispatched and excused.
+    for (crate_path, reason) in AC11_OUT_OF_SCOPE {
+        assert!(
+            !AC11_DISPATCHED.contains(crate_path),
+            "AC-11: {crate_path} is both dispatched and excused. Pick one: \\
+             either its sites must dispatch, or the excuse must go."
+        );
+        assert!(
+            reason.len() > 80,
+            "AC-11: out-of-scope entry {crate_path} needs a real reason, not a \\
+             stub. A short one is indistinguishable from a hand-wave."
+        );
+        assert!(
+            workspace_root().join(crate_path).exists(),
+            "AC-11: out-of-scope path {crate_path} no longer exists. Remove the \\
+             entry; a stale exception is a silent hole."
+        );
+    }
+
+    // And the exception must stay pinned to what it claims. If the nostr
+    // site ever disappears, the entry is describing nothing.
+    let nostr = read("crates/octo-adapter-nostr/src/lib.rs");
+    assert!(
+        nostr.contains("VerifyingKey::from_bytes"),
+        "AC-11: the nostr site this exception describes no longer exists. \\
+         Re-decide it rather than leaving a reason for a thing that is gone."
     );
 }

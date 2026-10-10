@@ -1023,7 +1023,8 @@ fn wave_integration_w6_envelope() {
     let msg = quota_router_sm_engine::envelope::unsigned_canonical_ser(&env);
     env.signature = key.sign(&msg);
     let pub_bytes = key.verifying_key().to_bytes();
-    verify_envelope_signature(&env, &pub_bytes).unwrap();
+    verify_envelope_signature(&octo_algo_ed25519::ed25519_algorithm_id(), &env, &pub_bytes)
+        .unwrap();
 
     let h = sql_statements_hash(&env.sql_statements);
     assert_ne!(h, [0u8; 32]);

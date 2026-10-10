@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey};
 pub use octo_determin::Dqa;
 use octo_determin::DqaError;
 use serde::{Deserialize, Serialize};
@@ -679,7 +679,11 @@ impl AskSigned {
     /// Returns `AskSignedError::AskIdMismatch` if `ask_id != payload.ask_id()`.
     /// Returns `AskSignedError::SignatureLengthInvalid` if signature is not 64 bytes.
     /// Returns `AskSignedError::AskSignatureInvalid` if Ed25519 verify fails.
-    pub fn verify(&self, asker_public_key: &Ed25519PublicKey) -> Result<(), AskSignedError> {
+    pub fn verify(
+        &self,
+        algorithm_id: &octo_ident::AlgorithmId,
+        asker_public_key: &Ed25519PublicKey,
+    ) -> Result<(), AskSignedError> {
         // 1. Re-derive AskId from payload; must equal embedded ask_id.
         let derived = self.payload.ask_id();
         if derived != self.ask_id {
@@ -690,17 +694,18 @@ impl AskSigned {
         }
         // 2. Verify Ed25519 signature over canonical_ser(payload).
         let canonical = serde_json::to_vec(&self.payload).map_err(AskSignedError::CanonicalSer)?;
-        let sig_bytes: [u8; 64] = self
-            .signature
-            .as_slice()
-            .try_into()
-            .map_err(|_| AskSignedError::SignatureLengthInvalid)?;
-        let verifying = VerifyingKey::from_bytes(asker_public_key)
-            .map_err(|_| AskSignedError::InvalidPublicKey)?;
-        let sig = Signature::from_bytes(&sig_bytes);
-        verifying
-            .verify(&canonical, &sig)
-            .map_err(|_| AskSignedError::AskSignatureInvalid)
+        // NO 64-byte pre-filter: an earlier version coerced the signature to
+        // a fixed array before verifying, which would refuse every algorithm
+        // whose signatures are not 64 bytes and report it as an invalid
+        // signature — indistinguishable from a genuinely bad one. The
+        // registered algorithm reports its own length error.
+        octo_algo_ed25519::verify_dispatch(
+            algorithm_id,
+            asker_public_key,
+            &canonical,
+            &self.signature,
+        )
+        .map_err(|_| AskSignedError::AskSignatureInvalid)
     }
 
     /// Return the signature as a fixed 64-byte array. Panics if stored signature
@@ -739,6 +744,11 @@ pub enum AskSignedError {
 
 #[cfg(test)]
 mod ask_signed_tests {
+    /// The algorithm these fixtures sign under. Centralised so a second
+    /// algorithm is one edit rather than a hunt through the test bodies.
+    fn ed25519_id() -> octo_ident::AlgorithmId {
+        octo_algo_ed25519::ed25519_algorithm_id()
+    }
     use super::*;
     use crate::ask::{AxisRate, ModelRateTable};
 
@@ -770,7 +780,7 @@ mod ask_signed_tests {
         let signed = AskSigned::sign(payload.clone(), &seed).expect("sign");
         assert_eq!(signed.ask_id, payload.ask_id());
         assert_eq!(signed.payload, payload);
-        signed.verify(&pk).expect("verify");
+        signed.verify(&ed25519_id(), &pk).expect("verify");
     }
 
     #[test]
@@ -792,7 +802,7 @@ mod ask_signed_tests {
         let mut signed = AskSigned::sign(payload, &seed).unwrap();
         // Flip one byte in the rate table — payload && ask_id diverge.
         signed.payload.rates.rates[0].rate_per_1k = Dqa::new(999, 0).expect("non-overflow");
-        let err = signed.verify(&pk).unwrap_err();
+        let err = signed.verify(&ed25519_id(), &pk).unwrap_err();
         // Either AskIdMismatch (preferred) or AskSignatureInvalid — both are
         // acceptable defenses against tampering.
         assert!(
@@ -811,7 +821,7 @@ mod ask_signed_tests {
         let pk = AskSigned::public_key_from_seed(&seed);
         let mut signed = AskSigned::sign(payload, &seed).unwrap();
         signed.ask_id[0] ^= 0xFF;
-        let err = signed.verify(&pk).unwrap_err();
+        let err = signed.verify(&ed25519_id(), &pk).unwrap_err();
         assert!(
             matches!(err, AskSignedError::AskIdMismatch { .. }),
             "got {err:?}"
@@ -824,7 +834,7 @@ mod ask_signed_tests {
         let seed = [0x11u8; 32];
         let signed = AskSigned::sign(payload, &seed).unwrap();
         let wrong_pk = AskSigned::public_key_from_seed(&[0x22u8; 32]);
-        let err = signed.verify(&wrong_pk).unwrap_err();
+        let err = signed.verify(&ed25519_id(), &wrong_pk).unwrap_err();
         assert!(
             matches!(err, AskSignedError::AskSignatureInvalid),
             "got {err:?}"
@@ -1364,6 +1374,7 @@ pub fn sign_settlement_receipt(
 /// Returns `SettlementError::AskSignatureInvalid` if router signature verify fails.
 /// Returns `SettlementError::CanonicalSer` if `serde_json` fails.
 pub fn verify_settlement_receipt(
+    algorithm_id: &octo_ident::AlgorithmId,
     receipt: &SettlementReceipt,
     router_public_key: &Ed25519PublicKey,
     expected_settlement_hash: &[u8; 32],
@@ -1377,17 +1388,13 @@ pub fn verify_settlement_receipt(
     msg.extend_from_slice(&event_canonical);
     msg.extend_from_slice(&receipt.nonce);
     msg.extend_from_slice(&receipt.event.settled_at_unix.to_le_bytes());
-    let sig_bytes: [u8; 64] = receipt
-        .router_signature
-        .as_slice()
-        .try_into()
-        .map_err(|_| SettlementError::AskSignatureInvalid)?;
-    let verifying = VerifyingKey::from_bytes(router_public_key)
-        .map_err(|_| SettlementError::AskSignatureInvalid)?;
-    let sig = Signature::from_bytes(&sig_bytes);
-    verifying
-        .verify(&msg, &sig)
-        .map_err(|_| SettlementError::AskSignatureInvalid)
+    octo_algo_ed25519::verify_dispatch(
+        algorithm_id,
+        router_public_key,
+        &msg,
+        &receipt.router_signature,
+    )
+    .map_err(|_| SettlementError::AskSignatureInvalid)
 }
 
 #[cfg(test)]
@@ -1578,6 +1585,11 @@ mod tests {
 
 #[cfg(test)]
 mod settlement_engine_tests {
+    /// The algorithm these fixtures sign under — see the same helper in
+    /// `ask_signed_tests`.
+    fn ed25519_id() -> octo_ident::AlgorithmId {
+        octo_algo_ed25519::ed25519_algorithm_id()
+    }
     use super::*;
 
     fn sample_event() -> SettlementEvent {
@@ -1742,7 +1754,7 @@ mod settlement_engine_tests {
         let nonce = [0xEEu8; 16];
         let receipt = sign_settlement_receipt(event.clone(), &seed, nonce).unwrap();
         let expected_hash = compute_settlement_hash(&event).unwrap();
-        verify_settlement_receipt(&receipt, &pk, &expected_hash).expect("verify");
+        verify_settlement_receipt(&ed25519_id(), &receipt, &pk, &expected_hash).expect("verify");
     }
 
     #[test]
@@ -1752,7 +1764,7 @@ mod settlement_engine_tests {
         let pk = AskSigned::public_key_from_seed(&seed);
         let receipt = sign_settlement_receipt(event, &seed, [0xEE; 16]).unwrap();
         let wrong_hash = [0xFFu8; 32];
-        let err = verify_settlement_receipt(&receipt, &pk, &wrong_hash).unwrap_err();
+        let err = verify_settlement_receipt(&ed25519_id(), &receipt, &pk, &wrong_hash).unwrap_err();
         assert!(matches!(err, SettlementError::HashMismatch));
     }
 
@@ -1763,7 +1775,8 @@ mod settlement_engine_tests {
         let receipt = sign_settlement_receipt(event, &seed, [0xEE; 16]).unwrap();
         let expected_hash = compute_settlement_hash(&receipt.event).unwrap();
         let wrong_pk = AskSigned::public_key_from_seed(&[0x99u8; 32]);
-        let err = verify_settlement_receipt(&receipt, &wrong_pk, &expected_hash).unwrap_err();
+        let err = verify_settlement_receipt(&ed25519_id(), &receipt, &wrong_pk, &expected_hash)
+            .unwrap_err();
         assert!(matches!(err, SettlementError::AskSignatureInvalid));
     }
 
@@ -1775,7 +1788,8 @@ mod settlement_engine_tests {
         let mut receipt = sign_settlement_receipt(event, &seed, [0xEE; 16]).unwrap();
         receipt.event.cost = dqa_add(receipt.event.cost, Dqa::new(1, 0).expect("non-overflow")); // tamper
         let expected_hash = compute_settlement_hash(&receipt.event).unwrap();
-        let err = verify_settlement_receipt(&receipt, &pk, &expected_hash).unwrap_err();
+        let err =
+            verify_settlement_receipt(&ed25519_id(), &receipt, &pk, &expected_hash).unwrap_err();
         assert!(matches!(err, SettlementError::AskSignatureInvalid));
     }
 

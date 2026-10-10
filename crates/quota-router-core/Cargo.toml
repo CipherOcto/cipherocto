@@ -85,6 +85,9 @@ octo-network = { path = "../octo-network" }
 octo-core = { path = "../octo-core" }
 octo-reputation = { path = "../octo-reputation" }
 octo-ident = { path = "../octo-ident" }
+# Mission 0009-c: test fixtures verify an envelope signature through the
+# registry rather than a locally built key (RFC-0009 AC#11).
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
 # Mission 0870-b-envelope-adoption: NodeEnvelope + PayloadKindId +
 # Authorization from RFC-0871 (Layer 1 stable substrate). Used by quota
 # router outbound to wrap existing 0xC3–0xCB discriminator payloads in

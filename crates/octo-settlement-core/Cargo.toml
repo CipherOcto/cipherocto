@@ -10,6 +10,14 @@ authors = ["CipherOcto"]
 crate-type = ["rlib"]
 
 [dependencies]
+# Mission 0009-c2: the Layer B algorithm registry + the Ed25519
+# `SignatureAlgorithm` implementation, so `verify_receipt_chain_authenticated`
+# dispatches through `AlgorithmRegistry` instead of constructing a
+# `VerifyingKey` inline (RFC-0009 AC#11). Layer E per-algorithm extension over
+# Layer B; the arrow never points back.
+octo-ident = { path = "../octo-ident" }
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
+
 # Layer A primitive: canonical serde for Receipt + Ask + Reservation +
 # AskState + ReservationState.
 serde = { version = "1", features = ["derive"] }

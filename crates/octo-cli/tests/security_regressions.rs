@@ -1707,45 +1707,45 @@ const AC11_DISPATCHED: &[&str] = &[
 const AC11_PENDING: &[(&str, usize, &str)] = &[
     (
         "crates/octo-network/src/ocrypt/attestation.rs",
-        4,
+        8,
         "mission 0009-c3, blocked on the RFC-0010 DID codec",
     ),
     (
         "crates/octo-network/src/gossip/reputation.rs",
         1,
-        "mission 0009-c3, blocked on the RFC-0010 DID codec. A second \
-         occurrence sits in a doc comment naming this constructor, which is \
-         why the count is measured with comments stripped rather than by \
-         grep.",
+        "mission 0009-c3, blocked on the RFC-0010 DID codec. Counted with \
+         comments stripped: this file also has a doc comment naming \
+         VerifyingKey::from_bytes, which a raw grep would have counted here \
+         and the guard correctly does not.",
     ),
     (
         "crates/octo-network/src/porelay/heartbeat.rs",
-        1,
+        2,
         "mission 0009-c3, blocked on the RFC-0010 DID codec",
     ),
     (
         "crates/octo-network/src/porelay/forwarding.rs",
-        1,
+        2,
         "mission 0009-c3, blocked on the RFC-0010 DID codec",
     ),
     (
         "crates/octo-network/src/porelay/bandwidth.rs",
-        1,
+        2,
         "mission 0009-c3, blocked on the RFC-0010 DID codec",
     ),
     (
         "crates/octo-network/src/porelay/availability.rs",
-        1,
+        2,
         "mission 0009-c3, blocked on the RFC-0010 DID codec",
     ),
     (
         "crates/octo-network/src/drs/route.rs",
-        1,
+        2,
         "mission 0009-c3, blocked on the RFC-0010 DID codec",
     ),
     (
         "crates/octo-network/src/dot/envelope.rs",
-        1,
+        2,
         "mission 0009-c3, blocked on the RFC-0010 DID codec",
     ),
     (
@@ -1755,8 +1755,37 @@ const AC11_PENDING: &[(&str, usize, &str)] = &[
     ),
     (
         "crates/octo-network/src/dom/admission.rs",
-        1,
+        2,
         "mission 0009-c3, blocked on the RFC-0010 DID codec",
+    ),
+    // Swept 2026-10-10: every remaining production site workspace-wide, in
+    // crates no other list covered. The `octo-network` entries above are all
+    // `VerifyingKey::from_bytes`; these three are the `Signature::from_bytes`
+    // half, which is why they were invisible for as long as it was.
+    (
+        "crates/octo-coordinator-types/src/slashing.rs",
+        1,
+        "verifies an adjudicator signature under hardcoded Ed25519 during \
+         slashing-proof validation. Same codec blocker as mission 0009-c3.",
+    ),
+    (
+        "crates/octo-vault/src/cache_subscriber.rs",
+        1,
+        "resolves a producer key by DID then verifies under hardcoded Ed25519. \
+         The DID lookup already exists here, so this is the closest thing to \
+         dispatchable — the algorithm is simply not read. Blocked on the codec.",
+    ),
+    (
+        "crates/quota-router-core/src/receipt.rs",
+        3,
+        "the only production one is wrap_receipt_envelope, which seeds the \
+         signature with an all-zero value for the caller to overwrite via \
+         sign_envelope, so nothing verifies this placeholder. The count is of \
+         the whole file, test code included, because the assertion reads the \
+         file rather than a prefix of it. Pending rather than allowlisted only \
+         because the crate is not on the scanned list; if it is added, the \
+         production one becomes an allowlist entry with the same reasoning as \
+         the sm-engine one.",
     ),
 ];
 
@@ -2131,8 +2160,12 @@ fn ac11_pending_sites_are_counted_and_still_present() {
              opposite answers to the same question."
         );
 
+        // Both constructors count. AC#11 names two, and a pending entry covering
+        // only one would read as zero sites for a file whose site is the other
+        // one — which is precisely how these three stayed unrecorded.
         let body = strip_comments(&std::fs::read_to_string(&abs).unwrap());
-        let actual = body.matches("VerifyingKey::from_bytes").count();
+        let actual = body.matches("VerifyingKey::from_bytes").count()
+            + body.matches("Signature::from_bytes").count();
         assert_eq!(
             actual, *expected,
             "AC-11: {path} has {actual} un-dispatched sites, the table says \

@@ -131,6 +131,30 @@ is pending mission `0009-c3`, with its measured site count, so the count
 cannot drift silently and a new site is caught by the count moving rather
 than by someone remembering.
 
+### Three more crates were invisible the same way
+
+Swept every crate in the workspace against all three lists once the
+pending table existed. Three carried production signature-verification
+sites and appeared in none of them:
+
+| Site                                     | What it is                                                                 |
+| ---------------------------------------- | -------------------------------------------------------------------------- |
+| `octo-coordinator-types/src/slashing.rs` | verifies an adjudicator signature under hardcoded Ed25519                  |
+| `octo-vault/src/cache_subscriber.rs`     | resolves a producer key by DID, then verifies under hardcoded Ed25519      |
+| `quota-router-core/src/receipt.rs`       | an all-zero placeholder the caller overwrites; **not** a verification site |
+
+The first two are genuine and are now pending. The third is the same shape
+as the `sm-engine` placeholder already allowlisted — a value that is never
+verified — and is recorded as pending rather than allowlisted only because
+`quota-router-core` is not on the scanned list. That is stated in its
+reason, so whoever adds the crate to the scan sees it.
+
+**Every other crate's occurrences are test code or comments.** Verified by
+splitting each file at its first `#[cfg(test)]` rather than trusting a raw
+grep: `octo-policy` looked like 26 sites and is 0 in production, and
+`octo-algo-ed25519` is the registration itself, which is where keys are
+_supposed_ to be built.
+
 ### A second gap, in a crate the gate _does_ call dispatched
 
 The gate greps exactly one pattern, `VerifyingKey::from_bytes`. AC#11 names

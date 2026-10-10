@@ -412,11 +412,13 @@ impl IdentityKey {
             msg.extend_from_slice(&successor.public_key_bytes());
             msg
         };
-        // NOT yet prefixed. See mission 0009-e2 §Out of scope: making this
-        // bind requires key context to be persisted on `IdentityRecord`
-        // first, or rotation would work before a store save and fail after
-        // the reload — a state-dependent cliff worse than either extreme.
-        let proof = self.signer.sign(&proof_message)?;
+        // Bound to this identity's algorithm and key. Safe to require now
+        // that `IdentityRecord` carries the key context across a store
+        // reload — without that, this would work before a save and fail
+        // after the reopen, which is the cliff this line used to sit on.
+        let proof = self
+            .sign_lifecycle_proof(&proof_message)?
+            .ok_or(WalletError::NoKeyContext)?;
         // Cache successor + timestamp (consume `successor`).
         self.successor_key = Some(Box::new(successor));
         self.rotation_started_at_unix_secs = Some(now_unix_secs);
@@ -587,17 +589,17 @@ impl IdentityKey {
     /// registered, or the signature does not verify.
     pub fn verify_successor_proof(
         algorithm_id: &octo_ident::AlgorithmId,
+        key_id: &octo_ident::VerificationMethodId,
         old_pub: &[u8; 32],
         new_pub: &[u8; 32],
         proof: &[u8; 64],
     ) -> Result<(), WalletError> {
-        // Still the legacy shape, pending the same persistence work as
-        // §`begin_rotation`.
         let mut payload = Vec::with_capacity(6 + 32);
         payload.extend_from_slice(b"rotate");
         payload.extend_from_slice(new_pub);
-        octo_algo_ed25519::verify_dispatch(algorithm_id, old_pub, &payload, proof)
-            .map_err(|_| WalletError::InvalidSuccessorProof)
+        IdentityKey::verify_lifecycle_proof(algorithm_id, key_id, old_pub, &payload, proof, || {
+            WalletError::InvalidSuccessorProof
+        })
     }
 
     /// RFC-0009 §Lifecycle row 4 revocation proof verifier (pure helper).
@@ -1424,9 +1426,9 @@ mod tests {
 
     #[test]
     fn begin_rotation_from_active_transitions_to_rotating() {
-        let mut old = IdentityKey::from_seed([10u8; 32]);
+        let mut old = rotation_key([10u8; 32]);
         old.activate(1_000).expect("activate");
-        let successor = IdentityKey::from_seed([11u8; 32]);
+        let successor = rotation_key([11u8; 32]);
         let proof = old
             .begin_rotation(successor, 2_000)
             .expect("begin_rotation");
@@ -1459,9 +1461,9 @@ mod tests {
 
     #[test]
     fn complete_rotation_refuses_before_grace_period() {
-        let mut old = IdentityKey::from_seed([15u8; 32]);
+        let mut old = rotation_key([15u8; 32]);
         old.activate(1_000).expect("activate");
-        let successor = IdentityKey::from_seed([16u8; 32]);
+        let successor = rotation_key([16u8; 32]);
         old.begin_rotation(successor, 2_000)
             .expect("begin_rotation");
         // Now at t=2_000; try to complete at t=2_000 + 1h (well before 24h grace).
@@ -1484,6 +1486,14 @@ mod tests {
 
     /// The key id the helper above attaches for these tests.
     const TEST_KEY_ID: &str = "key-a";
+    /// An identity with a key context, for the rotation tests.
+    ///
+    /// The successor proof is the authorisation for a handoff, so it refuses
+    /// without one — an unbound proof is not a weaker proof, it is none.
+    fn rotation_key(seed: [u8; 32]) -> IdentityKey {
+        IdentityKey::from_seed(seed)
+            .with_verification_method_id(octo_ident::VerificationMethodId::derive(TEST_KEY_ID))
+    }
 
     #[test]
     fn complete_rotation_succeeds_after_grace_period() {
@@ -1498,6 +1508,7 @@ mod tests {
         // Verify proof signature immediately (per RFC-0009 row 2 contract).
         IdentityKey::verify_successor_proof(
             &octo_algo_ed25519::ed25519_algorithm_id(),
+            &octo_ident::VerificationMethodId::derive(TEST_KEY_ID),
             &old_pub,
             &new_pub,
             &proof,
@@ -1514,9 +1525,9 @@ mod tests {
 
     #[test]
     fn abort_rotation_returns_to_active() {
-        let mut old = IdentityKey::from_seed([19u8; 32]);
+        let mut old = rotation_key([19u8; 32]);
         old.activate(1_000).expect("activate");
-        let successor = IdentityKey::from_seed([20u8; 32]);
+        let successor = rotation_key([20u8; 32]);
         old.begin_rotation(successor, 2_000)
             .expect("begin_rotation");
         old.abort_rotation().expect("abort_rotation");
@@ -1536,6 +1547,7 @@ mod tests {
         let tampered = [0xff; 32];
         let result = IdentityKey::verify_successor_proof(
             &octo_algo_ed25519::ed25519_algorithm_id(),
+            &octo_ident::VerificationMethodId::derive(TEST_KEY_ID),
             &old_pub,
             &tampered,
             &proof,
@@ -1551,9 +1563,9 @@ mod tests {
     /// F3: `activate()` from `Rotating` returns `RotationInProgress`.
     #[test]
     fn activate_refuses_from_rotating() {
-        let mut old = IdentityKey::from_seed([30u8; 32]);
+        let mut old = rotation_key([30u8; 32]);
         old.activate(1_000).expect("activate");
-        let successor = IdentityKey::from_seed([31u8; 32]);
+        let successor = rotation_key([31u8; 32]);
         old.begin_rotation(successor, 2_000)
             .expect("begin_rotation");
         // Now in Rotating. activate() must refuse.
@@ -1681,13 +1693,13 @@ mod tests {
     /// after `complete_rotation()` succeeds. Distinct from `Revoked` state.
     #[test]
     fn is_deprecated_flips_only_after_complete_rotation() {
-        let mut old = IdentityKey::from_seed([38u8; 32]);
+        let mut old = rotation_key([38u8; 32]);
         assert!(!old.is_deprecated(), "fresh key must NOT be deprecated");
 
         old.activate(1_000).expect("activate");
         assert!(!old.is_deprecated(), "active key must NOT be deprecated");
 
-        let successor = IdentityKey::from_seed([39u8; 32]);
+        let successor = rotation_key([39u8; 32]);
         old.begin_rotation(successor, 2_000)
             .expect("begin_rotation");
         assert!(
@@ -1977,6 +1989,97 @@ mod lifecycle_proof_tests {
             &proof,
         )
         .expect("a genuine revocation proof must verify");
+    }
+
+    /// A rotating identity, its successor's key, and the proof it produced.
+    fn rotating(key_id: &str) -> (IdentityKey, [u8; 32], [u8; 64]) {
+        let mut old = IdentityKey::from_seed([44u8; 32])
+            .with_verification_method_id(VerificationMethodId::derive(key_id));
+        old.activate(1_000).expect("activate");
+        let successor = IdentityKey::from_seed([45u8; 32])
+            .with_verification_method_id(VerificationMethodId::derive("key-b"));
+        let new_pub = successor.public_key_bytes();
+        let proof = old
+            .begin_rotation(successor, 2_000)
+            .expect("begin_rotation");
+        (old, new_pub, proof)
+    }
+
+    #[test]
+    fn a_successor_proof_is_bound_to_its_key_id() {
+        let (old, new_pub, proof) = rotating("key-a");
+        let old_pub = old.public_key_bytes();
+
+        IdentityKey::verify_successor_proof(
+            &old.algorithm_id(),
+            &VerificationMethodId::derive("key-a"),
+            &old_pub,
+            &new_pub,
+            &proof,
+        )
+        .expect("genuine");
+
+        // The same proof under another verification method. Before the
+        // prefix the signed bytes were `b"rotate" || new_pub` and nothing
+        // tied them to a key, so this call could not have distinguished the
+        // two at all.
+        IdentityKey::verify_successor_proof(
+            &old.algorithm_id(),
+            &VerificationMethodId::derive("key-b"),
+            &old_pub,
+            &new_pub,
+            &proof,
+        )
+        .expect_err("a successor proof must not carry over to another key_id");
+    }
+
+    #[test]
+    fn a_successor_proof_binds_the_successor_key() {
+        let (old, new_pub, proof) = rotating("key-a");
+        let old_pub = old.public_key_bytes();
+
+        // A proof authorising one successor must not authorise another.
+        let other = [0x5Au8; 32];
+        IdentityKey::verify_successor_proof(
+            &old.algorithm_id(),
+            &VerificationMethodId::derive("key-a"),
+            &old_pub,
+            &other,
+            &proof,
+        )
+        .expect_err("a successor proof must bind the successor it names");
+
+        // Sanity in the other direction: the named successor does verify, so
+        // the refusal above is about the binding and not a broken key.
+        IdentityKey::verify_successor_proof(
+            &old.algorithm_id(),
+            &VerificationMethodId::derive("key-a"),
+            &old_pub,
+            &new_pub,
+            &proof,
+        )
+        .expect("the named successor must verify");
+    }
+
+    #[test]
+    fn a_successor_proof_is_refused_without_a_prefix() {
+        let (old, new_pub, _proof) = rotating("key-a");
+        let old_pub = old.public_key_bytes();
+
+        // The legacy shape, signed directly. A verifier accepting it would be
+        // a downgrade path onto proofs minted before the prefix existed.
+        let mut expected = Vec::new();
+        expected.extend_from_slice(b"rotate");
+        expected.extend_from_slice(&new_pub);
+        let legacy = old.signer().sign(&expected).expect("sign the legacy shape");
+        IdentityKey::verify_successor_proof(
+            &old.algorithm_id(),
+            &VerificationMethodId::derive("key-a"),
+            &old_pub,
+            &new_pub,
+            &legacy,
+        )
+        .expect_err("an unprefixed successor proof must be refused");
     }
 
     #[test]

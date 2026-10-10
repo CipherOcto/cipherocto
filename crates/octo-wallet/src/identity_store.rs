@@ -482,6 +482,12 @@ impl WalletStore {
             registered_at_unix: now_unix,
             rotation_history: Vec::new(),
             deprecated: false,
+            // Carried from the key rather than generated. An identity
+            // registered without one records `None` and keeps working, but
+            // it cannot produce a domain-bound lifecycle proof — and that is
+            // better than inventing an id here, which RFC-0009 forbids and
+            // which would make the signed domain depend on who registered.
+            verification_method_id: key.verification_method_id().map(|id| *id.as_bytes()),
         };
 
         // 5. Insert in sorted-by-DID order. `binary_search_by`
@@ -705,7 +711,11 @@ impl WalletStore {
         // which was a plain array and so left the seed on the stack
         // on every path out of this function. See the note on
         // `seed_arr` in `unlock`.
-        let succ_key = IdentityKey::from_seed(*succ_arr);
+        let mut succ_key = IdentityKey::from_seed(*succ_arr);
+        if let Some(raw) = succ_record.verification_method_id {
+            succ_key = succ_key
+                .with_verification_method_id(octo_ident::VerificationMethodId::from_bytes(raw));
+        }
         // BINDING CHECK. The vault slot is chosen by
         // `succ_record.pubkey_bytes`, and the DID is the index
         // key - but nothing tied the two together, so an index
@@ -730,13 +740,23 @@ impl WalletStore {
         // the key without checking it means a hand-edited index
         // can name any successor it likes. The predecessor key is
         // `predecessor`, passed in and holding the seed.
-        let mut expected = Vec::with_capacity(6 + 32);
-        expected.extend_from_slice(b"rotate");
-        expected.extend_from_slice(&succ_key.public_key_bytes());
-        let recomputed = predecessor.sign(&expected)?;
-        if recomputed.to_bytes() != event.signature_proof {
-            return Err(WalletError::InvalidSuccessorProof);
-        }
+        //
+        // It VERIFIES rather than re-signing. Re-signing would have to
+        // reproduce the signable prefix here as well, and any drift between
+        // this function and `begin_rotation` would silently accept a forged
+        // event — the two would be parallel implementations of one rule. The
+        // predecessor's key context is restored by `unlock` from the record,
+        // so it is available here.
+        let key_id = predecessor
+            .verification_method_id()
+            .ok_or(WalletError::InvalidSuccessorProof)?;
+        IdentityKey::verify_successor_proof(
+            &predecessor.algorithm_id(),
+            &key_id,
+            &predecessor.public_key_bytes(),
+            &succ_key.public_key_bytes(),
+            &event.signature_proof,
+        )?;
         Ok(succ_key)
     }
 
@@ -954,6 +974,13 @@ impl WalletStore {
             revoked_at,
             rotation_started_at,
         )?;
+        // Restore the key context. Without this the record round trip drops
+        // it, and rotation would work before a save and fail after the
+        // reload — the state-dependent behaviour this field exists to stop.
+        if let Some(raw) = record.verification_method_id {
+            key =
+                key.with_verification_method_id(octo_ident::VerificationMethodId::from_bytes(raw));
+        }
         // Bind the key to the record it was read from. The vault
         // lookup above was keyed on `record.pubkey_bytes`, so the
         // seed decrypts into SOME key - but nothing established that
@@ -1170,6 +1197,8 @@ impl UnlockedWallet<'_> {
         // seed, so the value extracted here is the one the
         // successor record needs to persist.
         let successor_pubkey = successor.public_key_bytes();
+        // Read before `successor` is consumed below.
+        let successor_key_id = successor.verification_method_id();
         let proof = self
             .key
             .begin_rotation(successor, now_unix_secs_from_u64(now_unix))?;
@@ -1192,6 +1221,10 @@ impl UnlockedWallet<'_> {
             registered_at_unix: now_unix.cast_signed(),
             rotation_history: Vec::new(),
             deprecated: false,
+            // The successor's own key id, which the caller already has in
+            // hand on the `successor` handle. `None` for a successor
+            // restored without one, same as any other record.
+            verification_method_id: successor_key_id.map(|id| *id.as_bytes()),
         };
         // Insert at the position resolved by the guard above, which
         // ran before the seal and confirmed the DID is absent.
@@ -1677,6 +1710,18 @@ pub(crate) fn write_index_atomically(root: &Path, index: &WalletIndex) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An identity with a key context, for the rotation tests.
+    ///
+    /// `begin_rotation` refuses without one and `IdentityRecord` now carries
+    /// it, so a context attached here survives the reopen these tests depend
+    /// on. That persistence is the whole reason the rotation proof could
+    /// start binding at all — without it the proof would work before a save
+    /// and fail after the reload.
+    fn rotation_key(seed: [u8; 32]) -> IdentityKey {
+        IdentityKey::from_seed(seed)
+            .with_verification_method_id(octo_ident::VerificationMethodId::derive("key-a"))
+    }
 
     /// Serialises the tests that mutate `$OCTO_HOME` / `$HOME`.
     ///
@@ -2906,7 +2951,7 @@ mod tests {
     fn tv_x_37_begin_rotation_flips_predecessor_to_rotating() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut store = WalletStore::open_at(dir.path()).expect("open_at");
-        let key = IdentityKey::from_seed([0x37u8; 32]);
+        let key = rotation_key([0x37u8; 32]);
         let did = store
             .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
             .expect("register");
@@ -2914,7 +2959,7 @@ mod tests {
         let mut handle = store
             .unlock("correct-horse-battery-staple", &mut seed_out)
             .expect("unlock");
-        let successor = IdentityKey::from_seed([0x38u8; 32]);
+        let successor = rotation_key([0x38u8; 32]);
         let _successor_did = handle
             .begin_rotation(successor, "correct-horse-battery-staple", 1_700_000_010)
             .expect("begin_rotation");
@@ -3008,7 +3053,7 @@ mod tests {
     fn tv_x_41_abort_rotation_leaves_successor_slot_as_orphan() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut store = WalletStore::open_at(dir.path()).expect("open_at");
-        let key = IdentityKey::from_seed([0x41u8; 32]);
+        let key = rotation_key([0x41u8; 32]);
         let did = store
             .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
             .expect("register");
@@ -3016,7 +3061,7 @@ mod tests {
         let mut handle = store
             .unlock("correct-horse-battery-staple", &mut seed_out)
             .expect("unlock");
-        let successor = IdentityKey::from_seed([0x42u8; 32]);
+        let successor = rotation_key([0x42u8; 32]);
         handle
             .begin_rotation(successor, "correct-horse-battery-staple", 1_700_000_010)
             .expect("begin_rotation");
@@ -3122,7 +3167,7 @@ mod tests {
     fn tv_x_22_predecessor_returns_to_active_deprecated_after_complete() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut store = WalletStore::open_at(dir.path()).expect("open_at");
-        let key = IdentityKey::from_seed([0xA1u8; 32]);
+        let key = rotation_key([0xA1u8; 32]);
         let did = store
             .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
             .expect("register");
@@ -3130,7 +3175,7 @@ mod tests {
         let mut handle = store
             .unlock("correct-horse-battery-staple", &mut seed_out)
             .expect("unlock");
-        let successor = IdentityKey::from_seed([0xA2u8; 32]);
+        let successor = rotation_key([0xA2u8; 32]);
         handle
             .begin_rotation(successor, "correct-horse-battery-staple", 1_700_000_010)
             .expect("begin_rotation");
@@ -3201,7 +3246,7 @@ mod tests {
     fn tv_x_40_rotation_round_trip_does_not_panic_in_complete() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut store = WalletStore::open_at(dir.path()).expect("open_at");
-        let key = IdentityKey::from_seed([0xABu8; 32]);
+        let key = rotation_key([0xABu8; 32]);
         let _did = store
             .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
             .expect("register");
@@ -3209,7 +3254,7 @@ mod tests {
         let mut handle = store
             .unlock("correct-horse-battery-staple", &mut seed_out)
             .expect("unlock");
-        let successor = IdentityKey::from_seed([0xACu8; 32]);
+        let successor = rotation_key([0xACu8; 32]);
         handle
             .begin_rotation(successor, "correct-horse-battery-staple", 1_700_000_010)
             .expect("begin_rotation");
@@ -3252,13 +3297,13 @@ mod tests {
         let mut store = WalletStore::open_at(dir.path()).expect("open_at");
         store
             .register(
-                IdentityKey::from_seed([0xB0u8; 32]),
+                rotation_key([0xB0u8; 32]),
                 "correct-horse-battery-staple",
                 true,
                 1_700_000_000,
             )
             .expect("register");
-        let bystander = IdentityKey::from_seed([0xB1u8; 32]);
+        let bystander = rotation_key([0xB1u8; 32]);
         let bystander_did = bystander.did().clone();
         store
             .register(
@@ -3274,7 +3319,7 @@ mod tests {
             .expect("unlock");
         handle
             .begin_rotation(
-                IdentityKey::from_seed([0xB2u8; 32]),
+                rotation_key([0xB2u8; 32]),
                 "correct-horse-battery-staple",
                 1_700_000_010,
             )
@@ -3427,7 +3472,7 @@ mod tests {
         let mut store = WalletStore::open_at(dir.path()).expect("open_at");
         store
             .register(
-                IdentityKey::from_seed([0xB6u8; 32]),
+                rotation_key([0xB6u8; 32]),
                 "correct-horse-battery-staple",
                 true,
                 1_700_000_000,
@@ -3439,7 +3484,7 @@ mod tests {
             .expect("unlock");
         handle
             .begin_rotation(
-                IdentityKey::from_seed([0xB7u8; 32]),
+                rotation_key([0xB7u8; 32]),
                 "correct-horse-battery-staple",
                 1_700_000_010,
             )
@@ -3470,7 +3515,7 @@ mod tests {
     fn tv_x_49_rotate_complete_survives_a_store_reopen() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut store = WalletStore::open_at(dir.path()).expect("open_at");
-        let key = IdentityKey::from_seed([0xABu8; 32]);
+        let key = rotation_key([0xABu8; 32]);
         store
             .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
             .expect("register");
@@ -3478,7 +3523,7 @@ mod tests {
         let mut handle = store
             .unlock("correct-horse-battery-staple", &mut seed_out)
             .expect("unlock");
-        let successor = IdentityKey::from_seed([0xACu8; 32]);
+        let successor = rotation_key([0xACu8; 32]);
         let successor_did_obj = successor.did();
         let successor_did = successor_did_obj.0.clone();
         let proof = handle
@@ -3760,7 +3805,7 @@ mod tests {
         let mut store = WalletStore::open_at(dir.path()).expect("open_at");
         store
             .register(
-                IdentityKey::from_seed([0xD1u8; 32]),
+                rotation_key([0xD1u8; 32]),
                 "correct-horse-battery-staple",
                 true,
                 1_700_000_000,
@@ -3770,7 +3815,7 @@ mod tests {
         let mut handle = store
             .unlock("correct-horse-battery-staple", &mut seed_out)
             .expect("unlock");
-        let successor_key = IdentityKey::from_seed([0xD2u8; 32]);
+        let successor_key = rotation_key([0xD2u8; 32]);
         let successor_did = successor_key.did();
         // A REAL rotation, so the event carries a proof that verifies
         // against the rehydrated successor at unlock.
@@ -4219,14 +4264,14 @@ mod tests {
         let mut store = WalletStore::open_at(dir.path()).expect("open_at");
         store
             .register(
-                IdentityKey::from_seed([0xE6u8; 32]),
+                rotation_key([0xE6u8; 32]),
                 "correct-horse-battery-staple",
                 true,
                 1_700_000_000,
             )
             .expect("register predecessor");
         let predecessor_did = store.active_did().expect("predecessor DID").clone();
-        let successor_key = IdentityKey::from_seed([0xE7u8; 32]);
+        let successor_key = rotation_key([0xE7u8; 32]);
         let successor_did = successor_key.did();
 
         let mut seed_out = Vec::new();
@@ -4484,10 +4529,10 @@ mod tests {
     fn tv_x_64_a_successor_record_naming_another_identitys_key_is_refused() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut store = WalletStore::open_at(dir.path()).expect("open_at");
-        let predecessor = IdentityKey::from_seed([0xB1u8; 32]);
-        let other = IdentityKey::from_seed([0xB2u8; 32]);
+        let predecessor = rotation_key([0xB1u8; 32]);
+        let other = rotation_key([0xB2u8; 32]);
         let other_pubkey = other.public_key_bytes();
-        let successor = IdentityKey::from_seed([0xB3u8; 32]);
+        let successor = rotation_key([0xB3u8; 32]);
         let successor_did = successor.did();
         store
             .register(
@@ -4562,13 +4607,13 @@ mod tests {
         let mut store = WalletStore::open_at(dir.path()).expect("open_at");
         store
             .register(
-                IdentityKey::from_seed([0xB4u8; 32]),
+                rotation_key([0xB4u8; 32]),
                 "correct-horse-battery-staple",
                 true,
                 1_700_000_000,
             )
             .expect("register predecessor");
-        let successor = IdentityKey::from_seed([0xB5u8; 32]);
+        let successor = rotation_key([0xB5u8; 32]);
         let successor_did = successor.did();
         let mut seed_out = Vec::new();
         let mut handle = store
@@ -4819,5 +4864,144 @@ mod tests {
             !succ.contains("let mut succ_arr = [0u8; 32];"),
             "the plain-array spelling is exactly the defect; both may not be present: {succ}"
         );
+    }
+}
+
+#[cfg(test)]
+mod verification_method_persistence_tests {
+    use super::*;
+    use octo_ident::VerificationMethodId;
+
+    const PASS: &str = "correct horse battery staple";
+
+    fn key_with_context(seed: [u8; 32], key_id: &str) -> IdentityKey {
+        let mut key = IdentityKey::from_seed(seed)
+            .with_verification_method_id(VerificationMethodId::derive(key_id));
+        key.activate(1_000).expect("activate");
+        key
+    }
+
+    /// The property this field exists for.
+    ///
+    /// A key context living only in memory makes any behaviour that depends
+    /// on it silently depend on whether the process has saved recently.
+    /// `tv_x_49_rotate_complete_survives_a_store_reopen` checks a rotation
+    /// survives persistence; this checks the *proof* does, which is the thing
+    /// that actually needs the key id.
+    #[test]
+    fn a_key_context_survives_the_store_round_trip() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().join("wallet");
+
+        let key = key_with_context([61u8; 32], "key-a");
+        let did = {
+            let mut store = WalletStore::open_at(&root).expect("open");
+            store.register(key, PASS, true, 1_000).expect("register")
+        };
+        assert!(
+            store_record(&root, &did).verification_method_id.is_some(),
+            "register must carry the key id onto the record"
+        );
+
+        // Reopen: a fresh process would see exactly this.
+        let mut store = WalletStore::open_at(&root).expect("reopen");
+        let mut seed = Vec::new();
+        let unlocked = store.unlock(PASS, &mut seed).expect("unlock");
+        assert_eq!(
+            unlocked.active_identity().verification_method_id(),
+            Some(VerificationMethodId::derive("key-a")),
+            "the rehydrated key must know its key id, or rotation would work \
+             before a save and fail after the reload"
+        );
+    }
+
+    /// The concrete consequence: a revocation proof minted *after* the reload
+    /// verifies. Before this field existed the rehydrated key had no context
+    /// and produced no bound proof at all.
+    #[test]
+    fn a_proof_minted_after_a_reload_still_verifies() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().join("wallet");
+
+        let key = key_with_context([63u8; 32], "key-a");
+        let pubkey = key.public_key_bytes();
+        {
+            let mut store = WalletStore::open_at(&root).expect("open");
+            store.register(key, PASS, true, 1_000).expect("register");
+        }
+
+        let mut store = WalletStore::open_at(&root).expect("reopen");
+        let mut seed = Vec::new();
+        let unlocked = store.unlock(PASS, &mut seed).expect("unlock");
+        let mut unlocked = unlocked;
+        unlocked.revoke(2_000).expect("revoke after reload");
+
+        let proof = unlocked
+            .active_identity()
+            .revoked_proof()
+            .expect("a rehydrated key produces a bound proof");
+        IdentityKey::verify_revocation_proof(
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &VerificationMethodId::derive("key-a"),
+            &pubkey,
+            &proof,
+        )
+        .expect("a proof minted after a store reload must verify");
+    }
+
+    /// A record written before this field existed still parses, and its
+    /// identity has no key context rather than a broken one.
+    ///
+    /// The legacy JSON is produced by serialising a current record and
+    /// deleting the new key, rather than hand-written, so the vector cannot
+    /// drift into asserting a shape this codebase never produced.
+    #[test]
+    fn a_record_without_the_field_still_loads() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().join("wallet");
+        let mut store = WalletStore::open_at(&root).expect("open");
+        let key = key_with_context([64u8; 32], "key-a");
+        let did = store.register(key, PASS, true, 1_000).expect("register");
+
+        let mut legacy: serde_json::Value =
+            serde_json::to_value(store_record(&root, &did)).expect("serialize");
+        let object = legacy.as_object_mut().expect("a record is an object");
+        assert!(
+            object.remove("verification_method_id").is_some(),
+            "sanity: the field is present on a freshly written record"
+        );
+        let legacy_json = serde_json::to_string(&legacy).expect("re-serialize");
+
+        let record: IdentityRecord =
+            serde_json::from_str(&legacy_json).expect("a record predating the field must parse");
+        assert_eq!(
+            record.verification_method_id, None,
+            "absent means no key context, not a zeroed one"
+        );
+    }
+
+    /// The raw bytes are the signable form, not the textual UUID — the
+    /// distinction RFC-0009 §Domain separation makes normative.
+    #[test]
+    fn the_persisted_form_is_the_raw_uuid_bytes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().join("wallet");
+        let mut store = WalletStore::open_at(&root).expect("open");
+        let key = key_with_context([62u8; 32], "key-a");
+        let did = store.register(key, PASS, true, 1_000).expect("register");
+        assert_eq!(
+            store_record(&root, &did).verification_method_id,
+            Some(*VerificationMethodId::derive("key-a").as_bytes()),
+            "the record stores the 16 raw bytes, which is what the signable \
+             prefix reads"
+        );
+    }
+
+    fn store_record(root: &std::path::Path, did: &Did) -> IdentityRecord {
+        WalletStore::read_or_init_index(root)
+            .expect("read")
+            .record(did)
+            .expect("record")
+            .clone()
     }
 }

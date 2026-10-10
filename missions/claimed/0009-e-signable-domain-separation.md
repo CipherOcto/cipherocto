@@ -176,11 +176,15 @@ here rather than left to be discovered:
   unchanged. It carries no key context at all, so the RFC-named "real
   signers" list is only half covered. Making it carry one is a trait change
   across every implementor.
-- `verify_successor_proof` / `verify_revocation_proof` take an `algorithm_id`
-  **out of band** because they are pure static helpers with no signer to ask.
-  That is exactly the "verifier prefers its own algorithm" shape the prefix
-  removes, and it is the first migration slice.
-- `IdentityRecord` does not persist a `key_id`.
+- ~~`verify_successor_proof` / `verify_revocation_proof` take an
+  `algorithm_id` **out of band**~~ **Done**: both now take a `key_id` and
+  verify under the prefix. See `0009-e2`.
+- ~~`IdentityRecord` does not persist a `key_id`.~~ **Done** in
+  `missions/claimed/0009-e2-lifecycle-proof-domain-separation`: the record now
+  carries `verification_method_id`, and both lifecycle proofs are migrated.
+  The persistence was the prerequisite — without it, binding the successor
+  proof would have made rotation work before a store save and fail after the
+  reload.
 
 The follow-up is a migration mission, not an extension of this one: replace
 `sign`/`verify` at each site and delete the bare path, since RFC-0009's

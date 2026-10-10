@@ -140,6 +140,27 @@ pub struct IdentityRecord {
     /// row 3, but the rotation handoff is complete.
     #[serde(default)]
     pub deprecated: bool,
+    /// The verification-method id this identity signs under, as the 16 raw
+    /// bytes of its `Uuid` (RFC-0009 §Domain separation).
+    ///
+    /// Persisted rather than derived, and `None` when the record predates
+    /// the prefix. Both matter:
+    ///
+    /// - **Persisting it** is what stops rotation from succeeding on a live
+    ///   key and failing after the store is reopened. Without this field the
+    ///   key context exists only in memory, so any behaviour that depends on
+    ///   it silently depends on whether the process has saved recently.
+    /// - **`None` is not an invitation to invent one.** RFC-0009 forbids
+    ///   deriving this from the public key and forbids allocating it at
+    ///   signing time; an identity whose record carries none still signs
+    ///   unprefixed and still revokes, it simply cannot produce a bound
+    ///   proof. See `IdentityKey::revoke`.
+    ///
+    /// Stored as raw bytes rather than a `VerificationMethodId` so this
+    /// struct does not need `octo-ident`'s optional serde feature, matching
+    /// how `pubkey_bytes` is handled.
+    #[serde(default)]
+    pub verification_method_id: Option<[u8; 16]>,
 }
 
 /// Identity rotation event (Layer B `[ADD]` — distinct from `RotationEvent`

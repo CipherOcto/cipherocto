@@ -12,16 +12,20 @@ metadata:
     - 0009-e-signable-domain-separation
 ---
 
-# Mission `0009-e2-lifecycle-proof-domain-separation` — PARTIALLY IMPLEMENTED 2026-10-09
+# Mission `0009-e2-lifecycle-proof-domain-separation` — IMPLEMENTED 2026-10-09
 
 ## Status
 
-**The revocation proof is migrated. The successor proof is deliberately not,
-and the reason turned out to be an ordering constraint rather than an
-estimate.** `octo-wallet` 342 lib + 3 lifecycle-replay + 3 ask-publish, all
-passing. Clippy clean with `--all-targets --all-features`.
+**Both lifecycle proofs are migrated.** `octo-wallet` 349 lib + 3
+lifecycle-replay + 3 ask-publish, all passing. Clippy clean with
+`--all-targets --all-features`.
 
-### Why the successor proof is deferred
+This mission ran twice. The first attempt bound both proofs and broke **18
+tests**, and the reason turned out to be an ordering constraint rather than an
+estimate. Both halves are recorded below, because the first failure is what
+identified the right sequence.
+
+### The ordering constraint the first attempt found
 
 The first attempt bound both lifecycle proofs and broke **18 tests**. Eleven of
 them are in `identity_store` and they are the informative ones:
@@ -37,11 +41,35 @@ uniform and safe; permissively signing unbound proofs is uniform and weak. A
 behaviour that depends on whether the process has saved recently is neither,
 and it is a genuinely hard bug to diagnose later.
 
-So the prerequisite is **`IdentityRecord` persists `verification_method_id`**.
-That is a storage-format change, it is the last item on
-`missions/claimed/0009-e-signable-domain-separation` §What this does not cover,
-and it has to land _before_ the successor proof migrates. Sequencing is recorded
-here so the next attempt does not rediscover it by running into 18 failures.
+So the prerequisite was `IdentityRecord` persisting `verification_method_id`,
+which has since landed, and the successor proof followed. The sequence is
+recorded so the reasoning survives even though both halves are now done.
+
+### The persistence work
+
+`IdentityRecord` gains `verification_method_id: Option<[u8; 16]>` with
+`#[serde(default)]`, carried from the key at §`register` and restored at
+§`unlock` and in the successor rehydration path. Raw bytes, not the textual
+UUID — the distinction RFC-0009 §Domain separation makes normative, and the
+signable prefix reads exactly these.
+
+`None` is preserved as an honest value rather than papered over: a record
+written before the field parses, its identity simply has no key context, and it
+still signs and revokes, meeting a bound proof with an explicit refusal rather
+than a silently wrong answer.
+
+### The store stopped re-signing to check a proof
+
+`rehydrate_successor_key` used to _recompute_ `b"rotate" || new_pub`, sign it
+with the predecessor key, and compare bytes. With the prefix that would have
+meant **reproducing the prefix in a second place** — and any drift between
+that function and `begin_rotation` would silently accept a forged rotation
+event. It now calls the same `verify_successor_proof` the rest of the system
+uses. One implementation, two callers, no second encoding to drift.
+
+This is the one change here that was not strictly required, and the one most
+easily missed: the re-sign still _passed_ every vector while the two encodings
+quietly diverged.
 
 ### Revocation is deliberately asymmetric with rotation
 
@@ -74,14 +102,19 @@ which it previously did not bind at all."
 
 ### Mutation-verified
 
-Four mutations, all red on first attempt.
+Nine mutations across both halves, all red.
 
-| Mutation                                           | Caught by                                                                               |
-| -------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| Lifecycle verifier ignores the `key_id`            | `a_revocation_proof_is_bound_to_its_key_id`                                             |
-| Revocation blocked by a missing key context        | `revocation_is_never_blocked_by_a_missing_key_context`                                  |
-| Revocation proof signed without a prefix           | `a_revocation_proof_round_trips`                                                        |
-| Verifier accepts the bare literal (downgrade path) | `a_revocation_proof_is_refused_without_a_prefix`, `the_legacy_bare_constant_is_refused` |
+| Mutation                                           | Caught by                                                                                                    |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Store drops the key context on reload              | `a_key_context_survives_the_store_round_trip`                                                                |
+| `register` stops persisting the key id             | `the_persisted_form_is_the_raw_uuid_bytes`                                                                   |
+| Persisted form is not the raw bytes                | `the_persisted_form_is_the_raw_uuid_bytes`                                                                   |
+| Successor proof signed without a prefix            | `a_successor_proof_is_bound_to_its_key_id`                                                                   |
+| Rehydration stops checking the successor proof     | `tv_x_49_rotate_complete_survives_a_store_reopen`, `tv_x_65_a_rotation_event_with_a_forged_proof_is_refused` |
+| Lifecycle verifier ignores the `key_id`            | `a_revocation_proof_is_bound_to_its_key_id`                                                                  |
+| Revocation blocked by a missing key context        | `revocation_is_never_blocked_by_a_missing_key_context`                                                       |
+| Revocation proof signed without a prefix           | `a_revocation_proof_round_trips`                                                                             |
+| Verifier accepts the bare literal (downgrade path) | `a_revocation_proof_is_refused_without_a_prefix`, `the_legacy_bare_constant_is_refused`                      |
 
 ### A trap the tests walked into
 
@@ -174,9 +207,14 @@ Verified by the §Test Vectors list.
 - `the_legacy_bare_constant_is_refused` — the downgrade path
 - `revocation_is_never_blocked_by_a_missing_key_context` — the DoS shape
 
-Deferred to the successor-proof mission, gated on `IdentityRecord` carrying the
-key id: `a_successor_proof_is_bound_to_its_key_id` and
-`a_successor_proof_binds_the_successor_key`.
+- `a_successor_proof_is_bound_to_its_key_id`
+- `a_successor_proof_binds_the_successor_key` — a proof for one successor does
+  not verify for another
+- `a_successor_proof_is_refused_without_a_prefix`
+- `a_key_context_survives_the_store_round_trip` — the persistence prerequisite
+- `a_proof_minted_after_a_reload_still_verifies`
+- `a_record_without_the_field_still_loads`
+- `the_persisted_form_is_the_raw_uuid_bytes`
 
 The mission's inherited caveat applies: five of these compare behaviour rather
 than bytes, but only `a_revocation_proof_is_bound_to_its_key_id` and

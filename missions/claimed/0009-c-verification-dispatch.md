@@ -23,6 +23,86 @@ files**. That number was wrong in two independent ways, and both are recorded
 in §What changed and why. The real core slice is **20 sites across 7 crates**
 that already depend on `octo-ident`.
 
+### In progress — the "already depends on octo-ident" claim was too strong
+
+The first scoping pass classified crates by whether they depended on
+`octo-ident`, and concluded this slice needed **no new dependency edges**.
+That was measured by grepping the whole manifest, which cannot tell
+`[dependencies]` from `[dev-dependencies]`. Re-checking per section:
+
+- `quota-router-sm-engine` had `octo-ident` as a **dev**-dependency only.
+- `octo-cap-macaroon` had `octo-ident` as a **dev**-dependency only.
+
+Neither can dispatch from library code on a dev-dependency, so both
+gained a real edge — with a manifest comment, per the repository's
+dependency-rationale convention. `octo-runtime` was correctly edge-free:
+it routes through the `octo-wallet` re-export, which is the gateway
+pattern that crate already used for `ed25519_dalek`.
+
+**Lesson for the re-survey:** check the section, not the file.
+
+### Two prerequisites this scope did not name
+
+`0009-b` built the registry and registered **nothing** — the only
+`SignatureAlgorithm` implementations in the tree were two test dummies,
+so there was no algorithm to dispatch to. The process-wide singleton
+`0009-b` recorded as a gap also did not exist. Both are prerequisites of
+dispatch and are delivered here: a new Layer E crate `octo-algo-ed25519`
+carrying `Ed25519Algorithm`, and `bootstrap`/`global` on the registry.
+
+### Progress: 18 of 20 sites dispatched
+
+**Done and gated.** The AC#11 vector asserts no dispatched crate rebuilds
+a `VerifyingKey` inline, and it is mutation-checked:
+
+| Crate                    | Sites | Notes                                                            |
+| ------------------------ | ----- | ---------------------------------------------------------------- |
+| `octo-wallet`            | 8     | `IdentityKey::verify` takes the algorithm from its signer        |
+| `octo-cap-macaroon`      | 6     | canonical governance verifier + 4 `CapabilitySigner` smoke tests |
+| `octo-reputation`        | 1     | the single governance choke point                                |
+| `quota-router-sm-engine` | 1     | strict check preserved                                           |
+| `octo-runtime`           | 1     | zero new edges, via the `octo-wallet` gateway                    |
+| `octo-wallet-node`       | 1     | test-local smoke check                                           |
+
+**Two sites cannot be dispatched by this slice, and saying so is the
+point.** Both read the algorithm off a value that does not carry one:
+
+- **`octo-cap-macaroon` §`CapabilityToken::verify_holder_sig`** — the
+  algorithm would have to travel on the token. `AlgorithmId` has no serde
+  impl, so adding the field is a Layer B wire-form change.
+- **`octo-protocol` §`verify_ed25519_signature`** — `Authorization::Signature`
+  carries no algorithm, and the `did:octo:z` payload is a bare 32 bytes.
+  The dispatcher has nothing to dispatch on. **Same root cause as
+  `0009-c3`**: the DID wire form cannot name an algorithm.
+
+Both are in the AC#11 vector's allowlist, each with its reason written
+inline, and the vector still walks both files so a _new_ hardcoded site
+there is caught rather than hidden behind the exception.
+
+### Three follow-ons, recorded not hidden
+
+1. **`AlgorithmId` needs serde** (Layer B). This is the single
+   prerequisite for both blocked sites and for `SuspensionAuth` carrying
+   its own algorithm instead of the verifier assuming one. Widening the
+   substrate is deliberately its own change.
+2. **`CapabilitySigner::algorithm_id()`.** The trait has 11 implementors
+   across 6 crates and does not declare an algorithm, so the four smoke
+   tests name theirs in a local helper. Nothing is blocked on it — the
+   verifiers take the id as a parameter — but a signer that cannot state
+   its algorithm is a signer the registry cannot route.
+3. **`HsmAdapter::algorithm_id()`** landed here and is the pattern worth
+   copying for the trait above.
+
+## Status
+
+Claimed (2026-10-09). `0009-b-algorithm-registry` has landed, so the registry
+this dispatches through exists.
+
+This is v2.0 of a mission that previously claimed **65 sites across 32
+files**. That number was wrong in two independent ways, and both are recorded
+in §What changed and why. The real core slice is **20 sites across 7 crates**
+that already depend on `octo-ident`.
+
 ## Dependencies
 
 `depends_on: 0009-b-algorithm-registry`. `0009-e` (signable prefix) gates full

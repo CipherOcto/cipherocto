@@ -157,10 +157,11 @@ mod tests {
         bad_pk[31] = 1; // not on the Ed25519 curve
         let body_hash = blake3_hash(b"test body");
         let sig = [0u8; 64];
-        // Off-curve pubkey is rejected at `VerifyingKey::from_bytes` BEFORE
-        // signature verification — the substrate reports `InvalidPubkeyLength`
-        // in this rejection stage. Either error variant is a valid
-        // "rejection of malformed pubkey" outcome; the substrate fails-closed.
+        // An off-curve pubkey is rejected before signature verification — the
+        // substrate reports `InvalidSignature` in this rejection stage, since
+        // the length check passes (32 bytes) and the algorithm itself refuses
+        // the encoding. Either error variant is a valid "rejection of
+        // malformed pubkey" outcome; the substrate fails-closed.
         assert!(matches!(
             verify_governance_signature(&ed25519_id(), &sig, &body_hash, &bad_pk),
             Err(GovernanceSignatureError::InvalidPubkeyLength(_))

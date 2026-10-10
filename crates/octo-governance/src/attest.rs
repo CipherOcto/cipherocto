@@ -851,4 +851,67 @@ mod tests {
         assert_eq!(r2.appended_at_unix, 1_700_000_777);
         assert_eq!(session.attestation_log().len().expect("unpoisoned"), 2);
     }
+    /// Every optional field in the canonical envelope is **fixed width**, so
+    /// the encoding cannot be made to collide by shifting a boundary.
+    ///
+    /// This was worth pinning because the encoding looks ambiguous at a
+    /// glance: `expires_at_unix` is emitted as either zero or eight bytes
+    /// around bare `0x00` delimiters, which reads like the
+    /// concatenation-collision shape that `octo-cap-macaroon` §`holder_msg`
+    /// explicitly length-prefixes against. It is not, because `snapshot_id`
+    /// is `Option<&[u8; 32]>` rather than a variable slice — both optionals
+    /// have a width the grammar already fixes, so no two distinct
+    /// presence/value combinations can produce the same byte string.
+    ///
+    /// A collision was attempted here first and came back green, which is the
+    /// only reason this note exists. Had it not been built, the "this looks
+    /// ambiguous" objection would have been re-derived from the code by
+    /// whoever reads it next.
+    #[test]
+    fn optional_fields_cannot_collide_by_shifting_a_boundary() {
+        let (session, signer) = attest_session_with_signer(signer_did(), 1_700_000_000);
+        let snapshot = [0x42; 32];
+
+        // The zero snapshot is the discriminating case: if the snapshot
+        // field were ever emitted at variable width, an all-zero snapshot
+        // would become indistinguishable from an absent one, and the last
+        // two rows would collapse into one.
+        let zero = [0u8; 32];
+        let combos = [
+            (None, None),
+            (Some(1_u64), None),
+            (None, Some(&snapshot)),
+            (Some(1_u64), Some(&snapshot)),
+            (Some(u64::MAX), Some(&snapshot)),
+            (Some(7_u64), None),
+            (Some(7_u64), Some(&zero)),
+        ];
+
+        let mut ids = Vec::new();
+        for (expires, snap) in combos {
+            let receipt = attest_v2(
+                &session,
+                subject_did(),
+                "route-quality:uptime-30d",
+                None,
+                Some([0x42; 32]),
+                expires,
+                snap,
+                false,
+                signer.as_ref(),
+                signer_did(),
+            )
+            .expect("attest");
+            ids.push(receipt.attestation_id);
+        }
+
+        let mut sorted = ids.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            ids.len(),
+            "every presence/value combination must produce a distinct attestation id"
+        );
+    }
 }

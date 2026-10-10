@@ -323,11 +323,35 @@ the eight sites counted above, and it signs bare. The same-name collision
 across two crates is itself the hazard: an implementer grepping for
 `CapabilitySigner` finds the wrong one.
 
-Whether it needs the prefix depends on whether its input already carries
-domain separation — `octo-governance` documents that the signer sees only a
-BLAKE3-256 digest over canonical envelope bytes, so this needs the same
-inquiry `envelope_v2` got rather than an assumption either way. Recorded
-here as a gap, not answered.
+**Answered: the encoding is sound, the prefix gap remains.** Two questions,
+two different answers, and the second one cost a wrong hypothesis to get right.
+
+_Is the canonical envelope ambiguous?_ **No.** It concatenates with bare `0x00`
+delimiters and emits `expires_at_unix` as either zero or eight bytes, which is
+exactly the concatenation-collision shape `octo-cap-macaroon` §`holder_msg`
+length-prefixes against. It is not, because **both optional fields are fixed
+width** — `Option<u64>` and `Option<&[u8; 32]>` — so the presence flags are
+recoverable from the total length and no two distinct presence/value
+combinations can produce the same bytes.
+
+A collision was constructed and the vector came back **green**, which is the
+only reason that is written down rather than left as a claim. It is now pinned
+by `optional_fields_cannot_collide_by_shifting_a_boundary`, mutation-checked by
+making the snapshot variable-width — which produces a real
+`DuplicateAttestation`, two semantically distinct attestations collapsing to one
+id.
+
+_Does it need the prefix?_ **Yes, for the same reason as everywhere else.**
+`sign_envelope` takes `[u8; 64]`, names no algorithm, and binds no key — so a
+governance signature carries neither. What it does have, unlike `envelope_v2`,
+is an algorithm already threaded through `verify_governance_signature` as an
+explicit parameter, and a signer whose DID is inside the envelope. That is
+narrower than the macaroon case, not wider.
+
+Also worth recording: `attest` and `attest_v2` **duplicate the envelope
+construction verbatim**, so any fix has to land twice or the deprecated path
+becomes a second source of truth. That duplication is itself a
+§No parallel abstractions problem, independent of the prefix.
 
 ### The `octo-runtime` attach-handle paths, and what the token actually binds
 

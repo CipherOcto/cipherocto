@@ -13,7 +13,6 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use ed25519_dalek::Signature;
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -713,6 +712,25 @@ impl IdentityKey {
     /// - `Rotating`: proceeds (old key valid during grace per RFC-0009 row 3)
     /// - `Revoked`: rejects with `WalletError::NotActive`
     ///
+    /// Sign `msg`, returning the signature **bytes**.
+    ///
+    /// Bytes rather than an `ed25519_dalek::Signature`: the return type is the
+    /// public face of this method's coupling, and a dalek type there asserts
+    /// Ed25519 to every reader — including the compiler, which will then
+    /// refuse the value if a future adapter speaks anything else. RFC-0009
+    /// AC#11 exists so nothing in the API asserts an algorithm that the
+    /// registry could have chosen differently. [`Self::verify`] already
+    /// dispatches; this returns raw bytes for the same reason.
+    ///
+    /// The algorithm is still **not** free-floating: it is recoverable from
+    /// [`Self::algorithm_id`], which sources it from the signer that produced
+    /// the key, so a caller pairing these two cannot mismatch them.
+    ///
+    /// [`Self::sign_prefixed`] remains the preferred entry point — it commits
+    /// the signature to `algorithm_id ‖ key_id ‖ payload` rather than a bare
+    /// message. This one exists for callers that build their own signable
+    /// bytes.
+    ///
     /// # This is the low-level primitive, not the domain-separated one
     ///
     /// A signature made here binds neither the algorithm nor the key — it
@@ -733,17 +751,15 @@ impl IdentityKey {
     /// make quietly.
     ///
     /// # Errors
-    /// Returns `WalletError::NotActive` when lifecycle ≠ Active/Rotating,
-    /// or `WalletError::Hsm(_)` on any adapter failure (transport, user
-    /// rejection, device error).
-    pub fn sign(&self, msg: &[u8]) -> Result<Signature, WalletError> {
+    /// - [`WalletError::NotActive`] when the lifecycle forbids signing.
+    /// - Any error from the underlying [`HsmAdapter::sign`].
+    pub fn sign(&self, msg: &[u8]) -> Result<[u8; 64], WalletError> {
         if !self.lifecycle.can_sign() {
             return Err(WalletError::NotActive {
                 current_state: self.lifecycle,
             });
         }
-        let sig_bytes = self.signer.sign(msg)?;
-        Ok(Signature::from_bytes(&sig_bytes))
+        self.signer.sign(msg).map_err(WalletError::Hsm)
     }
 
     /// Borrow the underlying signer (e.g. for tests asserting parity with
@@ -1073,7 +1089,7 @@ impl octo_cap_macaroon::CapabilitySigner for IdentityKey {
         // is the open capability question mission `0009-e9` deliberately did
         // not decide: whether the holder message's prefix travels in band.
         IdentityKey::sign(self, msg)
-            .map(|sig| sig.to_bytes().to_vec())
+            .map(|sig| sig.to_vec())
             .map_err(|e| octo_cap_macaroon::CapabilitySignerError::Signer(e.to_string()))
     }
 
@@ -1104,7 +1120,7 @@ mod tests {
         k.activate(1_700_000_000).expect("activate");
         let msg = b"hello world";
         let sig = k.sign(msg).expect("sign");
-        k.verify(msg, &sig.to_bytes()).expect("verify");
+        k.verify(msg, &sig).expect("verify");
     }
 
     #[test]
@@ -1157,7 +1173,7 @@ mod tests {
         let msg = b"cross-key";
         let sig = other.sign(msg).expect("sign");
         assert!(
-            signer.verify(msg, &sig.to_bytes()).is_err(),
+            signer.verify(msg, &sig).is_err(),
             "a signature from a different key must not verify"
         );
     }
@@ -1184,7 +1200,7 @@ mod tests {
         let mut id = IdentityKey::from_seed(seed);
         id.activate(1_700_000_000).expect("activate");
         let adapter_sig = id.sign(b"parity check").expect("adapter sign");
-        assert_eq!(raw_sig.to_bytes(), adapter_sig.to_bytes());
+        assert_eq!(raw_sig.to_bytes(), adapter_sig);
     }
 
     #[test]
@@ -1382,7 +1398,7 @@ mod tests {
         assert!(key.revoked_at_unix_secs().is_none());
         // sign() now succeeds
         let sig = key.sign(b"msg").expect("sign after activate");
-        assert_eq!(sig.to_bytes().len(), 64);
+        assert_eq!(sig.len(), 64);
     }
 
     #[test]

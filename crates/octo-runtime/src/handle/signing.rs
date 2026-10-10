@@ -76,10 +76,10 @@ pub fn sign_attach_handle_payload(
         })?;
     let canonical = canonical_payload_bytes(&session_id, payload, mint_timestamp_unix, ttl_unix);
     let msg = signable_bytes(&prefix, &canonical)?;
-    let dalek_sig = holder.sign(&msg).map_err(|e| AttachError::BadSignature {
+    let sig_bytes = holder.sign(&msg).map_err(|e| AttachError::BadSignature {
         reason: format!("IdentityKey::sign: {e}"),
     })?;
-    Ok(Signature(dalek_sig.to_bytes()))
+    Ok(Signature(sig_bytes))
 }
 
 /// Verify the canonical payload bytes for an `AttachHandle` token
@@ -542,7 +542,7 @@ mod tests {
         let prefix =
             octo_wallet::SignablePrefix::from_bytes(&holder_prefix(&holder)).expect("prefix bytes");
         let msg = signable_bytes(&prefix, &canonical).expect("signable");
-        let sig = Signature(holder.sign(&msg).expect("sign").to_bytes());
+        let sig = Signature(holder.sign(&msg).expect("sign"));
 
         // Proof the verifier is reading the algorithm from the prefix rather
         // than assuming Ed25519: hand it a token whose prefix names a
@@ -595,7 +595,7 @@ mod tests {
         let real =
             octo_wallet::SignablePrefix::from_bytes(&holder_prefix(&holder)).expect("prefix bytes");
         let msg = signable_bytes(&real, &canonical).expect("signable");
-        let sig = Signature(holder.sign(&msg).expect("sign").to_bytes());
+        let sig = Signature(holder.sign(&msg).expect("sign"));
 
         // Same key, same algorithm, different `key_id` in the prefix. This is
         // the substitution the prefix exists to refuse: an attacker who can
@@ -788,7 +788,7 @@ mod tests {
             &canonical,
         )
         .expect("signable");
-        let sig = Signature(holder.sign(&msg).expect("sign").to_bytes());
+        let sig = Signature(holder.sign(&msg).expect("sign"));
 
         match verify_attach_handle_payload_v2(
             &rotated,

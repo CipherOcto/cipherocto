@@ -405,6 +405,34 @@ fn strip_comments(src: &str) -> String {
     out
 }
 
+/// Whether `haystack` contains `needle` as a **whole path segment**.
+///
+/// A bare `contains` is wrong for a path like `Signature::from_bytes`:
+/// `GovernanceSignature::from_bytes` contains that string, so the AC#11 scan
+/// flagged a governance newtype's own constructor as an Ed25519 site. That is
+/// not a cosmetic false positive — it is the guard refusing to be extended,
+/// because the first exception it reports is one nobody can act on.
+///
+/// The boundary that matters is on the left: a path segment starts after
+/// `::`, whitespace, or a delimiter. Requiring the left boundary is enough,
+/// since the needle itself ends on `(` or an identifier and a trailing
+/// `FooSignature::from_bytes_x` would not match on the right either.
+fn contains_path_call(haystack: &str, needle: &str) -> bool {
+    let bytes = haystack.as_bytes();
+    let n = needle.len();
+    if n == 0 || n > bytes.len() {
+        return false;
+    }
+    bytes
+        .windows(n)
+        .enumerate()
+        .any(|(i, w)| w == needle.as_bytes() && (i == 0 || !is_ident_byte(bytes[i - 1])))
+}
+
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
 /// Slice out the body of the function whose definition line contains `anchor`.
 ///
 /// The indent of the anchor line is used to find the end: the body runs until
@@ -1675,19 +1703,30 @@ const AC11_OUT_OF_SCOPE: &[(&str, &str)] = &[(
      site in this crate IS in scope and must be dispatched.",
 )];
 
-/// `VerifyingKey::from_bytes` occurrences that are still legitimate, each
-/// with the reason. An allowlist entry without a reason is
+/// Inline-constructor occurrences that are still legitimate, each with the
+/// reason. An allowlist entry without a reason is
 /// indistinguishable from the defect it hides, which is the failure this
 /// vector exists to prevent.
-const AC11_ALLOWED: &[(&str, &str)] = &[(
-    "crates/octo-protocol/src/authorization.rs",
-    "Authorization::Signature carries no algorithm and the did:octo:z \
+const AC11_ALLOWED: &[(&str, &str)] = &[
+    (
+        "crates/octo-protocol/src/authorization.rs",
+        "Authorization::Signature carries no algorithm and the did:octo:z \
          payload is a bare 32 bytes, so the dispatcher has nothing to \
          dispatch on. Blocked on the same DID codec as mission 0009-c3.",
-)];
+    ),
+    (
+        "crates/quota-router-sm-engine/src/envelope.rs",
+        "unsigned_canonical_ser clones the envelope to blank the signature \
+         field so the signed message excludes it. The all-zero value is a \
+         placeholder that is never serialized and never verified, so no \
+         algorithm is selected here. The honest fix is an Option or a \
+         separate unsigned struct, not a dispatch: dispatching would be \
+         dispatching on a value with no cryptographic meaning.",
+    ),
+];
 
 #[test]
-fn ac11_no_verification_site_rebuilds_a_verifying_key_inline() {
+fn ac11_no_verification_site_rebuilds_a_key_or_signature_inline() {
     let root = workspace_root();
     let mut offenders: Vec<String> = Vec::new();
     let mut scanned_dirs = 0usize;
@@ -1739,8 +1778,16 @@ fn ac11_no_verification_site_rebuilds_a_verifying_key_inline() {
             }
             let src = std::fs::read_to_string(&path).unwrap();
             let body = strip_comments(&src);
-            if body.contains("VerifyingKey::from_bytes") {
-                offenders.push(rel);
+            // AC#11 names TWO constructors, not one. Grepping only the key
+            // half let a live `Signature::from_bytes` sit in `octo-wallet` —
+            // a crate this gate certifies as dispatched — for the whole of
+            // the verification-dispatch work, because `IdentityKey::sign`
+            // returned an `ed25519_dalek::Signature` and this pattern could
+            // not see it. Both halves are checked now.
+            for ctor in ["VerifyingKey::from_bytes", "Signature::from_bytes"] {
+                if contains_path_call(&body, ctor) {
+                    offenders.push(format!("{rel} ({ctor})"));
+                }
             }
         }
         if scanned > 0 {
@@ -1790,9 +1837,15 @@ fn ac11_every_allowlist_entry_still_exists_and_still_has_a_reason() {
         // in all three, and by the end the file rebuilt no verifying key at
         // all. The exception was pure blind spot.
         let src = std::fs::read_to_string(workspace_root().join(path)).unwrap();
+        let body = strip_comments(&src);
+        // Either constructor justifies the entry, and neither surviving does
+        // NOT — checking one pattern here while the scan checks two would make
+        // this guard demand a site the crate may legitimately have stopped
+        // building in the other half.
         assert!(
-            strip_comments(&src).contains("VerifyingKey::from_bytes"),
-            "AC-11: allowlisted {path} no longer contains a VerifyingKey::from_bytes \
+            contains_path_call(&body, "VerifyingKey::from_bytes")
+                || contains_path_call(&body, "Signature::from_bytes"),
+            "AC-11: allowlisted {path} no longer contains either constructor \
              site, so the exception is superseded — remove the entry. An allowlist \
              entry outliving its blocker exempts the file from the gate for no \
              reason, which is a silent hole rather than a documented one."

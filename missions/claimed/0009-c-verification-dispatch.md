@@ -68,8 +68,12 @@ a `VerifyingKey` inline, and it is mutation-checked:
 point.** Both read the algorithm off a value that does not carry one:
 
 - **`octo-cap-macaroon` §`CapabilityToken::verify_holder_sig`** — the
-  algorithm would have to travel on the token. `AlgorithmId` has no serde
-  impl, so adding the field is a Layer B wire-form change.
+  algorithm would have to travel on the token. `AlgorithmId` had no serde
+  impl at the time of writing, so this was blocked on a Layer B change.
+  **`AlgorithmId` serde has since landed**; the remaining work is a
+  capability-token wire change owned by
+  `0009-c4-capability-token-algorithm-binding`, sized there at 18
+  construction sites across 10 crates.
 - **`octo-protocol` §`verify_ed25519_signature`** — `Authorization::Signature`
   carries no algorithm, and the `did:octo:z` payload is a bare 32 bytes.
   The dispatcher has nothing to dispatch on. **Same root cause as

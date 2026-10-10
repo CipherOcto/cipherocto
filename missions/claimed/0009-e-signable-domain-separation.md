@@ -263,10 +263,70 @@ One process note for the next implementer: `cargo clippy -p quota-router-core
 `any-llm-mode` are mutually exclusive behind a `compile_error!`. Use
 `--all-targets` without `--all-features` for that crate.
 
-- `CapabilitySigner::sign(&self, msg: &[u8])` in `octo-cap-macaroon` is
-  unchanged. It carries no key context at all, so the RFC-named "real
-  signers" list is only half covered. Making it carry one is a trait change
-  across every implementor.
+### The `CapabilitySigner` trait change — scope surveyed, key_id answered
+
+`CapabilitySigner::sign(&self, msg: &[u8])` in `octo-cap-macaroon` is
+unchanged, and it carries no key context at all — so the RFC-named "real
+signers" list is still only half covered. This was an open question in this
+mission and is now answered from the source rather than deferred.
+
+**The "11 implementors across 6 crates" figure overstates the blast radius.**
+Enumerating every `impl CapabilitySigner for` site in the tree gives 16, split
+cleanly between the two same-named traits: 12 for the macaroon one and 4 for
+the governance one. Of the 12, exactly **one** is production —
+`octo_wallet::IdentityKey`. Two are the `Box`/`Arc` blanket impls. The other
+nine are test fixtures and dev-mode stubs spread across `octo-cap-macaroon`
+(`signer`, `token`, `wire`, `discharge`, `cli_fns`), `octo-role`, and
+`octo-cli`. So this is one production impl to migrate and a wide fan of test
+scaffolding to update — real work, but not a cross-cutting substrate change,
+and it should not be scoped by the raw implementor count.
+
+**Where a capability key's `key_id` comes from: the holder identity's
+verification method.** No new concept is needed. The trait already carries
+`did()`, and its contract is substrate truth — the same DID the slash ledger
+binds to, not a CLI-side derivation. A capability _holder_ is therefore an
+identity, and its `key_id` is that identity's `verification_method_id`,
+exactly as at every other site in this table. The production implementor
+already has the field; the trait change is what exposes it.
+
+**The trait carries neither `algorithm_id` nor `key_id` today.** This is
+known rather than accidental: a fixture in `octo-cap-macaroon` §`signer` says
+so in as many words and calls widening the trait a follow-on, noting that the
+verifier takes the algorithm id as a parameter so nothing is blocked. Both
+ids belong on the trait, because the verifier currently learns the algorithm
+from its own configuration — which is the preference RFC-0009 forbids.
+
+### A site this table does not list: `octo-governance`'s `CapabilitySigner`
+
+`crates/octo-governance/src/attest.rs` declares a **second, unrelated trait
+also named `CapabilitySigner`**, with `fn sign_envelope(&self, envelope_bytes:
+&[u8]) -> Result<[u8; 64], String>`. It is not the macaroon one, it is not in
+the eight sites counted above, and it signs bare. The same-name collision
+across two crates is itself the hazard: an implementer grepping for
+`CapabilitySigner` finds the wrong one.
+
+Whether it needs the prefix depends on whether its input already carries
+domain separation — `octo-governance` documents that the signer sees only a
+BLAKE3-256 digest over canonical envelope bytes, so this needs the same
+inquiry `envelope_v2` got rather than an assumption either way. Recorded
+here as a gap, not answered.
+
+### The two `octo-runtime` attach-handle paths are not the same shape
+
+`octo-runtime` §`handle/signing` has two, and only one is live.
+`octo-attach-key-rotation` is **opt-in and off by default**, so v2 — which
+binds a `key_id` — does not compile in a default build, while v1 is what
+`mint_attach_handle`, `attach_with_token`, `decode_token` and the CLI's
+`agent run --detach` path all use.
+
+v2's binding is a hand-rolled `key_id.to_be_bytes()` suffix appended to the
+canonical payload. That is a second, parallel mechanism for a job RFC-0009's
+prefix already does, and RFC-0009's prefix binds strictly more: it carries
+the algorithm, which the suffix cannot. The `KeySet` grace-window lookup is
+a different job — it resolves _which pubkey_ to try, whereas the prefix binds
+_which key_ — so the `KeySet` survives the migration and only the suffix is
+redundant.
+
 - ~~`verify_successor_proof` / `verify_revocation_proof` take an
   `algorithm_id` **out of band**~~ **Done**: both now take a `key_id` and
   verify under the prefix. See `0009-e2`.

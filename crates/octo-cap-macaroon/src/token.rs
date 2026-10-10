@@ -284,7 +284,7 @@ impl CapabilityToken {
         let holder_pub = holder.public_key_bytes();
         let holder_did = holder_did.to_owned();
 
-        let msg = Self::holder_msg(&macaroon.root_id, &macaroon.caveats);
+        let msg = Self::holder_msg(holder.algorithm_id(), &macaroon.root_id, &macaroon.caveats);
         let sig_bytes = holder.sign(&msg)?;
         // The signer names its own algorithm. Stamping a constant here is
         // how a non-Ed25519 holder ends up recorded as Ed25519 and then
@@ -340,7 +340,11 @@ impl CapabilityToken {
     ) -> Result<Self, MintError> {
         let mut next = self.clone();
         next.macaroon = next.macaroon.attenuate(caveat, catalog)?;
-        let msg = Self::holder_msg(&next.macaroon.root_id, &next.macaroon.caveats);
+        let msg = Self::holder_msg(
+            holder.algorithm_id(),
+            &next.macaroon.root_id,
+            &next.macaroon.caveats,
+        );
         let sig_bytes = holder.sign(&msg)?;
         // Same rule as `mint`: the algorithm comes from the signer.
         next.holder_sig = HolderSignature::new(holder.algorithm_id(), &sig_bytes)?;
@@ -363,7 +367,11 @@ impl CapabilityToken {
                     .to_owned(),
             ));
         }
-        let msg = Self::holder_msg(&self.macaroon.root_id, &self.macaroon.caveats);
+        let msg = Self::holder_msg(
+            self.holder_sig.algorithm_id(),
+            &self.macaroon.root_id,
+            &self.macaroon.caveats,
+        );
         // Dispatch, not a locally constructed key (RFC-0009 AC#11). The
         // algorithm comes from the signature itself, so a token naming an
         // algorithm this deployment does not implement fails closed instead
@@ -394,12 +402,30 @@ impl CapabilityToken {
     /// caveat-variant-tagged serialization). The outer `u32(|caveats_wire|)`
     /// removes the outer ambiguity; inner per-caveat boundaries remain
     /// length-prefixed by each caveat's own `canonical_ser`.
-    fn holder_msg(root_id: &MacaroonId, caveats: &[Caveat]) -> Vec<u8> {
+    fn holder_msg(
+        algorithm_id: octo_ident::AlgorithmId,
+        root_id: &MacaroonId,
+        caveats: &[Caveat],
+    ) -> Vec<u8> {
         let mut inner = Vec::with_capacity(caveats.len() * 64);
         for caveat in caveats {
             inner.extend_from_slice(&caveat.canonical_ser());
         }
-        let mut msg = Vec::with_capacity(4 + 16 + 4 + inner.len());
+        // The algorithm is part of what gets signed, not a label attached to
+        // the signature afterwards. `HolderSignature` is a pair of
+        // `(algorithm_id, signature)`; while the signature covered only
+        // `root_id || caveats`, that first element was unauthenticated
+        // metadata — it travelled in the token and was read back to pick a
+        // verifier, but nothing in the signed bytes committed to it.
+        //
+        // Dispatch on the claimed algorithm is how the claim is *used*; this
+        // is how it is *authenticated*. They are different properties, and
+        // having only the first is what left the gap (mission `0009-e10`).
+        //
+        // Prefixed rather than suffixed so it cannot be confused with a
+        // `root_id` field, and fixed width because `AlgorithmId` is.
+        let mut msg = Vec::with_capacity(16 + 4 + root_id.len() + 4 + inner.len());
+        msg.extend_from_slice(algorithm_id.as_bytes());
         msg.extend_from_slice(&u32_len_field(root_id.len()));
         msg.extend_from_slice(root_id);
         msg.extend_from_slice(&u32_len_field(inner.len()));
@@ -484,6 +510,48 @@ mod tests {
         assert!(
             msg.contains("no registered algorithm"),
             "expected an unknown-algorithm refusal, got: {msg}"
+        );
+    }
+
+    /// Mission `0009-e10`: the algorithm must be in the *signed bytes*, not just
+    /// carried alongside the signature.
+    ///
+    /// Deliberately a white-box assertion on the composed message. The
+    /// tempting end-to-end vector — take a valid token, rewrite its
+    /// `algorithm_id`, assert verification fails — is **vacuous**: it is green
+    /// before this change and green after, because verification already
+    /// dispatches on the claimed algorithm and so already refused the rewrite
+    /// for the wrong reason. Only the message itself distinguishes "carried"
+    /// from "committed".
+    #[test]
+    fn holder_msg_commits_to_the_algorithm() {
+        let root = [0xA7; 16];
+        let caveats = [Caveat::Audience("aud".to_owned())];
+
+        let ed = CapabilityToken::holder_msg(
+            crate::governance_signature::governance_algorithm_id(),
+            &root,
+            &caveats,
+        );
+        let other = CapabilityToken::holder_msg(
+            octo_ident::AlgorithmId::derive("some-other-algorithm"),
+            &root,
+            &caveats,
+        );
+
+        assert_ne!(
+            ed, other,
+            "the signed message must differ by algorithm, or the algorithm_id \
+             in HolderSignature is unauthenticated metadata — carried in the \
+             token and read back to pick a verifier, but committed to by \
+             nothing"
+        );
+        // And it is a prefix, not a field buried in the body, so it cannot be
+        // confused with the root_id that follows it.
+        assert_eq!(
+            ed[..16],
+            crate::governance_signature::governance_algorithm_id().as_bytes()[..],
+            "the algorithm must lead the message"
         );
     }
 

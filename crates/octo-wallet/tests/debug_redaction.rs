@@ -237,13 +237,22 @@ fn capability_token_debug_does_not_leak_holder_sig_or_chain() {
         CapabilityToken::mint(&ROOT_SECRET_MARKER, &holder, &sample_did(192), &caveats).unwrap();
     let out = format!("{token:?}");
     assert_no_marker("CapabilityToken (holder seed)", &out);
-    // holder_sig is derived from holder.sign(...); it does NOT contain
-    // the SEED_MARKER bytes directly, but the redacted form must NOT
-    // include the literal hex of holder_sig.to_bytes() either. We assert
-    // the explicit redaction marker is present.
+    // The marker no longer claims a width. `holder_sig` is variable width
+    // after mission `0009-e8`, so "64 bytes" would be a claim the Debug impl
+    // cannot know — and a marker that asserts a width it does not have is the
+    // same defect class as a doc asserting an invariant from a changed
+    // dependency.
     assert!(
-        out.contains("[REDACTED 64 bytes]"),
-        "CapabilityToken Debug must include '[REDACTED 64 bytes]' (holder_sig redaction marker); got: {out}"
+        out.contains("[REDACTED]"),
+        "CapabilityToken Debug must redact holder_sig; got: {out}"
+    );
+    // And the property the marker was standing in for, asserted directly.
+    // Pinning the marker string alone only tests that a literal is present,
+    // which any implementation could satisfy while printing the signature.
+    let sig_hex = hex::encode(token.holder_sig.to_bytes());
+    assert!(
+        !out.contains(&sig_hex),
+        "CapabilityToken Debug must not print the holder signature hex; got: {out}"
     );
     assert!(
         out.contains("discharges_count"),

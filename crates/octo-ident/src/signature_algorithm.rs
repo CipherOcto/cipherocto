@@ -582,7 +582,18 @@ pub enum BootstrapError {
 /// registry rejects the install.
 pub fn bootstrap(algs: Vec<Arc<dyn SignatureAlgorithm>>) -> Result<(), BootstrapError> {
     let _guard = bootstrap_guard();
-    let registry = global();
+    bootstrap_locked(global(), algs)
+}
+
+/// Body of [`bootstrap`], for callers that already hold the bootstrap lock.
+///
+/// Split out because [`bootstrap_additional`] needs the same decision under
+/// the same lock, and `BOOTSTRAP_LOCK` is a plain non-reentrant
+/// `std::sync::Mutex` — delegating to `bootstrap` would deadlock.
+fn bootstrap_locked(
+    registry: &AlgorithmRegistry,
+    algs: Vec<Arc<dyn SignatureAlgorithm>>,
+) -> Result<(), BootstrapError> {
     let mut requested: Vec<AlgorithmId> = algs.iter().map(|a| a.id()).collect();
     requested.sort_unstable();
     requested.dedup();
@@ -599,6 +610,88 @@ pub fn bootstrap(algs: Vec<Arc<dyn SignatureAlgorithm>>) -> Result<(), Bootstrap
     }
 
     registry.populate(algs)?;
+    Ok(())
+}
+
+/// Add algorithms to the process-wide registry **without** replacing or
+/// conflicting with an existing bootstrap.
+///
+/// # Why this exists
+///
+/// [`bootstrap`] is idempotent only for an _identical_ set: it refuses a
+/// second call whose ids differ, because two callers disagreeing about what
+/// the deployment supports is the hazard it exists to catch. That is correct
+/// while there is one algorithm. It stops being correct the moment there are
+/// two — and RFC-0009 §Dual-format signature algorithms and the ZK-capable
+/// key is exactly that: one identity carrying an Ed25519 key and a
+/// STARK-curve Schnorr key.
+///
+/// With only [`bootstrap`], a binary depending on two per-algorithm crates
+/// would have one of them win and the other report
+/// [`BootstrapError::ConflictingBootstrap`], or worse, need both crates to
+/// agree on a set neither of them owns. Neither is a registry of algorithms;
+/// it is a registry of one algorithm with a compile-time deadlock at the
+/// install site. Per-algorithm crates are independent Layer E extensions and
+/// must not have to depend on each other to be installable together.
+///
+/// So installation has two shapes: [`bootstrap`] declares _this deployment's
+/// whole set_, and this function _adds_ to whatever is already there. An
+/// already-registered algorithm is idempotent here, mirroring how
+/// [`bootstrap`] treats a repeated identical set.
+///
+/// # Layer
+///
+/// Layer B. This is the registry's own interface, not an extension reaching
+/// into it — per-algorithm crates call it rather than touching
+/// [`AlgorithmRegistry::register`] and re-deriving the boot-order rules.
+///
+/// # Errors
+///
+/// [`BootstrapError::Registry`] if the registry rejects an algorithm. If the
+/// registry is not yet populated this behaves exactly like [`bootstrap`],
+/// including refusing a conflicting set.
+///
+/// # What this does not do: restrict a set
+///
+/// Calling this after an explicit [`bootstrap`] **adds to** that set rather
+/// than failing against it. So a deployment that starts with
+/// `bootstrap(vec![ed25519])` to say "Ed25519 only" still gets anything a
+/// linked crate later installs, and cannot keep it out without not linking
+/// the crate.
+///
+/// That is a real gap in the install semantics and it is stated here rather
+/// than left to be discovered. It is a **missing capability, not a weakened
+/// control**: verification still dispatches on the identifier a peer named, so
+/// an added algorithm cannot be reached unless something is told to use it,
+/// and `UnknownAlgorithm` still fails closed for everything absent.
+///
+/// The alternative — recording which populating call was strict — buys that
+/// capability at the cost of a second piece of registry state whose only
+/// purpose is to make an install fail. RFC-0009 §Dual-format signature
+/// algorithms and the ZK-capable key does not specify install semantics at
+/// this level, so the simpler rule stands until it does. A deployment that
+/// must restrict the set should bootstrap it itself and not use per-crate
+/// `install()`.
+pub fn bootstrap_additional(algs: Vec<Arc<dyn SignatureAlgorithm>>) -> Result<(), BootstrapError> {
+    let _guard = bootstrap_guard();
+    let registry = global();
+
+    if !registry.is_populated() {
+        // First install in this process: there is no existing set to add to,
+        // so this is an ordinary bootstrap and keeps the fail-closed
+        // "nothing is ready yet" window intact.
+        return bootstrap_locked(registry, algs);
+    }
+
+    for alg in algs {
+        match registry.register(alg) {
+            // Already here: this is the repeat-install case, and refusing it
+            // would make a binary with two initialising crates for the same
+            // algorithm fail to start over nothing.
+            Ok(()) | Err(AlgorithmRegistryError::AlreadyRegistered(_)) => {}
+            Err(e) => return Err(BootstrapError::Registry(e)),
+        }
+    }
     Ok(())
 }
 

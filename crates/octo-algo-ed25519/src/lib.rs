@@ -36,8 +36,8 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signature, VerifyingKey};
 use octo_ident::{
-    bootstrap, global, AlgorithmId, AlgorithmRegistryError, BootstrapError, SignatureAlgorithm,
-    SignatureError, ZkSupport,
+    bootstrap_additional, global, AlgorithmId, AlgorithmRegistryError, BootstrapError,
+    SignatureAlgorithm, SignatureError, ZkSupport,
 };
 
 /// Name this algorithm is derived from.
@@ -153,15 +153,25 @@ impl SignatureAlgorithm for Ed25519Algorithm {
 
 /// Install Ed25519 into the process-wide registry.
 ///
-/// Idempotent: calling it from several initialising crates is fine. Install
-/// **before** the first verification — an unbootstrapped registry fails
-/// closed rather than guessing.
+/// Idempotent, and **composable**: this adds to whatever is installed rather
+/// than declaring the deployment's whole algorithm set. That matters as soon
+/// as there is a second algorithm — RFC-0009 §Dual-format signature algorithms
+/// and the ZK-capable key puts an Ed25519 key and a STARK-curve Schnorr key
+/// on one identity — because two per-algorithm crates that each declared the
+/// full set would collide, and neither should have to depend on the other to
+/// be installable. See [`octo_ident::bootstrap_additional`].
+///
+/// Install **before** the first verification — an unbootstrapped registry
+/// fails closed rather than guessing.
+///
+/// A deployment that must **restrict** the algorithm set rather than extend
+/// it should bootstrap the set itself and not use this; see
+/// [`octo_ident::bootstrap_additional`] §What this does not do.
 ///
 /// # Errors
-/// [`BootstrapError::ConflictingBootstrap`] if some other caller already
-/// installed a different algorithm set.
+/// [`BootstrapError::Registry`] if the registry rejects the algorithm.
 pub fn install() -> Result<(), BootstrapError> {
-    bootstrap(vec![Ed25519Algorithm::shared()])
+    bootstrap_additional(vec![Ed25519Algorithm::shared()])
 }
 
 /// The process-wide registry, with Ed25519 guaranteed installed.

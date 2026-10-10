@@ -47,8 +47,9 @@ pub use rich_document::{
     MAX_VERIFICATION_METHODS,
 };
 pub use signature_algorithm::{
-    bootstrap, global, AlgorithmId, AlgorithmRegistry, AlgorithmRegistryError, BootstrapError,
-    CircuitId, IdBytes, SignatureAlgorithm, SignatureError, VerificationMethodId, ZkSupport,
+    bootstrap, bootstrap_additional, global, AlgorithmId, AlgorithmRegistry,
+    AlgorithmRegistryError, BootstrapError, CircuitId, IdBytes, SignatureAlgorithm, SignatureError,
+    VerificationMethodId, ZkSupport,
 };
 pub use write_coordinator::{canonical_hash, DidWriteCoordinator, DidWriteCoordinatorError};
 

@@ -10,6 +10,15 @@ authors = ["CipherOcto"]
 crate-type = ["rlib"]
 
 [dependencies]
+
+# Mission 0009-c: the Layer B registry + the Ed25519 `SignatureAlgorithm`
+# implementation, so the canonical governance verifier dispatches through
+# `AlgorithmRegistry` instead of naming dalek (RFC-0009 AC#11). Layer E
+# extension over Layer B. `octo-ident` was previously a dev-dependency of
+# this crate only, which a lib-side dispatch needs promoted.
+octo-ident = { path = "../octo-ident" }
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
+
 # BLAKE3 keyed-hash primitive (Layer A per RFC-0853 §1.1) — used for
 # HMAC-BLAKE3 = blake3::keyed_hash per RFC-0957 §Algorithms.
 blake3 = "1.5"

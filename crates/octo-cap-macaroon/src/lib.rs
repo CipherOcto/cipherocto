@@ -125,8 +125,8 @@ pub use discharge::{
     RevocationDischargeProvider, REVOCATION_DISCHARGE_TTL_SECS,
 };
 pub use governance_signature::{
-    blake3_hash, verify_governance_signature, GovernancePubkey, GovernanceSignatureBytes,
-    GovernanceSignatureError,
+    blake3_hash, governance_algorithm_id, verify_governance_signature, GovernancePubkey,
+    GovernanceSignatureBytes, GovernanceSignatureError,
 };
 pub use holder_kind::HolderKind;
 pub use holder_persist::{

@@ -32,6 +32,18 @@ pub enum GovernanceSignatureError {
     InvalidPubkeyLength(usize),
 }
 
+/// The algorithm governance signatures are verified under by default.
+///
+/// The verifier below takes the algorithm as a parameter so it genuinely
+/// dispatches (RFC-0009 AC#11); this is the value current callers pass,
+/// kept in one place so a consumer does not have to add its own dependency
+/// just to name the algorithm. The honest home is a field alongside the
+/// governance key on the signed body, which this slice does not change.
+#[must_use]
+pub fn governance_algorithm_id() -> octo_ident::AlgorithmId {
+    octo_algo_ed25519::ed25519_algorithm_id()
+}
+
 /// Verify a 64-byte Ed25519 signature over the given `body_hash` using
 /// `governance_pubkey`. Returns `Ok(())` on success, `Err(_)` on failure.
 ///
@@ -49,15 +61,21 @@ pub enum GovernanceSignatureError {
 /// v2.1 §2.3 for PaymentCaveat). This function is the substrate-
 /// canonical verifier that all event types share.
 pub fn verify_governance_signature(
+    algorithm_id: &octo_ident::AlgorithmId,
     sig: &GovernanceSignatureBytes,
     body_hash: &[u8; 32],
     governance_pubkey: &GovernancePubkey,
 ) -> Result<(), GovernanceSignatureError> {
-    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-    let pk = VerifyingKey::from_bytes(governance_pubkey)
-        .map_err(|_| GovernanceSignatureError::InvalidPubkeyLength(governance_pubkey.len()))?;
-    let s = Signature::from_bytes(sig);
-    pk.verify(body_hash, &s)
+    // Length is checked here rather than left to the algorithm so the
+    // error variant stays meaningful: `InvalidPubkeyLength` reports the
+    // pubkey length that was actually supplied, which the dispatch layer
+    // has no way to recover.
+    if governance_pubkey.len() != 32 {
+        return Err(GovernanceSignatureError::InvalidPubkeyLength(
+            governance_pubkey.len(),
+        ));
+    }
+    octo_algo_ed25519::verify_dispatch(algorithm_id, governance_pubkey, body_hash, sig)
         .map_err(|_| GovernanceSignatureError::InvalidSignature)
 }
 
@@ -79,6 +97,12 @@ pub fn blake3_hash(input: &[u8]) -> [u8; 32] {
 
 #[cfg(test)]
 mod tests {
+    /// The algorithm these fixtures sign under. Centralised so a second
+    /// algorithm is one edit, not a hunt through the test bodies.
+    fn ed25519_id() -> octo_ident::AlgorithmId {
+        octo_algo_ed25519::ed25519_algorithm_id()
+    }
+
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
     use rand::RngCore;
@@ -110,7 +134,10 @@ mod tests {
         let (sk, pk) = sample_key();
         let body_hash = blake3_hash(b"test body");
         let sig = sk.sign(&body_hash).to_bytes();
-        assert_eq!(verify_governance_signature(&sig, &body_hash, &pk), Ok(()));
+        assert_eq!(
+            verify_governance_signature(&ed25519_id(), &sig, &body_hash, &pk),
+            Ok(())
+        );
     }
 
     #[test]
@@ -119,7 +146,7 @@ mod tests {
         let body_hash = blake3_hash(b"test body");
         let bogus_sig = [0u8; 64];
         assert_eq!(
-            verify_governance_signature(&bogus_sig, &body_hash, &pk),
+            verify_governance_signature(&ed25519_id(), &bogus_sig, &body_hash, &pk),
             Err(GovernanceSignatureError::InvalidSignature)
         );
     }
@@ -135,7 +162,7 @@ mod tests {
         // in this rejection stage. Either error variant is a valid
         // "rejection of malformed pubkey" outcome; the substrate fails-closed.
         assert!(matches!(
-            verify_governance_signature(&sig, &body_hash, &bad_pk),
+            verify_governance_signature(&ed25519_id(), &sig, &body_hash, &bad_pk),
             Err(GovernanceSignatureError::InvalidPubkeyLength(_))
                 | Err(GovernanceSignatureError::InvalidSignature)
         ));

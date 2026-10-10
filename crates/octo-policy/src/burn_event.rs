@@ -301,6 +301,7 @@ pub fn new(
     // chain rule, not vault governance)
     if meta.governance_pubkey.is_some() {
         verify_governance_signature(
+            &octo_cap_macaroon::governance_algorithm_id(),
             governance_signature.as_bytes(),
             &body_hash,
             &governance_pubkey,
@@ -362,6 +363,7 @@ pub fn validate(
     let body_hash = compute_body_hash(burn);
     if meta.governance_pubkey.is_some() {
         verify_governance_signature(
+            &octo_cap_macaroon::governance_algorithm_id(),
             burn.governance_signature.as_bytes(),
             &body_hash,
             &burn.governance_pubkey,

@@ -260,6 +260,7 @@ pub fn new(
         // body_hash commitment (single-role).
         let _ = governance_pubkey_body_hash;
         verify_governance_signature(
+            &octo_cap_macaroon::governance_algorithm_id(),
             settlement.governance_signature.as_bytes(),
             &body_hash,
             meta.governance_pubkey
@@ -332,8 +333,13 @@ pub fn validate(
     let body_hash = compute_settlement_body_hash(settlement);
     // (e) re-run Gate 5
     if let Some(pk) = meta.governance_pubkey {
-        verify_governance_signature(settlement.governance_signature.as_bytes(), &body_hash, &pk)
-            .map_err(|_| SettlementEventError::InvalidSignature)?;
+        verify_governance_signature(
+            &octo_cap_macaroon::governance_algorithm_id(),
+            settlement.governance_signature.as_bytes(),
+            &body_hash,
+            &pk,
+        )
+        .map_err(|_| SettlementEventError::InvalidSignature)?;
     }
     // (f) stale snapshot
     if current_epoch.get() < settlement.registry_snapshot_epoch.get() {

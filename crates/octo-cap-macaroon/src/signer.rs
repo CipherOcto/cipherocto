@@ -45,9 +45,11 @@ pub enum CapabilitySignerError {
 /// messages. The `sign` method may fail (HSM transport, user denial,
 /// etc.); the failure mode is surfaced via `CapabilitySignerError`.
 ///
-/// Implementors MUST also return the 32-byte Ed25519 public key via
-/// `public_key_bytes`. The verifier reconstructs the verifying key from
-/// these 32 bytes via `ed25519_dalek::VerifyingKey::from_bytes`.
+/// Implementors MUST also return the 32-byte public key via
+/// `public_key_bytes`. The verifier dispatches on an `AlgorithmId`
+/// through `AlgorithmRegistry` rather than reconstructing a key itself
+/// (RFC-0009 AC#11); the algorithm comes from
+/// `CapabilitySigner::algorithm_id`.
 pub trait CapabilitySigner {
     /// Sign `msg`; return the 64-byte Ed25519 signature.
     ///
@@ -163,8 +165,17 @@ impl CapabilitySigner for std::sync::Arc<dyn CapabilitySigner> {
 
 #[cfg(test)]
 mod tests {
+    /// The algorithm these fixtures sign under. `CapabilitySigner` does
+    /// not carry an `algorithm_id` method — it has 11 implementors across
+    /// 6 crates — so the fixture states its algorithm here instead. Widening
+    /// the trait is a follow-on; the verifier takes the id as a parameter,
+    /// so nothing is blocked on it.
+    fn ed25519_id() -> octo_ident::AlgorithmId {
+        octo_algo_ed25519::ed25519_algorithm_id()
+    }
+
     use super::*;
-    use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+    use ed25519_dalek::{Signer, SigningKey};
 
     /// Test fixture: thin Ed25519 keypair wrapper implementing `CapabilitySigner`.
     /// Mirrors the canonical `IdentityKey` impl in `octo-wallet` without taking
@@ -248,9 +259,8 @@ mod tests {
         let msg = b"verify-me";
         let sig_bytes = s.sign(msg).expect("sign");
         let pk_bytes = s.public_key_bytes();
-        let vk = VerifyingKey::from_bytes(&pk_bytes).expect("pk parse");
-        let sig = Signature::from_bytes(&sig_bytes);
-        vk.verify(msg, &sig).expect("signature must verify");
+        octo_algo_ed25519::verify_dispatch(&ed25519_id(), &pk_bytes, msg, &sig_bytes)
+            .expect("signature must verify");
     }
 
     /// R10 finding: `CapabilitySigner::sign` was tested with short
@@ -264,9 +274,7 @@ mod tests {
         let sig_bytes = s.sign(b"").expect("sign empty");
         assert_eq!(sig_bytes.len(), 64);
         let pk_bytes = s.public_key_bytes();
-        let vk = VerifyingKey::from_bytes(&pk_bytes).expect("pk parse");
-        let sig = Signature::from_bytes(&sig_bytes);
-        vk.verify(b"", &sig)
+        octo_algo_ed25519::verify_dispatch(&ed25519_id(), &pk_bytes, b"", &sig_bytes)
             .expect("empty msg signature must verify");
     }
 
@@ -278,9 +286,7 @@ mod tests {
         let sig_bytes = s.sign(&msg).expect("sign large");
         assert_eq!(sig_bytes.len(), 64);
         let pk_bytes = s.public_key_bytes();
-        let vk = VerifyingKey::from_bytes(&pk_bytes).expect("pk parse");
-        let sig = Signature::from_bytes(&sig_bytes);
-        vk.verify(&msg, &sig)
+        octo_algo_ed25519::verify_dispatch(&ed25519_id(), &pk_bytes, &msg, &sig_bytes)
             .expect("1 MiB msg signature must verify");
     }
 

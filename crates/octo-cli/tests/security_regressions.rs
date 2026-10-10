@@ -1638,3 +1638,118 @@ fn h7_private_write_primitives_have_exactly_one_definition() {
         "H-7: octo-wallet::fs_perms must re-export the shared primitives"
     );
 }
+
+// ── AC-11: no verification site hardcodes an algorithm ────────────────────
+
+/// Crates this vector covers. Each has completed its dispatch work; the
+/// two that have not are handled by the explicit allowlist below, which is
+/// the point of listing them rather than omitting them.
+const AC11_DISPATCHED: &[&str] = &[
+    "crates/octo-wallet/src",
+    "crates/octo-reputation/src",
+    "crates/quota-router-sm-engine/src",
+    "crates/octo-runtime/src",
+    "crates/octo-wallet-node/src",
+];
+
+/// `VerifyingKey::from_bytes` occurrences that are still legitimate, each
+/// with the reason. An allowlist entry without a reason is
+/// indistinguishable from the defect it hides, which is the failure this
+/// vector exists to prevent.
+const AC11_ALLOWED: &[(&str, &str)] = &[
+    (
+        "crates/octo-cap-macaroon/src/token.rs",
+        "verify_holder_sig reads the algorithm off the token, and the token \
+         does not carry one. Carrying it needs AlgorithmId to have serde, a \
+         Layer B wire-form change, and lands after this vector.",
+    ),
+    (
+        "crates/octo-protocol/src/authorization.rs",
+        "Authorization::Signature carries no algorithm and the did:octo:z \
+         payload is a bare 32 bytes, so the dispatcher has nothing to \
+         dispatch on. Blocked on the same DID codec as mission 0009-c3.",
+    ),
+];
+
+#[test]
+fn ac11_no_verification_site_rebuilds_a_verifying_key_inline() {
+    let root = workspace_root();
+    let mut offenders: Vec<String> = Vec::new();
+
+    let mut dirs: Vec<&str> = AC11_DISPATCHED.to_vec();
+    // The allowlist entries live under these two crates, so they are walked
+    // too — otherwise adding a NEW hardcoded site to them would go unseen
+    // merely because they are currently excepted.
+    dirs.push("crates/octo-cap-macaroon/src");
+    dirs.push("crates/octo-protocol/src");
+
+    for dir in dirs {
+        let abs = root.join(dir);
+        let Ok(entries) = std::fs::read_dir(&abs) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let rel = path
+                .strip_prefix(&root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            if AC11_ALLOWED.iter().any(|(allowed, _)| *allowed == rel) {
+                continue;
+            }
+            let src = std::fs::read_to_string(&path).unwrap();
+            let body = strip_comments(&src);
+            if body.contains("VerifyingKey::from_bytes") {
+                offenders.push(rel);
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "AC-11: these files rebuild an Ed25519 verifying key inline instead \
+         of dispatching through AlgorithmRegistry: {offenders:?}. If one of \
+         them is a signing site, say so in AC11_ALLOWED with the reason."
+    );
+}
+
+#[test]
+fn ac11_every_allowlist_entry_still_exists_and_still_has_a_reason() {
+    // An allowlist that silently rots is worse than none: the path is
+    // renamed or deleted, the excepted file stops being scanned, and a new
+    // hardcoded site inside it passes unnoticed.
+    for (path, reason) in AC11_ALLOWED {
+        assert!(
+            workspace_root().join(path).exists(),
+            "AC-11: allowlisted path {path} no longer exists. Remove the entry \
+             or repoint it; a stale exception is a silent hole."
+        );
+        assert!(
+            reason.len() > 40 && !reason.trim().is_empty(),
+            "AC-11: allowlist entry {path} needs a real reason, not a stub"
+        );
+    }
+}
+
+#[test]
+fn ac11_the_ed25519_registration_itself_is_where_keys_get_built() {
+    // AC-11 excludes "the Ed25519 registration itself". If that exclusion
+    // ever names a file that no longer exists, the dispatching crates lose
+    // their only legal home for constructing a key.
+    let reg = workspace_root().join("crates/octo-algo-ed25519/src/lib.rs");
+    assert!(
+        reg.exists(),
+        "AC-11: the Ed25519 registration crate is gone. Either restore it or \
+         amend AC-11 with the new registration's home."
+    );
+    let src = std::fs::read_to_string(&reg).unwrap();
+    assert!(
+        strip_comments(&src).contains("VerifyingKey::from_bytes"),
+        "AC-11: the registration must still be where the key is constructed, \
+         otherwise the dispatching crates have nowhere legal to build one."
+    );
+}

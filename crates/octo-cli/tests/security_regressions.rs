@@ -1764,9 +1764,12 @@ const AC11_PENDING: &[(&str, usize, &str)] = &[
     // half, which is why they were invisible for as long as it was.
     (
         "crates/octo-coordinator-types/src/slashing.rs",
-        1,
-        "verifies an adjudicator signature under hardcoded Ed25519 during \
-         slashing-proof validation. Same codec blocker as mission 0009-c3.",
+        0,
+        "mission 0009-c6: DISPATCHED. Count of zero rather than removed, so a \
+         future site here fails the gate instead of opening a new silent gap. \
+         Second instance of the vault finding: the codec did not block it \
+         either, because the governance key set is supplied by the caller and \
+         no DID is parsed on the way to the key.",
     ),
     (
         "crates/octo-vault/src/cache_subscriber.rs",

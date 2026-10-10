@@ -2,7 +2,9 @@
 //! (RFC-0855p-b §Implementation Phase 5 + §Appendix B Slash Offense Codes).
 
 use ed25519_dalek::Signer;
-use octo_coordinator_types::slashing::{apply_slash, verify_slash_proof, CoolDownTracker};
+use octo_coordinator_types::slashing::{
+    apply_slash, ed25519_governance_keys, verify_slash_proof, CoolDownTracker,
+};
 use octo_coordinator_types::state::{
     CoordinatorError, CoordinatorLifecycle, CoordinatorRecord, CoordinatorSource, SlashProof,
 };
@@ -49,7 +51,8 @@ fn sample_signed_proof(offense: u16, penalty: u64) -> SlashProof {
 fn tv_sl_1_valid_slash_progression() {
     let proof = sample_signed_proof(0x0001, 1_000); // DoubleSign
     let sk = keypair([0x77u8; 32]);
-    let governance_set = vec![([0x77u8; 32], sk.verifying_key())];
+    let plain_set = vec![([0x77u8; 32], sk.verifying_key())];
+    let governance_set = ed25519_governance_keys(&plain_set);
     let mut record = sample_record();
     let mut cool_down = CoolDownTracker::new();
 
@@ -69,7 +72,8 @@ fn tv_sl_1_valid_slash_progression() {
 fn tv_sl_2_demoting_to_inactive_with_cool_down() {
     let proof = sample_signed_proof(0x0009, 500); // GenesisCompromise
     let sk = keypair([0x77u8; 32]);
-    let governance_set = vec![([0x77u8; 32], sk.verifying_key())];
+    let plain_set = vec![([0x77u8; 32], sk.verifying_key())];
+    let governance_set = ed25519_governance_keys(&plain_set);
     let mut record = sample_record();
     let mut cool_down = CoolDownTracker::new();
 
@@ -86,7 +90,8 @@ fn tv_sl_3_invalid_adjudicator_signature_rejected() {
     let mut proof = sample_signed_proof(0x0001, 1_000);
     proof.adjudicator_signature[0] = 0xFF;
     let sk = keypair([0x77u8; 32]);
-    let governance_set = vec![([0x77u8; 32], sk.verifying_key())];
+    let plain_set = vec![([0x77u8; 32], sk.verifying_key())];
+    let governance_set = ed25519_governance_keys(&plain_set);
     let record = sample_record();
     let err = verify_slash_proof(&proof, &record, &governance_set).unwrap_err();
     assert_eq!(err, CoordinatorError::InvalidAdjudicatorSignature);
@@ -97,7 +102,8 @@ fn tv_sl_3_invalid_adjudicator_signature_rejected() {
 fn tv_sl_4_unknown_offense_code_rejected() {
     let proof = sample_signed_proof(0x000C, 100);
     let sk = keypair([0x77u8; 32]);
-    let governance_set = vec![([0x77u8; 32], sk.verifying_key())];
+    let plain_set = vec![([0x77u8; 32], sk.verifying_key())];
+    let governance_set = ed25519_governance_keys(&plain_set);
     let record = sample_record();
     let err = verify_slash_proof(&proof, &record, &governance_set).unwrap_err();
     assert_eq!(err, CoordinatorError::UnknownOffenseCode { got: 0x000C });

@@ -12,6 +12,15 @@ crate-type = ["rlib"]
 [dependencies]
 # Ed25519 public key 32-byte wrapper (RFC-0009 identity substrate Layer A).
 ed25519-dalek = { version = "2.1", features = ["serde"] }
+# RFC-0009 AC#11: slash-proof adjudication verifies under the algorithm the
+# governance key was registered under, not a hardcoded Ed25519. Layer E
+# per-algorithm extension depending on Layer B — the arrow never points back,
+# which is why `octo-ident` itself has no ed25519-dalek dependency. Same edge
+# `octo-wallet`, `octo-reputation` and `octo-vault` take.
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
+# RFC-0009 AC#11: the governance key set names the algorithm each adjudicator
+# key speaks. Layer B identity substrate, reached for `AlgorithmId`.
+octo-ident = { path = "../octo-ident" }
 # Typed-discriminator serialization helpers (Borsh canonical BE bytes per
 # RFC-0126). Used by HandoverReasonTypeId canonical_ser.
 borsh = { version = "=1.5.0", features = ["derive"] }

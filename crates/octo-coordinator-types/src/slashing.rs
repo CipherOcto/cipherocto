@@ -25,7 +25,9 @@
 //!   Phase 1 substrate.
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use ed25519_dalek::{Verifier, VerifyingKey};
+use ed25519_dalek::VerifyingKey;
+use octo_algo_ed25519::ed25519_algorithm_id;
+use octo_ident::AlgorithmId;
 
 use crate::state::{
     validate_transition, CoordinatorError, CoordinatorLifecycle, CoordinatorRecord, SlashProof,
@@ -115,11 +117,28 @@ pub fn slash_proof_payload(proof: &SlashProof) -> Vec<u8> {
 // verify_slash_proof (full verification)
 // -----------------------------------------------------------------------------
 
-/// Verifying-keys map for governance multi-sig: `(adjudicator_id,
-/// verifying_key)`. Slash proof verifies iff at least one `(id, vk)`
-/// pair matches `proof.adjudicator` AND `vk.verify(payload, signature)`
-/// succeeds.
-pub type GovernanceVerifyingKeys<'a> = &'a [([u8; 32], VerifyingKey)];
+/// Verifying-keys map for governance multi-sig:
+/// `(adjudicator_id, algorithm_id, verifying_key)`. Slash proof verifies
+/// iff at least one entry matches `proof.adjudicator` AND the signature
+/// verifies under that entry's own algorithm.
+///
+/// The algorithm is part of the entry rather than assumed of it
+/// (RFC-0009 AC#11). Use [`ed25519_governance_keys`] to build the
+/// Ed25519-only form for callers that genuinely have nothing else.
+pub type GovernanceVerifyingKeys<'a> = &'a [([u8; 32], AlgorithmId, VerifyingKey)];
+
+/// Build the Ed25519-only governance key set from a plain `(id, key)` list.
+///
+/// Convenience, **not a fallback**: an entry naming an unregistered
+/// algorithm is refused at verification time rather than quietly verified
+/// under whatever this helper defaults to.
+pub fn ed25519_governance_keys(
+    keys: &[([u8; 32], VerifyingKey)],
+) -> Vec<([u8; 32], AlgorithmId, VerifyingKey)> {
+    keys.iter()
+        .map(|(id, vk)| (*id, ed25519_algorithm_id(), *vk))
+        .collect()
+}
 
 /// Verify a slash proof against the §Phase 5 substrate.
 ///
@@ -159,17 +178,24 @@ pub fn verify_slash_proof(
         });
     }
 
-    // (d) Adjudicator signature verification.
+    // (d) Adjudicator signature verification, dispatched on the algorithm the
+    // matching governance key was registered under (RFC-0009 AC#11).
+    //
+    // Raw bytes, not a dalek `Signature`: building one first would assert
+    // Ed25519 before the registry had a say, and an unregistered algorithm
+    // would fail as a malformed signature rather than as an unknown one.
     let payload = slash_proof_payload(proof);
-    let signature = ed25519_dalek::Signature::from_bytes(&proof.adjudicator_signature);
-    let verified = governance_set.iter().find_map(|(id, vk)| {
-        if *id == proof.adjudicator {
-            vk.verify(&payload, &signature).ok()
-        } else {
-            None
-        }
+    let verified = governance_set.iter().any(|(id, algorithm, vk)| {
+        *id == proof.adjudicator
+            && octo_algo_ed25519::verify_dispatch(
+                algorithm,
+                vk.as_bytes(),
+                &payload,
+                &proof.adjudicator_signature,
+            )
+            .is_ok()
     });
-    if verified.is_none() {
+    if !verified {
         return Err(CoordinatorError::InvalidAdjudicatorSignature);
     }
 
@@ -305,13 +331,71 @@ mod tests {
         proof
     }
 
+    // ── AC#11: dispatch on the adjudicator key's declared algorithm ─────────
+    use ed25519_dalek::Signer;
+
+    /// The happy path with the algorithm stated explicitly on the entry.
+    ///
+    /// **Control:** this alone cannot distinguish dispatch from a hardcoded
+    /// Ed25519 — a verifier that ignored the recorded algorithm entirely
+    /// would also pass it. The unregistered-algorithm vector below is what
+    /// makes the pair meaningful.
+    #[test]
+    fn tv_sl_ac11_dispatch_on_the_declared_algorithm_verifies() {
+        let proof = sample_proof_with_signature(0x0001, 1_000);
+        let sk = keypair_from_seed([0x77u8; 32]);
+        let governance_set = vec![([0x77u8; 32], ed25519_algorithm_id(), sk.verifying_key())];
+        let record = sample_record();
+        assert!(verify_slash_proof(&proof, &record, &governance_set).is_ok());
+    }
+
+    /// The fail-closed half, and the control that proves the dispatch is real.
+    ///
+    /// A genuine Ed25519 signature, a matching adjudicator id, a valid key —
+    /// the only thing wrong is that the entry names an algorithm this
+    /// deployment has not registered. It must be refused, not verified
+    /// anyway. Before the change this was inexpressible: the key set was a
+    /// list of `(id, VerifyingKey)`, so the algorithm was whatever the type
+    /// said and no entry could disagree with it.
+    #[test]
+    fn tv_sl_ac11_refuses_an_unregistered_algorithm() {
+        let proof = sample_proof_with_signature(0x0001, 1_000);
+        let sk = keypair_from_seed([0x77u8; 32]);
+        let bogus = AlgorithmId::derive("not-a-registered-slashing-algorithm");
+        assert_ne!(bogus, ed25519_algorithm_id());
+        let governance_set = vec![([0x77u8; 32], bogus, sk.verifying_key())];
+        let record = sample_record();
+        let err = verify_slash_proof(&proof, &record, &governance_set).unwrap_err();
+        assert!(
+            matches!(err, CoordinatorError::InvalidAdjudicatorSignature),
+            "an unregistered algorithm must fail closed, got {err:?}"
+        );
+    }
+
+    /// Dispatch must not degrade the check: a corrupted signature under the
+    /// *correct* algorithm is still refused.
+    #[test]
+    fn tv_sl_ac11_still_refuses_a_bad_signature() {
+        let mut proof = sample_proof_with_signature(0x0001, 1_000);
+        let sk = keypair_from_seed([0x77u8; 32]);
+        // Sign the same payload with a different key.
+        let other = keypair_from_seed([0x11u8; 32]);
+        proof.adjudicator_signature = other
+            .sign(&crate::slashing::slash_proof_payload(&proof))
+            .to_bytes();
+        let governance_set = ed25519_governance_keys(&[([0x77u8; 32], sk.verifying_key())]);
+        let record = sample_record();
+        assert!(verify_slash_proof(&proof, &record, &governance_set).is_err());
+    }
+
     // TV-SL-1: valid slash → Active → Demoting → Inactive.
     #[test]
     fn tv_sl_1_valid_slash_progression() {
         let proof = sample_proof_with_signature(0x0001, 1_000); // DoubleSign
         let sk = keypair_from_seed([0x77u8; 32]);
         let vk = sk.verifying_key();
-        let governance_set = vec![([0x77u8; 32], vk)];
+        let plain_set = vec![([0x77u8; 32], vk)];
+        let governance_set = ed25519_governance_keys(&plain_set);
         let mut record = sample_record();
         let mut cool_down = CoolDownTracker::new();
 
@@ -347,7 +431,8 @@ mod tests {
         proof.adjudicator_signature[0] = 0xFF;
         let sk = keypair_from_seed([0x77u8; 32]);
         let vk = sk.verifying_key();
-        let governance_set = vec![([0x77u8; 32], vk)];
+        let plain_set = vec![([0x77u8; 32], vk)];
+        let governance_set = ed25519_governance_keys(&plain_set);
         let record = sample_record();
         let err = verify_slash_proof(&proof, &record, &governance_set).unwrap_err();
         assert_eq!(err, CoordinatorError::InvalidAdjudicatorSignature);
@@ -360,7 +445,8 @@ mod tests {
         let proof = sample_proof_with_signature(0x000C, 100);
         let record = sample_record();
         let sk = keypair_from_seed([0x77u8; 32]);
-        let governance_set = vec![([0x77u8; 32], sk.verifying_key())];
+        let plain_set = vec![([0x77u8; 32], sk.verifying_key())];
+        let governance_set = ed25519_governance_keys(&plain_set);
         let err = verify_slash_proof(&proof, &record, &governance_set).unwrap_err();
         assert_eq!(err, CoordinatorError::UnknownOffenseCode { got: 0x000C });
     }
@@ -371,7 +457,8 @@ mod tests {
         let proof = sample_proof_with_signature(0x0001, 20_000);
         let record = sample_record();
         let sk = keypair_from_seed([0x77u8; 32]);
-        let governance_set = vec![([0x77u8; 32], sk.verifying_key())];
+        let plain_set = vec![([0x77u8; 32], sk.verifying_key())];
+        let governance_set = ed25519_governance_keys(&plain_set);
         let err = verify_slash_proof(&proof, &record, &governance_set).unwrap_err();
         match err {
             CoordinatorError::StakeUnderflow {
@@ -392,7 +479,8 @@ mod tests {
         proof.coordinator_term_id = [0xFFu8; 32];
         let record = sample_record();
         let sk = keypair_from_seed([0x77u8; 32]);
-        let governance_set = vec![([0x77u8; 32], sk.verifying_key())];
+        let plain_set = vec![([0x77u8; 32], sk.verifying_key())];
+        let governance_set = ed25519_governance_keys(&plain_set);
         let err = verify_slash_proof(&proof, &record, &governance_set).unwrap_err();
         match err {
             CoordinatorError::TermIdMismatch {
@@ -409,7 +497,7 @@ mod tests {
     // unused-must-use helper to prevent dead-code warnings.
     fn _unused_helper<'a>(
         proof: &'a SlashProof,
-        governance_set: &'a [([u8; 32], VerifyingKey)],
+        governance_set: &'a [([u8; 32], AlgorithmId, VerifyingKey)],
         record: &CoordinatorRecord,
     ) -> Result<SlashProof, CoordinatorError> {
         verify_slash_proof(proof, record, governance_set)?;

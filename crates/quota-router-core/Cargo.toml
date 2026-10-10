@@ -227,6 +227,19 @@ path = "src/lib.rs"
 # See RFC-0917 lines 175-176: "HTTP Proxy Server | (always)" and "Python SDK Interface | (always)"
 default = ["litellm-mode"]
 test-helpers = []
+# Test-only passthrough to `zk-verifier`. The stub verifier is forgeable by
+# design, so this must never reach a production build; the C-1 guard in
+# `octo-cli`'s security regression suite enforces that it appears here only
+# as an opt-in passthrough and never inside `default = [...]`.
+#
+# This was previously unreachable — the crate declared no such feature, so
+# `cargo test -p quota-router-core --features allow-stub-verifier` was
+# rejected outright and the 11 `zk_verify::capability` vectors could not be
+# run at all. They are written against the stub path (`build_stub_proof`
+# calls `zk_verifier::stub_commitment` and expects `Ok`), so without the
+# passthrough they were not merely unrunnable, they were unrunnable *as
+# written*. The same shape already exists in `quota-router-cli`.
+allow-stub-verifier = ["zk-verifier/allow-stub-verifier"]
 litellm-mode = ["tokio", "hyper", "hyper-util", "http", "http-body", "http-body-util", "rustls", "rustls-pemfile", "reqwest", "axum", "bytes"]
 any-llm-mode = ["tokio", "hyper", "hyper-util", "http", "http-body", "http-body-util", "rustls", "rustls-pemfile", "reqwest", "axum", "pyo3", "bytes"]
 full = ["tokio", "hyper", "hyper-util", "http", "http-body", "http-body-util", "rustls", "rustls-pemfile", "reqwest", "axum", "pyo3", "bytes"]
@@ -249,6 +262,15 @@ rcgen = "0.13"
 # the real-zk FFI is loaded (R4 forgery-channel gate rejects
 # stub-shaped proofs under FFI). Dev-dep only.
 zk-vendor = { path = "../zk-vendor" }
+
+# Enables the BLAKE3 stub verifier for this crate's own test binary so the
+# `zk_verify::capability` vectors can build a stub-shaped proof hermetically
+# (no `libstwo_sys.so`). Dev-dep features do not reach a release build, which
+# is what keeps the C-1 fix on the production edge above intact — the
+# production `zk-verifier` dependency still resolves without the feature, so
+# `verify_capability_zk` returns `VerifyError::StubDisabled` in a real binary.
+# Mirrors `quota-router-cli`, which wires the same pair.
+zk-verifier = { path = "../zk-verifier", features = ["allow-stub-verifier"] }
 
 # Mission marketplace-facade-reputation-async-migration: dual-read
 # parity tests use `#[tokio::test]` to drive the async `ProviderReputationRegistryCompat`

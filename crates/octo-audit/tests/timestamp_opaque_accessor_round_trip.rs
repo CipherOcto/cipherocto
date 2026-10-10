@@ -57,7 +57,19 @@ fn no_raw_zero_field_access_in_octo_audit_core() {
         core_src_dir
     );
 
-    let offenders = walk_dir_collect_offenders(&core_src_dir);
+    let (offenders, scanned) = walk_dir_collect_offenders(&core_src_dir);
+    // Anti-vacuity: the walker drops any file it cannot read, and the caller
+    // then asserts only that no offender was found. If every read fails the
+    // result is a clean bill of health for a tree that was never examined.
+    // The root `is_dir()` assert above rules out a missing crate; this
+    // rules out an unreadable one. The bound sits below the current file
+    // count so routine churn cannot trip it.
+    assert!(
+        scanned >= 3,
+        "only {scanned} files read under {} — the scan saw nothing, so a clean \
+         result means nothing was inspected",
+        core_src_dir.display()
+    );
     assert!(
         offenders.is_empty(),
         "raw `.0` field access on TimestampOpaque in octo-audit-core/src is forbidden; \
@@ -66,11 +78,12 @@ fn no_raw_zero_field_access_in_octo_audit_core() {
     );
 }
 
-fn walk_dir_collect_offenders(dir: &std::path::Path) -> Vec<String> {
+fn walk_dir_collect_offenders(dir: &std::path::Path) -> (Vec<String>, usize) {
     let mut offenders = Vec::new();
+    let mut scanned = 0usize;
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
-        Err(_) => return offenders,
+        Err(_) => return (offenders, scanned),
     };
     for entry in entries.flatten() {
         let path = entry.path();
@@ -83,7 +96,9 @@ fn walk_dir_collect_offenders(dir: &std::path::Path) -> Vec<String> {
             }
         }
         if path.is_dir() {
-            offenders.extend(walk_dir_collect_offenders(&path));
+            let (nested, nested_scanned) = walk_dir_collect_offenders(&path);
+            offenders.extend(nested);
+            scanned += nested_scanned;
             continue;
         }
         if path.extension().and_then(|s| s.to_str()) != Some("rs") {
@@ -93,6 +108,7 @@ fn walk_dir_collect_offenders(dir: &std::path::Path) -> Vec<String> {
             Ok(c) => c,
             Err(_) => continue,
         };
+        scanned += 1;
         for (idx, line) in contents.lines().enumerate() {
             if line.contains("TimestampOpaque") && line.contains(".0") {
                 let trimmed = line.trim_start();
@@ -110,5 +126,5 @@ fn walk_dir_collect_offenders(dir: &std::path::Path) -> Vec<String> {
             }
         }
     }
-    offenders
+    (offenders, scanned)
 }

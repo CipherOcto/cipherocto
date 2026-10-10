@@ -63,7 +63,19 @@ fn no_raw_zero_field_access_in_quota_router_sm_engine() {
         sm_engine_src
     );
 
-    let offenders = walk_dir_collect_offenders(&sm_engine_src);
+    let (offenders, scanned) = walk_dir_collect_offenders(&sm_engine_src);
+    // Anti-vacuity: the walker drops any file it cannot read, and the caller
+    // then asserts only that no offender was found. If every read fails the
+    // result is a clean bill of health for a tree that was never examined.
+    // The root `is_dir()` assert above rules out a missing crate; this
+    // rules out an unreadable one. The bound sits below the current file
+    // count so routine churn cannot trip it.
+    assert!(
+        scanned >= 5,
+        "only {scanned} files read under {} — the scan saw nothing, so a clean \
+         result means nothing was inspected",
+        sm_engine_src.display()
+    );
     assert!(
         offenders.is_empty(),
         "raw `.0` field access on SettlementHashOpaque in quota-router-sm-engine/src is forbidden; \
@@ -72,11 +84,12 @@ fn no_raw_zero_field_access_in_quota_router_sm_engine() {
     );
 }
 
-fn walk_dir_collect_offenders(dir: &std::path::Path) -> Vec<String> {
+fn walk_dir_collect_offenders(dir: &std::path::Path) -> (Vec<String>, usize) {
     let mut offenders = Vec::new();
+    let mut scanned = 0usize;
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
-        Err(_) => return offenders,
+        Err(_) => return (offenders, scanned),
     };
     for entry in entries.flatten() {
         let path = entry.path();
@@ -89,7 +102,9 @@ fn walk_dir_collect_offenders(dir: &std::path::Path) -> Vec<String> {
             }
         }
         if path.is_dir() {
-            offenders.extend(walk_dir_collect_offenders(&path));
+            let (nested, nested_scanned) = walk_dir_collect_offenders(&path);
+            offenders.extend(nested);
+            scanned += nested_scanned;
             continue;
         }
         if path.extension().and_then(|s| s.to_str()) != Some("rs") {
@@ -99,6 +114,7 @@ fn walk_dir_collect_offenders(dir: &std::path::Path) -> Vec<String> {
             Ok(c) => c,
             Err(_) => continue,
         };
+        scanned += 1;
         for (idx, line) in contents.lines().enumerate() {
             if line.contains("SettlementHashOpaque") && line.contains(".0") {
                 let trimmed = line.trim_start();
@@ -116,5 +132,5 @@ fn walk_dir_collect_offenders(dir: &std::path::Path) -> Vec<String> {
             }
         }
     }
-    offenders
+    (offenders, scanned)
 }

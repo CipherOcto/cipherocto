@@ -196,10 +196,14 @@ Three separable changes, in increasing cost:
 
 1. ~~Extend the scan to `Signature::from_bytes` as well.~~ **Done**,
    2026-10-10. It found a live site in a crate the gate certified clean.
-2. Give un-scanned crates an explicit _pending_ entry with a measured site
+2. ~~Give un-scanned crates an explicit _pending_ entry with a measured site
    count, so `octo-network`'s absence is a recorded fact rather than an
-   accident. **Not done** — the next piece of gate work, and it does not
-   wait for the codec.
+   accident.~~ **Done**, 2026-10-10. `AC11_PENDING` in the `octo-cli` guard
+   lists all ten `octo-network` files with their individual site counts, and a
+   vector asserts each count still matches — in **both** directions, so a new
+   site and a dispatched site each turn the gate red. That second direction is
+   the one that matters: it is what stops the table outliving its blocker, the
+   way the AC#11 allowlist entry did.
 3. Dispatch the `octo-network` sites. Blocked on the codec, as
    §Why this is blocked says.
 

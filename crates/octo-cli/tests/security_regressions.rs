@@ -1683,6 +1683,83 @@ const AC11_DISPATCHED: &[&str] = &[
     "crates/octo-settlement-core/src",
 ];
 
+/// Crates that **have** un-dispatched AC#11 sites and are known to.
+///
+/// Without this list the gate's silence about a crate is indistinguishable
+/// from its cleanliness: the scan walks a fixed set of directories, so a
+/// crate that is simply absent cannot fail it. `octo-network` sat in no list
+/// at all — not dispatched, not excused — while carrying 14 sites. Proved by
+/// planting a `VerifyingKey::from_bytes` in `dom/admission.rs`: all four
+/// AC#11 vectors stayed green.
+///
+/// So this is the honest middle state between "dispatched" and "out of
+/// scope": the sites are acknowledged, counted, and owned by a mission. The
+/// counts are what make it a guard rather than a comment — `ac11_pending`
+/// asserts each file still has exactly the number of sites listed here, so a
+/// **new** site turns the gate red and a **removed** one does too. That
+/// second direction is the point: dispatching a site without updating this
+/// table is a failure, which is what stops the table outliving its blocker
+/// the way an allowlist entry did.
+///
+/// Dispatch is blocked on the RFC-0010 DID codec, so this entry is expected
+/// to shrink. It is recorded here rather than left to memory because the
+/// whole failure mode was that nobody was holding the number.
+const AC11_PENDING: &[(&str, usize, &str)] = &[
+    (
+        "crates/octo-network/src/ocrypt/attestation.rs",
+        4,
+        "mission 0009-c3, blocked on the RFC-0010 DID codec",
+    ),
+    (
+        "crates/octo-network/src/gossip/reputation.rs",
+        1,
+        "mission 0009-c3, blocked on the RFC-0010 DID codec. A second \
+         occurrence sits in a doc comment naming this constructor, which is \
+         why the count is measured with comments stripped rather than by \
+         grep.",
+    ),
+    (
+        "crates/octo-network/src/porelay/heartbeat.rs",
+        1,
+        "mission 0009-c3, blocked on the RFC-0010 DID codec",
+    ),
+    (
+        "crates/octo-network/src/porelay/forwarding.rs",
+        1,
+        "mission 0009-c3, blocked on the RFC-0010 DID codec",
+    ),
+    (
+        "crates/octo-network/src/porelay/bandwidth.rs",
+        1,
+        "mission 0009-c3, blocked on the RFC-0010 DID codec",
+    ),
+    (
+        "crates/octo-network/src/porelay/availability.rs",
+        1,
+        "mission 0009-c3, blocked on the RFC-0010 DID codec",
+    ),
+    (
+        "crates/octo-network/src/drs/route.rs",
+        1,
+        "mission 0009-c3, blocked on the RFC-0010 DID codec",
+    ),
+    (
+        "crates/octo-network/src/dot/envelope.rs",
+        1,
+        "mission 0009-c3, blocked on the RFC-0010 DID codec",
+    ),
+    (
+        "crates/octo-network/src/dot/dc.rs",
+        1,
+        "mission 0009-c3, blocked on the RFC-0010 DID codec",
+    ),
+    (
+        "crates/octo-network/src/dom/admission.rs",
+        1,
+        "mission 0009-c3, blocked on the RFC-0010 DID codec",
+    ),
+];
+
 /// Crates deliberately **outside** AC#11, with the reason each one is.
 ///
 /// AC#11 reaches "holder- or capability-signature verification sites". A
@@ -2018,6 +2095,54 @@ fn no_capability_token_api_names_ed25519_dalek() {
         "AC-11: verify_holder_sig must dispatch on the signature's own \
          algorithm, not on a hardcoded one."
     );
+}
+
+#[test]
+fn ac11_pending_sites_are_counted_and_still_present() {
+    // The count is the guard. An entry that names a file without pinning how
+    // many sites are in it is a comment with a type, and it fails in the one
+    // direction that matters: a fifteenth site in `octo-network` would be
+    // invisible, exactly as the first fourteen were.
+    for (path, expected, reason) in AC11_PENDING {
+        let abs = workspace_root().join(path);
+        assert!(
+            abs.exists(),
+            "AC-11: pending {path} no longer exists. Move it to AC11_DISPATCHED \
+             if the sites are gone, or drop the entry — a pending path that \
+             does not resolve describes nothing."
+        );
+        assert!(
+            reason.len() > 20,
+            "AC-11: pending entry {path} needs a real reason, not a stub"
+        );
+        // Disjointness: a file cannot be both dispatched (gated for zero
+        // sites) and pending (gated for N sites). Both gates would run, and
+        // whichever lost would be the one that failed for no stated reason.
+        assert!(
+            !AC11_DISPATCHED
+                .iter()
+                .any(|d| path.starts_with(d) && d.ends_with("/src")),
+            "AC-11: {path} is both dispatched and pending. Pick one."
+        );
+        assert!(
+            !AC11_ALLOWED.iter().any(|(allowed, _)| allowed == path),
+            "AC-11: {path} is both pending and allowlisted. A pending file is \
+             being counted; an allowlisted file is being skipped. Those are \
+             opposite answers to the same question."
+        );
+
+        let body = strip_comments(&std::fs::read_to_string(&abs).unwrap());
+        let actual = body.matches("VerifyingKey::from_bytes").count();
+        assert_eq!(
+            actual, *expected,
+            "AC-11: {path} has {actual} un-dispatched sites, the table says \
+             {expected}.\n  \
+             A new site: add it to AC11_PENDING with its count.\n  \
+             A dispatched site: remove the entry, or drop the file when its \
+             last site is gone — a pending entry that outlives its sites is \
+             how octo-network went unrecorded in the first place."
+        );
+    }
 }
 
 #[test]

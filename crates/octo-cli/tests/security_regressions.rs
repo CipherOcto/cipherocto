@@ -1679,20 +1679,12 @@ const AC11_OUT_OF_SCOPE: &[(&str, &str)] = &[(
 /// with the reason. An allowlist entry without a reason is
 /// indistinguishable from the defect it hides, which is the failure this
 /// vector exists to prevent.
-const AC11_ALLOWED: &[(&str, &str)] = &[
-    (
-        "crates/octo-cap-macaroon/src/token.rs",
-        "verify_holder_sig reads the algorithm off the token, and the token \
-         does not carry one. Carrying it needs AlgorithmId to have serde, a \
-         Layer B wire-form change, and lands after this vector.",
-    ),
-    (
-        "crates/octo-protocol/src/authorization.rs",
-        "Authorization::Signature carries no algorithm and the did:octo:z \
+const AC11_ALLOWED: &[(&str, &str)] = &[(
+    "crates/octo-protocol/src/authorization.rs",
+    "Authorization::Signature carries no algorithm and the did:octo:z \
          payload is a bare 32 bytes, so the dispatcher has nothing to \
          dispatch on. Blocked on the same DID codec as mission 0009-c3.",
-    ),
-];
+)];
 
 #[test]
 fn ac11_no_verification_site_rebuilds_a_verifying_key_inline() {
@@ -1754,6 +1746,27 @@ fn ac11_every_allowlist_entry_still_exists_and_still_has_a_reason() {
         assert!(
             reason.len() > 40 && !reason.trim().is_empty(),
             "AC-11: allowlist entry {path} needs a real reason, not a stub"
+        );
+
+        // The half that actually rots. Every entry above is written as
+        // "blocked until <landed work>", so the normal life of an entry is
+        // that its blocker gets fixed and the file stops hardcoding anything.
+        // Nothing here noticed: existence and a reason both stay true, the
+        // vector keeps skipping the file, and a NEW hardcoded site in it goes
+        // unseen.
+        //
+        // `crates/octo-cap-macaroon/src/token.rs` sat in this state for the
+        // whole of missions `0009-c4`, `0009-e5` and `0009-e10` — the blocker
+        // named in its reason ("the token does not carry an algorithm") landed
+        // in all three, and by the end the file rebuilt no verifying key at
+        // all. The exception was pure blind spot.
+        let src = std::fs::read_to_string(workspace_root().join(path)).unwrap();
+        assert!(
+            strip_comments(&src).contains("VerifyingKey::from_bytes"),
+            "AC-11: allowlisted {path} no longer contains a VerifyingKey::from_bytes \
+             site, so the exception is superseded — remove the entry. An allowlist \
+             entry outliving its blocker exempts the file from the gate for no \
+             reason, which is a silent hole rather than a documented one."
         );
     }
 }

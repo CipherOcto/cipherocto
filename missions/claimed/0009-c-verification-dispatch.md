@@ -67,21 +67,41 @@ a `VerifyingKey` inline, and it is mutation-checked:
 **Two sites cannot be dispatched by this slice, and saying so is the
 point.** Both read the algorithm off a value that does not carry one:
 
-- **`octo-cap-macaroon` §`CapabilityToken::verify_holder_sig`** — the
-  algorithm would have to travel on the token. `AlgorithmId` had no serde
-  impl at the time of writing, so this was blocked on a Layer B change.
-  **`AlgorithmId` serde has since landed**; the remaining work is a
-  capability-token wire change owned by
-  `0009-c4-capability-token-algorithm-binding`, sized there at 18
-  construction sites across 10 crates.
+- **`octo-cap-macaroon` §`CapabilityToken::verify_holder_sig`** — **RESOLVED,
+  and no longer excepted.** Every blocker named here landed: `AlgorithmId`
+  gained serde, `0009-c4-capability-token-algorithm-binding` put the
+  algorithm on the token, `0009-e5` carried it in wire segment 2, and
+  `0009-e10` bound it into the signed message. `token.rs` now rebuilds no
+  verifying key at all, so its AC#11 allowlist entry has been removed. See
+  §The allowlist outlived its blocker below.
 - **`octo-protocol` §`verify_ed25519_signature`** — `Authorization::Signature`
   carries no algorithm, and the `did:octo:z` payload is a bare 32 bytes.
   The dispatcher has nothing to dispatch on. **Same root cause as
   `0009-c3`**: the DID wire form cannot name an algorithm.
 
-Both are in the AC#11 vector's allowlist, each with its reason written
-inline, and the vector still walks both files so a _new_ hardcoded site
-there is caught rather than hidden behind the exception.
+The remaining site is in the AC#11 vector's allowlist with its reason
+written inline, and the vector still walks that file so a _new_ hardcoded
+site there is caught rather than hidden behind the exception.
+
+### §The allowlist outlived its blocker
+
+This section records the third time in this chain that a documented premise
+turned out stale, and the shape is worth naming because it is silent.
+
+The allowlist entry for `crates/octo-cap-macaroon/src/token.rs` said the
+exception existed because "the token does not carry an algorithm", and that
+carrying it "lands after this vector". It did land — three times over. The
+entry was never revisited, because the rot guard beside it checked only that
+the path still existed and the reason was non-empty, both of which stay true
+forever. Meanwhile the vector skips allowlisted files wholesale, so the
+exemption had quietly become a blind spot over a file that no longer needed
+one.
+
+Fixed in two parts, because either alone leaves the hole open for next time:
+the stale entry is gone, and `ac11_every_allowlist_entry_still_exists_and_still_has_a_reason`
+now also asserts the allowlisted file still _contains_ a hardcoded site. An
+entry that outlives its blocker is now a failing test rather than an
+invisible exemption. Both halves were mutation-checked.
 
 ### Three follow-ons, recorded not hidden
 

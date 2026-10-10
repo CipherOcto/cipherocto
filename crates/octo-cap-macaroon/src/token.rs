@@ -182,18 +182,39 @@ mod holder_signature_serde {
     use super::HolderSignature;
     use serde::{Deserialize, Deserializer, Serializer};
 
+    /// Layout: `algorithm_id (16 raw bytes) || signature`, matching the wire
+    /// segment 2 form so both transports carry the same claim.
     pub fn serialize<S: Serializer>(sig: &HolderSignature, ser: S) -> Result<S::Ok, S::Error> {
-        ser.serialize_bytes(&sig.to_bytes())
+        let mut out = Vec::with_capacity(16 + sig.to_bytes().len());
+        out.extend_from_slice(sig.algorithm_id().as_bytes());
+        out.extend_from_slice(&sig.to_bytes());
+        ser.serialize_bytes(&out)
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<HolderSignature, D::Error> {
         let bytes: Vec<u8> = Deserialize::deserialize(de)?;
-        // The algorithm is not on the wire. Ed25519 is the historical
-        // form, and a caller that resolved a different algorithm must
-        // re-stamp the signature rather than have one invented here.
+        // The algorithm travels with the signature. This used to re-stamp
+        // Ed25519 on the way in, with a comment claiming the algorithm was
+        // "resolved out of band by the caller" — which, as the wire-form fix
+        // in the same mission established, names a source that does not
+        // exist. A serde round-trip silently rewrote the claim, so this was a
+        // third transport inventing an algorithm the signer never named.
+        //
+        // A value written before this change carries signature bytes alone and
+        // is now rejected rather than guessed at, which is the right failure
+        // for a record whose algorithm is load-bearing.
+        const ALGORITHM_ID_LEN: usize = 16;
+        if bytes.len() < ALGORITHM_ID_LEN {
+            return Err(serde::de::Error::custom(format!(
+                "holder signature must carry a {ALGORITHM_ID_LEN}-byte algorithm prefix, got {}",
+                bytes.len()
+            )));
+        }
+        let mut algorithm_bytes = [0u8; ALGORITHM_ID_LEN];
+        algorithm_bytes.copy_from_slice(&bytes[..ALGORITHM_ID_LEN]);
         HolderSignature::new(
-            crate::governance_signature::governance_algorithm_id(),
-            &bytes,
+            octo_ident::AlgorithmId::from_bytes(algorithm_bytes),
+            &bytes[ALGORITHM_ID_LEN..],
         )
         .map_err(serde::de::Error::custom)
     }
@@ -651,5 +672,57 @@ mod tests {
         fresh
             .verify_holder_sig()
             .expect("signature verifies after re-sign");
+    }
+
+    /// The serde path must carry the same algorithm claim the wire path does.
+    ///
+    /// `holder_signature_serde::deserialize` used to re-stamp Ed25519 on the
+    /// way in, for the same reason and with the same false justification the
+    /// wire parser had: a comment claiming the algorithm was "resolved out of
+    /// band by the caller", which is not a source that exists. Two transports,
+    /// one silent downgrade each, and a persisted token could round-trip
+    /// through serde and come back claiming an algorithm it was never made
+    /// under.
+    #[test]
+    fn a_serde_round_trip_preserves_the_algorithm_claim() {
+        use super::holder_signature_serde;
+
+        let exotic = octo_ident::AlgorithmId::derive("stark-schnorr");
+        let sig = HolderSignature::new(exotic, &[0x5a; 64]).expect("wrap");
+
+        // Exercised through the same `#[serde(with = ...)]` path the
+        // `CapabilityToken` field uses, since `HolderSignature` itself is not
+        // Serialize — the module attributes it.
+        #[derive(serde::Serialize, serde::Deserialize)]
+        struct Wrapper(#[serde(with = "holder_signature_serde")] HolderSignature);
+
+        let json = serde_json::to_string(&Wrapper(sig)).expect("serialize");
+        let Wrapper(back) = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(
+            back.algorithm_id(),
+            exotic,
+            "serde must not invent an algorithm for a signature it was handed"
+        );
+        assert_ne!(
+            back.algorithm_id(),
+            crate::governance_signature::governance_algorithm_id(),
+            "explicitly: this must not have been rewritten as Ed25519"
+        );
+
+        // And a pre-fix value — bare signature bytes, no algorithm — must be
+        // refused rather than guessed at.
+        let legacy = serde_json::to_string(&serde_bytes::ByteArray::new([0x5a; 64]))
+            .expect("legacy serialize");
+        // It is refused. The exact complaint depends on the byte count — a
+        // 64-byte value has 16 bytes stripped as a bogus algorithm and is then
+        // rejected for length — and pinning the wording would assert on the
+        // accident rather than the property. What matters is that it does not
+        // deserialize into an Ed25519 claim nobody made.
+        let parsed = serde_json::from_str::<Wrapper>(&legacy);
+        assert!(
+            parsed.is_err(),
+            "a bare 64-byte signature carries no algorithm and must not parse"
+        );
     }
 }

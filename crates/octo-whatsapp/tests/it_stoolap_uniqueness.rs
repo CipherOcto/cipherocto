@@ -47,7 +47,7 @@ fn no_direct_stoolap_dependency() {
             {
                 continue;
             }
-            let content = fs::read_to_string(&entry).unwrap();
+            let content = fs::read_to_string(entry).unwrap();
             // Skip lines inside `#[cfg(test)]` blocks — those
             // are not compiled into the production binary so
             // they cannot violate the runtime's coupling to

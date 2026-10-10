@@ -231,7 +231,7 @@ fn worker_main(
 ) {
     let batch_window = Duration::from_millis(cfg.batch_window_ms);
     loop {
-        if shutdown.load(Ordering::Acquire) && channel_is_empty(&&rx) {
+        if shutdown.load(Ordering::Acquire) && channel_is_empty(&rx) {
             break;
         }
         // Block for the first item — keeps the worker idle on a
@@ -396,7 +396,7 @@ mod tests {
         q.enqueue(EmbedderJob::new(42, "hello world"));
         // Poll until the worker drains.
         let deadline = Instant::now() + Duration::from_secs(2);
-        while count_embeddings(&&db) == 0 && Instant::now() < deadline {
+        while count_embeddings(&db) == 0 && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert_eq!(count_embeddings(&db), 1);
@@ -458,7 +458,7 @@ mod tests {
             q.enqueue(EmbedderJob::new(i as i64, format!("m{i}")));
         }
         let deadline = Instant::now() + Duration::from_secs(3);
-        while count_embeddings(&&db) < 50 && Instant::now() < deadline {
+        while count_embeddings(&db) < 50 && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert_eq!(count_embeddings(&db), 50);
@@ -484,7 +484,7 @@ mod tests {
         q.enqueue(EmbedderJob::new(7, "x"));
         // Wait for first write
         let deadline = Instant::now() + Duration::from_secs(2);
-        while count_embeddings(&&db) == 0 && Instant::now() < deadline {
+        while count_embeddings(&db) == 0 && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(10));
         }
         // Replay the same job — must NOT duplicate.

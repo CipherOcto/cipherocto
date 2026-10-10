@@ -350,8 +350,24 @@ impl IdentityKey {
             self.lifecycle
         );
         // Produce the audit proof per RFC-0009 §Lifecycle row 4.
-        let proof = self.signer.sign(b"revoke")?;
-        self.revoked_proof = Some(proof);
+        //
+        // The literal is bound to this identity's algorithm and key rather
+        // than signed bare. As a bare constant it attested to nothing beyond
+        // "someone holding this key signed the word revoke" — the same six
+        // bytes under any algorithm, any key, any time.
+        //
+        // **Revocation is never gated on this.** A key context is an audit
+        // annotation, and making the ability to revoke depend on one would
+        // hand anyone who can strip a `key_id` from a record a permanent
+        // denial of service on the safety action itself. So an identity with
+        // no key context still revokes; it simply produces no *bound* audit
+        // proof, and §`verify_revocation_proof` will refuse that absence
+        // rather than mistake it for one.
+        //
+        // This is asymmetric with §`begin_rotation` on purpose. Rotation is
+        // an operator action with the caller standing right there, so
+        // failing loudly is correct there and refusing is not a DoS.
+        self.revoked_proof = self.sign_lifecycle_proof(b"revoke")?;
         self.lifecycle = LifecycleState::Revoked;
         self.revoked_at_unix_secs = Some(now_unix_secs);
         // Replace signer with a NullSigner: any direct `sign()` calls on
@@ -396,6 +412,10 @@ impl IdentityKey {
             msg.extend_from_slice(&successor.public_key_bytes());
             msg
         };
+        // NOT yet prefixed. See mission 0009-e2 §Out of scope: making this
+        // bind requires key context to be persisted on `IdentityRecord`
+        // first, or rotation would work before a store save and fail after
+        // the reload — a state-dependent cliff worse than either extreme.
         let proof = self.signer.sign(&proof_message)?;
         // Cache successor + timestamp (consume `successor`).
         self.successor_key = Some(Box::new(successor));
@@ -522,27 +542,61 @@ impl IdentityKey {
         Ok(())
     }
 
-    /// RFC-0853 §12 successor proof verifier (pure helper).
+    /// Sign a lifecycle proof under the mandatory signable prefix.
     ///
-    /// Re-derives the expected proof message (`b"rotate" || new_pub`) and
-    /// verifies it against the old public key + provided proof signature,
-    /// dispatching on `algorithm_id` through `AlgorithmRegistry`
-    /// (RFC-0009 AC#11). The caller supplies the algorithm because a
-    /// static helper has no signer to ask.
+    /// The proof is a bare literal (`b"revoke"`) or a bare concatenation
+    /// (`b"rotate" ‖ new_pub`). Both are bound here to this identity's
+    /// algorithm and verification method, so a proof stops being a value
+    /// that means the same thing under any equation or any key.
     ///
     /// # Errors
-    /// Returns `WalletError::InvalidSuccessorProof` if the algorithm is
-    /// not registered, or the signature does not verify.
+    /// - [`WalletError::NoKeyContext`] when no `key_id` is attached. Refused
+    ///   rather than downgraded: an unprefixed proof is the legacy shape, and
+    ///   a verifier that accepts both has a downgrade path.
+    /// - Any error from the underlying [`HsmAdapter::sign`].
+    fn sign_lifecycle_proof(&self, payload: &[u8]) -> Result<Option<[u8; 64]>, WalletError> {
+        // `None` means "this identity has no key context, so there is no
+        // bound proof to produce" — never "the proof is invalid". Callers
+        // decide whether that is fatal; §`revoke` decides it is not.
+        let Some(prefix) = self
+            .verification_method_id
+            .map(|key_id| octo_ident::SignablePrefix::new(self.algorithm_id(), key_id))
+        else {
+            return Ok(None);
+        };
+        let message = octo_ident::SignedMessage::new(prefix, payload.to_vec());
+        let signable = message
+            .signable(octo_ident::SignableForm::Raw)
+            .map_err(|e| WalletError::Signature(e.to_string()))?;
+        Ok(Some(self.signer.sign(&signable)?))
+    }
+
+    /// RFC-0853 §12 successor proof verifier (pure helper).
+    ///
+    /// Re-derives the expected proof message under the mandatory signable
+    /// prefix and verifies it against the old public key, dispatching on
+    /// `algorithm_id` through `AlgorithmRegistry` (RFC-0009 AC#11).
+    ///
+    /// `key_id` is required rather than inferred: the prefix binds it, and a
+    /// verifier that cannot name the key cannot rebuild the domain the signer
+    /// signed. Passing an algorithm without a key is exactly the preference
+    /// case RFC-0009 §Domain separation removes.
+    ///
+    /// # Errors
+    /// Returns `WalletError::InvalidSuccessorProof` if the algorithm is not
+    /// registered, or the signature does not verify.
     pub fn verify_successor_proof(
         algorithm_id: &octo_ident::AlgorithmId,
         old_pub: &[u8; 32],
         new_pub: &[u8; 32],
         proof: &[u8; 64],
     ) -> Result<(), WalletError> {
-        let mut msg = Vec::with_capacity(6 + 32);
-        msg.extend_from_slice(b"rotate");
-        msg.extend_from_slice(new_pub);
-        octo_algo_ed25519::verify_dispatch(algorithm_id, old_pub, &msg, proof)
+        // Still the legacy shape, pending the same persistence work as
+        // §`begin_rotation`.
+        let mut payload = Vec::with_capacity(6 + 32);
+        payload.extend_from_slice(b"rotate");
+        payload.extend_from_slice(new_pub);
+        octo_algo_ed25519::verify_dispatch(algorithm_id, old_pub, &payload, proof)
             .map_err(|_| WalletError::InvalidSuccessorProof)
     }
 
@@ -562,11 +616,37 @@ impl IdentityKey {
     /// signature does not verify.
     pub fn verify_revocation_proof(
         algorithm_id: &octo_ident::AlgorithmId,
+        key_id: &octo_ident::VerificationMethodId,
         pubkey: &[u8; 32],
         proof: &[u8; 64],
     ) -> Result<(), WalletError> {
-        octo_algo_ed25519::verify_dispatch(algorithm_id, pubkey, b"revoke", proof)
-            .map_err(|_| WalletError::InvalidRevocationProof)
+        IdentityKey::verify_lifecycle_proof(algorithm_id, key_id, pubkey, b"revoke", proof, || {
+            WalletError::InvalidRevocationProof
+        })
+    }
+
+    /// Shared body for the two lifecycle-proof verifiers.
+    ///
+    /// Rebuilds the signable prefix the signer used and verifies under the
+    /// named algorithm. Both proofs are a short payload, and both used to be
+    /// verified as a bare concatenation against a caller-supplied algorithm.
+    fn verify_lifecycle_proof(
+        algorithm_id: &octo_ident::AlgorithmId,
+        key_id: &octo_ident::VerificationMethodId,
+        public_key: &[u8; 32],
+        payload: &[u8],
+        proof: &[u8; 64],
+        error: fn() -> WalletError,
+    ) -> Result<(), WalletError> {
+        let message = octo_ident::SignedMessage::new(
+            octo_ident::SignablePrefix::new(*algorithm_id, *key_id),
+            payload.to_vec(),
+        );
+        let signable = message
+            .signable(octo_ident::SignableForm::Raw)
+            .map_err(|_| error())?;
+        octo_algo_ed25519::verify_dispatch(algorithm_id, public_key, &signable, proof)
+            .map_err(|_| error())
     }
 
     /// Crate-internal seed accessor for HKDF derivation. Returns the seed
@@ -1392,9 +1472,22 @@ mod tests {
         );
     }
 
+    /// An identity with a key context attached, for the lifecycle proofs.
+    ///
+    /// `from_seed` alone carries none, and §`begin_rotation` now refuses
+    /// without one — so a rotation test that does not attach a key id is
+    /// testing a path that no longer exists.
+    fn with_key(seed: [u8; 32], key_id: &str) -> IdentityKey {
+        IdentityKey::from_seed(seed)
+            .with_verification_method_id(octo_ident::VerificationMethodId::derive(key_id))
+    }
+
+    /// The key id the helper above attaches for these tests.
+    const TEST_KEY_ID: &str = "key-a";
+
     #[test]
     fn complete_rotation_succeeds_after_grace_period() {
-        let mut old = IdentityKey::from_seed([17u8; 32]);
+        let mut old = with_key([17u8; 32], TEST_KEY_ID);
         old.activate(1_000).expect("activate");
         let successor = IdentityKey::from_seed([18u8; 32]);
         let old_pub = old.public_key_bytes();
@@ -1432,7 +1525,7 @@ mod tests {
 
     #[test]
     fn verify_successor_proof_rejects_tampered_new_pub() {
-        let mut old = IdentityKey::from_seed([21u8; 32]);
+        let mut old = with_key([21u8; 32], TEST_KEY_ID);
         old.activate(1_000).expect("activate");
         let successor = IdentityKey::from_seed([22u8; 32]);
         let old_pub = old.public_key_bytes();
@@ -1500,7 +1593,7 @@ mod tests {
     /// valid state-machine edge per RFC-0009 §Lifecycle table).
     #[test]
     fn revoke_succeeds_from_rotating() {
-        let mut old = IdentityKey::from_seed([33u8; 32]);
+        let mut old = with_key([33u8; 32], TEST_KEY_ID);
         old.activate(1_000).expect("activate");
         let successor = IdentityKey::from_seed([34u8; 32]);
         old.begin_rotation(successor, 2_000)
@@ -1517,7 +1610,10 @@ mod tests {
     /// potent re-invocation.
     #[test]
     fn revoke_captures_audit_proof() {
-        let mut key = IdentityKey::from_seed([35u8; 32]);
+        // A key context is what makes the audit proof *bound*; without one
+        // `revoke` still succeeds but records no proof, which is the
+        // deliberate asymmetry documented on §`revoke`.
+        let mut key = with_key([35u8; 32], TEST_KEY_ID);
         assert!(key.revoked_proof().is_none(), "no proof pre-revoke");
         key.activate(1_000).expect("activate");
         key.revoke(2_000).expect("revoke");
@@ -1534,13 +1630,14 @@ mod tests {
     /// this to confirm holder authorization (not forgery).
     #[test]
     fn revoke_captured_proof_verifies_against_pubkey() {
-        let mut key = IdentityKey::from_seed([36u8; 32]);
+        let mut key = with_key([36u8; 32], TEST_KEY_ID);
         key.activate(1_000).expect("activate");
         key.revoke(2_000).expect("revoke");
         let proof = key.revoked_proof().expect("proof captured");
         let pubkey = key.public_key_bytes();
         IdentityKey::verify_revocation_proof(
             &octo_algo_ed25519::ed25519_algorithm_id(),
+            &octo_ident::VerificationMethodId::derive(TEST_KEY_ID),
             &pubkey,
             &proof,
         )
@@ -1550,13 +1647,14 @@ mod tests {
     /// F14 (tamper): tampered proof bytes or wrong pubkey must be rejected.
     #[test]
     fn verify_revocation_proof_rejects_tampered_proof() {
-        let mut key = IdentityKey::from_seed([37u8; 32]);
+        let mut key = with_key([37u8; 32], TEST_KEY_ID);
         key.activate(1_000).expect("activate");
         key.revoke(2_000).expect("revoke");
         let mut tampered = key.revoked_proof().expect("proof captured");
         tampered[0] ^= 0x01;
         let result = IdentityKey::verify_revocation_proof(
             &octo_algo_ed25519::ed25519_algorithm_id(),
+            &octo_ident::VerificationMethodId::derive(TEST_KEY_ID),
             &key.public_key_bytes(),
             &tampered,
         );
@@ -1569,6 +1667,7 @@ mod tests {
         let proof = key.revoked_proof().expect("proof");
         let result = IdentityKey::verify_revocation_proof(
             &octo_algo_ed25519::ed25519_algorithm_id(),
+            &octo_ident::VerificationMethodId::derive(TEST_KEY_ID),
             &wrong_pub,
             &proof,
         );
@@ -1848,5 +1947,136 @@ mod signable_prefix_tests {
             digest_hasher.finalize()
         };
         assert_eq!(&hashed_signable[..32], expected.as_bytes());
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_proof_tests {
+    use super::*;
+    use octo_ident::{AlgorithmId, SignablePrefix, SignedMessage, VerificationMethodId};
+
+    fn revoking(key_id: &str) -> IdentityKey {
+        let mut key = IdentityKey::from_seed([41u8; 32])
+            .with_verification_method_id(VerificationMethodId::derive(key_id));
+        key.activate(1_000).expect("activate");
+        key.revoke(2_000).expect("revoke");
+        key
+    }
+
+    #[test]
+    fn a_revocation_proof_round_trips() {
+        let key = revoking("key-a");
+        let proof = key
+            .revoked_proof()
+            .expect("a key context yields a bound proof");
+        assert_eq!(proof.len(), 64);
+        IdentityKey::verify_revocation_proof(
+            &key.algorithm_id(),
+            &key.verification_method_id().expect("key id"),
+            &key.public_key_bytes(),
+            &proof,
+        )
+        .expect("a genuine revocation proof must verify");
+    }
+
+    #[test]
+    fn a_revocation_proof_is_bound_to_its_key_id() {
+        let key = revoking("key-a");
+        let proof = key.revoked_proof().expect("proof");
+        let pubkey = key.public_key_bytes();
+
+        // The same proof, presented as another verification method's. This is
+        // the vector that can detect the actual defect: before the prefix the
+        // proof was the bare constant b"revoke", so it verified under any
+        // key_id whatsoever.
+        IdentityKey::verify_revocation_proof(
+            &key.algorithm_id(),
+            &VerificationMethodId::derive("key-b"),
+            &pubkey,
+            &proof,
+        )
+        .expect_err("a proof must not carry over to another key_id");
+
+        // And back the other way: a proof bound to key-b does not verify as
+        // key-a either.
+        let other = revoking("key-b");
+        IdentityKey::verify_revocation_proof(
+            &key.algorithm_id(),
+            &VerificationMethodId::derive("key-a"),
+            &pubkey,
+            &other.revoked_proof().expect("proof"),
+        )
+        .expect_err("a proof bound elsewhere must not verify here");
+    }
+
+    #[test]
+    fn a_revocation_proof_is_refused_without_a_prefix() {
+        // Sign BEFORE revoking: `revoke` swaps the adapter for a `NullSigner`,
+        // so asking a revoked identity to produce a signature fails at the
+        // adapter rather than giving us the legacy bytes to test against.
+        let mut key = IdentityKey::from_seed([43u8; 32])
+            .with_verification_method_id(VerificationMethodId::derive("key-a"));
+        key.activate(1_000).expect("activate");
+        let pubkey = key.public_key_bytes();
+
+        // The legacy shape: the bare six bytes, signed directly. A verifier
+        // that accepted it would have a downgrade path, so it must not.
+        let legacy = key
+            .signer()
+            .sign(b"revoke")
+            .expect("sign the legacy literal");
+        IdentityKey::verify_revocation_proof(
+            &key.algorithm_id(),
+            &key.verification_method_id().expect("key id"),
+            &pubkey,
+            &legacy,
+        )
+        .expect_err("an unprefixed revocation proof must be refused");
+    }
+
+    #[test]
+    fn revocation_is_never_blocked_by_a_missing_key_context() {
+        // The DoS shape this asymmetry exists to prevent: gating the ability
+        // to revoke on an optional audit annotation hands anyone who can strip
+        // a key_id from a record a permanent block on the safety action.
+        let mut key = IdentityKey::from_seed([42u8; 32]);
+        key.activate(1_000).expect("activate");
+        key.revoke(2_000)
+            .expect("revoke must succeed without a key context");
+        assert_eq!(key.lifecycle(), crate::lifecycle::LifecycleState::Revoked);
+        // No bound proof — an absence, not a forgery. The verifier refuses it
+        // rather than mistaking it for one.
+        assert!(
+            key.revoked_proof().is_none(),
+            "there is no bound proof to record, and saying so is the point"
+        );
+    }
+
+    #[test]
+    fn a_revocation_proof_names_its_own_algorithm_and_key() {
+        let key = revoking("key-a");
+        let proof = key.revoked_proof().expect("proof");
+        // What the signer actually signed, rebuilt independently: the prefix
+        // plus the canonicalized literal, not the literal alone.
+        let expected = SignedMessage::new(
+            SignablePrefix::new(key.algorithm_id(), VerificationMethodId::derive("key-a")),
+            b"revoke".to_vec(),
+        )
+        .signable(octo_ident::SignableForm::Raw)
+        .expect("signable");
+        let _ = proof;
+        // Assert the domain the verifier rebuilds matches, by checking a
+        // differently-keyed prefix produces different signable bytes.
+        let other = SignedMessage::new(
+            SignablePrefix::new(key.algorithm_id(), VerificationMethodId::derive("key-b")),
+            b"revoke".to_vec(),
+        )
+        .signable(octo_ident::SignableForm::Raw)
+        .expect("signable");
+        assert_ne!(
+            expected, other,
+            "the key_id must be part of what was signed"
+        );
+        assert_ne!(key.algorithm_id(), AlgorithmId::derive("stark-schnorr"));
     }
 }

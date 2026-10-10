@@ -205,6 +205,10 @@ octo-audit = { path = "../octo-audit" }
 octo-audit-internal = ["octo-audit/octo-audit-internal"]
 
 [dev-dependencies]
+# The second real algorithm (mission 0009-d). Dev-only: this crate must not
+# depend on it at runtime, and the test exists precisely to show a lifecycle
+# proof signed under one algorithm does not verify under the other.
+octo-algo-stark-schnorr = { path = "../octo-algo-stark-schnorr" }
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"

@@ -163,14 +163,18 @@ here rather than left to be discovered:
   | ------------------------------------ | ------------------------------------------------- | ---------------------------- |
   | `octo-wallet` §`revoke`              | `b"revoke"` — a 6-byte constant, bound to nothing | migrated in `0009-e2`        |
   | `octo-wallet` §`begin_rotation`      | `b"rotate" ‖ new_pub`                             | migrated in `0009-e2`        |
-  | `octo-wallet` §`IdentityKey::sign`   | the caller's bare message                         | outstanding                  |
-  | `octo-wallet` §`identity_store`      | a wrapper over the above                          | outstanding                  |
+  | `octo-wallet` §`IdentityKey::sign`   | the caller's bare message                         | closed in `0009-e6`          |
+  | `octo-wallet` §`identity_store`      | a wrapper over the above                          | closed in `0009-e6`          |
   | `octo-wallet-node` §sign handler     | the request bytes                                 | migrated in `0009-e3`        |
   | `octo-runtime` §handle/signing (two) | the holder message                                | migrated in `0009-e4` (v1)   |
   | `quota-router-core` §`envelope_v2`   | a domain-separated preimage                       | **not migrated — see below** |
 
-  Three sites remain outstanding, plus the `CapabilitySigner` trait change
-  below.
+  **All sites are now migrated.** The last two — the bare `IdentityKey::sign`
+  substrate escape and the `identity_store` wrapper — closed in `0009-e6`, which also
+  found something larger: `register` never attached a verification method, so every
+  normally-registered operator identity had no key context and could not sign under
+  the prefix at all. Every migrated site above was correct and unreachable. See
+  `0009-e6` §Defect one.
 
   The `octo-wallet-node` handler was taken first of the four because it is the
   only remotely reachable one, and the only one where the missing binding is

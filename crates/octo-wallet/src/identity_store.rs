@@ -50,6 +50,13 @@ pub const WALLET_INDEX_VERSION: u32 = 1;
 /// check compares against.
 pub const MIN_PASSPHRASE_CHARS: usize = 12;
 
+/// Name of the verification method `register` attaches to a key that arrives
+/// without one. The DID-document convention for a document's first key.
+///
+/// Not derived from key material — see the comment at the top of `register`
+/// for why that matters and what the scope of the id is.
+const PRIMARY_VERIFICATION_METHOD: &str = "key-0";
+
 /// On-disk wallet index. Persisted as `store.json` under the store root.
 ///
 /// NO `PartialEq` derive: `IdentityRecord` derives only `Debug, Clone,
@@ -425,6 +432,33 @@ impl WalletStore {
         activate: bool,
         now_unix: i64,
     ) -> Result<Did, WalletError> {
+        // 0. Guarantee a key context before anything is written.
+        //
+        // `IdentityKey::from_seed` and `IdentityKey::generate` both return a
+        // key with `verification_method_id: None`, and that is what the CLI
+        // registration path uses. Without this step such an identity
+        // registers cleanly and then cannot sign *anything* under the
+        // RFC-0009 prefix — `sign_prefixed`, the attach-handle mint, and the
+        // wallet-node oracle all refuse with `NoKeyContext`. Fail-closed, but
+        // it means the prefix substrate is unreachable for every
+        // normally-registered operator identity.
+        //
+        // `key-0` is the DID-document convention for a document's first key.
+        // It is deliberately NOT derived from key material: RFC-0009 requires
+        // a `key_id` to be stable within one DID document and rotatable
+        // independently of the key, so anything derived from the public key
+        // would defeat the point. The id is scoped to the document, so two
+        // identities sharing `key-0` is not a collision — and a signature
+        // replayed across documents still fails, because the verifying key is
+        // resolved from the DID and a different document means a different
+        // key.
+        let key = if key.verification_method_id().is_none() {
+            key.with_verification_method_id(octo_ident::VerificationMethodId::derive(
+                PRIMARY_VERIFICATION_METHOD,
+            ))
+        } else {
+            key
+        };
         // 1. Passphrase floor. Display message interpolates the
         //    same constant via `error::MIN_PASSPHRASE_CHARS`
         //    (re-exported from this module), so the operator's
@@ -1454,16 +1488,31 @@ impl UnlockedWallet<'_> {
         &self.did
     }
 
-    /// Sign a message with the unlocked identity's key. Delegates
-    /// to `IdentityKey::sign`, which gates on lifecycle state per
-    /// RFC-0009 §Lifecycle Requirements.
+    /// Sign a payload under the unlocked identity's mandatory signable
+    /// prefix (RFC-0009 §Domain separation), returning the raw 64 signature
+    /// bytes.
+    ///
+    /// **This replaces a bare `sign(&self, msg)` that used to live here.**
+    /// That method delegated straight to `IdentityKey::sign` and so signed
+    /// whatever it was handed with nothing bound: no algorithm, no key. An
+    /// `UnlockedWallet` is the natural place to reach for a key, which makes
+    /// an unbound door here the one most likely to be walked through by
+    /// whoever writes the next feature.
+    ///
+    /// It had **no production callers** — only two uses in this module's own
+    /// tests — so removing it cost nothing. Removing rather than deprecating
+    /// is deliberate: a deprecated bare-sign entry point is still an entry
+    /// point, and the compiler is a stronger guard than a lint.
     ///
     /// # Errors
-    /// Returns `WalletError::NotActive` when lifecycle is not
-    /// `Active` or `Rotating`; `WalletError::Hsm(_)` on adapter
-    /// failure.
-    pub fn sign(&self, msg: &[u8]) -> Result<ed25519_dalek::Signature, WalletError> {
-        self.key.sign(msg)
+    /// - `WalletError::NoKeyContext` if the identity carries no `key_id`.
+    ///   An unlocked wallet restores one from the persisted record, so this
+    ///   only fires for an identity minted outside `register`.
+    /// - `WalletError::NotActive` when lifecycle is not `Active` or
+    ///   `Rotating`, per RFC-0009 §Lifecycle Requirements.
+    /// - `WalletError::Hsm(_)` on adapter failure.
+    pub fn sign_prefixed(&self, payload: &[u8]) -> Result<[u8; 64], WalletError> {
+        self.key.sign_prefixed(payload)
     }
 
     /// Append an `IdentityRotationEvent` to the predecessor's
@@ -2755,15 +2804,22 @@ mod tests {
         let handle = store
             .unlock("correct-horse-battery-staple", &mut seed_out)
             .expect("unlock");
-        let sig = handle.sign(b"hello").expect("sign");
+        let sig = handle.sign_prefixed(b"hello").expect("sign");
         // Holder signature, so in AC#11's scope: dispatch rather than
         // building a local VerifyingKey. The registry's Ed25519 is the
         // strict check this site was already asking for.
+        let wire = handle
+            .key
+            .signable_prefix()
+            .map(|p| octo_ident::SignedMessage::new(p, b"hello".to_vec()))
+            .expect("key context restored on unlock")
+            .signable(octo_ident::SignableForm::Raw)
+            .expect("signable bytes");
         octo_algo_ed25519::verify_dispatch(
             &octo_algo_ed25519::ed25519_algorithm_id(),
             &pubkey,
-            b"hello",
-            &sig.to_bytes(),
+            &wire,
+            &sig,
         )
         .expect("signature must verify against recorded pubkey");
     }
@@ -3033,7 +3089,9 @@ mod tests {
         let mut seed_out = Vec::new();
         {
             let handle = store2.unlock(&passphrase, &mut seed_out).expect("unlock");
-            handle.sign(b"round-trip").expect("sign after round-trip");
+            handle
+                .sign_prefixed(b"round-trip")
+                .expect("sign after round-trip");
         }
         // Buffer is zeroized per §AC-20. The handle's drop
         // releases the lifetime tie so `seed_out` is now
@@ -5003,5 +5061,92 @@ mod verification_method_persistence_tests {
             .record(did)
             .expect("record")
             .clone()
+    }
+
+    // ── Registration must leave a signable key ─────────────────────────
+
+    /// The property this file's `sign_prefixed` wrapper depends on: an
+    /// identity registered through the ordinary path can sign under the
+    /// RFC-0009 prefix.
+    ///
+    /// `IdentityKey::from_seed` and `IdentityKey::generate` — the two
+    /// constructors the CLI registration path uses — both return a key with
+    /// no `verification_method_id`. Without `register` attaching one, every
+    /// operator identity registers successfully and then cannot produce a
+    /// single prefixed signature: the attach-handle mint, the wallet-node
+    /// signing oracle, and this file's own wrapper all refuse with
+    /// `NoKeyContext`. Fail-closed, and entirely silent until someone tries
+    /// to use the identity for anything.
+    #[test]
+    fn a_registered_identity_can_sign_under_the_prefix() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("store");
+        // Exactly what `octo identity register` builds: a bare key, no
+        // verification method attached.
+        let key = IdentityKey::from_seed([0x5a; 32]);
+        assert!(
+            key.verification_method_id().is_none(),
+            "control: the incoming key really has no key context"
+        );
+
+        let did = store
+            .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
+            .expect("register");
+
+        let pubkey_bytes = store.identity_record(&did).expect("record").pubkey_bytes;
+        assert!(
+            store
+                .identity_record(&did)
+                .expect("record")
+                .verification_method_id
+                .is_some(),
+            "register must persist a key context, or the identity can never sign"
+        );
+
+        let mut seed_out = Vec::new();
+        let handle = store
+            .unlock("correct-horse-battery-staple", &mut seed_out)
+            .expect("unlock");
+
+        // The whole point: not merely persisted, but usable.
+        let sig = handle
+            .sign_prefixed(b"anything at all")
+            .expect("a registered identity must be able to sign under the prefix");
+
+        let msg = {
+            let p = handle.key.signable_prefix().expect("key context");
+            octo_ident::SignedMessage::new(p, b"anything at all".to_vec())
+                .signable(octo_ident::SignableForm::Raw)
+                .expect("signable bytes")
+        };
+        octo_algo_ed25519::verify_dispatch(
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &pubkey_bytes,
+            &msg,
+            &sig,
+        )
+        .expect("signature must verify");
+    }
+
+    /// A key that already carries a verification method keeps it. Otherwise
+    /// `register` would silently overwrite a rotation-aware choice, and the
+    /// persisted id would disagree with the one in flight.
+    #[test]
+    fn register_preserves_an_explicit_verification_method() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = WalletStore::open_at(dir.path()).expect("store");
+        let chosen = octo_ident::VerificationMethodId::derive("hardware-slot-3");
+        let key = IdentityKey::from_seed([0x6b; 32]).with_verification_method_id(chosen);
+
+        let did = store
+            .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
+            .expect("register");
+
+        let record = store.identity_record(&did).expect("record");
+        assert_eq!(
+            record.verification_method_id,
+            Some(*chosen.as_bytes()),
+            "register must not overwrite a key context the caller chose"
+        );
     }
 }

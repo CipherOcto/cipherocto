@@ -159,18 +159,99 @@ here rather than left to be discovered:
   alongside genuine `IdentityKey::sign` calls. Counting only non-test
   production sites gives **eight**:
 
-  | Site                                 | What it signs                                     |
-  | ------------------------------------ | ------------------------------------------------- |
-  | `octo-wallet` §`revoke`              | `b"revoke"` — a 6-byte constant, bound to nothing |
-  | `octo-wallet` §`begin_rotation`      | `b"rotate" ‖ new_pub`                             |
-  | `octo-wallet` §`IdentityKey::sign`   | the caller's bare message                         |
-  | `octo-wallet` §`identity_store`      | a wrapper over the above                          |
-  | `octo-wallet-node` §sign handler     | the request bytes                                 |
-  | `octo-runtime` §handle/signing (two) | the holder message                                |
-  | `quota-router-core` §`envelope_v2`   | a preimage that may already carry its own domain  |
+  | Site                                 | What it signs                                     | State                        |
+  | ------------------------------------ | ------------------------------------------------- | ---------------------------- |
+  | `octo-wallet` §`revoke`              | `b"revoke"` — a 6-byte constant, bound to nothing | migrated in `0009-e2`        |
+  | `octo-wallet` §`begin_rotation`      | `b"rotate" ‖ new_pub`                             | migrated in `0009-e2`        |
+  | `octo-wallet` §`IdentityKey::sign`   | the caller's bare message                         | outstanding                  |
+  | `octo-wallet` §`identity_store`      | a wrapper over the above                          | outstanding                  |
+  | `octo-wallet-node` §sign handler     | the request bytes                                 | outstanding                  |
+  | `octo-runtime` §handle/signing (two) | the holder message                                | outstanding                  |
+  | `quota-router-core` §`envelope_v2`   | a domain-separated preimage                       | **not migrated — see below** |
 
-  The last one must be checked before migrating: if that preimage already
-  contains a domain separator, prefixing it would bind two domains at once.
+  Four sites remain outstanding, plus the `CapabilitySigner` trait change
+  below.
+
+### §`envelope_v2` is already domain-separated, and must not be prefixed
+
+The open question was whether `quota-router-core` §`envelope_v2` should take
+the RFC-0009 prefix. **It should not.** Reading `signature_preimage` settles
+it: the preimage is already a **32-byte domain-separated digest**,
+`blake3::derive_key(DOMAIN_SIGNATURE, envelope_id ‖ from_did ‖ payload)`, and
+RFC-0853 §Domain Separation is the very mechanism the RFC-0009 prefix
+implements. Prefixing it would bind two domains inside one signature, and
+would change an RFC-0871 byte-pinned wire format in order to do so.
+
+Three things the prefix would supply are already present:
+
+1. **A domain.** `DOMAIN_SIGNATURE` is a dedicated context string — exactly
+   the role the prefix's domain field plays.
+2. **The signer, in band.** `from_did` sits inside the preimage, which binds
+   the signer _more_ tightly than a `key_id` would: the DID resolves to the
+   key rather than merely naming it.
+3. **The algorithm, by type.** `Authorization::Signature` carries
+   `Ed25519SignatureBytes`, so the algorithm is fixed by the wire type and no
+   confused message can substitute another.
+
+What the prefix would add is a `key_id`, and RFC-0871 has no
+verification-method identifier on the envelope to carry one. Supplying it is
+an RFC change, not a migration, so this site stays as it is.
+
+**The one property the preimage does not obviously have, and why it does not
+need it.** `envelope_id ‖ from_did ‖ payload` joins two variable-length
+fields with no length prefix, and
+`octo-settlement-core` §`router_signature_preimage` length-prefixes
+`router_id` for exactly this reason — so the shape invites the objection that
+the boundary is ambiguous. It is not exploitable, and _not_ because of how
+base58 happens to length-encode. Moving the `from_did`/`payload` boundary
+changes the DID, and the verifier derives the verifying key _from that same
+DID_: `verify_ed25519_signature` base58-decodes the signer DID and builds the
+`VerifyingKey` from the result. A shifted DID resolves to a different key, so
+the signature check fails closed. Signer binding and key selection read one
+field, which makes the boundary self-defending — and because the argument is
+independent of base58's length behaviour, a future multibase or multicodec
+change cannot silently invalidate it.
+
+### A defect found while checking this: `envelope_id` did not commit to the envelope
+
+Answering the question meant reading how `envelope_id` was derived, and the
+derivation was wrong. `compute_envelope_id` zeroed `envelope_id` but **not**
+`authorization`, while `build_node_envelope` builds with an empty authorization
+and then populates it. So a delivered envelope's `envelope_id` was a digest of
+the _pre-signature_ bytes and did **not** equal `compute_envelope_id` of the
+envelope as delivered. A comment claimed the two were "structural-equivalent in
+the borsh serialization"; they are not — `[]` and
+`[Authorization::Signature { .. }]` are different bytes.
+
+Nothing caught it, for two compounding reasons. No verify path recomputes the
+id: the verifier reads it off the wire and rebuilds the preimage from it, which
+is sound only because the id is inside the preimage. And every test that
+recomputed the id built its envelope with an empty authorization — the single
+case where the old definition and the intended one agree. The field had
+quietly stopped being a content digest, and so could not have served as a
+replay or dedup key, which is the one job an envelope id exists for.
+
+Fixed by excluding `authorization` from the derivation, which is what RFC-0871
+§Adversary Analysis A6 describes and what makes the chicken-and-egg resolve at
+all. The RFC-0871 byte-pinned vectors are unaffected, because they all build
+with an empty authorization, where the two definitions coincide — so no pinned
+digest changed. Two vectors now pin the property:
+`envelope_id_commits_to_contents_independently_of_authorization` and
+`envelope_id_is_unchanged_by_adding_a_signature`. Both were confirmed red
+against the old derivation before the fix was applied.
+
+The second of those two was initially **vacuous**: it cloned a built envelope
+and mutated the `authorization` field, which of course left the stored
+`envelope_id` untouched and so asserted nothing. Rewritten to send both
+variants through `NodeEnvelope::build`, so the constructor genuinely
+recomputes in each case. The populated-authorization build is the control that
+distinguishes them — the empty one is exactly the case that agrees with the
+old behaviour.
+
+One process note for the next implementer: `cargo clippy -p quota-router-core
+--all-features` is **not** a valid invocation. `litellm-mode` and
+`any-llm-mode` are mutually exclusive behind a `compile_error!`. Use
+`--all-targets` without `--all-features` for that crate.
 
 - `CapabilitySigner::sign(&self, msg: &[u8])` in `octo-cap-macaroon` is
   unchanged. It carries no key context at all, so the RFC-named "real

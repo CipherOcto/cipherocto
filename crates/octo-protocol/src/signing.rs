@@ -24,13 +24,26 @@ pub const DOMAIN_SIGNATURE: &str = "OCTO_NODEENVELOPE_V1_SIGNATURE";
 
 /// Compute `envelope_id = BLAKE3-256(canonical_ser(envelope_without_id))`.
 ///
-/// Implementation: serialize the envelope with `envelope_id` zeroed (the
-/// build-time placeholder), then BLAKE3-256 hash. Per RFC-0871 §Algorithms
-/// step 2.
+/// Implementation: serialize the envelope with `envelope_id` zeroed and
+/// `authorization` cleared — this is the canonical idempotent derivation.
+///
+/// **Both `envelope_id` and `authorization` are excluded**, per RFC-0871
+/// §Adversary Analysis A6. The id commits to the envelope's *unsigned*
+/// content; the signature is computed over that id. Excluding only the id
+/// would make the derivation depend on whether authorization had been
+/// populated yet, which breaks it in both directions: an envelope signed
+/// after construction would carry an id derived from the pre-signature
+/// bytes, and the same content signed and unsigned would carry different
+/// ids — so the id could not serve as a replay or dedup key.
+///
+/// For an envelope with no authorization the two definitions agree, which is
+/// why an empty-authorization caller sees no change. It is the *populated*
+/// case that distinguishes them.
 #[must_use]
 pub fn compute_envelope_id(envelope: &NodeEnvelope) -> [u8; 32] {
     let mut env_without_id = envelope.clone();
     env_without_id.envelope_id = [0u8; 32];
+    env_without_id.authorization = Vec::new();
     let bytes =
         borsh::to_vec(&env_without_id).expect("NodeEnvelope borsh serialization is infallible");
     *blake3::hash(&bytes).as_bytes()

@@ -148,18 +148,24 @@ pub fn build_node_envelope(
         sig: sig_bytes,
     }];
 
-    // NOTE: per RFC-0871 §Adversary Analysis A6, signatures are computed
-    // *over* the envelope_id, which itself was computed *over* the envelope
-    // *without* the authorization list. This breaks the chicken-and-egg
-    // because modifying authorization does not change the signature
-    // preimage; the verifier rebuilds the envelope from the wire bytes
-    // (including the now-populated authorization list), recomputes the
-    // envelope_id, recomputes the preimage, and verifies the signature.
+    // NOTE: per RFC-0871 §Adversary Analysis A6, the signature is computed
+    // *over* the envelope_id, and the envelope_id is computed over the
+    // envelope with `authorization` cleared. That is what breaks the
+    // chicken-and-egg: signing cannot perturb the id the signature is
+    // computed over, because authorization is excluded from the derivation.
     //
-    // We do NOT need to recompute envelope_id after setting authorization —
-    // it's already correct (computed over the placeholder authorization
-    // list, which is structural-equivalent to the populated one in the
-    // borsh serialization).
+    // So we must NOT recompute envelope_id after setting authorization —
+    // the id is already correct, and recomputing it would fold the signature
+    // into the field it is meant to certify.
+    //
+    // The verifier does not recompute the id either: it reads the id off the
+    // wire and rebuilds the preimage from it. That is sound, because the id
+    // is inside the preimage and so altering it invalidates the signature.
+    // It does mean `envelope_id` is an authenticity-protected field rather
+    // than an independently checkable one.
+    //
+    // `envelope_id_commits_to_contents_independently_of_authorization` pins
+    // the property this depends on.
 
     // Touch network_id to silence dead-code lint when only used for
     // signature-bound context (kept for future binding).
@@ -503,6 +509,88 @@ mod tests {
         let preimage = signature_preimage(&env.envelope_id, signer_did.as_str(), &env.payload);
         octo_protocol::authorization::verify_ed25519_signature(&signer_did, &preimage, &sig)
             .expect("signature must verify");
+    }
+
+    /// `envelope_id` must commit to the envelope's contents and must not
+    /// depend on who signed it (RFC-0871 §Adversary Analysis A6).
+    ///
+    /// This pins a real defect that had been papered over by a comment
+    /// asserting the id "is structural-equivalent" across the authorization
+    /// transition. It is not: `compute_envelope_id` zeroed only
+    /// `envelope_id`, so an envelope whose `authorization` was populated
+    /// *after* construction carried an id derived from the empty-authorization
+    /// bytes. No verify path recomputed it, so the field silently stopped
+    /// being a content digest — and every test that recomputed the id built
+    /// its envelope with an empty authorization, which is the one case where
+    /// the old definition agrees with the intended one.
+    #[test]
+    fn envelope_id_commits_to_contents_independently_of_authorization() {
+        let k = sample_identity();
+        let env = build_node_envelope(
+            &k,
+            &NetworkId([0xab; 32]),
+            octo_protocol::payload_kind::QUOTA_ROUTER_ANNOUNCE,
+            b"hello".to_vec(),
+            60,
+            1_735_689_600_000,
+        )
+        .unwrap();
+
+        assert_eq!(
+            env.envelope_id,
+            octo_protocol::compute_envelope_id(&env),
+            "envelope_id must equal the canonical id of the envelope as delivered, \
+             even though authorization was populated after construction"
+        );
+    }
+
+    /// The id must be a function of the *unsigned* content alone: the same
+    /// content must carry the same id whether or not a signature is present.
+    /// Without this the id cannot serve as a replay or dedup key, because
+    /// the same content signed and unsigned would carry different ids.
+    ///
+    /// Both envelopes go through `NodeEnvelope::build` — i.e. the id is
+    /// genuinely recomputed by the constructor in each case. Cloning a built
+    /// envelope and mutating a field would leave the stored id untouched and
+    /// assert nothing.
+    #[test]
+    fn envelope_id_is_unchanged_by_adding_a_signature() {
+        let k = sample_identity();
+        let unsigned = NodeEnvelope::build(
+            node_canonical_did(&k),
+            RecipientRef::Broadcast,
+            octo_protocol::payload_kind::QUOTA_ROUTER_ANNOUNCE,
+            b"hello".to_vec(),
+            vec![],
+            [0x11; 32],
+            1_735_689_600_000,
+            octo_protocol::envelope::VERSION_TAG_V2,
+        )
+        .unwrap();
+
+        let signed = NodeEnvelope::build(
+            node_canonical_did(&k),
+            RecipientRef::Broadcast,
+            octo_protocol::payload_kind::QUOTA_ROUTER_ANNOUNCE,
+            b"hello".to_vec(),
+            vec![Authorization::Signature {
+                signer_did: unsigned.from_did.clone(),
+                sig: Ed25519SignatureBytes([0x5a; 64]),
+            }],
+            [0x11; 32],
+            1_735_689_600_000,
+            octo_protocol::envelope::VERSION_TAG_V2,
+        )
+        .unwrap();
+        assert!(
+            !signed.authorization.is_empty(),
+            "control: the signed build must actually carry an authorization"
+        );
+
+        assert_eq!(
+            unsigned.envelope_id, signed.envelope_id,
+            "a signature must not perturb the envelope id"
+        );
     }
 
     // TV1..TV7 — one round-trip test per RFC-0870 payload kind. Mirrors

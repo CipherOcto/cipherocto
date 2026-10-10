@@ -25,7 +25,10 @@ stoolap = ["dep:serde_json", "dep:octo-storage-core"]
 # Deterministic Floating-Point per RFC-0104 — score_ewma / score_delta canonical encoding
 octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
 # Canonical OctoID codec per RFC-0010 — `RecorderDid::to_wire()` delegate.
-octo-ident = { path = "../octo-ident" }
+# `serde` feature: `SuspensionAuth` now carries the algorithm its governance
+# signature is verified under (mission 0009-c), and `AlgorithmId` only
+# serialises when that feature is on.
+octo-ident = { path = "../octo-ident", features = ["serde"] }
 
 # Mission 0009-c: Ed25519 `SignatureAlgorithm` implementation, so
 # `auth::verify_governance_signature` dispatches through `AlgorithmRegistry`

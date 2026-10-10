@@ -1105,6 +1105,10 @@ mod tests {
                 let sig = sk.sign(msg);
                 Ok(sig.to_bytes())
             }
+            fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+                octo_algo_ed25519::ed25519_algorithm_id()
+            }
+
             fn public_key_bytes(&self) -> [u8; 32] {
                 self.pub_bytes
             }

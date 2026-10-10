@@ -291,9 +291,13 @@ than a fact about the signature. Demonstrated by probe: a
 round-trip does, comes back stamped Ed25519. Latent rather than live — the
 trait's `[u8; 64]` and `[u8; 32]` return types cannot represent a 33-byte key
 at all — but the failure mode when a second algorithm arrives is a silent
-wrong answer, which is the shape AC#11 exists to prevent. Recorded as
-`0009-e5`, with the prefix migration for this trait deliberately split out
-rather than bundled.
+wrong answer, which is the shape AC#11 exists to prevent. Fixed in
+`0009-e5` on both halves: mint now stamps what the signer reports, and the wire
+segment carries the algorithm so the round-trip cannot re-stamp it. The
+"resolved out of band by the caller" comment named a source that does not
+exist — `HolderRecord` carries `holder_pub` and no algorithm at all. The prefix
+migration for this trait stays split out; `holder_msg` still has no field for a
+`key_id`.
 
 **Where a capability key's `key_id` comes from: the holder identity's
 verification method.** No new concept is needed. The trait already carries

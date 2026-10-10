@@ -442,6 +442,12 @@ mod tests {
             // Deterministic stub signature (zeros + length marker).
             Ok([0u8; 64])
         }
+        fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+            // Via `octo-wallet`, which `octo-role` already depends on. Not
+            // adding an `octo-algo-ed25519` edge just to name a constant.
+            octo_wallet::ed25519_algorithm_id()
+        }
+
         fn public_key_bytes(&self) -> [u8; 32] {
             self.pk
         }

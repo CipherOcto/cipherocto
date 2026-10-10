@@ -304,6 +304,9 @@ mod tests {
         fn public_key_bytes(&self) -> [u8; 32] {
             self.0.verifying_key().to_bytes()
         }
+        fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+            octo_algo_ed25519::ed25519_algorithm_id()
+        }
     }
 
     fn fixture_token(caveats: &[Caveat]) -> CapabilityToken {

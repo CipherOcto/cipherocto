@@ -11,14 +11,20 @@ metadata:
     - 0009-e-signable-domain-separation
 ---
 
-# Mission `0009-e5-capability-signer-algorithm-binding` — CLAIMED 2026-10-10
+# Mission `0009-e5-capability-signer-algorithm-binding` — IMPLEMENTED 2026-10-10
 
 ## Status
 
-Claimed (2026-10-10). Surveyed against the source; the defect below is
-demonstrated, not hypothesised. The RFC-0009 prefix migration for this trait is
-deliberately **not** bundled with this mission — see §Why the prefix is a
-separate mission.
+Claimed and implemented (2026-10-10). The defect below was demonstrated before
+the fix and is now closed on both halves — the mint stamp and the wire
+round-trip. Four vectors, three mutations, all red.
+
+The RFC-0009 prefix migration for this trait is deliberately **not** bundled —
+see §Why the prefix is a separate mission.
+
+`octo-cap-macaroon` 411 lib + all integration suites green, `octo-role` 33,
+`octo-wallet` 349, `octo-cli` security guards 45. Clippy clean with
+`--all-targets --all-features` across all four crates.
 
 ## Dependencies
 
@@ -144,24 +150,90 @@ decided on its own evidence.
 
 ## Acceptance criteria
 
-- [ ] `CapabilitySigner` carries `algorithm_id`, and no mint site calls
-      `governance_algorithm_id()` to stamp a signature.
-- [ ] `serialize_wire` / `deserialize_wire` preserve the holder signature's
-      algorithm, or the parse path takes it as an explicit parameter and the
-      wire does not invent one.
-- [ ] Every vector above exists under its specified name and is
+- [x] `CapabilitySigner` carries a **required** `algorithm_id`, and no mint
+      site calls `governance_algorithm_id()` to stamp a signature.
+- [x] `serialize_wire` / `deserialize_wire` preserve the holder signature's
+      algorithm.
+- [x] Every vector above exists under its specified name and is
       mutation-checked.
-- [ ] All eleven `HolderSignature::new` sites accounted for — production,
-      fixture, or deliberately refusing.
-- [ ] Clippy clean with `--all-targets --all-features` on `octo-cap-macaroon`,
-      `octo-wallet` and `octo-cli`.
+- [x] All eleven `HolderSignature::new` sites accounted for. Two are production
+      (`mint`, `attenuate_with_signer`) and now read the signer. One is the
+      wire parse path and now reads the wire. The rest are fixtures or the
+      deliberate mismatch tests in `token.rs`.
+- [x] Clippy clean with `--all-targets --all-features` on `octo-cap-macaroon`,
+      `octo-wallet`, `octo-cli` and `octo-role`.
 
-## Open question
+**Not done: the `key_id`.** `holder_msg` still has no field for it, and the
+prefix migration that would add one is split out for the reason above.
 
-**Does the capability wire form gain a fifth field, or does the parse path take
-the algorithm as a parameter?** The wire already resolves `holder_did` and
-`holder_pub` out of band, so a parameter is consistent with what the format
-already does; a field is consistent with RFC-0009's "algorithm travels in band"
-and with the attach-handle precedent. Both are defensible. Deciding this needs
-evidence about who resolves the holder context today and whether that resolver
-has the algorithm available, which has not been gathered. Not guessed.
+**Not done: the trait's fixed-width returns.** `sign` returns a 64-byte array
+and `public_key_bytes` a 32-byte array, so a 33-byte STARK-Schnorr key still
+cannot be a capability holder. This mission removes the _lie_ about the
+algorithm so that widening is no longer blocked by it; the widening itself is
+unchanged and open.
+
+## §The open question, answered
+
+**A fifth field, or a parameter?** Answered with evidence: **the wire**, and not
+because a field is tidier.
+
+The question turned on whether the parser had any out-of-band source to read
+the algorithm from. It does not. `HolderRecord` — the registry entry
+`verify_with_resolve` resolves against — carries `cap_root_hash`, `holder_did`
+and `holder_pub`, and **`holder_pub` is documented as "Holder Ed25519 public
+key (32 bytes; per RFC-0009 §Capability Keys)"**. There is no algorithm field
+anywhere on the record. So the previous "resolved out of band by the caller"
+comment described a source that does not exist: the caller had nothing to
+resolve _from_.
+
+That also settles why the field was not simply added to the record as part of
+this mission: a registry schema change with its own migration and gossip
+determinism contract is a different piece of work, and the wire field makes it
+unnecessary for correctness today.
+
+Implemented as segment 2 carrying `algorithm_id (16) ‖ signature (64)` — 80
+bytes, base64url, same position. **No fifth segment and no segment-count
+change**, so the v1/v2 three-or-four segment shape is untouched and the
+existing v1/v2 forward- and backward-compat tests pass untouched. That is why
+407 of the 411 tests needed no edit.
+
+## §Mutation evidence
+
+Three mutations, all red.
+
+| Mutation                                                       | Vectors that went red                                                                                              |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `mint` reverts to stamping `governance_algorithm_id()`         | `a_signer_naming_another_algorithm_is_recorded_faithfully`, `a_non_ed25519_survivor_is_not_downgraded_by_the_wire` |
+| Parse reads the algorithm then ignores it, re-stamping Ed25519 | `a_non_ed25519_survivor_is_not_downgraded_by_the_wire`                                                             |
+| Encoder writes a constant instead of the token's algorithm     | `a_non_ed25519_survivor_is_not_downgraded_by_the_wire`                                                             |
+
+**One vector is vacuous, and the mutation says so.**
+`mint_records_the_signers_own_algorithm` stayed **green** under the mutation
+that reverted `mint` to a constant. Its signer reports Ed25519 and the constant
+is Ed25519, so the two agree on every input it can produce — it cannot tell
+reading the signer from stamping a constant.
+
+It is kept because it is the positive statement of the property and because its
+assertion is cheap, but the weight sits entirely on
+`a_signer_naming_another_algorithm_is_recorded_faithfully`, which mints with a
+signer reporting an algorithm nothing verifies under. That is the second
+occurrence of this exact shape in this RFC chain — `0009-e4` had a vector set
+that could not distinguish "reads the prefix" from "assumes Ed25519" — and the
+lesson does not appear to be learned by writing the vector; it has to be
+discovered by mutating it.
+
+## §Why no vector here needs a second algorithm crate
+
+`a_non_ed25519_survivor_is_not_downgraded_by_the_wire` needed a token claiming
+a non-Ed25519 algorithm. Rather than add `octo-algo-stark-schnorr` as a
+dev-dependency, the fixture is a local signer that _reports_ an arbitrary
+algorithm id while signing with Ed25519. The property under test is what the
+wire does with the reported id, not whether the signature verifies — and a
+vector that depended on a second algorithm would additionally have to solve
+registry bootstrapping, which is a different problem with its own ordering
+hazards.
+
+This is a deliberate narrowing, stated so a reader does not over-read it: the
+vectors prove **the claim survives transport**, not that a STARK-Schnorr
+capability token works end to end. The latter is blocked on the trait's fixed
+`[u8; 64]` and `[u8; 32]` return types, which remain open.

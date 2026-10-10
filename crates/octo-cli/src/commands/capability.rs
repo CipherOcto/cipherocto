@@ -1594,6 +1594,9 @@ mod tests {
             fn public_key_bytes(&self) -> [u8; 32] {
                 self.0
             }
+            fn algorithm_id(&self) -> octo_wallet::AlgorithmId {
+                octo_wallet::ed25519_algorithm_id()
+            }
         }
 
         CapabilityToken::mint(

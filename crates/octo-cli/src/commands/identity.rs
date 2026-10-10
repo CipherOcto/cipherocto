@@ -1928,6 +1928,12 @@ impl CapabilitySigner for DevSigner {
     fn public_key_bytes(&self) -> [u8; 32] {
         self.pk
     }
+    fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+        // Via the wallet's re-export rather than a new `octo-algo-ed25519`
+        // edge: the CLI is a Layer-E consumer of Layer B and should not grow
+        // a second path to the algorithm registry.
+        octo_wallet::ed25519_algorithm_id()
+    }
 }
 
 // ---------------------------------------------------------------------------

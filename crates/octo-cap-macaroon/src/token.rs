@@ -237,10 +237,10 @@ impl CapabilityToken {
 
         let msg = Self::holder_msg(&macaroon.root_id, &macaroon.caveats);
         let sig_bytes = holder.sign(&msg)?;
-        let holder_sig = HolderSignature::new(
-            crate::governance_signature::governance_algorithm_id(),
-            &sig_bytes,
-        )?;
+        // The signer names its own algorithm. Stamping a constant here is
+        // how a non-Ed25519 holder ends up recorded as Ed25519 and then
+        // failing verification as though it were forged (mission `0009-e5`).
+        let holder_sig = HolderSignature::new(holder.algorithm_id(), &sig_bytes)?;
 
         Ok(Self {
             macaroon,
@@ -293,10 +293,8 @@ impl CapabilityToken {
         next.macaroon = next.macaroon.attenuate(caveat, catalog)?;
         let msg = Self::holder_msg(&next.macaroon.root_id, &next.macaroon.caveats);
         let sig_bytes = holder.sign(&msg)?;
-        next.holder_sig = HolderSignature::new(
-            crate::governance_signature::governance_algorithm_id(),
-            &sig_bytes,
-        )?;
+        // Same rule as `mint`: the algorithm comes from the signer.
+        next.holder_sig = HolderSignature::new(holder.algorithm_id(), &sig_bytes)?;
         next.holder_sig_stale = false;
         Ok(next)
     }
@@ -514,6 +512,10 @@ mod tests {
             let sig = sk.sign(msg);
             Ok(sig.to_bytes())
         }
+        fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+            octo_algo_ed25519::ed25519_algorithm_id()
+        }
+
         fn public_key_bytes(&self) -> [u8; 32] {
             self.pub_bytes
         }

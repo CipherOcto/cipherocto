@@ -20,6 +20,15 @@
 //! canonical `IdentityKey` impl maps `WalletError::Hsm(...)` to
 //! `CapabilitySignerError::Hsm(...)`. Custom signer backends (e.g.,
 //! hardware wallets) map their own errors here.
+//!
+//! ## The signer names its own algorithm
+//!
+//! `algorithm_id` is a required method, not a defaulted one. A mint site that
+//! wants to record which algorithm a holder signature was made under has to
+//! ask the signer, because nothing else knows. Stamping a constant instead is
+//! how a non-Ed25519 signer ends up recorded as Ed25519 and then failing
+//! verification as though it were forged — a silent wrong answer, not a
+//! rejection. See mission `0009-e5`.
 
 use thiserror::Error;
 
@@ -46,10 +55,11 @@ pub enum CapabilitySignerError {
 /// etc.); the failure mode is surfaced via `CapabilitySignerError`.
 ///
 /// Implementors MUST also return the 32-byte public key via
-/// `public_key_bytes`. The verifier dispatches on an `AlgorithmId`
-/// through `AlgorithmRegistry` rather than reconstructing a key itself
-/// (RFC-0009 AC#11); the algorithm comes from
-/// `CapabilitySigner::algorithm_id`.
+/// `public_key_bytes`, and MUST name the algorithm their key speaks via
+/// [`CapabilitySigner::algorithm_id`]. The verifier dispatches on an
+/// `AlgorithmId` through `AlgorithmRegistry` rather than reconstructing a key
+/// itself (RFC-0009 AC#11), so a signer that reports the wrong algorithm is
+/// dispatched to the wrong verifier.
 pub trait CapabilitySigner {
     /// Sign `msg`; return the 64-byte Ed25519 signature.
     ///
@@ -58,6 +68,14 @@ pub trait CapabilitySigner {
     /// (transport / user denial / etc.) or `Malformed` on internal
     /// serializer bugs.
     fn sign(&self, msg: &[u8]) -> Result<[u8; 64], CapabilitySignerError>;
+
+    /// The algorithm this signer's key speaks, and therefore the algorithm
+    /// `sign` produces.
+    ///
+    /// Required, with no default. A default would let an implementor forget
+    /// it and inherit a constant, which is precisely the defect mission
+    /// `0009-e5` exists to remove.
+    fn algorithm_id(&self) -> octo_ident::AlgorithmId;
 
     /// Return the canonical DID form for this signer.
     ///
@@ -142,9 +160,13 @@ impl CapabilitySigner for Box<dyn CapabilitySigner + '_> {
     fn sign(&self, msg: &[u8]) -> Result<[u8; 64], CapabilitySignerError> {
         (**self).sign(msg)
     }
+    fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+        (**self).algorithm_id()
+    }
     fn did(&self) -> String {
         (**self).did()
     }
+
     fn public_key_bytes(&self) -> [u8; 32] {
         (**self).public_key_bytes()
     }
@@ -155,9 +177,13 @@ impl CapabilitySigner for std::sync::Arc<dyn CapabilitySigner> {
     fn sign(&self, msg: &[u8]) -> Result<[u8; 64], CapabilitySignerError> {
         (**self).sign(msg)
     }
+    fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+        (**self).algorithm_id()
+    }
     fn did(&self) -> String {
         (**self).did()
     }
+
     fn public_key_bytes(&self) -> [u8; 32] {
         (**self).public_key_bytes()
     }
@@ -165,11 +191,9 @@ impl CapabilitySigner for std::sync::Arc<dyn CapabilitySigner> {
 
 #[cfg(test)]
 mod tests {
-    /// The algorithm these fixtures sign under. `CapabilitySigner` does
-    /// not carry an `algorithm_id` method — it has 11 implementors across
-    /// 6 crates — so the fixture states its algorithm here instead. Widening
-    /// the trait is a follow-on; the verifier takes the id as a parameter,
-    /// so nothing is blocked on it.
+    /// The algorithm these fixtures sign under. Now a convenience for the
+    /// test bodies; `CapabilitySigner::algorithm_id` is the authority and
+    /// each impl reports through it (mission `0009-e5`).
     fn ed25519_id() -> octo_ident::AlgorithmId {
         octo_algo_ed25519::ed25519_algorithm_id()
     }
@@ -193,6 +217,10 @@ mod tests {
             did_from_pubkey(&self.public_key_bytes())
         }
 
+        fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+            octo_algo_ed25519::ed25519_algorithm_id()
+        }
+
         fn public_key_bytes(&self) -> [u8; 32] {
             self.0.verifying_key().to_bytes()
         }
@@ -211,6 +239,10 @@ mod tests {
                 CapabilitySignerError::Signer(s) => CapabilitySignerError::Signer(s.clone()),
                 CapabilitySignerError::Malformed(s) => CapabilitySignerError::Malformed(s.clone()),
             })
+        }
+
+        fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+            octo_algo_ed25519::ed25519_algorithm_id()
         }
 
         fn public_key_bytes(&self) -> [u8; 32] {

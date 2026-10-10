@@ -1055,6 +1055,12 @@ impl octo_cap_macaroon::CapabilitySigner for IdentityKey {
     fn public_key_bytes(&self) -> [u8; 32] {
         IdentityKey::public_key_bytes(self)
     }
+
+    /// The algorithm this identity's signer speaks — sourced from the signer
+    /// rather than restated, so the two cannot drift (mission `0009-e5`).
+    fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+        IdentityKey::algorithm_id(self)
+    }
 }
 
 #[cfg(test)]

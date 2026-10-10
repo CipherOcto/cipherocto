@@ -57,6 +57,16 @@ pub struct WireV2 {
     pub proof_bundle: Option<Vec<u8>>,
 }
 
+/// Bytes carried in wire segment 2: the RFC-0009 `AlgorithmId` (16 raw
+/// bytes) followed by the 64-byte signature.
+///
+/// The algorithm used to be absent from the wire and re-stamped as Ed25519
+/// on parse, which silently downgraded any token minted under another
+/// algorithm — `HolderRecord` has no algorithm field, so there was no
+/// out-of-band source for the parser to use instead. Carrying it here is
+/// what makes the round-trip lossless (mission `0009-e5`).
+const SIG_SEGMENT_LEN: usize = 16 + 64;
+
 /// Serialize a `CapabilityToken` to v1 wire format (3 segments).
 ///
 /// **Forward-compat:** if the caller has a v2 wire with an embedded
@@ -69,12 +79,14 @@ pub struct WireV2 {
 pub fn serialize_wire(token: &CapabilityToken) -> Result<String, WireError> {
     let macaroon_bytes =
         json_canon::to_vec(&token.macaroon).map_err(|e| WireError::Serialize(e.clone()))?;
-    let sig_bytes = token.holder_sig.to_bytes();
+    let mut sig_segment = Vec::with_capacity(SIG_SEGMENT_LEN);
+    sig_segment.extend_from_slice(token.holder_sig.algorithm_id().as_bytes());
+    sig_segment.extend_from_slice(&token.holder_sig.to_bytes());
     let discharges_bytes =
         json_canon::to_vec(&token.discharges).map_err(|e| WireError::Serialize(e.clone()))?;
 
     let s1 = URL_SAFE_NO_PAD.encode(&macaroon_bytes);
-    let s2 = URL_SAFE_NO_PAD.encode(sig_bytes);
+    let s2 = URL_SAFE_NO_PAD.encode(&sig_segment);
     let s3 = URL_SAFE_NO_PAD.encode(&discharges_bytes);
 
     Ok(format!("{s1}.{s2}.{s3}"))
@@ -185,26 +197,25 @@ fn parse_wire_to_token(
         .decode(parts[2])
         .map_err(|e| WireError::Parse(format!("discharges b64: {e}")))?;
 
-    if sig_bytes.len() != 64 {
+    if sig_bytes.len() != SIG_SEGMENT_LEN {
         return Err(WireError::Parse(format!(
-            "sig must be 64 bytes, got {}",
+            "sig segment must be {SIG_SEGMENT_LEN} bytes (algorithm + signature), got {}",
             sig_bytes.len()
         )));
     }
+    let mut algorithm_bytes = [0u8; 16];
+    algorithm_bytes.copy_from_slice(&sig_bytes[..16]);
+    let algorithm_id = octo_ident::AlgorithmId::from_bytes(algorithm_bytes);
     let mut sig_arr = [0u8; 64];
-    sig_arr.copy_from_slice(&sig_bytes);
-    // The wire carries signature bytes only. The algorithm is not on the
-    // wire — it is resolved out of band by the caller, exactly as
-    // `holder_pub` and `holder_did` are — because RFC-0009 BC#13 puts it on
-    // the `VerificationMethod` beside the key. Stamping the historical
-    // Ed25519 form here is what the previous dalek-parsing code did
-    // implicitly; a caller holding a non-Ed25519 key re-stamps after
-    // parsing rather than having the wire assert an algorithm for it.
-    let holder_sig = crate::token::HolderSignature::new(
-        crate::governance_signature::governance_algorithm_id(),
-        &sig_arr,
-    )
-    .map_err(|e| WireError::Parse(format!("sig: {e}")))?;
+    sig_arr.copy_from_slice(&sig_bytes[16..]);
+    // The algorithm is read off the wire, not invented. The previous code
+    // stamped Ed25519 here, which is a silent downgrade for any other
+    // signer: the token would claim Ed25519 and fail verification as though
+    // forged. `HolderRecord` carries `holder_pub` but no algorithm, so there
+    // was no out-of-band source this could have read instead (mission
+    // `0009-e5`).
+    let holder_sig = crate::token::HolderSignature::new(algorithm_id, &sig_arr)
+        .map_err(|e| WireError::Parse(format!("sig: {e}")))?;
 
     let macaroon: crate::macaroon::Macaroon = json_canon::from_slice(&macaroon_bytes)
         .map_err(|e| WireError::Parse(format!("macaroon json: {e}")))?;
@@ -356,6 +367,10 @@ mod tests {
             let sig = sk.sign(msg);
             Ok(sig.to_bytes())
         }
+        fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+            octo_algo_ed25519::ed25519_algorithm_id()
+        }
+
         fn public_key_bytes(&self) -> [u8; 32] {
             self.pub_bytes
         }
@@ -498,5 +513,128 @@ mod tests {
         )
         .unwrap();
         assert_eq!(back.macaroon.root_id, token.macaroon.root_id);
+    }
+
+    // ── The algorithm travels with the signature ───────────────────────
+
+    /// A signer that reports an algorithm it did not use is exactly what
+    /// mission `0009-e5` removed. Mint must record what the signer named,
+    /// not a constant it chose itself.
+    ///
+    /// Local fixture rather than `IdentityKey`: this crate cannot depend on
+    /// `octo-wallet` — that separation is the entire reason the
+    /// `CapabilitySigner` trait exists.
+    struct ReportingSigner {
+        key: ed25519_dalek::SigningKey,
+        reported: octo_ident::AlgorithmId,
+    }
+
+    impl ReportingSigner {
+        fn new(byte: u8, reported: octo_ident::AlgorithmId) -> Self {
+            Self {
+                key: ed25519_dalek::SigningKey::from_bytes(&[byte; 32]),
+                reported,
+            }
+        }
+    }
+
+    impl crate::signer::CapabilitySigner for ReportingSigner {
+        fn sign(&self, msg: &[u8]) -> Result<[u8; 64], crate::signer::CapabilitySignerError> {
+            use ed25519_dalek::Signer as _;
+            Ok(self.key.sign(msg).to_bytes())
+        }
+        fn public_key_bytes(&self) -> [u8; 32] {
+            self.key.verifying_key().to_bytes()
+        }
+        fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+            self.reported
+        }
+    }
+
+    fn signed_token(signer: &ReportingSigner) -> crate::token::CapabilityToken {
+        crate::token::CapabilityToken::mint(&[0x42; 32], signer, "did:octo:zCapHolder", &[])
+            .expect("mint")
+    }
+
+    #[test]
+    fn mint_records_the_signers_own_algorithm() {
+        let signer = ReportingSigner::new(0x11, octo_algo_ed25519::ed25519_algorithm_id());
+        let token = signed_token(&signer);
+
+        assert_eq!(
+            token.holder_sig.algorithm_id(),
+            signer.algorithm_id(),
+            "the token must record the signer's algorithm, not a mint-site constant"
+        );
+        token
+            .verify_holder_sig()
+            .expect("a truthful claim verifies");
+    }
+
+    /// The control that keeps the vector above honest: a signer naming a
+    /// *different* algorithm has that name recorded, because `mint` reads
+    /// the signer rather than the only algorithm that happens to verify.
+    #[test]
+    fn a_signer_naming_another_algorithm_is_recorded_faithfully() {
+        let exotic = octo_ident::AlgorithmId::derive("not-a-registered-algorithm");
+        let signer = ReportingSigner::new(0x22, exotic);
+        let token = signed_token(&signer);
+
+        assert_eq!(
+            token.holder_sig.algorithm_id(),
+            exotic,
+            "mint must not second-guess the signer"
+        );
+        assert!(
+            token.verify_holder_sig().is_err(),
+            "a claim naming an unregistered algorithm must not verify"
+        );
+    }
+
+    #[test]
+    fn the_algorithm_survives_the_wire_round_trip() {
+        let signer = ReportingSigner::new(0x33, octo_algo_ed25519::ed25519_algorithm_id());
+        let token = signed_token(&signer);
+
+        let wire = serialize_wire(&token).expect("serialize");
+        let back =
+            deserialize_wire(&wire, "did:octo:zCapHolder", token.holder_pub).expect("deserialize");
+
+        assert_eq!(
+            back.holder_sig.algorithm_id(),
+            token.holder_sig.algorithm_id(),
+            "the wire must not re-stamp the algorithm it was handed"
+        );
+        assert_eq!(
+            back.holder_sig.to_bytes(),
+            token.holder_sig.to_bytes(),
+            "and must not disturb the signature bytes"
+        );
+    }
+
+    /// The downgrade this mission exists to remove, stated as a vector. A
+    /// non-Ed25519 claim must not come back claiming to be Ed25519 — that
+    /// is the silent wrong answer, where a genuine signature fails as though
+    /// forged.
+    #[test]
+    fn a_non_ed25519_survivor_is_not_downgraded_by_the_wire() {
+        let exotic = octo_ident::AlgorithmId::derive("stark-schnorr");
+        let signer = ReportingSigner::new(0x44, exotic);
+        let token = signed_token(&signer);
+
+        let wire = serialize_wire(&token).expect("serialize");
+        let back =
+            deserialize_wire(&wire, "did:octo:zCapHolder", token.holder_pub).expect("deserialize");
+
+        assert_eq!(
+            back.holder_sig.algorithm_id(),
+            exotic,
+            "the wire must preserve a non-Ed25519 algorithm"
+        );
+        assert_ne!(
+            back.holder_sig.algorithm_id(),
+            crate::governance_signature::governance_algorithm_id(),
+            "explicitly: this must not have been silently rewritten as Ed25519"
+        );
     }
 }

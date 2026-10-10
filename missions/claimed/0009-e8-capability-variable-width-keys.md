@@ -245,3 +245,23 @@ to `&[u8]` and `Vec<u8>` at most call sites, so widening one leaf type produced
 two errors rather than a cascade. The scoping reason "blast radius" was real but
 the number was not the cost. Worth remembering before treating a site count as
 an effort estimate.
+
+### Verified, not assumed
+
+`holder_pub_gossip_is_stable_across_the_widening` was mutation-checked against
+the implementation, because the claim it backs — that the gossip bytes did not
+move — is the load-bearing claim of this whole mission and a green test proves
+nothing about it on its own.
+
+Both of its substantive assertions were turned red deliberately:
+
+- Moving `holder_pub` after `audience_did` fails the declaration-order check.
+  That is the mutation the determinism contract exists to catch, and it is
+  invisible to a round-trip test.
+- Serialising `holder_pub` as a hex string instead of a JSON array of integers
+  fails the representation check, with the offending bytes in the failure
+  output. Both encodings deserialize to the same value, so this is precisely
+  the silent wire break that only pinned bytes can see.
+
+The third assertion, that a non-32-byte key round-trips, is what stops the first
+two from passing against a field left at its original fixed width.

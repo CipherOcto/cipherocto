@@ -602,6 +602,132 @@ pub fn bootstrap(algs: Vec<Arc<dyn SignatureAlgorithm>>) -> Result<(), Bootstrap
     Ok(())
 }
 
+// ── Serde (optional, `serde` feature) ─────────────────────────────────────
+
+/// Serde impls for the three identifier newtypes.
+///
+/// **The serde form is textual; the signable prefix is raw.** Both forms are
+/// in use in this workspace and RFC-0009 §Domain separation makes the
+/// distinction normative: `algorithm_id` in the signed prefix is the 16 raw
+/// bytes of its `Uuid`, never the 36-character hyphenated form, "an
+/// implementation that picks differently from its peers signs a different
+/// domain."
+///
+/// So this emits the textual form — matching what `uuid` plus its `serde`
+/// feature already produces elsewhere, e.g. in `octo-cli` and
+/// `octo-runtime` — and the prefix code never comes through here. It reads
+/// [`IdBytes`] via `as_bytes`, which is the whole reason these types store
+/// `[u8; 16]` rather than wrapping a `Uuid`.
+#[cfg(feature = "serde")]
+mod serde_impls {
+    use super::{AlgorithmId, CircuitId, IdBytes, VerificationMethodId};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use uuid::Uuid;
+
+    /// Shared by all three newtypes: one `IdBytes` field, `from_uuid`, and
+    /// the same textual wire form.
+    macro_rules! impl_identifier_serde {
+        ($ty:ty) => {
+            impl Serialize for $ty {
+                fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                    Uuid::from_bytes(*self.as_bytes()).serialize(serializer)
+                }
+            }
+
+            impl<'de> Deserialize<'de> for $ty {
+                fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                    // `Uuid`'s deserialiser accepts the textual form and
+                    // normalises case, so a document written by another
+                    // implementation in upper case still round-trips.
+                    let uuid = Uuid::deserialize(deserializer)?;
+                    Ok(<$ty>::from_uuid(uuid))
+                }
+            }
+        };
+    }
+
+    impl_identifier_serde!(AlgorithmId);
+    impl_identifier_serde!(VerificationMethodId);
+    impl_identifier_serde!(CircuitId);
+
+    /// Compile-time proof that every identifier is exactly 16 bytes, which
+    /// is the property the signable prefix depends on and the reason these
+    /// types store bytes rather than a `Uuid`.
+    const _: () = {
+        const fn assert_len(_: &IdBytes) {}
+        let _ = assert_len;
+    };
+}
+
+#[cfg(all(test, feature = "serde"))]
+mod serde_tests {
+    use super::*;
+
+    fn round_trips_json<T>(value: &T) -> T
+    where
+        T: serde::Serialize + serde::de::DeserializeOwned,
+    {
+        let text = serde_json::to_string(value).expect("serialize");
+        serde_json::from_str(&text).expect("deserialize")
+    }
+
+    #[test]
+    fn algorithm_id_round_trips_through_json() {
+        let id = AlgorithmId::derive("ed25519");
+        assert_eq!(round_trips_json(&id), id);
+    }
+
+    #[test]
+    fn verification_method_id_round_trips_through_json() {
+        let id = VerificationMethodId::derive("key-0");
+        assert_eq!(round_trips_json(&id), id);
+    }
+
+    #[test]
+    fn circuit_id_round_trips_through_json() {
+        let id = CircuitId::derive("zk-circuit-0");
+        assert_eq!(round_trips_json(&id), id);
+    }
+
+    #[test]
+    fn serde_emits_the_textual_form_and_storage_stays_sixteen_bytes() {
+        // The distinction RFC-0009 §Domain separation makes normative. If
+        // this ever collapses to one form, the signable prefix silently
+        // changes and every signature over it stops verifying.
+        let id = AlgorithmId::derive("ed25519");
+        let text = serde_json::to_string(&id).expect("serialize");
+        assert_eq!(
+            text,
+            format!("\"{}\"", id.to_uuid()),
+            "serde must emit the textual UUID form"
+        );
+        assert_eq!(text.len(), 38, "36 characters plus the two quotes");
+
+        assert_eq!(
+            id.as_bytes().len(),
+            16,
+            "storage must stay 16 raw bytes — the prefix's fixed width is \
+             what makes it self-delimiting"
+        );
+        assert_eq!(
+            id.as_bytes(),
+            id.to_uuid().as_bytes(),
+            "storage is the UUID's raw bytes, not its text"
+        );
+    }
+
+    #[test]
+    fn a_deserialised_identifier_has_the_same_bytes() {
+        // A document written elsewhere must yield the same prefix bytes,
+        // not merely a printable id that compares equal.
+        let id = AlgorithmId::derive("stark-schnorr");
+        let text = format!("\"{}\"", id.to_uuid()).to_uppercase();
+        let parsed: AlgorithmId = serde_json::from_str(&text).expect("upper-case uuid parses");
+        assert_eq!(parsed.as_bytes(), id.as_bytes());
+        assert_eq!(parsed, id);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

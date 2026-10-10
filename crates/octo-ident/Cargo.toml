@@ -40,6 +40,22 @@ async-trait = "=0.1.92"
 # that same random value.
 uuid = { version = "1", features = ["v5"] }
 
+# Serde for the identifier newtypes (RFC-0009 §Domain separation). Optional
+# and off by default, so the Layer B substrate stays minimal for consumers
+# that never serialise an identifier. NOT needed for `to_uuid`/`from_uuid`.
+#
+# The serde form is deliberately the **textual** UUID, which is what the rest
+# of the workspace already emits (`uuid` with its `serde` feature, as
+# `octo-cli` and `octo-runtime` use it). RFC-0009 §Domain separation makes the
+# distinction normative: the *signable prefix* is the 16 raw bytes, never the
+# 36-character form, because both are in use and picking differently signs a
+# different domain. The prefix therefore never goes through serde — it reads
+# the newtype's own `bytes`, which is why these types store `[u8; 16]`.
+serde = { version = "1", optional = true, default-features = false, features = [
+    "std",
+    "derive",
+] }
+
 # NOTE: NO `octo-protocol = { path = "../octo-protocol" }` dep here — would
 # close a Cargo cycle (`octo-protocol → octo-ident`). Layer B per-hop
 # signature type (`RawHopSignature`) mirrors `octo_protocol::HopSignature`
@@ -56,6 +72,13 @@ allow-legacy-input = []
 # default so Layer-1 codec stays minimal; `octo-protocol` enables it via its
 # own feature flag.
 borsh = ["dep:borsh"]
+# Adds serde Serialize/Deserialize for `AlgorithmId`, `VerificationMethodId` and
+# `CircuitId`, plus `DidDocument`. Needed by any crate that persists an
+# identifier in a JSON/serde document — a DID document carrying `algorithm_id`,
+# a capability token carrying its holder's algorithm. Off by default for the
+# same reason as `borsh`. Enables `uuid`'s serde impl so the textual form
+# matches what the rest of the workspace already emits.
+serde = ["dep:serde", "uuid/serde"]
 
 [dependencies.borsh]
 version = "=1.5.0"
@@ -69,6 +92,11 @@ optional = true
 version = "0.12"
 
 [dev-dependencies]
+# serde_json for the identifier serde round-trip tests. The `serde` feature
+# must be enabled for those tests to compile; they are gated the same way the
+# borsh TV suite is.
+serde_json = "1"
+
 # Test runtime for `#[tokio::test]` in write_coordinator module.
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 # Borsh for the rich_did_document_tv round-trip tests. Re-uses the same

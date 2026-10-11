@@ -12,12 +12,15 @@
 
 use octo_algo_ed25519::ed25519_algorithm_id;
 use octo_algo_stark_schnorr::stark_schnorr_algorithm_id;
+use octo_algo_stark_schnorr::{public_key, sign, Felt};
 use octo_ident::VerificationMethodId;
 use octo_wallet::{IdentityKey, WalletError};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 const KEY_ID: &str = "key-a";
 
-fn revoked() -> (IdentityKey, [u8; 64]) {
+fn revoked() -> (IdentityKey, Vec<u8>) {
     octo_algo_ed25519::install().expect("install ed25519");
     let mut key = IdentityKey::from_seed([51u8; 32])
         .with_verification_method_id(VerificationMethodId::derive(KEY_ID));
@@ -36,7 +39,7 @@ fn a_revocation_proof_verifies_under_its_own_algorithm() {
     IdentityKey::verify_revocation_proof(
         &ed25519_algorithm_id(),
         &VerificationMethodId::derive(KEY_ID),
-        &key.public_key_bytes(),
+        key.public_key_bytes(),
         &proof,
     )
     .expect("genuine");
@@ -56,7 +59,7 @@ fn a_revocation_proof_replayed_as_the_other_algorithm_is_rejected() {
     let outcome = IdentityKey::verify_revocation_proof(
         &stark_schnorr_algorithm_id(),
         &VerificationMethodId::derive(KEY_ID),
-        &key.public_key_bytes(),
+        key.public_key_bytes(),
         &proof,
     );
     assert!(
@@ -70,7 +73,7 @@ fn a_revocation_proof_replayed_as_the_other_algorithm_is_rejected() {
     IdentityKey::verify_revocation_proof(
         &ed25519_algorithm_id(),
         &VerificationMethodId::derive(KEY_ID),
-        &key.public_key_bytes(),
+        key.public_key_bytes(),
         &proof,
     )
     .expect("the genuine form must still verify");
@@ -90,7 +93,7 @@ fn the_legacy_bare_constant_is_refused() {
     let outcome = IdentityKey::verify_revocation_proof(
         &ed25519_algorithm_id(),
         &VerificationMethodId::derive(KEY_ID),
-        &pubkey,
+        pubkey,
         &legacy,
     );
     assert!(
@@ -160,5 +163,91 @@ fn a_stark_schnorr_revocation_proof_verifies_through_the_dispatched_path() {
         IdentityKey::verify_revocation_proof(&ed25519_algorithm_id(), &key_id, &wire, &proof,)
             .is_err(),
         "a stark-schnorr proof must not verify as Ed25519"
+    );
+}
+
+/// A `HsmAdapter` for an algorithm whose key is not 32 bytes.
+///
+/// **This impl is the acceptance criterion.** While `HsmAdapter::get_public_key`
+/// returned `[u8; 32]` and `sign` returned `[u8; 64]`, no adapter for a
+/// 33-byte-key algorithm could be written at all — the trait's own docs promise
+/// that adding an algorithm means adding an adapter, and the signatures made
+/// that promise false. Widened by mission 0009-cd.
+struct StarkSigner {
+    secret: Felt,
+    /// A fresh nonce per signature. A fixed nonce would make two signatures
+    /// over different messages identical bytes, which this vector would then
+    /// not be able to tell apart.
+    nonce_counter: AtomicU64,
+}
+
+impl octo_wallet::hsm::HsmAdapter for StarkSigner {
+    fn get_public_key(&self) -> Result<Vec<u8>, octo_wallet::hsm::HsmError> {
+        Ok(public_key(&self.secret)
+            .expect("derives a public key")
+            .to_wire()
+            .to_vec())
+    }
+
+    fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, octo_wallet::hsm::HsmError> {
+        let n = self.nonce_counter.fetch_add(1, Ordering::SeqCst);
+        Ok(sign(&self.secret, msg, &Felt::from(n))
+            .expect("sign")
+            .to_wire()
+            .to_vec())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+        stark_schnorr_algorithm_id()
+    }
+}
+
+/// The vector that proves the trait widening was real: an identity whose signer
+/// is not Ed25519, verifying its own signatures.
+///
+/// Every other vector in this file hands the verifier an explicit algorithm.
+/// This one lets the identity carry its key and its algorithm together through
+/// `HsmAdapter`, which is the path production uses — so it fails if the key
+/// stored on `IdentityKey` is still a 32-byte copy rather than the adapter's
+/// own bytes.
+#[test]
+fn an_identity_backed_by_a_non_ed25519_adapter_verifies_its_own_signatures() {
+    octo_algo_ed25519::install().expect("install ed25519");
+    octo_algo_stark_schnorr::install().expect("install stark-schnorr");
+
+    let secret = Felt::from_hex_unchecked("0x2f1e3d4c5b6a79880716253443526170");
+    let signer = Arc::new(StarkSigner {
+        secret,
+        nonce_counter: AtomicU64::new(1),
+    });
+    let mut key = IdentityKey::with_signer(signer).expect("with_signer");
+    key.activate(1_000).expect("activate");
+
+    assert_eq!(
+        key.public_key_bytes().len(),
+        33,
+        "the identity must carry the adapter's 33-byte key whole. A 32 here \
+         means IdentityKey is still making an independent fixed-size copy."
+    );
+
+    let sig = key.sign(b"hello").expect("sign");
+    assert_eq!(sig.len(), 64);
+    key.verify(b"hello", &sig)
+        .expect("a stark-schnorr identity must verify its own signature");
+
+    // The control, and the reason the first assertion is not enough: a verifier
+    // that ignored the key entirely would also pass it.
+    assert!(
+        key.verify(b"goodbye", &sig).is_err(),
+        "a signature over different bytes must not verify"
+    );
+    assert_ne!(
+        sig,
+        key.sign(b"hello").expect("sign again"),
+        "two signatures over the same message must differ (nonce discipline)"
     );
 }

@@ -160,9 +160,9 @@ fn tv2_child_unlinkability() -> Vec<u8> {
 fn tv3_hsm_boundary_no_seed_exfil() -> Vec<u8> {
     let seed: [u8; 32] = [0xA0; 32];
     let public_key: [u8; 32] = [0xB0; 32];
-    let signer = InMemorySigner::new(seed, public_key);
+    let signer = InMemorySigner::new(seed, public_key.to_vec());
     let msg: &[u8] = b"cipherocto/test-vector-3-hsm-boundary";
-    let sig: [u8; 64] = signer.sign(msg).expect("sign");
+    let sig: Vec<u8> = signer.sign(msg).expect("sign");
 
     // Invariant 1: signature MUST NOT contain the seed prefix.
     assert!(
@@ -182,7 +182,7 @@ fn tv3_hsm_boundary_no_seed_exfil() -> Vec<u8> {
         "Debug leaks seed hex: {dbg}"
     );
 
-    sig.to_vec()
+    sig.clone()
 }
 
 /// Canonical 3-TV fixture struct. JSON serialization is hand-rolled

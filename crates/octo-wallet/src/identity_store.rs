@@ -510,7 +510,7 @@ impl WalletStore {
         }
         let record = IdentityRecord {
             did: did.clone(),
-            pubkey_bytes,
+            pubkey_bytes: pubkey_bytes.to_vec(),
             lifecycle,
             hsm_slot: None,
             registered_at_unix: now_unix,
@@ -657,7 +657,7 @@ impl WalletStore {
         let Ok(record) = self.index.record(did) else {
             return false;
         };
-        let slug = seed_slot_slug_by_pubkey(record.pubkey_bytes);
+        let slug = seed_slot_slug_by_pubkey(&record.pubkey_bytes);
         self.vault
             .slots_dir()
             .join(format!("{slug}.vault"))
@@ -675,7 +675,7 @@ impl WalletStore {
     pub fn orphan_slots(&self) -> Vec<String> {
         let mut known: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         for r in &self.index.records {
-            let slug = seed_slot_slug_by_pubkey(r.pubkey_bytes);
+            let slug = seed_slot_slug_by_pubkey(&r.pubkey_bytes);
             known.insert(format!("{slug}.vault"));
         }
         let Ok(entries) = std::fs::read_dir(self.vault.slots_dir()) else {
@@ -725,13 +725,13 @@ impl WalletStore {
         passphrase: &str,
     ) -> Result<IdentityKey, WalletError> {
         // Re-attach from the vault slot `begin_rotation` sealed under
-        // `seed_slot_slug_by_pubkey(succ_record.pubkey_bytes)`. The
+        // `seed_slot_slug_by_pubkey(&succ_record.pubkey_bytes)`. The
         // DID is the index key the seal step also wrote.
         let succ_record = self
             .index
             .record(successor_did)
             .map_err(|_| WalletError::IdentityNotFound(successor_did.clone()))?;
-        let succ_slot = seed_slot_slug_by_pubkey(succ_record.pubkey_bytes);
+        let succ_slot = seed_slot_slug_by_pubkey(&succ_record.pubkey_bytes);
         let mut succ_seed = zeroize::Zeroizing::new(Vec::new());
         self.vault.get(&succ_slot, passphrase, &mut succ_seed)?;
         if succ_seed.len() < 32 {
@@ -787,8 +787,8 @@ impl WalletStore {
         IdentityKey::verify_successor_proof(
             &predecessor.algorithm_id(),
             &key_id,
-            &predecessor.public_key_bytes(),
-            &succ_key.public_key_bytes(),
+            predecessor.public_key_bytes(),
+            succ_key.public_key_bytes(),
             &event.signature_proof,
         )?;
         Ok(succ_key)
@@ -865,7 +865,7 @@ impl WalletStore {
         // 3. Compose the slug and call the vault. The vault's
         //    `VaultSlotNotFound` is preferred over a misleading
         //    `VaultDecryptionFailed` when the slot file is gone.
-        let slug = seed_slot_slug_by_pubkey(record.pubkey_bytes);
+        let slug = seed_slot_slug_by_pubkey(&record.pubkey_bytes);
         let get_result = self.vault.get(&slug, passphrase, seed_out);
         if let Err(e) = get_result {
             // Mission §AC-20: zeroize the caller-owned buffer
@@ -1142,7 +1142,7 @@ impl UnlockedWallet<'_> {
         successor: IdentityKey,
         passphrase: &str,
         now_unix: u64,
-    ) -> Result<[u8; 64], WalletError> {
+    ) -> Result<Vec<u8>, WalletError> {
         if passphrase.len() < MIN_PASSPHRASE_CHARS {
             return Err(WalletError::WeakPassphrase);
         }
@@ -1230,7 +1230,7 @@ impl UnlockedWallet<'_> {
         // and the public-key bytes are stable for a given
         // seed, so the value extracted here is the one the
         // successor record needs to persist.
-        let successor_pubkey = successor.public_key_bytes();
+        let successor_pubkey = successor.public_key_bytes().to_vec();
         // Read before `successor` is consumed below.
         let successor_key_id = successor.verification_method_id();
         let proof = self
@@ -1248,7 +1248,7 @@ impl UnlockedWallet<'_> {
         // window.
         let successor_record = IdentityRecord {
             did: successor_did.clone(),
-            pubkey_bytes: successor_pubkey,
+            pubkey_bytes: successor_pubkey.clone(),
             lifecycle: LifecycleState::Designated,
             hsm_slot: None,
             #[allow(clippy::cast_possible_wrap)]
@@ -1292,7 +1292,7 @@ impl UnlockedWallet<'_> {
             now_unix,
             now_unix.saturating_add(ROTATION_GRACE_PERIOD_SECS),
             successor_did_for_event,
-            proof,
+            proof.clone(),
         )?;
         write_index_atomically(&self.store.root, &self.store.index)?;
         Ok(proof)
@@ -1511,7 +1511,7 @@ impl UnlockedWallet<'_> {
     /// - `WalletError::NotActive` when lifecycle is not `Active` or
     ///   `Rotating`, per RFC-0009 §Lifecycle Requirements.
     /// - `WalletError::Hsm(_)` on adapter failure.
-    pub fn sign_prefixed(&self, payload: &[u8]) -> Result<[u8; 64], WalletError> {
+    pub fn sign_prefixed(&self, payload: &[u8]) -> Result<Vec<u8>, WalletError> {
         self.key.sign_prefixed(payload)
     }
 
@@ -1531,7 +1531,7 @@ impl UnlockedWallet<'_> {
         started_at: u64,
         grace_expires_at: u64,
         successor: Did,
-        signature_proof: [u8; 64],
+        signature_proof: Vec<u8>,
     ) -> Result<(), WalletError> {
         let pos = self
             .store
@@ -1706,7 +1706,7 @@ pub(crate) fn seed_slot_slug(key: &crate::identity::IdentityKey) -> String {
 /// rehydrate path in `unlock`, which has no `IdentityKey` yet) derives
 /// the same slot name the seal step wrote. Two spellings of one rule
 /// would orphan every slot on reopen.
-pub(crate) fn seed_slot_slug_by_pubkey(pubkey_bytes: [u8; 32]) -> String {
+pub(crate) fn seed_slot_slug_by_pubkey(pubkey_bytes: &[u8]) -> String {
     let slug = format!("identity-{}", hex::encode(pubkey_bytes));
     // Assert the slug passes validate_slot_id. The slug is derived
     // from hex-encoded pubkey bytes (a 73-character ASCII string) so
@@ -2080,6 +2080,36 @@ mod tests {
             orphans_after.iter().any(|s| s == "identity-orphan.vault"),
             "the orphan must still be reported after reopen, got {orphans_after:?}"
         );
+    }
+
+    /// Widening the key to a slice does not move any existing slot.
+    ///
+    /// `seed_slot_slug_by_pubkey` takes a slice now. The recorded worry was
+    /// that every persisted slot would orphan on reopen, because a different
+    /// spelling of the rule derives a different name. Measured rather than
+    /// assumed: for a 32-byte key the hex is the same 64 characters either
+    /// way, so the name is byte-identical and every existing slot is still
+    /// found. This test pins that, because the failure it guards against is
+    /// silent — the store would open fine and simply not see its keys.
+    #[test]
+    fn widening_the_key_did_not_rename_any_existing_slot() {
+        let key = IdentityKey::from_seed([0x5Au8; 32]);
+        let bytes = key.public_key_bytes();
+        assert_eq!(bytes.len(), 32);
+
+        // The name the old fixed-width rule produced, written out literally:
+        // `format!("identity-{}", hex::encode(pubkey))` over a `[u8; 32]`.
+        let legacy_name = format!("identity-{}", hex::encode(bytes));
+        assert_eq!(seed_slot_slug_by_pubkey(bytes), legacy_name);
+        assert_eq!(legacy_name.len(), 73, "9 prefix chars plus 64 hex chars");
+
+        // And a key of another length still names a legal slot, so the rule
+        // generalises rather than merely tolerating the old case.
+        let longer = seed_slot_slug_by_pubkey(&[0xABu8; 33]);
+        assert_eq!(longer.len(), 75);
+        crate::vault::validate_slot_id(&longer)
+            .expect("a 33-byte key still yields a legal slot id");
+        assert_ne!(longer, legacy_name, "different keys must not collide");
     }
 
     /// `tv_x_47` (mission §AC-29): the generated slug passes
@@ -2799,7 +2829,8 @@ mod tests {
         let pubkey = store
             .identity_record(&did)
             .expect("identity_record")
-            .pubkey_bytes;
+            .pubkey_bytes
+            .clone();
         let mut seed_out = Vec::new();
         let handle = store
             .unlock("correct-horse-battery-staple", &mut seed_out)
@@ -2976,13 +3007,14 @@ mod tests {
         let recorded = store
             .identity_record(&did)
             .expect("identity_record")
-            .pubkey_bytes;
+            .pubkey_bytes
+            .clone();
         let mut seed_out = Vec::new();
         let pubkey = {
             let handle = store
                 .unlock("correct-horse-battery-staple", &mut seed_out)
                 .expect("unlock");
-            handle.active_identity().public_key_bytes()
+            handle.active_identity().public_key_bytes().to_vec()
         };
         // Mission §AC-20: the caller-owned buffer is
         // zeroized, so it must be empty after unlock
@@ -3468,7 +3500,7 @@ mod tests {
             started_at_unix: 1_700_000_010,
             grace_expires_at_unix: 1_700_000_010 + 86_400,
             successor_did: IdentityKey::from_seed([0xB6u8; 32]).did(),
-            signature_proof: [0u8; 64],
+            signature_proof: vec![0u8; 64],
         }];
         write_index_atomically(dir.path(), &store.index).expect("persist the target state");
 
@@ -4191,7 +4223,7 @@ mod tests {
         // Splice the impostor's public key in while keeping the row's
         // DID - the inconsistent pair, written by hand.
         let mut index = read_index_for_test(dir.path());
-        index.records[0].pubkey_bytes = impostor.public_key_bytes();
+        index.records[0].pubkey_bytes = impostor.public_key_bytes().to_vec();
         assert_eq!(
             index.records[0].did, real_did,
             "precondition: the row still claims the original DID"
@@ -4564,7 +4596,7 @@ mod tests {
     ///
     /// The setup needs a SECOND registered identity, and that is the
     /// point rather than an inconvenience. The seal slot is chosen by
-    /// `seed_slot_slug_by_pubkey(succ_record.pubkey_bytes)`, so
+    /// `seed_slot_slug_by_pubkey(&succ_record.pubkey_bytes)`, so
     /// pointing the record at a key with no sealed slot would fail
     /// earlier with `VaultSlotNotFound` and never reach the binding
     /// check. Editing `pubkey_bytes` to an identity that IS sealed
@@ -4589,7 +4621,7 @@ mod tests {
         let mut store = WalletStore::open_at(dir.path()).expect("open_at");
         let predecessor = rotation_key([0xB1u8; 32]);
         let other = rotation_key([0xB2u8; 32]);
-        let other_pubkey = other.public_key_bytes();
+        let other_pubkey = other.public_key_bytes().to_vec();
         let successor = rotation_key([0xB3u8; 32]);
         let successor_did = successor.did();
         store
@@ -4628,7 +4660,7 @@ mod tests {
             .expect(
                 "the successor record must be in the index for this vector to be testing anything",
             );
-        index.records[pos].pubkey_bytes = other_pubkey;
+        index.records[pos].pubkey_bytes = other_pubkey.clone();
         write_index_atomically(dir.path(), &index).expect("write the poisoned index");
 
         let mut store = WalletStore::open_at(dir.path()).expect("reopen");
@@ -4696,7 +4728,7 @@ mod tests {
             !predecessor.rotation_history.is_empty(),
             "setup: begin_rotation must have persisted an event, or there is nothing to forge"
         );
-        predecessor.rotation_history[0].signature_proof = [0xABu8; 64];
+        predecessor.rotation_history[0].signature_proof = vec![0xABu8; 64];
         write_index_atomically(dir.path(), &index).expect("write the forged index");
 
         let mut store = WalletStore::open_at(dir.path()).expect("reopen");
@@ -4982,7 +5014,7 @@ mod verification_method_persistence_tests {
         let root = dir.path().join("wallet");
 
         let key = key_with_context([63u8; 32], "key-a");
-        let pubkey = key.public_key_bytes();
+        let pubkey = key.public_key_bytes().to_vec();
         {
             let mut store = WalletStore::open_at(&root).expect("open");
             store.register(key, PASS, true, 1_000).expect("register");
@@ -5093,7 +5125,11 @@ mod verification_method_persistence_tests {
             .register(key, "correct-horse-battery-staple", true, 1_700_000_000)
             .expect("register");
 
-        let pubkey_bytes = store.identity_record(&did).expect("record").pubkey_bytes;
+        let pubkey_bytes = store
+            .identity_record(&did)
+            .expect("record")
+            .pubkey_bytes
+            .clone();
         assert!(
             store
                 .identity_record(&did)

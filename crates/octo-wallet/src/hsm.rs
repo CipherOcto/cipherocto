@@ -31,17 +31,31 @@ pub enum HsmError {
 /// MVP: `InMemorySigner` wraps `crate::identity::IdentityKey`. Production swaps
 /// the adapter via the wallet constructor.
 pub trait HsmAdapter: Send + Sync {
-    /// Discover the device's public key (32 bytes Ed25519).
+    /// Discover the device's public key.
+    ///
+    /// A `Vec<u8>`, not `[u8; 32]`. This method is the extension point: the
+    /// trait's own docs say that adding an algorithm means adding an adapter.
+    /// While the return type was fixed at 32 bytes, an adapter for any
+    /// algorithm with other-sized keys — stark-schnorr is 33 — could not be
+    /// written at all. Widened by mission 0009-cd.
+    ///
     /// # Errors
     /// Returns `HsmError::Device` on transport failure, `HsmError::InvalidPubKey`
     /// on malformed response.
-    fn get_public_key(&self) -> Result<[u8; 32], HsmError>;
+    fn get_public_key(&self) -> Result<Vec<u8>, HsmError>;
 
-    /// Sign `msg`. Returns 64-byte Ed25519 signature.
+    /// Sign `msg`. Returns the algorithm's signature bytes.
+    ///
+    /// A `Vec<u8>` for the same reason as [`Self::get_public_key`]: a trait that
+    /// fixed the signature length at 64 has the identical defect one step over,
+    /// and would reject the same adapter the key change is trying to allow.
+    /// Ed25519 and stark-schnorr both happen to produce 64 bytes today, which is
+    /// exactly why the pin went unnoticed.
+    ///
     /// # Errors
     /// Returns `HsmError::UserRejected` if the user denies on-device,
     /// `HsmError::Device` on transport failure.
-    fn sign(&self, msg: &[u8]) -> Result<[u8; 64], HsmError>;
+    fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, HsmError>;
 
     /// Downcast hook for `Any` introspection. Required by callers that need
     /// to access adapter-specific state (e.g. `IdentityKey::seed_bytes_for_hkdf`
@@ -79,7 +93,7 @@ pub trait HsmAdapter: Send + Sync {
 /// the signer is dropped (RFC-0009 §Security §Key Handling Rule 3).
 pub struct InMemorySigner {
     seed_bytes: [u8; 32],
-    public_key: [u8; 32],
+    public_key: Vec<u8>,
 }
 
 impl Drop for InMemorySigner {
@@ -92,7 +106,7 @@ impl std::fmt::Debug for InMemorySigner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("InMemorySigner")
             .field("seed_bytes", &"[REDACTED]")
-            .field("public_key", &hex::encode(self.public_key))
+            .field("public_key", &hex::encode(&self.public_key))
             .finish()
     }
 }
@@ -100,7 +114,7 @@ impl std::fmt::Debug for InMemorySigner {
 impl InMemorySigner {
     /// Create an in-memory signer from an identity seed (32 bytes).
     #[must_use]
-    pub fn new(seed_bytes: [u8; 32], public_key: [u8; 32]) -> Self {
+    pub fn new(seed_bytes: [u8; 32], public_key: Vec<u8>) -> Self {
         Self {
             seed_bytes,
             public_key,
@@ -118,16 +132,16 @@ impl InMemorySigner {
 }
 
 impl HsmAdapter for InMemorySigner {
-    fn get_public_key(&self) -> Result<[u8; 32], HsmError> {
-        Ok(self.public_key)
+    fn get_public_key(&self) -> Result<Vec<u8>, HsmError> {
+        Ok(self.public_key.clone())
     }
 
-    fn sign(&self, msg: &[u8]) -> Result<[u8; 64], HsmError> {
+    fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, HsmError> {
         // Reconstruct signing key from seed; sign locally (MVP). Production HSM
         // adapters delegate to hardware and return device-computed signature.
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&self.seed_bytes);
         let sig = signing_key.sign(msg);
-        Ok(sig.to_bytes())
+        Ok(sig.to_bytes().to_vec())
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -164,7 +178,7 @@ impl std::fmt::Debug for LedgerSigner {
 impl LedgerSigner {
     /// Construct a Ledger-shaped signer with the given identity.
     #[must_use]
-    pub fn new(seed_bytes: [u8; 32], public_key: [u8; 32]) -> Self {
+    pub fn new(seed_bytes: [u8; 32], public_key: Vec<u8>) -> Self {
         Self {
             inner: InMemorySigner::new(seed_bytes, public_key),
         }
@@ -172,11 +186,11 @@ impl LedgerSigner {
 }
 
 impl HsmAdapter for LedgerSigner {
-    fn get_public_key(&self) -> Result<[u8; 32], HsmError> {
+    fn get_public_key(&self) -> Result<Vec<u8>, HsmError> {
         self.inner.get_public_key()
     }
 
-    fn sign(&self, msg: &[u8]) -> Result<[u8; 64], HsmError> {
+    fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, HsmError> {
         // Production: dispatch APDU `SIGN_PAYMENT` to Ledger; user confirms
         // on-device; device returns 64-byte Ed25519 signature.
         self.inner.sign(msg)
@@ -201,13 +215,13 @@ impl HsmAdapter for LedgerSigner {
 /// Per RFC-0009 §Lifecycle row 4 + RFC-0009 §Security §Key Handling
 /// Rule 3: revoked identities MUST NOT produce new signatures.
 pub struct NullSigner {
-    public_key: [u8; 32],
+    public_key: Vec<u8>,
 }
 
 impl std::fmt::Debug for NullSigner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NullSigner")
-            .field("public_key", &hex::encode(self.public_key))
+            .field("public_key", &hex::encode(&self.public_key))
             .finish()
     }
 }
@@ -215,17 +229,17 @@ impl std::fmt::Debug for NullSigner {
 impl NullSigner {
     /// Construct a `NullSigner` carrying the original public key.
     #[must_use]
-    pub fn new(public_key: [u8; 32]) -> Self {
+    pub fn new(public_key: Vec<u8>) -> Self {
         Self { public_key }
     }
 }
 
 impl HsmAdapter for NullSigner {
-    fn get_public_key(&self) -> Result<[u8; 32], HsmError> {
-        Ok(self.public_key)
+    fn get_public_key(&self) -> Result<Vec<u8>, HsmError> {
+        Ok(self.public_key.clone())
     }
 
-    fn sign(&self, _msg: &[u8]) -> Result<[u8; 64], HsmError> {
+    fn sign(&self, _msg: &[u8]) -> Result<Vec<u8>, HsmError> {
         Err(HsmError::Device(
             "signer revoked; cannot produce new signatures".to_owned(),
         ))
@@ -258,7 +272,7 @@ mod tests {
 
     #[test]
     fn in_memory_signer_signs_and_verifies() {
-        let s = InMemorySigner::new(sample_seed(), sample_pub());
+        let s = InMemorySigner::new(sample_seed(), sample_pub().to_vec());
         let pk = s.get_public_key().expect("get pub");
         assert_eq!(pk, sample_pub());
         let msg = b"phase h smoke test";
@@ -274,7 +288,7 @@ mod tests {
 
     #[test]
     fn ledger_signer_signs_smoke_test() {
-        let l = LedgerSigner::new(sample_seed(), sample_pub());
+        let l = LedgerSigner::new(sample_seed(), sample_pub().to_vec());
         let pk = l.get_public_key().expect("get pub");
         assert_eq!(pk, sample_pub());
         let msg = b"ledger smoke";
@@ -288,8 +302,8 @@ mod tests {
     fn both_signers_produce_same_signature_for_same_input() {
         // Both adapters MUST produce identical signatures for the same input
         // (deterministic Ed25519 + identical seed).
-        let in_mem = InMemorySigner::new(sample_seed(), sample_pub());
-        let ledger = LedgerSigner::new(sample_seed(), sample_pub());
+        let in_mem = InMemorySigner::new(sample_seed(), sample_pub().to_vec());
+        let ledger = LedgerSigner::new(sample_seed(), sample_pub().to_vec());
         let msg = b"interop test";
         let sig_in = in_mem.sign(msg).unwrap();
         let sig_ledger = ledger.sign(msg).unwrap();

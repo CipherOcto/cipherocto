@@ -16,9 +16,12 @@ metadata:
 
 ## Status
 
-Claimed. Filed by testing what `0009-cc`'s vector actually proved. The two store
-pre-filters and the comment above them are done; the record-field widening is
-blocked on the design fork in §Open question.
+Complete. Filed by testing what `0009-cc`'s vector actually proved.
+
+Every criterion is met. Three constraints this file recorded as blockers —
+persistence, the `#[repr(C)]` wire form, and the slot-name derivation — were
+each measured and each dissolved. They are kept as sections below because the
+reasoning that produced them is the thing worth inheriting.
 
 ## The finding
 
@@ -274,13 +277,13 @@ the record. That is the gap this mission closes.
 
 ## Acceptance Criteria
 
-- [ ] `HsmAdapter::get_public_key` returns a key whose length is not decided by
+- [x] `HsmAdapter::get_public_key` returns a key whose length is not decided by
       the trait, so an adapter for an algorithm with non-32-byte keys can
       actually be written — this is the root, and the other `octo-wallet` items
       are downstream of it
-- [ ] `HsmAdapter::sign` is considered at the same time as the key: a trait that
+- [x] `HsmAdapter::sign` is considered at the same time as the key: a trait that
       fixes the signature length at 64 has the same defect one step over
-- [ ] `IdentityKey::public_key` carries whatever the adapter returned, rather
+- [x] `IdentityKey::public_key` carries whatever the adapter returned, rather
       than a second independent 32-byte copy
 - [x] `GovernanceProof::governance_pubkey`, `SuspensionAuth::governance_pubkey`
       and `ResumeProof::governance_pubkey` carry a key whose length is not
@@ -302,7 +305,7 @@ the record. That is the gap this mission closes.
 - [x] A second-algorithm vector that round-trips through a **record**, not just
       through the verification function — constructed, stored, read back and
       verified — so the store path is covered and not only the helper
-- [ ] A second-algorithm vector that runs through an `HsmAdapter`, proving a
+- [x] A second-algorithm vector that runs through an `HsmAdapter`, proving a
       non-Ed25519 adapter can be written and that `IdentityKey` dispatches on
       the algorithm it reports
 - [x] Zero-key sentinel behaviour is unchanged for every existing 32-byte key
@@ -343,35 +346,54 @@ Hardcoding the algorithm turns three vectors red: this one, the function-level
 vector in `auth::tests`, and `an_unregistered_algorithm_on_the_auth_record_is_refused`.
 The third was already there; the first two are the new coverage.
 
-## The `HsmAdapter` fix is not independent of persistence
+## The `HsmAdapter` chain: measured, and there was no migration
 
-It was tempting to treat the adapter as the unblocked root and widen it first.
-Measuring the chain says otherwise.
+This section previously argued that widening the adapter was impossible without
+a migration strategy, on the strength of `seed_slot_slug_by_pubkey` hex-encoding
+the key into a directory name. **That was wrong, and measuring it is what
+unblocked the last four criteria.**
 
-The value does not stop at the trait. It runs:
+Three things had to be true for the migration to be real. All three were checked:
 
-```text
-HsmAdapter::get_public_key -> [u8; 32]
-  -> IdentityKey::public_key                  -> [u8; 32]
-    -> IdentityRecord::pubkey_bytes           -> [u8; 32], serde_bytes_32
-      -> seed_slot_slug_by_pubkey(pubkey)     -> format!("identity-{}", hex(pubkey))
-        -> a directory name on disk
-```
+1. **Would a 32-byte key derive a different slot name?** No. The rule is
+   `format!("identity-{}", hex::encode(pubkey))`. `hex::encode` of a 32-byte
+   `Vec<u8>` is the same 64 characters as of a `[u8; 32]`. The name is
+   byte-identical, so no existing slot moves.
+2. **Would a different-length key still yield a legal slot id?** Yes.
+   `validate_slot_id` caps at **128 characters**; a 32-byte key makes 73 and a
+   33-byte key makes 75. Both are hex plus the `identity-` prefix, well inside
+   the charset.
+3. **Would the persisted JSON change?** No. `serde_bytes_32` serialises through
+   `serde_bytes::Bytes`, which over JSON is a plain sequence. A 32-byte key
+   emits the same sequence as `Vec<u8>` would. Reading is strictly more
+   permissive: `ByteArray<32>` refused any length but 32, `Vec<u8>` does not.
 
-`seed_slot_slug_by_pubkey` hex-encodes the public key into a **filesystem slot
-name**. Changing the key's length changes the hex length changes the slot name.
-The function's own comment records the consequence:
+`widening_the_key_did_not_rename_any_existing_slot` pins the first of these,
+because the failure it guards is silent — the store would open cleanly and
+simply not see its keys.
 
-> Two spellings of one rule would orphan every slot on reopen.
+### What changed
 
-So widening the trait signature is not a contained refactor of `octo-wallet`. It
-is a migration of every persisted identity slot, and the blast radius does not
-stop at the crate — `octo-wallet-node`, `octo-capability-issuer-node` and
-`octo-cli` all construct identities through this path.
+`HsmAdapter::get_public_key` returns `Vec<u8>` and `HsmAdapter::sign` returns
+`Vec<u8>`. `IdentityKey::public_key` is a `Vec<u8>` that carries the adapter's
+bytes rather than making an independent 32-byte copy, and
+`IdentityRecord::pubkey_bytes` follows it through a new `serde_bytes_key`
+adapter. The lifecycle-proof types on `IdentityKey` and
+`IdentityRotationEvent::signature_proof` widen for the same reason: Ed25519 and
+stark-schnorr both produce 64 bytes today, which is precisely why those pins
+went unnoticed.
 
-This is why the design fork in §Open question has to be decided before any of
-the widening is attempted, and why "just widen the trait first" is the wrong
-order despite the trait being the root of the problem.
+### The vector that proves it
+
+`an_identity_backed_by_a_non_ed25519_adapter_verifies_its_own_signatures`
+implements `HsmAdapter` for stark-schnorr — an impl that **could not be written
+before this change** — attaches it to an `IdentityKey`, and verifies signatures
+the identity produced itself. Every other vector in that file hands the
+verifier an explicit algorithm; this one lets key and algorithm travel together
+through the adapter, which is the production path.
+
+Hardcoding the identity's algorithm turns that test red and exactly that test
+red, out of five.
 
 ## Open question
 

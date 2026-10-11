@@ -134,8 +134,10 @@ fn capability_key_debug_does_not_leak_bytes() {
 
 #[test]
 fn in_memory_signer_debug_does_not_leak_seed() {
-    let pk = IdentityKey::from_seed(SEED_MARKER).public_key_bytes();
-    let s = InMemorySigner::new(SEED_MARKER, pk);
+    let pk = IdentityKey::from_seed(SEED_MARKER)
+        .public_key_bytes()
+        .to_vec();
+    let s = InMemorySigner::new(SEED_MARKER, pk.clone());
     let out = format!("{s:?}");
     assert_no_marker("InMemorySigner", &out);
     // Tripwire: manual Debug prints `[REDACTED]` for `seed_bytes`.
@@ -148,8 +150,10 @@ fn in_memory_signer_debug_does_not_leak_seed() {
 
 #[test]
 fn ledger_signer_debug_does_not_leak_seed() {
-    let pk = IdentityKey::from_seed(SEED_MARKER).public_key_bytes();
-    let s = LedgerSigner::new(SEED_MARKER, pk);
+    let pk = IdentityKey::from_seed(SEED_MARKER)
+        .public_key_bytes()
+        .to_vec();
+    let s = LedgerSigner::new(SEED_MARKER, pk.clone());
     let out = format!("{s:?}");
     assert_no_marker("LedgerSigner", &out);
     // Tripwire: LedgerSigner Debug delegates to the inner InMemorySigner

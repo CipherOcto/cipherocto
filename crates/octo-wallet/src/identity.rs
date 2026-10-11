@@ -32,7 +32,7 @@ use octo_ident::DidCodec;
 ///   do not expose it at all.
 pub struct IdentityKey {
     signer: Arc<dyn HsmAdapter>,
-    public_key: [u8; 32],
+    public_key: Vec<u8>,
     /// `key_id` for the mandatory signable prefix (RFC-0009 §Domain
     /// separation), or `None` for an identity restored without one.
     ///
@@ -62,7 +62,7 @@ pub struct IdentityKey {
     /// (cross-node revocation propagation). The current surface
     /// captures + exposes it; production gossip wiring ships in a
     /// follow-on mission.
-    revoked_proof: Option<[u8; 64]>,
+    revoked_proof: Option<Vec<u8>>,
     /// Successor `IdentityKey` for rotation (RFC-0009 §Lifecycle row 2).
     /// `None` until [`Self::begin_rotation`] succeeds; cleared on
     /// [`Self::complete_rotation`] or [`Self::abort_rotation`].
@@ -82,7 +82,7 @@ pub const ROTATION_GRACE_PERIOD_SECS: u64 = 24 * 60 * 60;
 impl std::fmt::Debug for IdentityKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("IdentityKey")
-            .field("public_key", &hex::encode(self.public_key))
+            .field("public_key", &hex::encode(&self.public_key))
             .field("signer", &"<dyn HsmAdapter>")
             .finish_non_exhaustive()
     }
@@ -97,12 +97,12 @@ impl Clone for IdentityKey {
     fn clone(&self) -> Self {
         Self {
             signer: self.signer.clone(),
-            public_key: self.public_key,
+            public_key: self.public_key.clone(),
             verification_method_id: self.verification_method_id,
             lifecycle: self.lifecycle,
             activated_at_unix_secs: self.activated_at_unix_secs,
             revoked_at_unix_secs: self.revoked_at_unix_secs,
-            revoked_proof: self.revoked_proof,
+            revoked_proof: self.revoked_proof.clone(),
             successor_key: self.successor_key.clone(),
             rotation_started_at_unix_secs: self.rotation_started_at_unix_secs,
             deprecated: self.deprecated,
@@ -130,8 +130,8 @@ impl IdentityKey {
         let sk = ed25519_dalek::SigningKey::from_bytes(&seed);
         let public_key = sk.verifying_key().to_bytes();
         Self {
-            signer: Arc::new(InMemorySigner::new(seed, public_key)),
-            public_key,
+            signer: Arc::new(InMemorySigner::new(seed, public_key.to_vec())),
+            public_key: public_key.to_vec(),
             verification_method_id: None,
             lifecycle: crate::lifecycle::LifecycleState::Designated,
             activated_at_unix_secs: None,
@@ -187,8 +187,8 @@ impl IdentityKey {
         let sk = ed25519_dalek::SigningKey::from_bytes(&seed);
         let public_key = sk.verifying_key().to_bytes();
         Ok(Self {
-            signer: Arc::new(InMemorySigner::new(seed, public_key)),
-            public_key,
+            signer: Arc::new(InMemorySigner::new(seed, public_key.to_vec())),
+            public_key: public_key.to_vec(),
             // The persisted record carries no `key_id`, so a rehydrated
             // identity has none. It refuses prefixed signing instead of
             // allocating one: a locally allocated id would make the signed
@@ -309,8 +309,8 @@ impl IdentityKey {
     /// RFC-0009 §Lifecycle row 4 — bind the holder's authorization to the
     /// burn event for audit + cross-node revocation gossip.
     #[must_use]
-    pub fn revoked_proof(&self) -> Option<[u8; 64]> {
-        self.revoked_proof
+    pub fn revoked_proof(&self) -> Option<Vec<u8>> {
+        self.revoked_proof.clone()
     }
 
     /// RFC-0009 §Lifecycle row 4: `Active → Revoked` (or
@@ -372,7 +372,7 @@ impl IdentityKey {
         // Replace signer with a NullSigner: any direct `sign()` calls on
         // the adapter now fail at the adapter level (lifecycle gate is the
         // primary check; this is defense-in-depth).
-        self.signer = Arc::new(crate::hsm::NullSigner::new(self.public_key));
+        self.signer = Arc::new(crate::hsm::NullSigner::new(self.public_key.clone()));
         Ok(())
     }
 
@@ -395,7 +395,7 @@ impl IdentityKey {
         &mut self,
         successor: IdentityKey,
         now_unix_secs: u64,
-    ) -> Result<[u8; 64], WalletError> {
+    ) -> Result<Vec<u8>, WalletError> {
         use crate::lifecycle::LifecycleState;
         if self.lifecycle != LifecycleState::Active {
             return Err(WalletError::NotActive {
@@ -408,7 +408,7 @@ impl IdentityKey {
         let proof_message = {
             let mut msg = Vec::with_capacity(6 + 32);
             msg.extend_from_slice(b"rotate");
-            msg.extend_from_slice(&successor.public_key_bytes());
+            msg.extend_from_slice(successor.public_key_bytes());
             msg
         };
         // Bound to this identity's algorithm and key. Safe to require now
@@ -555,7 +555,7 @@ impl IdentityKey {
     ///   rather than downgraded: an unprefixed proof is the legacy shape, and
     ///   a verifier that accepts both has a downgrade path.
     /// - Any error from the underlying [`HsmAdapter::sign`].
-    fn sign_lifecycle_proof(&self, payload: &[u8]) -> Result<Option<[u8; 64]>, WalletError> {
+    fn sign_lifecycle_proof(&self, payload: &[u8]) -> Result<Option<Vec<u8>>, WalletError> {
         // `None` means "this identity has no key context, so there is no
         // bound proof to produce" — never "the proof is invalid". Callers
         // decide whether that is fatal; §`revoke` decides it is not.
@@ -589,9 +589,9 @@ impl IdentityKey {
     pub fn verify_successor_proof(
         algorithm_id: &octo_ident::AlgorithmId,
         key_id: &octo_ident::VerificationMethodId,
-        old_pub: &[u8; 32],
-        new_pub: &[u8; 32],
-        proof: &[u8; 64],
+        old_pub: &[u8],
+        new_pub: &[u8],
+        proof: &[u8],
     ) -> Result<(), WalletError> {
         let mut payload = Vec::with_capacity(6 + 32);
         payload.extend_from_slice(b"rotate");
@@ -619,7 +619,7 @@ impl IdentityKey {
         algorithm_id: &octo_ident::AlgorithmId,
         key_id: &octo_ident::VerificationMethodId,
         pubkey: &[u8],
-        proof: &[u8; 64],
+        proof: &[u8],
     ) -> Result<(), WalletError> {
         IdentityKey::verify_lifecycle_proof(algorithm_id, key_id, pubkey, b"revoke", proof, || {
             WalletError::InvalidRevocationProof
@@ -636,7 +636,7 @@ impl IdentityKey {
         key_id: &octo_ident::VerificationMethodId,
         public_key: &[u8],
         payload: &[u8],
-        proof: &[u8; 64],
+        proof: &[u8],
         error: fn() -> WalletError,
     ) -> Result<(), WalletError> {
         let message = octo_ident::SignedMessage::new(
@@ -680,10 +680,13 @@ impl IdentityKey {
         }
     }
 
-    /// Public verifying key (32 bytes Ed25519 public key).
+    /// The verifying key, whatever length the adapter's algorithm uses.
+    ///
+    /// Borrowed rather than copied: a stark-schnorr key is 33 bytes and a
+    /// fixed-width accessor would have forced it back to 32.
     #[must_use]
-    pub fn public_key_bytes(&self) -> [u8; 32] {
-        self.public_key
+    pub fn public_key_bytes(&self) -> &[u8] {
+        &self.public_key
     }
 
     /// Return this identity's DID. Layer B `[ADD]` per RFC-0011 §Subcommand
@@ -697,7 +700,7 @@ impl IdentityKey {
     /// re-implementing base58btc in the substrate).
     #[must_use]
     pub fn did(&self) -> crate::identity_record::Did {
-        crate::identity_record::Did(format!("did:octo:{}", hex::encode(self.public_key)))
+        crate::identity_record::Did(format!("did:octo:{}", hex::encode(&self.public_key)))
     }
 
     /// Ed25519 signature over `msg`, with **no** signable prefix.
@@ -753,7 +756,7 @@ impl IdentityKey {
     /// # Errors
     /// - [`WalletError::NotActive`] when the lifecycle forbids signing.
     /// - Any error from the underlying [`HsmAdapter::sign`].
-    pub fn sign(&self, msg: &[u8]) -> Result<[u8; 64], WalletError> {
+    pub fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, WalletError> {
         if !self.lifecycle.can_sign() {
             return Err(WalletError::NotActive {
                 current_state: self.lifecycle,
@@ -852,7 +855,7 @@ impl IdentityKey {
     ///   verifying after the prefix is deployed.
     /// - [`WalletError::NotActive`] when the lifecycle forbids signing.
     /// - Any error from the underlying [`HsmAdapter::sign`].
-    pub fn sign_prefixed(&self, payload: &[u8]) -> Result<[u8; 64], WalletError> {
+    pub fn sign_prefixed(&self, payload: &[u8]) -> Result<Vec<u8>, WalletError> {
         // Order matters: refusing for a missing key context first would leak
         // less, but the lifecycle check is the one that must not be
         // skippable, so both run before the signer is touched.
@@ -1089,7 +1092,6 @@ impl octo_cap_macaroon::CapabilitySigner for IdentityKey {
         // is the open capability question mission `0009-e9` deliberately did
         // not decide: whether the holder message's prefix travels in band.
         IdentityKey::sign(self, msg)
-            .map(|sig| sig.to_vec())
             .map_err(|e| octo_cap_macaroon::CapabilitySignerError::Signer(e.to_string()))
     }
 
@@ -1134,11 +1136,11 @@ mod tests {
             pk: [u8; 32],
         }
         impl HsmAdapter for StrangerAdapter {
-            fn get_public_key(&self) -> Result<[u8; 32], crate::hsm::HsmError> {
-                Ok(self.pk)
+            fn get_public_key(&self) -> Result<Vec<u8>, crate::hsm::HsmError> {
+                Ok(self.pk.to_vec())
             }
-            fn sign(&self, _msg: &[u8]) -> Result<[u8; 64], crate::hsm::HsmError> {
-                Ok([0u8; 64])
+            fn sign(&self, _msg: &[u8]) -> Result<Vec<u8>, crate::hsm::HsmError> {
+                Ok(vec![0u8; 64])
             }
             fn as_any(&self) -> &dyn std::any::Any {
                 self
@@ -1200,7 +1202,7 @@ mod tests {
         let mut id = IdentityKey::from_seed(seed);
         id.activate(1_700_000_000).expect("activate");
         let adapter_sig = id.sign(b"parity check").expect("adapter sign");
-        assert_eq!(raw_sig.to_bytes(), adapter_sig);
+        assert_eq!(raw_sig.to_bytes().to_vec(), adapter_sig);
     }
 
     #[test]
@@ -1222,11 +1224,11 @@ mod tests {
             pk: [u8; 32],
         }
         impl HsmAdapter for FakeHwAdapter {
-            fn get_public_key(&self) -> Result<[u8; 32], crate::hsm::HsmError> {
-                Ok(self.pk)
+            fn get_public_key(&self) -> Result<Vec<u8>, crate::hsm::HsmError> {
+                Ok(self.pk.to_vec())
             }
-            fn sign(&self, _msg: &[u8]) -> Result<[u8; 64], crate::hsm::HsmError> {
-                Ok([0u8; 64])
+            fn sign(&self, _msg: &[u8]) -> Result<Vec<u8>, crate::hsm::HsmError> {
+                Ok(vec![0u8; 64])
             }
             fn as_any(&self) -> &dyn std::any::Any {
                 self
@@ -1362,7 +1364,7 @@ mod tests {
     fn in_memory_signer_factory_round_trips() {
         // Sanity check the construction path used by `IdentityKey::from_seed`.
         let seed = [11u8; 32];
-        let s = InMemorySigner::new(seed, [0u8; 32]);
+        let s = InMemorySigner::new(seed, vec![0u8; 32]);
         assert_eq!(s.seed_bytes(), seed);
     }
 
@@ -1550,8 +1552,8 @@ mod tests {
         let mut old = with_key([17u8; 32], TEST_KEY_ID);
         old.activate(1_000).expect("activate");
         let successor = IdentityKey::from_seed([18u8; 32]);
-        let old_pub = old.public_key_bytes();
-        let new_pub = successor.public_key_bytes();
+        let old_pub = old.public_key_bytes().to_vec();
+        let new_pub = successor.public_key_bytes().to_vec();
         let proof = old
             .begin_rotation(successor, 2_000)
             .expect("begin_rotation");
@@ -1589,7 +1591,7 @@ mod tests {
         let mut old = with_key([21u8; 32], TEST_KEY_ID);
         old.activate(1_000).expect("activate");
         let successor = IdentityKey::from_seed([22u8; 32]);
-        let old_pub = old.public_key_bytes();
+        let old_pub = old.public_key_bytes().to_vec();
         let proof = old
             .begin_rotation(successor, 2_000)
             .expect("begin_rotation");
@@ -1700,7 +1702,7 @@ mod tests {
         IdentityKey::verify_revocation_proof(
             &octo_algo_ed25519::ed25519_algorithm_id(),
             &octo_ident::VerificationMethodId::derive(TEST_KEY_ID),
-            &pubkey,
+            pubkey,
             &proof,
         )
         .expect("captured proof must verify against pubkey");
@@ -1717,7 +1719,7 @@ mod tests {
         let result = IdentityKey::verify_revocation_proof(
             &octo_algo_ed25519::ed25519_algorithm_id(),
             &octo_ident::VerificationMethodId::derive(TEST_KEY_ID),
-            &key.public_key_bytes(),
+            key.public_key_bytes(),
             &tampered,
         );
         assert!(
@@ -2035,20 +2037,20 @@ mod lifecycle_proof_tests {
         IdentityKey::verify_revocation_proof(
             &key.algorithm_id(),
             &key.verification_method_id().expect("key id"),
-            &key.public_key_bytes(),
+            key.public_key_bytes(),
             &proof,
         )
         .expect("a genuine revocation proof must verify");
     }
 
     /// A rotating identity, its successor's key, and the proof it produced.
-    fn rotating(key_id: &str) -> (IdentityKey, [u8; 32], [u8; 64]) {
+    fn rotating(key_id: &str) -> (IdentityKey, Vec<u8>, Vec<u8>) {
         let mut old = IdentityKey::from_seed([44u8; 32])
             .with_verification_method_id(VerificationMethodId::derive(key_id));
         old.activate(1_000).expect("activate");
         let successor = IdentityKey::from_seed([45u8; 32])
             .with_verification_method_id(VerificationMethodId::derive("key-b"));
-        let new_pub = successor.public_key_bytes();
+        let new_pub = successor.public_key_bytes().to_vec();
         let proof = old
             .begin_rotation(successor, 2_000)
             .expect("begin_rotation");
@@ -2058,7 +2060,7 @@ mod lifecycle_proof_tests {
     #[test]
     fn a_successor_proof_is_bound_to_its_key_id() {
         let (old, new_pub, proof) = rotating("key-a");
-        let old_pub = old.public_key_bytes();
+        let old_pub = old.public_key_bytes().to_vec();
 
         IdentityKey::verify_successor_proof(
             &old.algorithm_id(),
@@ -2086,7 +2088,7 @@ mod lifecycle_proof_tests {
     #[test]
     fn a_successor_proof_binds_the_successor_key() {
         let (old, new_pub, proof) = rotating("key-a");
-        let old_pub = old.public_key_bytes();
+        let old_pub = old.public_key_bytes().to_vec();
 
         // A proof authorising one successor must not authorise another.
         let other = [0x5Au8; 32];
@@ -2114,7 +2116,7 @@ mod lifecycle_proof_tests {
     #[test]
     fn a_successor_proof_is_refused_without_a_prefix() {
         let (old, new_pub, _proof) = rotating("key-a");
-        let old_pub = old.public_key_bytes();
+        let old_pub = old.public_key_bytes().to_vec();
 
         // The legacy shape, signed directly. A verifier accepting it would be
         // a downgrade path onto proofs minted before the prefix existed.
@@ -2145,7 +2147,7 @@ mod lifecycle_proof_tests {
         IdentityKey::verify_revocation_proof(
             &key.algorithm_id(),
             &VerificationMethodId::derive("key-b"),
-            &pubkey,
+            pubkey,
             &proof,
         )
         .expect_err("a proof must not carry over to another key_id");
@@ -2156,7 +2158,7 @@ mod lifecycle_proof_tests {
         IdentityKey::verify_revocation_proof(
             &key.algorithm_id(),
             &VerificationMethodId::derive("key-a"),
-            &pubkey,
+            pubkey,
             &other.revoked_proof().expect("proof"),
         )
         .expect_err("a proof bound elsewhere must not verify here");
@@ -2181,7 +2183,7 @@ mod lifecycle_proof_tests {
         IdentityKey::verify_revocation_proof(
             &key.algorithm_id(),
             &key.verification_method_id().expect("key id"),
-            &pubkey,
+            pubkey,
             &legacy,
         )
         .expect_err("an unprefixed revocation proof must be refused");

@@ -324,7 +324,7 @@ impl StarkliCompat {
                 },
                 mac: hex_encode(tag),
             },
-            public_key: hex_encode(&key.public_key_bytes()),
+            public_key: hex_encode(key.public_key_bytes()),
             cipher_name: None,
         };
 
@@ -578,7 +578,7 @@ mod tests {
         //    catch a malformed export, but it establishes no cross-
         //    implementation property and must not be read as one.
         let envelope = std::fs::read_to_string(&path).expect("envelope read");
-        let expected_hex = hex_encode(&public_before);
+        let expected_hex = hex_encode(public_before);
         assert!(
             envelope.contains(&expected_hex),
             "public key mismatch: envelope does not contain {expected_hex}"

@@ -10,6 +10,22 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Serde adapter for a variable-length key. The fixed-width `serde_bytes_32`
+/// module serialises the same way — `serde_bytes::Bytes` over JSON is a plain
+/// sequence — so a 32-byte key round-trips byte-identically through this and an
+/// existing `store.json` reads unchanged. Widened by mission 0009-cd.
+mod serde_bytes_key {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(bytes: &[u8], s: S) -> Result<S::Ok, S::Error> {
+        serde_bytes::Bytes::new(bytes).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
+        Ok(serde_bytes::ByteBuf::deserialize(d)?.into_vec())
+    }
+}
+
 /// Serde adapter for `[u8; 32]` fields (matches the `market_delivery`
 /// pattern; serde's derive does not auto-implement for fixed arrays).
 mod serde_bytes_32 {
@@ -21,20 +37,6 @@ mod serde_bytes_32 {
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 32], D::Error> {
         let v: serde_bytes::ByteArray<32> = serde_bytes::ByteArray::deserialize(d)?;
-        Ok(v.into_array())
-    }
-}
-
-/// Serde adapter for `[u8; 64]` fields.
-mod serde_bytes_64 {
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S: Serializer>(bytes: &[u8; 64], s: S) -> Result<S::Ok, S::Error> {
-        serde_bytes::Bytes::new(bytes).serialize(s)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 64], D::Error> {
-        let v: serde_bytes::ByteArray<64> = serde_bytes::ByteArray::deserialize(d)?;
         Ok(v.into_array())
     }
 }
@@ -117,9 +119,12 @@ impl From<&str> for Did {
 pub struct IdentityRecord {
     /// Canonical DID (RFC-0010 form).
     pub did: Did,
-    /// 32-byte Ed25519 public key.
-    #[serde(with = "serde_bytes_32")]
-    pub pubkey_bytes: [u8; 32],
+    /// The identity's public key, whatever length its algorithm uses.
+    ///
+    /// Widened by mission 0009-cd. `serde_bytes_32` deserialised through
+    /// `ByteArray<32>`, which refuses any length but 32 outright.
+    #[serde(with = "serde_bytes_key")]
+    pub pubkey_bytes: Vec<u8>,
     /// Lifecycle state at snapshot time.
     #[serde(with = "serde_lifecycle_state")]
     pub lifecycle: crate::lifecycle::LifecycleState,
@@ -180,9 +185,12 @@ pub struct IdentityRotationEvent {
     pub grace_expires_at_unix: i64,
     /// DID of the successor identity (RFC-0010 form).
     pub successor_did: Did,
-    /// 64-byte Ed25519 signature: `Ed25519(self, b"rotate" || successor_pubkey)`.
-    #[serde(with = "serde_bytes_64")]
-    pub signature_proof: [u8; 64],
+    /// The predecessor's rotation proof, whatever length its algorithm produces.
+    ///
+    /// Widened by mission 0009-cd. Ed25519 and stark-schnorr both produce 64
+    /// bytes today, which is why the fixed width went unnoticed.
+    #[serde(with = "serde_bytes_key")]
+    pub signature_proof: Vec<u8>,
 }
 
 // Wallet store handle lives in `crate::identity_store` (mission

@@ -46,7 +46,7 @@ pub fn begin_rotation(
     key: &mut IdentityKey,
     successor: IdentityKey,
     now_unix_secs: u64,
-) -> Result<[u8; 64], WalletError> {
+) -> Result<Vec<u8>, WalletError> {
     key.begin_rotation(successor, now_unix_secs)
 }
 

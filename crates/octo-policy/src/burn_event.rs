@@ -139,7 +139,7 @@ pub trait AuditSink: Send + Sync {
 }
 
 /// TransferEventLog port — re-exported from `octo_vault` (canonical Layer B
-/// substrate per `cipherocto-design-principles` §No parallel abstractions).
+/// substrate per `docs/architecture/design-principles.md` §No parallel abstractions).
 pub use octo_vault::TransferEventLog;
 
 /// Audit invariant violation (RFC-0105 §3.13 tri-invariant pair).

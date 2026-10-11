@@ -562,7 +562,7 @@ pub(crate) fn genesis_fold_lifecycle(genesis: GenesisState) -> crate::state::Coo
 ///
 /// Substrate-faithful: struct method delegates to the free
 /// function to keep the canonical election logic in one place
-/// per cipherocto-design-principles §Stable Abstractions
+/// per `docs/architecture/design-principles.md` §Stable Abstractions
 /// Principle.
 #[derive(Clone, Debug, Default)]
 pub struct WriterElection {

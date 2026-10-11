@@ -66,28 +66,28 @@ pub fn governance_algorithm_id() -> octo_ident::AlgorithmId {
 /// canonical verifier that all event types share.
 pub fn verify_governance_signature(
     algorithm_id: &octo_ident::AlgorithmId,
-    sig: &GovernanceSignatureBytes,
+    sig: &[u8],
     body_hash: &[u8; 32],
-    governance_pubkey: &GovernancePubkey,
+    governance_pubkey: &[u8],
 ) -> Result<(), GovernanceSignatureError> {
-    // `GovernancePubkey` is `[u8; 32]`, so there is nothing to check here:
-    // the key's length is fixed by its type. Comparing against the
-    // *algorithm's* required length is the check that can actually fire,
-    // and it is what makes `InvalidPubkeyLength` reachable — a caller
-    // holding a 32-byte key for a future 48-byte algorithm gets told the
-    // key length is wrong rather than that the signature is bad.
-    let algorithm = octo_algo_ed25519::shared_registry()
-        .map_err(|_| GovernanceSignatureError::InvalidSignature)?
-        .get(*algorithm_id)
-        .map_err(|_| GovernanceSignatureError::InvalidSignature)?;
-    if algorithm.public_key_len() != governance_pubkey.len() {
-        return Err(GovernanceSignatureError::InvalidPubkeyLength(
-            governance_pubkey.len(),
-        ));
-    }
-    algorithm
-        .verify(governance_pubkey, body_hash, sig)
-        .map_err(|_| GovernanceSignatureError::InvalidSignature)
+    // One way in. This used to reach for `shared_registry()` itself, take the
+    // algorithm out by hand and call `verify` on it, so that a wrong key
+    // length could be reported as `InvalidPubkeyLength` rather than folded
+    // into "signature bad". That distinction is worth keeping — it tells a
+    // caller holding a 33-byte key under a 32-byte algorithm what actually
+    // went wrong — but it did not need a second route to the registry.
+    //
+    // The registered algorithm reports the same length error, and the dispatch
+    // error carries it intact, so the specific case is recovered by matching
+    // rather than by bypassing the entry point.
+    octo_algo_ed25519::verify_dispatch(algorithm_id, governance_pubkey, body_hash, sig).map_err(
+        |e| match e {
+            octo_algo_ed25519::DispatchError::Signature(
+                octo_ident::SignatureError::BadKeyLength { got, .. },
+            ) => GovernanceSignatureError::InvalidPubkeyLength(got),
+            _ => GovernanceSignatureError::InvalidSignature,
+        },
+    )
 }
 
 /// Canonical BLAKE3 hash primitive (Layer A frozen substrate per §3.12).
@@ -138,6 +138,84 @@ mod tests {
         let a = blake3_hash(b"a");
         let b = blake3_hash(b"b");
         assert_ne!(a, b);
+    }
+
+    /// The vector that tells dispatch apart from a 32-and-64-byte assumption.
+    ///
+    /// Every other test in this module reaches the verifier with a 32-byte
+    /// Ed25519 key and a 64-byte Ed25519 signature, through
+    /// `governance_algorithm_id()`. A verifier that hardcoded those two widths
+    /// would pass all of them, and would pass this crate's other consumers too.
+    ///
+    /// **This vector could not have existed before the parameters were
+    /// widened.** `sig` was `&GovernanceSignatureBytes` and `governance_pubkey`
+    /// was `&GovernancePubkey` — aliases for `[u8; 64]` and `[u8; 32]` — so a
+    /// 33-byte key was a compile error at the call rather than a runtime
+    /// verdict, and the algorithm parameter could only ever be consulted to
+    /// reject. This module is the substrate's shared governance verifier, so
+    /// that reached every governance-signed event type in the workspace.
+    ///
+    /// It also pins the error split. A wrong-width key must still be reported
+    /// as `InvalidPubkeyLength` rather than folded into `InvalidSignature` —
+    /// the caller needs to know it handed over the wrong kind of key.
+    #[test]
+    fn a_governance_signature_verifies_under_stark_schnorr() {
+        use octo_algo_stark_schnorr::{public_key, sign, Felt};
+
+        octo_algo_ed25519::install().expect("install ed25519");
+        octo_algo_stark_schnorr::install().expect("install stark-schnorr");
+
+        let secret = Felt::from_hex_unchecked("0x6b1c2d3e4f506172");
+        let pk = public_key(&secret).expect("derives a public key").to_wire();
+        assert_eq!(
+            pk.len(),
+            33,
+            "a stark-schnorr governance key is 33 bytes — that is what the \
+             widened parameter makes expressible"
+        );
+
+        let body_hash = blake3_hash(b"governance body");
+        let sig = sign(
+            &secret,
+            &body_hash,
+            &Felt::from_hex_unchecked("0x0099887766554433"),
+        )
+        .expect("sign")
+        .to_wire();
+
+        assert!(
+            verify_governance_signature(
+                &octo_algo_stark_schnorr::stark_schnorr_algorithm_id(),
+                &sig,
+                &body_hash,
+                &pk,
+            )
+            .is_ok(),
+            "a genuine stark-schnorr governance signature must not be refused \
+             by the dispatched path"
+        );
+
+        // The error split survives: the right algorithm with the wrong-width
+        // key is a key-length problem, not a bad signature.
+        let ed = octo_algo_ed25519::ed25519_algorithm_id();
+        assert!(
+            matches!(
+                verify_governance_signature(&ed, &sig, &body_hash, &pk),
+                Err(GovernanceSignatureError::InvalidPubkeyLength(33))
+            ),
+            "a 33-byte key under ed25519 must be reported as a key-length \
+             problem, not as an invalid signature"
+        );
+
+        // And a genuine Ed25519 governance signature under the same key width
+        // still works, so the vector is not passing by refusing everything.
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[0x51u8; 32]);
+        let good = sk.sign(&body_hash).to_bytes();
+        assert!(
+            verify_governance_signature(&ed, &good, &body_hash, &sk.verifying_key().to_bytes())
+                .is_ok(),
+            "a genuine ed25519 governance signature must still verify"
+        );
     }
 
     #[test]

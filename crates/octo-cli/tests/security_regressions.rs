@@ -1841,6 +1841,14 @@ const AC11_DISPATCHED: &[&str] = &[
     // scanned by hand below. RFC-0871's authorization verification is under
     // this scan now, not excused from it.
     "crates/octo-protocol/src",
+    // Found by `ac11_every_crate_that_verifies_a_signature_is_scanned_or_explained`,
+    // not by a failing site. `verify_holder_sig` dispatches on the algorithm
+    // recorded beside the signature and was never read by any gate — the crate
+    // was clean by review, not by construction. Its `HolderSignature` is the
+    // reference instance of this pattern: `Vec<u8>` bytes, a slice-returning
+    // `to_bytes`, and a constructor that checks the length against the
+    // *registered algorithm's* `signature_len()` rather than a hardcoded 64.
+    "crates/octo-cap-macaroon/src",
 ];
 
 /// Crates that **have** un-dispatched AC#11 sites and are known to.
@@ -2041,9 +2049,31 @@ const AC11_OUT_OF_SCOPE: &[(&str, &str)] = &[(
 /// a new inline site added beside it would not have been seen. An entry that
 /// outlives its site is how a file goes dark in the first place.
 ///
-/// The other entry below is genuinely live: it blanks a signature field for a
-/// canonical-serialization round trip and never verifies it.
+/// The list is empty. The last entry described `unsigned_canonical_ser`
+/// blanking an envelope signature field, and stopped being true when
+/// `ExecutionEnvelope::signature` became bytes.
 const AC11_ALLOWED: &[(&str, &str)] = &[];
+
+/// Crates that **are** signature algorithms rather than consumers of one.
+///
+/// They appear in `verify_dispatch` because that function is theirs — it is
+/// defined there, and their own tests exercise it. They are not AC#11 sites,
+/// because a dispatch question only exists where a *caller* chooses the
+/// algorithm. Listing them is what lets the coverage test below tell "this
+/// crate is deliberately not scanned" apart from "this crate was never
+/// looked at", which are otherwise the same silence.
+const AC11_ALGORITHM_CRATES: &[(&str, &str)] = &[
+    (
+        "crates/octo-algo-ed25519/src",
+        "Defines `verify_dispatch` and self-tests it. The one crate in the \
+         workspace where naming Ed25519 is the whole point.",
+    ),
+    (
+        "crates/octo-algo-stark-schnorr/src",
+        "Same, for the second registered algorithm. Its existence is what \
+         makes a one-algorithm assumption observable at a call site.",
+    ),
+];
 
 #[test]
 fn ac11_no_verification_site_rebuilds_a_key_or_signature_inline() {
@@ -2461,6 +2491,120 @@ fn ac11_pending_table_is_complete_for_every_crate_it_covers() {
          view, which is how octo-network went unrecorded for so long: add a \
          pending entry with its measured count, or an allowlist entry with \
          the reason it is legitimate."
+    );
+}
+
+/// Every crate that verifies a signature is either scanned or accounted for.
+///
+/// The tests above all walk **fixed lists**. A list only speaks about the
+/// crates someone put in it, so a crate holding verification code and absent
+/// from every list is not "clean" — it is **unexamined**, and the two look
+/// identical from outside. That is the failure this whole arc keeps meeting in
+/// new forms, one level up from the site it was last found at.
+///
+/// It was live here. `octo-cap-macaroon` holds `verify_holder_sig`, which
+/// dispatches correctly on the algorithm recorded beside the signature, and
+/// which no gate had ever read. The crate turned out to be clean — its
+/// `HolderSignature` stores `Vec<u8>` and validates the length against the
+/// *registered algorithm's* `signature_len()`, which is the best instance of
+/// this pattern in the workspace. It was clean by luck and by review, not by
+/// construction, and nothing would have said so.
+///
+/// Adding the crate to `AC11_DISPATCHED` is what makes it scanned. This test
+/// is what stops the next one from being added unexamined.
+///
+/// A crate reaches this check by *containing* the call, test code included. A
+/// crate whose only occurrence is its own tests is still worth listing, because
+/// "the product path is dispatched, the test path is not" is exactly the
+/// distinction a reader cannot make from outside.
+#[test]
+fn ac11_every_crate_that_verifies_a_signature_is_scanned_or_explained() {
+    let root = workspace_root();
+    let crates_dir = root.join("crates");
+
+    // Every crate any AC-11 list speaks about, in any form.
+    let mut accounted: BTreeSet<String> = BTreeSet::new();
+    for d in AC11_DISPATCHED {
+        accounted.insert(d.to_string());
+    }
+    for (p, _, _) in AC11_PENDING {
+        if let Some(idx) = p.find("/src") {
+            accounted.insert(p[..=idx + 3].to_string());
+        }
+    }
+    for (p, _) in AC11_OUT_OF_SCOPE {
+        if let Some(idx) = p.find("/src") {
+            accounted.insert(p[..=idx + 3].to_string());
+        }
+    }
+    for (p, _) in AC11_ALLOWED {
+        if let Some(idx) = p.find("/src") {
+            accounted.insert(p[..=idx + 3].to_string());
+        }
+    }
+    for (p, _) in AC11_ALGORITHM_CRATES {
+        accounted.insert(p.to_string());
+    }
+
+    let mut scanned = 0usize;
+    let mut unaccounted: Vec<String> = Vec::new();
+    let Ok(entries) = std::fs::read_dir(&crates_dir) else {
+        panic!("cannot read {}", crates_dir.display());
+    };
+    for entry in entries.flatten() {
+        let src = entry.path().join("src");
+        if !src.is_dir() {
+            continue;
+        }
+        let rel = format!("crates/{}/src", entry.file_name().to_string_lossy());
+        let mut sites = 0usize;
+        let mut stack = vec![src];
+        while let Some(dir) = stack.pop() {
+            let Ok(files) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for f in files.flatten() {
+                let path = f.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                    continue;
+                }
+                let body = strip_comments(&std::fs::read_to_string(&path).unwrap_or_default());
+                sites += body.matches("verify_dispatch").count();
+            }
+        }
+        if sites == 0 {
+            continue;
+        }
+        scanned += 1;
+        if !accounted.contains(&rel) {
+            unaccounted.push(format!("{rel} ({sites} call sites)"));
+        }
+    }
+
+    assert!(
+        unaccounted.is_empty(),
+        "AC-11: these crates call verify_dispatch and appear in no AC-11 list, so \
+         the gate has never read them. A crate that is unexamined and a crate that \
+         is clean are indistinguishable from outside, which is how a site stays \
+         hidden: add the crate to AC11_DISPATCHED if its sites should be \
+         dispatched, or to AC11_ALGORITHM_CRATES if it implements an algorithm \
+         rather than consuming one. Unaccounted: {unaccounted:?}"
+    );
+
+    // Measured, not guessed. The first version of this asserted nothing about
+    // how much it actually walked, so a regression that stopped the walk would
+    // have gone green by finding nothing to complain about. 14 is the measured
+    // count of crates containing the call today.
+    assert!(
+        scanned >= 14,
+        "the crate-coverage walk examined only {scanned} crates containing \
+         verify_dispatch, against a measured 14. If this ever fires, the walk \
+         stopped covering the workspace — which would make the check above pass \
+         vacuously."
     );
 }
 

@@ -100,6 +100,17 @@ borsh = { version = "=1.5.0", features = ["derive"] }
 proptest = "1"
 # Test-only sample-DID helper used by `caveat.rs` + `macaroon.rs` tests.
 octo-ident = { path = "../octo-ident" }
+# Second registered algorithm (Layer A, RFC-0009 AC#11). Dev-only, and the
+# reason is specific to this module: `verify_governance_signature` is the
+# substrate's shared governance verifier, and every other test here reaches it
+# through `governance_algorithm_id()` with 32-byte keys and 64-byte Ed25519
+# signatures. A verifier that hardcoded those widths would pass all of them — a
+# stark-schnorr key is 33 bytes, which makes the difference observable. This is
+# the crate's first real second-algorithm evidence since the key and signature
+# parameters were widened off their fixed-size aliases. Dev-only because no
+# governance key in the product is stark-schnorr; the vector keeps the site
+# honest.
+octo-algo-stark-schnorr = { path = "../octo-algo-stark-schnorr" }
 # Tokio for `CompositeCapabilityCatalog` async TV (mission 0959-c4).
 tokio = { version = "1", features = ["macros", "rt"] }
 

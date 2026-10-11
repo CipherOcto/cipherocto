@@ -50,10 +50,10 @@ on the constructor:
 `HolderRecord::canonical_de` is `serde_json::from_slice`, so the contract is
 canonical JSON. **Both production producers write raw bytes instead:**
 
-| Producer                            | What it writes                                           |
-| ----------------------------------- | -------------------------------------------------------- |
-| `octo-wallet-node` mint handler     | 32 raw bytes of `compute_capability_id(&token.macaroon)` |
-| `octo-capability-issuer-node` issue | `req.capability.to_vec()` — the raw request bytes        |
+| Producer                            | What it writes                                             |
+| ----------------------------------- | ---------------------------------------------------------- |
+| `octo-wallet-node` mint handler     | 32 raw bytes of `compute_capability_id(&token.macaroon)`   |
+| `octo-capability-issuer-node` issue | `req.capability.to_vec()` — the **capability root secret** |
 
 The two producers do not even agree with each other about what the field holds.
 
@@ -61,6 +61,42 @@ Verified empirically, not by reading: feeding each producer's actual byte shape
 to `HolderRecord::canonical_de` fails with `expected value at line 1 column 1`.
 A consumer following the documented instruction fails on **every** bundle either
 mint site produces.
+
+### Escalation: one of those two values is a secret, not just the wrong bytes
+
+This mission originally described the issuer-node row as "the raw request bytes",
+which is accurate and much too mild. `IssueRequest.capability` is documented as
+
+> 32-byte capability root secret (random nonce per mint).
+
+and the handler's own module doc passes it as the first argument to
+`CapabilityToken::mint`, whose first parameter is `root_secret`. So the issuer
+node writes a capability's **master key** into the issued artifact, in a field
+documented as holder-record bytes, in the clear.
+
+The consequence is not that a decode fails. It is that the bundle is no longer
+safe to store or relay: anyone who reads one can mint arbitrary caveats against
+that capability root, because they hold the key the macaroons are HMAC'd with.
+Every other field in the bundle is derived or structural; this one is the input.
+
+A test pins the behaviour as correct —
+`handle_holder_record_bytes_carries_capability_root` asserts the bytes equal the
+supplied secret — so this is tested in, exactly like the decode failure.
+
+**Why the issuer has no caveat to attach.** The same handler documents its
+intended flow as `CapabilityToken::mint(&capability, &issuer_key, &holder_did, &[])`
+with "the full substrate lands in a later mission", and the code matches the
+aspiration, not the flow: it never calls `mint`, never signs, never registers.
+It builds a `CapabilityTokenV2` struct literal and returns it. So the issuer
+node does not issue — the caller supplies the root secret and the handler wraps
+it and hands the secret back.
+
+That is the root of the remaining ask-binding blocker, and it is worth stating
+plainly because the two findings look unrelated and are the same thing: **no
+production path can attach a caveat to a capability**, because the only
+production issue handler never mints one. Adding `Caveat::AskBinding` to the
+issuer is not a one-line change there; the mint has to exist first, and
+`IssueRequest` has no ask field for it to carry.
 
 ### The capability never leaves the node
 

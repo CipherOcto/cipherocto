@@ -326,7 +326,7 @@ impl PlatformAdapter for NativeP2PAdapter {
         // contents and whose signature is garbage. The key is the envelope's
         // own `source_peer`, so this proves integrity and internal consistency,
         // NOT that the claimed peer is who it claims to be — binding the key to
-        // a known peer is the registry work in CD-6.
+        // a known peer, and names its algorithm, is the registry work in CD-6.
         envelope
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),

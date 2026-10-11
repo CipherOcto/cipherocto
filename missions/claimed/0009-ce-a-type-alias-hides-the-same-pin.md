@@ -317,11 +317,47 @@ note claiming CD-6 will deliver the algorithm would be a pointer to work that
 does not exist, and it would outlive its usefulness by looking like an owned
 debt — which is worse than an admitted gap.
 
-**This is the one item in this arc that is not code work.** Closing it needs a
-decision nobody has recorded: whether the DOT/1 envelope gains an algorithm
-field, or whether CD-6 D1's peer registry is extended to carry an algorithm
-binding. Both are wire-format or plan changes with a blast radius across all
-twenty adapters, which is a decision rather than a refactor.
+### The decision, and why it was not mine to make
+
+Closing that gap needed a decision nobody had recorded: give DOT/1 an algorithm
+field, or extend CD-6 D1's peer registry to carry an algorithm binding. Both are
+wire-format or plan changes with a blast radius across all twenty adapters, so
+this is a decision rather than a refactor, and it was put to the operator rather
+than taken unilaterally.
+
+**Chosen: extend the peer registry.** DOT/1 keeps its field set and the
+algorithm comes from the registry. The registry maps a peer to a _credential_
+rather than a bare key:
+
+```text
+struct PeerCredential {
+    key: Vec<u8>,           // any algorithm's width
+    algorithm: AlgorithmId, // the algorithm that key speaks
+}
+```
+
+Adapters then pass `registry.credential(peer)?.algorithm` into `verify` instead
+of the constant. Three consequences, each a way this could go wrong:
+
+- **No wire change.** That is the reason this route was preferred over adding a
+  field to the envelope.
+- **Fail closed on a missing entry.** A peer the registry does not know has no
+  algorithm, so its frame is refused. It must not fall back to Ed25519 — a
+  fallback would silently reinstate the assumption this replaces, and it would
+  do so silently, which is the failure mode the whole item is about.
+- **Key widths follow the algorithm.** `key` is bytes, not a 32-byte array. A
+  fixed-width field here would recreate the very defect this binding exists to
+  remove, one layer out.
+
+CD-6's plan now carries this as part of D1 with an AC-6, and all **24** adapter
+sites name it as their owner. The plan document itself lives under a gitignored
+path, so the design is recorded here as well — a tracked comment pointing at an
+untracked scratchpad is a weak pointer, and this is the one place in the arc
+where that would have mattered.
+
+The guard's measured floor now means it will go red when the registry lands.
+That is deliberate: the debt being paid should be visible rather than absorbed by
+a guard quietly relaxed to accommodate it.
 
 ## The two hardening passes
 

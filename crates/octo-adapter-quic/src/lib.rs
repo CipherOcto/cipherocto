@@ -902,8 +902,8 @@ impl PlatformAdapter for QuicAdapter {
         // QUIC carries raw wire bytes — try direct deserialization first
         if let Ok(env) = DeterministicEnvelope::from_wire_bytes(&raw.payload) {
             // Ed25519 named explicitly so this reads as an assumption rather than an
-            // accident. CD-6's registry binds the key to a known peer; naming the
-            // algorithm per peer is a step beyond what that plan specifies.
+            // accident. CD-6's peer registry binds the key AND names the algorithm
+            // it speaks, so this constant goes away when that registry lands.
             // M-15: see the note on the fallback path below — parsing alone
             // accepts a structurally valid frame with a forged signature.
             env.verify(&octo_algo_ed25519::ed25519_algorithm_id(), &env.source_peer)
@@ -931,7 +931,7 @@ impl PlatformAdapter for QuicAdapter {
         // contents and whose signature is garbage. The key is the envelope's
         // own `source_peer`, so this proves integrity and internal consistency,
         // NOT that the claimed peer is who it claims to be — binding the key to
-        // a known peer is the registry work in CD-6.
+        // a known peer, and names its algorithm, is the registry work in CD-6.
         envelope
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),

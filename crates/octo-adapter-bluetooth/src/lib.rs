@@ -261,7 +261,7 @@ impl PlatformAdapter for BluetoothAdapter {
         //
         // The key is the envelope's own `source_peer`, so this proves integrity
         // and internal consistency, NOT that the claimed peer is who it says it
-        // is. Binding the key to a known peer is the registry work in CD-6;
+        // is. CD-6's peer registry binds the key and names its algorithm;
         // what this closes is the "any well-formed blob is accepted" gap.
         envelope
             .verify(

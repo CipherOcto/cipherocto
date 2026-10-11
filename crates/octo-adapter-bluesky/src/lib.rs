@@ -274,8 +274,8 @@ impl PlatformAdapter for BlueskyAdapter {
         };
         let env = decode()?;
         // Ed25519 named explicitly so this reads as an assumption rather than an
-        // accident. CD-6's registry binds the key to a known peer; naming the
-        // algorithm per peer is a step beyond what that plan specifies.
+        // accident. CD-6's peer registry binds the key AND names the algorithm
+        // it speaks, so this constant goes away when that registry lands.
         env.verify(&octo_algo_ed25519::ed25519_algorithm_id(), &env.source_peer)
             .map_err(|e| transport_err(format!("envelope verify failed: {e}")))?;
         Ok(env)

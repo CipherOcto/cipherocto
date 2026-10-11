@@ -777,15 +777,75 @@ and the one approximation available in-tree was not.
 A handle taken in one function and passed to another — the same shape, one level
 up — is uncovered by the registry guard for the same reason, and is untriaged.
 
+## A fifth false claim, found by following 0009-cf's own trail
+
+`0009-cf` was filed for the capability chain parent binding being documented and
+absent. Tracing the same field to every place it is described turned up a second
+claim, in a different crate, about the same values — and this one is worse.
+
+`ProofBundle::capability_v2` was documented as follows:
+
+> When `Some`, the ZK circuit public inputs include the bundle's `chain_depth` +
+> `chain_parent` (BLAKE3 binding) + `issuer_did` so the verifier checks
+> hierarchical attenuation chain state.
+
+`PublicInputs` has none of those three fields. It carries `ask_id`,
+`axes_consumed`, `cap_root_hash`, `invocation_hash`, `holder_did`,
+`current_unix_time`, `output_hash` and `provider_slot_id`. Across `zk-circuit`,
+`zk-verifier` and `zk-vendor` there is no source line mentioning `chain_depth`,
+`chain_parent` or `issuer_did`. Every production construction site writes
+`None`, and the only `Some` is the serde test that then reads it back.
+
+```mermaid
+graph LR
+    A[capability_v2: Some] --> B[ProofBundle travels]
+    B --> C[verifier]
+    C --> D[public inputs]
+    D -. claimed .-> E[chain_depth + chain_parent + issuer_did]
+    E -. absent .-> F[no such fields]
+```
+
+**The other four false claims in this arc were claims about convenience.** This
+one is a soundness claim. It asserts that a zero-knowledge proof attests to
+hierarchical attenuation chain state, and a verifier reading that entry would
+conclude the chain is proven. In a proof system "the public inputs carry X" is
+the whole content of the claim; there is no weaker reading available.
+
+### The near-miss that probably produced it
+
+`cairo/src/lib.cairo` defines `CHAIN_DEPTH = 3`. That is the **caveat** chain
+depth — macaroon caveat attenuation, asserted through `CaveatChainDepthMismatch`
+— and it has nothing to do with `CapabilityTokenV2::chain_depth`.
+
+So the check that should have refuted this claim is: grep `chain_depth` in the
+circuit, find a hit, conclude the claim holds. The grep result is real and the
+conclusion is wrong, because two different concepts share one name. This is the
+clearest instance in the arc of **a grep hit is not evidence** — the earlier
+lesson was that a scan must be keyed on the property being asserted, and this is
+the same lesson arriving in a disguise: the scan found a symbol, and the symbol
+was the wrong symbol.
+
+Both claims are corrected in `octo-cap-zk`, and the round-trip test now states
+that it measures wire compatibility only. The test's fixture is a `chain_depth: 1`
+child token with an arbitrary `[0xCC; 32]` parent — a shape that reads as chain
+coverage and measures nothing, which is precisely what the "must not happen"
+section below was written to prevent. It was written before this finding and it
+would have prevented this one.
+
+Filed as `0009-ci`, sequenced after `0009-cf`: binding an unbound value into a
+proof would move the defect rather than fix it.
+
 ## What this arc handed on
 
-Three findings were scoped and filed as missions, because they are implementation
+Four findings were scoped and filed as missions, because they are implementation
 work with a measured subject rather than more analysis:
 
 - `0009-cf` — the capability chain parent binding is documented and absent.
 - `0009-cg` — key revocation is never checked at verify time.
 - `0009-ch` — 24 adapters name their algorithm instead of looking it up, with the
   CD-6 D1 amendment already made.
+- `0009-ci` — the ZK attestation is documented as binding capability chain state
+  into the circuit public inputs, and binds nothing. Sequenced after `0009-cf`.
 
 The remaining unresolved gates — AC#8b's FROST test and the four BLS/DKG gates —
 were deliberately **not** filed as missions. Their subject does not exist at all:

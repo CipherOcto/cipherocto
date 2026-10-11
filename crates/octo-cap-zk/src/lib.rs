@@ -242,13 +242,42 @@ pub struct ProofBundle {
     #[serde(default)]
     pub witness_format: zk_vendor::prover_input::WitnessFormat,
     /// **Mission 0957-f-v2-bundle-consumer-migration:** optional V2
-    /// capability bundle that this proof attests to. When `Some`,
-    /// the ZK circuit public inputs include the bundle's
-    /// `chain_depth` + `chain_parent` (BLAKE3 binding) + `issuer_did`
-    /// so the verifier checks hierarchical attenuation chain state.
-    /// When `None`, the proof falls back to the legacy raw-macaroon
-    /// substrate (pre-V2). `#[serde(default)]` preserves
-    /// back-compat with pre-V2 serialized bundles.
+    /// capability bundle carried alongside a proof.
+    ///
+    /// **This field binds nothing. No circuit reads it.**
+    ///
+    /// An earlier revision of this doc claimed that when the field is
+    /// `Some`, the ZK circuit public inputs include the bundle's
+    /// `chain_depth`, `chain_parent` and `issuer_did`, "so the verifier
+    /// checks hierarchical attenuation chain state". That was never true
+    /// and no code was written for it. Measured across the workspace:
+    ///
+    /// | Claimed                                          | Actual                        |
+    /// | ------------------------------------------------- | ----------------------------- |
+    /// | public inputs carry `chain_depth`/`chain_parent`  | `PublicInputs` has neither    |
+    /// | public inputs carry `issuer_did`                  | `PublicInputs` has neither    |
+    /// | the circuit consumes the bundle                   | no `zk-circuit`, `zk-verifier`,|
+    /// |                                                   | or `zk-vendor` source mentions |
+    /// |                                                   | any of the three names         |
+    /// | a verifier checks the chain                       | no such code path exists       |
+    ///
+    /// `cairo/src/lib.cairo` does define a `CHAIN_DEPTH`, which is the
+    /// **caveat** chain depth (macaroon caveat attenuation, `CaveatChain
+    /// DepthMismatch`) and is unrelated to `CapabilityTokenV2::chain_depth`.
+    /// Grepping `chain_depth` across the circuit returns that constant, which
+    /// is the most likely origin of the confusion this doc entry encodes.
+    ///
+    /// Every production construction site writes `None`. The only `Some`
+    /// is the serde round-trip test, which sets the field and reads it back.
+    /// The bundle therefore travels with the proof as data and has no
+    /// effect on what the proof proves.
+    ///
+    /// `#[serde(default)]` preserves back-compat with pre-V2 serialized
+    /// bundles, and that part of the field's original purpose does hold.
+    ///
+    /// Wiring the bundle into the circuit is tracked in mission
+    /// `0009-ci`. The parent binding the bundle's own type lacks is
+    /// tracked in `0009-cf`.
     #[serde(default)]
     pub capability_v2: Option<octo_cap_macaroon::CapabilityBundleV2>,
 }
@@ -915,14 +944,33 @@ mod tests {
 
     /// TV (mission 0957-f-v2-bundle-consumer-migration) — `ProofBundle`
     /// accepts a `capability_v2: Option<CapabilityBundleV2>` field;
-    /// serde roundtrip preserves the field. The ZK circuit constraint
-    /// path (V2-aware verifier) consumes the field; the legacy path
-    /// ignores it (None → raw macaroon substrate).
+    /// serde roundtrip preserves the field and its contents.
+    ///
+    /// **This is a serde test and nothing more.** An earlier revision of
+    /// this comment claimed "the ZK circuit constraint path (V2-aware
+    /// verifier) consumes the field". No such path exists — see the
+    /// `capability_v2` field docs for the measurement. What this test
+    /// covers is wire compatibility of the field, including that a
+    /// `chain_parent` value survives a JSON round trip.
+    ///
+    /// **It is not coverage of hierarchical chain verification.** The
+    /// `[0xCC; 32]` parent below is an arbitrary constant, not a value
+    /// any function computes or checks — `compute_chain_parent` and
+    /// `verify_chain_parent` do not exist. `chain_depth: 1` makes this a
+    /// child token with a parent nothing ever minted. A reader scanning
+    /// this test for evidence that chain state is bound would find none,
+    /// which is the accurate state of the code.
+    ///
+    /// The properties that are missing are specified in missions
+    /// `0009-ci` (bind the bundle into the circuit) and `0009-cf`
+    /// (compute and verify the parent binding at all).
     #[test]
     fn proof_bundle_capability_v2_field_roundtrip() {
         use octo_cap_macaroon::{
             CapabilityBundleV2, CapabilityBundleV2Envelope, CapabilityTokenV2,
         };
+        // Arbitrary parent constant: preserved verbatim by serde, bound
+        // by nothing. See the note above.
         let token_v2 = CapabilityTokenV2 {
             chain_depth: 1,
             chain_parent: [0xCC; 32],

@@ -3563,3 +3563,149 @@ fn every_verifier_trait_has_a_production_implementation_or_is_accounted_for() {
         "0969-c: the recorded set of stub-only verifier traits has drifted — {problems:?}"
     );
 }
+
+/// Private-notes citations that must not appear in shipped documentation.
+///
+/// A `[[wikilink]]` resolves inside one developer's working notes and
+/// nowhere else. This repository had 222 of them across tracked Rust
+/// source, plus more in Markdown — every one a pointer a reader of the
+/// repository could not follow. The HARD rule in the project instructions
+/// (`no-memory-citations-in-official-docs`) forbids exactly this, and
+/// nothing enforced it.
+///
+/// The guard fails on any occurrence, in any decoration: `[[name]]`,
+/// `[name]`, backticked, or bare. An earlier version of this work matched
+/// only the double-bracket form and reported 184 when the true count was
+/// 222 — a decorated-but-unbracketed citation is still a citation.
+const FORBIDDEN_NOTE_CITATIONS: [&str; 11] = [
+    "cipherocto-design-principles",
+    "stoolap-general-purpose-db",
+    "stoolap-fork-persistence",
+    "feedback-no-fabricated-commit-rule",
+    "deferred-vs-unspecified",
+    "feedback_initiation_user_only",
+    "no-parallel-abstractions",
+    "no-phantom-mission-pointers",
+    "no-line-refs-anywhere",
+    "grand-design-audit-refactor-2026-08-08",
+    "drain-coordinator-approach-2026-08-10",
+];
+
+/// Files permitted to name the tokens, because they are the documents the
+/// citations now resolve to and they quote the old form as an example of
+/// what they replaced — plus this guard, which has to name what it forbids.
+///
+/// An allowlist, not a directory skip: a new document must be added here
+/// deliberately to be exempt, which is the opposite of how a directory
+/// exclusion behaves.
+///
+/// The guard's own exemption is not a loophole in practice. Editing the
+/// list above is the only way to make this file violate, and the list is
+/// short enough to read in the diff.
+const CITATION_ALLOWLIST: [&str; 4] = [
+    "docs/architecture/design-principles.md",
+    "docs/architecture/stoolap-integration.md",
+    "docs/05-process/engineering-rules.md",
+    "crates/octo-cli/tests/security_regressions.rs",
+];
+
+/// Directories that never contain shipped documentation.
+fn is_untracked_by_design(rel: &str) -> bool {
+    const SKIP_DIRS: [&str; 5] = [".git", "target", "node_modules", ".claude", ".audit"];
+    SKIP_DIRS
+        .iter()
+        .any(|d| rel == *d || rel.starts_with(&format!("{d}/")))
+}
+
+/// Files git tracks, filtered to source and documentation.
+///
+/// `git ls-files` rather than a directory walk, deliberately. An earlier
+/// version of this guard walked the filesystem and reported **448** markdown
+/// files against a shell measurement of **288**. The difference was untracked
+/// scratch: `docs/reviews/` is gitignored and agent worktrees live under
+/// `.claude/`. None of it ships. A guard that counts what will not be
+/// published cannot be calibrated, because its denominator moves with whatever
+/// happens to be lying around on the machine — which is exactly the mistake
+/// this guard exists to prevent elsewhere.
+fn tracked_docs(root: &Path) -> Vec<String> {
+    let out = Command::new("git")
+        .current_dir(root)
+        .args(["ls-files", "*.rs", "*.md"])
+        .output()
+        .expect("git ls-files must run from the test");
+    assert!(
+        out.status.success(),
+        "git ls-files failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| !l.is_empty() && !is_untracked_by_design(l))
+        .map(std::borrow::ToOwned::to_owned)
+        .collect()
+}
+
+/// No source or documentation file cites a private working note.
+///
+/// Every **tracked** `.rs` and `.md` file is checked, not just `crates/`:
+/// the violations were in `.audit/`, `octo-sync/` and `determin/` as well,
+/// and a guard scoped to where you happened to look is the kind that reads
+/// as coverage and is not.
+#[test]
+fn no_source_or_doc_file_cites_a_private_working_note() {
+    let root = workspace_root();
+    let files = tracked_docs(&root);
+    assert!(
+        files.len() > 100,
+        "only {} tracked source/doc files were found — the guard is not looking \
+         at enough of the tree to mean anything",
+        files.len()
+    );
+
+    let allow: BTreeSet<&str> = CITATION_ALLOWLIST.iter().copied().collect();
+    let mut hits: Vec<String> = Vec::new();
+    for rel in &files {
+        if allow.contains(rel.as_str()) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(root.join(rel)) else {
+            continue;
+        };
+        for token in FORBIDDEN_NOTE_CITATIONS {
+            if text.contains(token) {
+                hits.push(format!("{rel} mentions `{token}`"));
+            }
+        }
+    }
+
+    let rs_hits: Vec<&String> = hits.iter().filter(|h| h.contains(".rs")).collect();
+    assert!(
+        rs_hits.is_empty(),
+        "Rust source must not cite private notes — {} file(s) do: {rs_hits:?}. \
+         Cite `docs/architecture/design-principles.md`, \
+         `docs/architecture/stoolap-integration.md` or \
+         `docs/05-process/engineering-rules.md` by path and section instead.",
+        rs_hits.len()
+    );
+
+    // Markdown is a known, measured, unfinished debt rather than a pass.
+    // Counting the distinct files every run keeps the number honest and
+    // stops it growing silently. This assertion fails loudly when someone
+    // adds more; it is not a claim that the sweep is done.
+    //
+    // Distinct *files*, not (file, token) pairs — a file naming two tokens
+    // is still one file to sweep, and counting pairs made the number move
+    // for reasons unrelated to how much work remains.
+    let md_files: BTreeSet<&str> = hits
+        .iter()
+        .filter_map(|h| h.split(" mentions ").next())
+        .filter(|p| p.ends_with(".md"))
+        .collect();
+    let md_count = md_files.len();
+    assert!(
+        md_count <= 288,
+        "markdown files citing private notes grew past the recorded baseline of 288 \
+         (now {md_count}). Either sweep them or, if that is genuinely the plan, \
+         raise this number deliberately — do not let it creep."
+    );
+}

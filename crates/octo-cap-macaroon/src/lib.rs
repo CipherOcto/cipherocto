@@ -57,6 +57,7 @@
 
 pub mod attestation;
 pub mod caveat;
+pub mod chain_parent;
 pub mod discharge;
 pub mod dqa_serde;
 pub mod governance_signature;
@@ -114,6 +115,9 @@ pub use caveat::{
     OverlayIdentity, PaymentCaveat, PaymentDecision, PaymentRejectionReason, PerAxisMax,
     PermissionKind, ProviderId, RateLimit, RawCaveat, UnixTimeSecs, ISO3166,
     PAID_QUERY_CAVEAT_NAME,
+};
+pub use chain_parent::{
+    chain_parent_binding_input, compute_chain_parent, verify_chain_parent, CHAIN_PARENT_INPUT_LEN,
 };
 pub use cli_fns::{attenuate, list_active, mint};
 pub use cli_summary::{CapabilitySummary, CaveatSummary};

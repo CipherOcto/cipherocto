@@ -7,6 +7,11 @@
 //! for hierarchical attenuation chain verification (RFC-0009 v1.2
 //! §Hierarchical attenuation chains).
 //!
+//! The binding those two fields carry is implemented in this crate's
+//! `chain_parent` module. Nothing in the workspace consults it: the capability
+//! verification production performs is V1-macaroon-based and never reads a V2
+//! bundle. See the `CapabilityTokenV2` docs and mission `0009-cf`.
+//!
 //! ## Layer discipline (per [[cipherocto-design-principles]])
 //!
 //! `CapabilityBundleV2` is owned by `octo-cap-macaroon` (Layer 4
@@ -84,17 +89,30 @@ pub const MAX_CHAIN_DEPTH: u8 = 8;
 ///
 /// Carries `chain_depth` and `chain_parent`.
 ///
-/// **Chaining is not implemented.** RFC-0009 specifies `chain_parent` as the
-/// BLAKE3-256 binding `parent_cap_key || child_cap_key || child_depth`, computed
-/// by `compute_chain_parent` and checked by `verify_chain_parent`. **Neither
-/// function exists in this workspace, and no code reads `chain_parent` to make
-/// a decision** — every occurrence is an assignment, a `Debug` print, or a test
-/// asserting the value round-trips.
+/// **The binding exists; nothing consumes it.** RFC-0009 specifies
+/// `chain_parent` as the BLAKE3-256 binding of
+/// `parent_cap_key || child_cap_key || child_depth`, and both halves now exist
+/// as [`compute_chain_parent`] and [`verify_chain_parent`] in this crate's
+/// `chain_parent` module, with a byte-exact vector and four mutation-verified
+/// tests.
+///
+/// What does not exist is a **caller**. No verification path reads
+/// `chain_parent` to make a decision, because there is no V2 verification path
+/// at all: the capability verification that production performs
+/// (`octo-wallet`'s `verify_capability`) works on the V1 macaroon substrate and
+/// contains no reference to `CapabilityBundleV2` or `token_v2`. V2 bundles are
+/// minted and transported; nothing decides anything from them.
 ///
 /// Every production mint writes `chain_depth: 0` and `chain_parent:
-/// [0u8; 32]`, so every token issued so far is a root token and there is no
-/// parent binding in force to forge. The field is reserved for that work, not a
-/// claim that the work is done.
+/// [0u8; 32]`, so every token issued so far is a root token. The zero value is
+/// not a valid binding for any parent/child pair — a test pins that — which is
+/// what makes the gap latent rather than live: there is no chain to forge
+/// today, and no forged chain that would pass.
+///
+/// Tracked in mission `0009-cf`.
+///
+/// [`compute_chain_parent`]: crate::chain_parent::compute_chain_parent
+/// [`verify_chain_parent`]: crate::chain_parent::verify_chain_parent
 #[derive(
     Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize, serde::Serialize, serde::Deserialize,
 )]
@@ -102,16 +120,18 @@ pub struct CapabilityTokenV2 {
     /// Chain depth (0 = root; 1..=8 = descendant). Lives on the
     /// token, NOT on `CapabilityKey` (per RFC-0009 R11 H1).
     ///
-    /// Only 0 is ever written — see the type's docs on chaining not being
-    /// implemented.
+    /// Only 0 is ever written by production mints — see the type's docs on the
+    /// absence of a V2 verification path.
     pub chain_depth: u8,
 
-    /// Reserved for RFC-0009's `compute_chain_parent` binding of
-    /// `parent_cap_key || child_cap_key || child_depth.to_be_bytes()`.
+    /// The BLAKE3-256 binding of `parent_cap_root || child_cap_root ||
+    /// child_depth`, per RFC-0009 §`compute_chain_parent`.
     ///
-    /// **Nothing computes or verifies that binding today.** `[0u8; 32]` is
-    /// what every production mint writes, and no verification path reads this
-    /// field. Treating it as a real parent binding today would be reading a
+    /// The binding is computable and checkable via
+    /// [`verify_chain_parent`](crate::chain_parent::verify_chain_parent), but
+    /// **no verification path consults it** and every production mint writes
+    /// `[0u8; 32]`, which satisfies the predicate for no parent/child pair.
+    /// Treating this field as a live parent binding today would be reading a
     /// value nothing maintains.
     pub chain_parent: [u8; 32],
 

@@ -1830,6 +1830,74 @@ mod settlement_engine_tests {
         verify_settlement_receipt(&ed25519_id(), &receipt, &pk, &expected_hash).expect("verify");
     }
 
+    /// The settlement-receipt counterpart of
+    /// `an_ask_signed_by_a_non_ed25519_algorithm_verifies`.
+    ///
+    /// This is the second of the two sites the alias check found, and it was
+    /// hidden the same way: it dispatched on `algorithm_id` while taking the
+    /// router key through a type alias for a 32-byte array. Nothing about the
+    /// dispatch argument could reach a 33-byte key, so the parameter was
+    /// load-bearing in name only.
+    ///
+    /// The signature input is `canonical_ser(event) ++ nonce ++
+    /// settled_at_unix`, computed identically on both sides. That is what makes
+    /// this a real second-algorithm vector rather than a length check: a
+    /// stark-schnorr signature over those bytes can only verify because the
+    /// message the verifier rebuilt is byte-identical to the one that was
+    /// signed.
+    ///
+    /// The receipt is built directly because `sign_settlement_receipt` is
+    /// Ed25519-only by the same trait constraint as `AskSigned::sign`.
+    #[test]
+    fn a_settlement_receipt_signed_by_a_non_ed25519_algorithm_verifies() {
+        use octo_algo_stark_schnorr::{public_key, sign, Felt};
+
+        octo_algo_ed25519::install().expect("install ed25519");
+        octo_algo_stark_schnorr::install().expect("install stark-schnorr");
+
+        let secret = Felt::from_hex_unchecked("0x3c4d5e6f708192a3b4c5d6e7f8091a2b");
+        let nonce_felt = Felt::from_hex_unchecked("0x0f1e2d3c4b5a6978");
+        let wire = public_key(&secret).expect("derives a public key").to_wire();
+        assert_eq!(wire.len(), 33, "a stark-schnorr key is 33 bytes");
+
+        let event = sample_event();
+        let nonce = [0xEEu8; 16];
+        let expected_hash = compute_settlement_hash(&event).unwrap();
+
+        // Byte-for-byte the same reconstruction `verify_settlement_receipt`
+        // performs. If the two ever diverge, this vector fails rather than
+        // silently testing a different message than production verifies.
+        let event_canonical = serde_json::to_vec(&event).unwrap();
+        let mut msg = Vec::with_capacity(event_canonical.len() + nonce.len() + 8);
+        msg.extend_from_slice(&event_canonical);
+        msg.extend_from_slice(&nonce);
+        msg.extend_from_slice(&event.settled_at_unix.to_le_bytes());
+
+        let signature = sign(&secret, &msg, &nonce_felt).expect("sign").to_wire();
+        let receipt = SettlementReceipt {
+            event,
+            router_signature: signature.to_vec(),
+            nonce,
+        };
+
+        assert!(
+            verify_settlement_receipt(
+                &octo_algo_stark_schnorr::stark_schnorr_algorithm_id(),
+                &receipt,
+                &wire,
+                &expected_hash,
+            )
+            .is_ok(),
+            "a genuine stark-schnorr receipt must not be refused by the \
+             dispatched path"
+        );
+
+        assert!(
+            verify_settlement_receipt(&ed25519_id(), &receipt, &wire, &expected_hash).is_err(),
+            "the same key and receipt must not verify under ed25519"
+        );
+    }
+
     #[test]
     fn receipt_wrong_hash_rejected() {
         let event = sample_event();

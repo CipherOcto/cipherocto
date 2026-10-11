@@ -48,7 +48,7 @@ use super::provider::{NetworkId, RouterNodeId};
 ///
 /// The wire form is `did:octo:z<base58btc(verifying_key)>` — the raw 32-byte
 /// Ed25519 public key, not the hash-derived canonical form. This is
-/// symmetric with `octo_protocol::authorization::verify_ed25519_signature`,
+/// symmetric with `octo_protocol::authorization::verify_authorization_signature`,
 /// which base58-decodes the `did:octo:z<...>` payload and constructs the
 /// `VerifyingKey` from the resulting 32 bytes. Without this alignment the
 /// signature verifier would reconstruct the wrong key (the hash payload
@@ -507,8 +507,13 @@ mod tests {
             _ => unreachable!(),
         };
         let preimage = signature_preimage(&env.envelope_id, signer_did.as_str(), &env.payload);
-        octo_protocol::authorization::verify_ed25519_signature(&signer_did, &preimage, &sig)
-            .expect("signature must verify");
+        octo_protocol::authorization::verify_authorization_signature(
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &signer_did,
+            &preimage,
+            &sig,
+        )
+        .expect("signature must verify");
     }
 
     /// `envelope_id` must commit to the envelope's contents and must not

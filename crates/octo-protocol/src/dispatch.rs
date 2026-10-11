@@ -26,7 +26,7 @@ use std::collections::{HashMap, HashSet};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 
-use crate::authorization::{verify_ed25519_signature, Authorization};
+use crate::authorization::{verify_authorization_signature, Authorization};
 use crate::envelope::NodeEnvelope;
 use crate::error::ProtocolError;
 use crate::payload_kind::PayloadKindId;
@@ -153,6 +153,23 @@ pub struct ReferenceDispatcher {
     cache: parking_lot::Mutex<ValidationCache>,
     clock: Box<dyn Clock>,
     config: DispatcherConfig,
+    /// Algorithm that incoming `Authorization::Signature` signers are
+    /// verified under (RFC-0009 AC#11).
+    ///
+    /// This is a *deployment* setting, not a per-message one, and the
+    /// distinction is deliberate rather than convenient. A canonical DID names
+    /// no algorithm — its payload is a bare 32 bytes — so nothing on the wire
+    /// can supply one. Until a per-signer registry lands, the node resolves it
+    /// once at construction and applies it to every inbound authorization.
+    ///
+    /// A wire field would be worse, not better: it would put the choice of
+    /// verifier under the control of the party being verified.
+    ///
+    /// Ed25519 is the constructor default and is **not** a fallback — it is an
+    /// explicit choice a deployment makes, and `with_signer_algorithm` replaces
+    /// it. An algorithm absent from the registry still fails closed at verify
+    /// time.
+    signer_algorithm: octo_ident::AlgorithmId,
 }
 
 impl ReferenceDispatcher {
@@ -163,7 +180,25 @@ impl ReferenceDispatcher {
             cache: parking_lot::Mutex::new(cache),
             clock,
             config,
+            signer_algorithm: octo_algo_ed25519::ed25519_algorithm_id(),
         }
+    }
+
+    /// Set the algorithm inbound signature authorizations verify under.
+    ///
+    /// Separate from `new` so the default stays explicit at the construction
+    /// site and callers that *do* have a resolved algorithm are forced to say
+    /// so out loud.
+    #[must_use]
+    pub fn with_signer_algorithm(mut self, algorithm: octo_ident::AlgorithmId) -> Self {
+        self.signer_algorithm = algorithm;
+        self
+    }
+
+    /// The algorithm inbound signature authorizations verify under.
+    #[must_use]
+    pub fn signer_algorithm(&self) -> &octo_ident::AlgorithmId {
+        &self.signer_algorithm
     }
 
     /// Borrow the inner cache (test-only).
@@ -196,7 +231,12 @@ impl ReferenceDispatcher {
                         envelope.from_did.as_str(),
                         &envelope.payload,
                     );
-                    verify_ed25519_signature(signer_did, &preimage, sig)?;
+                    verify_authorization_signature(
+                        &self.signer_algorithm,
+                        signer_did,
+                        &preimage,
+                        sig,
+                    )?;
                 }
                 Authorization::Capability(_token) => {
                     // RFC-0957 attenuation + caveat verification lives in

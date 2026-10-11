@@ -23,6 +23,10 @@ octo-ident = { path = "../octo-ident", features = ["borsh"] }
 # Bitcoin base58btc decoder (RFC-0010 §`raw_to_wire` shape). Required for
 # Ed25519 verifying-key reconstruction from canonical DID wire form.
 bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
+# Algorithm dispatch substrate (Layer A years-stable; RFC-0009 AC#11). The DID
+# payload names no algorithm, so `verify_authorization_signature` takes one from
+# its caller and routes through the registry rather than hardcoding Ed25519.
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
 # thiserror for ProtocolError — Layer 1 stable, RFC-0871 §Error Handling.
 thiserror = "1"
 # Async-trait for EnvelopeDispatcher trait — production dispatchers are async;

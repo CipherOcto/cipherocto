@@ -20,9 +20,7 @@
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use ed25519_dalek::Signature as Ed25519Signature;
-use ed25519_dalek::Verifier;
-
-use octo_ident::WireDid;
+use octo_ident::{AlgorithmId, WireDid};
 
 use crate::error::ProtocolError;
 
@@ -151,15 +149,26 @@ impl BlsSignature {
     }
 }
 
-/// Verify an Ed25519 signature over `msg` with the public key derived from
-/// `signer_did` (32-byte payload after `did:octo:z` prefix base58btc-decode
-/// per RFC-0010).
+/// Verify a signature over `msg` with the public key derived from `signer_did`
+/// (32-byte payload after `did:octo:z` prefix base58btc-decode per RFC-0010),
+/// dispatching on `algorithm` (RFC-0009 AC#11).
 ///
 /// Used by `EnvelopeDispatcher` to verify each `Authorization::Signature`.
 /// Also exposed publicly so downstream consumers (e.g. quota-router-core
 /// per RFC-0870 §NodeEnvelope Adoption) can verify RFC-0871 signatures
 /// without round-tripping through the full dispatcher.
-pub fn verify_ed25519_signature(
+///
+/// **On the algorithm parameter.** The DID payload is a bare 32 bytes and
+/// names no algorithm, which is the whole reason this needs one: the caller is
+/// the only party that knows which algorithm the signer's key belongs to.
+/// An unregistered algorithm fails closed.
+///
+/// The wire newtype is still `Ed25519SignatureBytes` because the borsh wire
+/// form is a flat 64-byte buffer. That is a statement about the format, not
+/// about how it is verified — renaming it is an RFC-0871 format change and is
+/// deliberately not done here.
+pub fn verify_authorization_signature(
+    algorithm: &AlgorithmId,
     signer_did: &WireDid,
     msg: &[u8],
     sig_bytes: &Ed25519SignatureBytes,
@@ -182,12 +191,8 @@ pub fn verify_ed25519_signature(
     }
     let mut pk_arr = [0u8; 32];
     pk_arr.copy_from_slice(&pk_bytes);
-    let pk = ed25519_dalek::VerifyingKey::from_bytes(&pk_arr).map_err(|e| {
-        ProtocolError::AuthorizationFailed(format!("ed25519 verifying key parse: {e}"))
-    })?;
-    let sig = sig_bytes.to_signature();
-    pk.verify(msg, &sig)
-        .map_err(|e| ProtocolError::AuthorizationFailed(format!("ed25519 verify: {e}")))
+    octo_algo_ed25519::verify_dispatch(algorithm, &pk_arr, msg, &sig_bytes.0)
+        .map_err(|e| ProtocolError::AuthorizationFailed(format!("signature verify: {e}")))
 }
 
 /// Minimal base58btc decoder (Bitcoin alphabet). No allocation beyond output.
@@ -293,10 +298,62 @@ mod tests {
         let did = WireDid::new(wire);
         let msg = b"the quick brown fox";
         let sig = Ed25519SignatureBytes::from_signature(&sk.sign(msg));
-        assert!(verify_ed25519_signature(&did, msg, &sig).is_ok());
+        assert!(verify_authorization_signature(
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &did,
+            msg,
+            &sig
+        )
+        .is_ok());
         // Tampered message must fail
         let bad = Ed25519SignatureBytes::from_signature(&sk.sign(b"the quick brown cat"));
-        assert!(verify_ed25519_signature(&did, msg, &bad).is_err());
+        assert!(verify_authorization_signature(
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &did,
+            msg,
+            &bad
+        )
+        .is_err());
+    }
+
+    // ── Mission 0009-ca: dispatch vectors ──────────────────────────────────
+    //
+    // The fail-closed control is the only one that can tell dispatch from a
+    // hardcoded Ed25519. The happy path and the tampered-message check are both
+    // satisfied by a verifier that ignores the algorithm argument entirely.
+
+    fn signed_did_and_sig(seed: u8) -> (WireDid, Ed25519SignatureBytes) {
+        let sk = SigningKey::from_bytes(&[seed; 32]);
+        let pk_bytes = sk.verifying_key().to_bytes();
+        let wire = format!("did:octo:z{}", bs58_encode(&pk_bytes));
+        let msg = b"the quick brown fox";
+        (
+            WireDid::new(wire),
+            Ed25519SignatureBytes::from_signature(&sk.sign(msg)),
+        )
+    }
+
+    #[test]
+    fn authorization_signature_dispatches_on_the_declared_algorithm() {
+        let (did, sig) = signed_did_and_sig(0x31);
+        assert!(verify_authorization_signature(
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &did,
+            b"the quick brown fox",
+            &sig
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn authorization_signature_refuses_an_unregistered_algorithm() {
+        let (did, sig) = signed_did_and_sig(0x32);
+        let bogus = octo_ident::AlgorithmId::derive("not-a-registered-auth-algorithm");
+        assert_ne!(bogus, octo_algo_ed25519::ed25519_algorithm_id());
+        assert!(
+            verify_authorization_signature(&bogus, &did, b"the quick brown fox", &sig).is_err(),
+            "an unregistered algorithm must fail closed"
+        );
     }
 
     /// Minimal base58btc encoder for tests (uses the `bs58` crate so the

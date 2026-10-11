@@ -2033,23 +2033,35 @@ const AC11_OUT_OF_SCOPE: &[(&str, &str)] = &[(
 /// reason. An allowlist entry without a reason is
 /// indistinguishable from the defect it hides, which is the failure this
 /// vector exists to prevent.
-const AC11_ALLOWED: &[(&str, &str)] = &[
-    (
-        "crates/octo-protocol/src/authorization.rs",
-        "Authorization::Signature carries no algorithm and the did:octo:z \
-         payload is a bare 32 bytes, so the dispatcher has nothing to \
-         dispatch on. Blocked on the same DID codec as mission 0009-c3.",
-    ),
-    (
-        "crates/quota-router-sm-engine/src/envelope.rs",
-        "unsigned_canonical_ser clones the envelope to blank the signature \
+///
+/// ### `crates/octo-protocol/src/authorization.rs` was here and is not any more
+///
+/// Its entry said the DID payload is a bare 32 bytes "so the dispatcher has
+/// nothing to dispatch on", and cited the `0009-c3` DID-codec blocker — which
+/// `13ced5e7` had already disproved when it was still cited.
+///
+/// The premise was true and the conclusion was not. `verify_dispatch` takes
+/// `public_key: &[u8]`, so nothing forces the algorithm to travel with the key;
+/// the caller supplies it, as at every other site in this arc. `0009-ca`
+/// dispatched it and the entry was **removed**, not re-justified.
+///
+/// Removing it is the point. An allowlist entry exempts the whole file from
+/// the scan, so this was not one dark site — it was RFC-0871 §Adversary
+/// Analysis A6's enforcement point for every signed envelope, unscanned, and
+/// a new inline site added beside it would not have been seen. An entry that
+/// outlives its site is how a file goes dark in the first place.
+///
+/// The other entry below is genuinely live: it blanks a signature field for a
+/// canonical-serialization round trip and never verifies it.
+const AC11_ALLOWED: &[(&str, &str)] = &[(
+    "crates/quota-router-sm-engine/src/envelope.rs",
+    "unsigned_canonical_ser clones the envelope to blank the signature \
          field so the signed message excludes it. The all-zero value is a \
          placeholder that is never serialized and never verified, so no \
          algorithm is selected here. The honest fix is an Option or a \
          separate unsigned struct, not a dispatch: dispatching would be \
          dispatching on a value with no cryptographic meaning.",
-    ),
-];
+)];
 
 #[test]
 fn ac11_no_verification_site_rebuilds_a_key_or_signature_inline() {
@@ -2164,14 +2176,14 @@ fn ac11_every_allowlist_entry_still_exists_and_still_has_a_reason() {
         // all. The exception was pure blind spot.
         let src = std::fs::read_to_string(workspace_root().join(path)).unwrap();
         let body = strip_comments(&src);
-        // Either constructor justifies the entry, and neither surviving does
-        // NOT — checking one pattern here while the scan checks two would make
-        // this guard demand a site the crate may legitimately have stopped
-        // building in the other half.
+        // Any of the constructors justifies the entry, and none surviving does NOT.
+        // This used to name two of the three by hand, which is the same drift
+        // `ac11_site_count` was introduced to end: an allowlisted file whose
+        // only site is `Signature::from_slice` would have been told to keep an
+        // exception it no longer needs, while the scan looked for three.
         assert!(
-            contains_path_call(&body, "VerifyingKey::from_bytes")
-                || contains_path_call(&body, "Signature::from_bytes"),
-            "AC-11: allowlisted {path} no longer contains either constructor \
+            ac11_site_count(&body) > 0,
+            "AC-11: allowlisted {path} no longer contains any constructor \
              site, so the exception is superseded — remove the entry. An allowlist \
              entry outliving its blocker exempts the file from the gate for no \
              reason, which is a silent hole rather than a documented one."

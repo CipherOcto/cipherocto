@@ -23,7 +23,7 @@
 //!
 //! AC-11 (unit TV: `hop_signature_signs_and_verifies`) lives in
 //! `crates/octo-protocol/src/hop_signature.rs` — same preimage + Ed25519
-//! sign/verify cycle, exercised via the public `verify_ed25519_signature`
+//! sign/verify cycle, exercised via the public `verify_authorization_signature`
 //! helper.
 //!
 //! ## Why no real network
@@ -965,7 +965,7 @@ async fn remote_backend_rejects_outer_envelope_borsh_decode_failure() {
 /// embedded in `ChainResolveResponse.signature_chain` is a REAL
 /// Ed25519 signature over the production 5-tuple preimage
 /// (`HopSignature::signing_preimage`), and the in-band `signer_pub`
-/// verifies it via the public `verify_ed25519_signature` helper.
+/// verifies it via the public `verify_authorization_signature` helper.
 ///
 /// The backend synthesises a real `HopSignature`:
 /// 1. Generates a deterministic Ed25519 keypair from a 32-byte seed.
@@ -976,12 +976,12 @@ async fn remote_backend_rejects_outer_envelope_borsh_decode_failure() {
 ///
 /// The test then decodes the resulting `ChainResolveResponse` from the
 /// chain handler and verifies each signature end-to-end via
-/// `verify_ed25519_signature`. Pins the cross-domain
+/// `verify_authorization_signature`. Pins the cross-domain
 /// sign+verify+substrate round trip.
 #[tokio::test]
 async fn chain_cross_domain_auth_verifies() {
     use ed25519_dalek::{Signer, SigningKey};
-    use octo_protocol::authorization::{verify_ed25519_signature, Ed25519SignatureBytes};
+    use octo_protocol::authorization::{verify_authorization_signature, Ed25519SignatureBytes};
     use octo_protocol::HopSignature;
 
     // 1. Generate a deterministic Ed25519 keypair from a 32-byte seed.
@@ -1060,8 +1060,13 @@ async fn chain_cross_domain_auth_verifies() {
     // 7. AC-14 contract: the in-band `signer_pub` verifies the
     //    signature over the production 5-tuple preimage.
     let wire_did = octo_ident::WireDid::new(on_wire.hop_did.clone());
-    verify_ed25519_signature(&wire_did, &preimage_hash, &sig)
-        .expect("HopSignature MUST verify against the 5-tuple preimage + in-band signer_pub");
+    verify_authorization_signature(
+        &octo_algo_ed25519::ed25519_algorithm_id(),
+        &wire_did,
+        &preimage_hash,
+        &sig,
+    )
+    .expect("HopSignature MUST verify against the 5-tuple preimage + in-band signer_pub");
 }
 
 /// AC-15: `chain_cycle_detection_aborts_cross_node` — cycle
@@ -1150,7 +1155,7 @@ async fn chain_cycle_detection_aborts_cross_node() {
 #[tokio::test]
 async fn true_3_node_chain_accumulates_two_real_signed_hop_signatures() {
     use ed25519_dalek::{Signer, SigningKey};
-    use octo_protocol::authorization::{verify_ed25519_signature, Ed25519SignatureBytes};
+    use octo_protocol::authorization::{verify_authorization_signature, Ed25519SignatureBytes};
     use octo_protocol::HopSignature;
 
     /// Helper: build a real Ed25519-signed `HopSignature` for a given
@@ -1265,10 +1270,20 @@ async fn true_3_node_chain_accumulates_two_real_signed_hop_signatures() {
     let sig_c_bytes = Ed25519SignatureBytes(resp.signature_chain[1].signature);
     let did_b = octo_ident::WireDid::new(resp.signature_chain[0].hop_did.clone());
     let did_c = octo_ident::WireDid::new(resp.signature_chain[1].hop_did.clone());
-    verify_ed25519_signature(&did_b, &preimage_b, &sig_b_bytes)
-        .expect("B's HopSignature MUST verify against B's 5-tuple preimage");
-    verify_ed25519_signature(&did_c, &preimage_c, &sig_c_bytes)
-        .expect("C's HopSignature MUST verify against C's 5-tuple preimage");
+    verify_authorization_signature(
+        &octo_algo_ed25519::ed25519_algorithm_id(),
+        &did_b,
+        &preimage_b,
+        &sig_b_bytes,
+    )
+    .expect("B's HopSignature MUST verify against B's 5-tuple preimage");
+    verify_authorization_signature(
+        &octo_algo_ed25519::ed25519_algorithm_id(),
+        &did_c,
+        &preimage_c,
+        &sig_c_bytes,
+    )
+    .expect("C's HopSignature MUST verify against C's 5-tuple preimage");
 
     // 6. Outermost-first ordering preserved across the substrate.
     assert_eq!(

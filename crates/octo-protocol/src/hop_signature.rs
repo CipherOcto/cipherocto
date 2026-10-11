@@ -139,14 +139,14 @@ mod tests {
     /// `BLAKE3-256(canonical_ser((chain_hash, hop_index, BLAKE3(inner_payload), envelope_id)))`.
     ///
     /// Sign with `ed25519_dalek::SigningKey`; verify with
-    /// `verify_ed25519_signature` (which decodes the canonical DID into
+    /// `verify_authorization_signature` (which decodes the canonical DID into
     /// the verifying key). The preimage is built via
     /// `HopSignature::signing_preimage` — the SAME helper the production
     /// chain handler uses — so the test pins the production encoder,
     /// not a hand-rolled preimage that could silently drift.
     #[test]
     fn hop_signature_signs_and_verifies() {
-        use crate::authorization::{verify_ed25519_signature, Ed25519SignatureBytes};
+        use crate::authorization::{verify_authorization_signature, Ed25519SignatureBytes};
         use ed25519_dalek::{Signer, SigningKey};
 
         // 1. Generate a deterministic Ed25519 keypair from a 32-byte seed.
@@ -171,12 +171,17 @@ mod tests {
         let sig = Ed25519SignatureBytes::from_signature(&sk.sign(&preimage_hash));
         let hop_sig = HopSignature::new(hop_index, hop_did.as_str().to_owned(), sig.0, pk_bytes);
 
-        // 4. Verify the signature via the public `verify_ed25519_signature`
+        // 4. Verify the signature via the public `verify_authorization_signature`
         //    helper — same code path the `EnvelopeDispatcher` uses for
         //    `Authorization::Signature` verification. This pins the
         //    end-to-end sign/verify cycle over the 5-tuple preimage.
-        verify_ed25519_signature(&hop_did, &preimage_hash, &sig)
-            .expect("hop signature MUST verify against the 5-tuple preimage");
+        verify_authorization_signature(
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &hop_did,
+            &preimage_hash,
+            &sig,
+        )
+        .expect("hop signature MUST verify against the 5-tuple preimage");
         // Re-decode the `HopSignature` wire form to confirm the
         // borsh layout is self-consistent end-to-end.
         let hop_sig_bytes = borsh::to_vec(&hop_sig).expect("HopSignature borsh");

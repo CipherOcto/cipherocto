@@ -72,6 +72,36 @@ They are still worth fixing. An Ed25519 type in a public signature is a real
 coupling — it is just a **different** defect from AC#11's, and naming it
 honestly matters more than folding it into this one.
 
+## The blocker was wrong for most of this set — re-measured 2026-10-10
+
+§Why this is blocked says every site here waits on the RFC-0010 codec. Reading
+each site individually, that is true for **none** of them:
+
+| Category                                               | Files                                                                                                                                                                            | Real blocker                          |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| Key arrives as a caller-supplied `&[u8; 32]` parameter | `porelay/heartbeat`, `porelay/forwarding`, `porelay/bandwidth`, `porelay/availability`, `drs/route`, `dot/envelope`, `gossip/reputation`, `GatewayAttestation::verify_signature` | **none** — split to mission `0009-c7` |
+| Key is a field on the wire struct                      | `dot/dc` (`witness_id`), `dom/admission` (`intent.sender_id`), `KeyRotation`, `RevocationNotice`                                                                                 | wire format change under RFC-0853     |
+| Actually DID-derived                                   | none of the ten                                                                                                                                                                  | —                                     |
+
+The only `pubkey_from_did` callers in `octo-network` are
+`dc/admin_attest.rs` and `octo-role/src/select.rs`. Neither is on the pending
+table.
+
+So this file's central premise — that the codec is the blocker for this crate —
+does not survive contact with the code. Two sibling sites were already
+dispatched on the strength of that correction (`0009-c5`, `0009-c6`), and the
+third instance of the same error was the blanket reason pasted across this
+whole table.
+
+**The prerequisite nobody had checked:** `octo-network` does not depend on
+`octo-ident` at all. The manifest mentions it only inside a comment describing
+a future codec swap, which reads at a glance exactly like a dependency. That
+new edge — not a codec — is the real work in the first category.
+
+`0009-c3` stays open for the two categories it can actually own: the wire-format
+sites, and the 24 typed-key `dot/` signatures §The 27 typed-key sites describes.
+Those are separate work from `0009-c7`.
+
 ## Why this is blocked
 
 `octo-cap-macaroon::pubkey_from_did` parses `did:octo:0x<hex>` into

@@ -1701,62 +1701,91 @@ const AC11_DISPATCHED: &[&str] = &[
 /// table is a failure, which is what stops the table outliving its blocker
 /// the way an allowlist entry did.
 ///
-/// Dispatch is blocked on the RFC-0010 DID codec, so this entry is expected
-/// to shrink. It is recorded here rather than left to memory because the
-/// whole failure mode was that nobody was holding the number.
+/// The table is expected to shrink. It is recorded here rather than left to
+/// memory because the whole failure mode was that nobody was holding the
+/// number.
+///
+/// ## The blocker is NOT uniformly the DID codec, and saying so was wrong
+///
+/// This table originally carried one reason for every `octo-network` entry:
+/// "blocked on the RFC-0010 DID codec". That was inherited from the sites
+/// where it is true, and pasted onto sites where it is not — the same error
+/// that made two sibling entries false blockers (`0009-c5`, `0009-c6`).
+///
+/// Measured 2026-10-10 by reading each site, the ten files split three ways:
+///
+/// - **Caller-supplied key** — `porelay/*`, `drs/route`, `dot/envelope`,
+///   `gossip/reputation`, `GatewayAttestation::verify_signature`. The key
+///   arrives as a `&[u8; 32]` parameter. No DID is parsed, so the codec is
+///   not in the path. Dispatchable by adding an `AlgorithmId` parameter,
+///   exactly as `octo-vault` was.
+/// - **Key is a field on the wire struct** — `KeyRotation`, `dom/admission`,
+///   `dot/dc`. The key travels inside the message
+///   (`self.old_public_key`, `intent.sender_id`, `witness_id`). Carrying an
+///   algorithm here means a **wire format change**, which is a different
+///   blocker under a different RFC and is *not* the DID codec.
+/// - **Actually DID-derived** — none of these ten. The only
+///   `pubkey_from_did` callers in the crate are `dc/admin_attest.rs` and
+///   `octo-role`, neither of which appears in this table.
+///
+/// The blanket reason also hid a second problem: `octo-network` does **not**
+/// depend on `octo-ident` at all. `octo-ident` appears in its manifest only
+/// inside a comment describing a future codec swap. So every dispatch here
+/// needs a new dependency edge, which is the actual work in the first
+/// category — not a codec that already landed.
 const AC11_PENDING: &[(&str, usize, &str)] = &[
     (
         "crates/octo-network/src/ocrypt/attestation.rs",
         8,
-        "mission 0009-c3, blocked on the RFC-0010 DID codec",
+        "mission 0009-c7: NOT codec-blocked, and not one blocker either. GatewayAttestation::verify_signature takes a caller-supplied key (dispatchable); KeyRotation and RevocationNotice carry their keys as wire fields (needs an RFC-0853 format change).",
     ),
     (
         "crates/octo-network/src/gossip/reputation.rs",
         1,
-        "mission 0009-c3, blocked on the RFC-0010 DID codec. Counted with \
-         comments stripped: this file also has a doc comment naming \
-         VerifyingKey::from_bytes, which a raw grep would have counted here \
-         and the guard correctly does not.",
+        "mission 0009-c7: NOT codec-blocked — the key is a caller-supplied \
+         parameter. Counted with comments stripped: this file also has \
+         a doc comment naming VerifyingKey::from_bytes, which a raw grep \
+         would have counted here and the guard correctly does not.",
     ),
     (
         "crates/octo-network/src/porelay/heartbeat.rs",
         2,
-        "mission 0009-c3, blocked on the RFC-0010 DID codec",
+        "mission 0009-c7: NOT codec-blocked. The key arrives as a caller-supplied byte parameter and no DID is parsed, so dispatch is reachable by adding an AlgorithmId parameter — the octo-vault shape. Needs an octo-ident dependency edge, which this crate does not yet have.",
     ),
     (
         "crates/octo-network/src/porelay/forwarding.rs",
         2,
-        "mission 0009-c3, blocked on the RFC-0010 DID codec",
+        "mission 0009-c7: NOT codec-blocked. The key arrives as a caller-supplied byte parameter and no DID is parsed, so dispatch is reachable by adding an AlgorithmId parameter — the octo-vault shape. Needs an octo-ident dependency edge, which this crate does not yet have.",
     ),
     (
         "crates/octo-network/src/porelay/bandwidth.rs",
         2,
-        "mission 0009-c3, blocked on the RFC-0010 DID codec",
+        "mission 0009-c7: NOT codec-blocked. The key arrives as a caller-supplied byte parameter and no DID is parsed, so dispatch is reachable by adding an AlgorithmId parameter — the octo-vault shape. Needs an octo-ident dependency edge, which this crate does not yet have.",
     ),
     (
         "crates/octo-network/src/porelay/availability.rs",
         2,
-        "mission 0009-c3, blocked on the RFC-0010 DID codec",
+        "mission 0009-c7: NOT codec-blocked. The key arrives as a caller-supplied byte parameter and no DID is parsed, so dispatch is reachable by adding an AlgorithmId parameter — the octo-vault shape. Needs an octo-ident dependency edge, which this crate does not yet have.",
     ),
     (
         "crates/octo-network/src/drs/route.rs",
         2,
-        "mission 0009-c3, blocked on the RFC-0010 DID codec",
+        "mission 0009-c7: NOT codec-blocked. The key arrives as a caller-supplied byte parameter and no DID is parsed, so dispatch is reachable by adding an AlgorithmId parameter — the octo-vault shape. Needs an octo-ident dependency edge, which this crate does not yet have.",
     ),
     (
         "crates/octo-network/src/dot/envelope.rs",
         2,
-        "mission 0009-c3, blocked on the RFC-0010 DID codec",
+        "mission 0009-c7: NOT codec-blocked. The key arrives as a caller-supplied byte parameter and no DID is parsed, so dispatch is reachable by adding an AlgorithmId parameter — the octo-vault shape. Needs an octo-ident dependency edge, which this crate does not yet have.",
     ),
     (
         "crates/octo-network/src/dot/dc.rs",
         1,
-        "mission 0009-c3, blocked on the RFC-0010 DID codec",
+        "mission 0009-c7: NOT codec-blocked. The key is a field on the message itself, so carrying an algorithm means a WIRE FORMAT change under RFC-0853. Different blocker, different RFC.",
     ),
     (
         "crates/octo-network/src/dom/admission.rs",
         2,
-        "mission 0009-c3, blocked on the RFC-0010 DID codec",
+        "mission 0009-c7: NOT codec-blocked. The key is a field on the message itself, so carrying an algorithm means a WIRE FORMAT change under RFC-0853. Different blocker, different RFC.",
     ),
     // Swept 2026-10-10: every remaining production site workspace-wide, in
     // crates no other list covered. The `octo-network` entries above are all

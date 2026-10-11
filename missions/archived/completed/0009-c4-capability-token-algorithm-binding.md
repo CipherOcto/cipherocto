@@ -1,11 +1,11 @@
 ---
 name: 0009-c4-capability-token-algorithm-binding
-description: RFC-0009 AC#11, blocked site 1 of 2. Give CapabilityToken the algorithm its holder signature is verified under, and stop naming ed25519_dalek::Signature in the capability token's public API.
+description: RFC-0009 AC#11, blocked site 1 of 2. CLOSED — CapabilityToken carries the algorithm its holder signature is verified under, and the sibling site this file left open was dispatched by mission 0009-ca.
 metadata:
   node_type: mission
   type: implementation
   created: 2026-10-09T00:00:00.000Z
-  v: "1.0"
+  v: "2.0"
   depends_on:
     - RFC-0009
     - 0009-b-algorithm-registry
@@ -26,13 +26,25 @@ exist — see §The wire format does not have to change. The real work was
 narrower and is done: `HolderSignature`, dispatch in `verify_holder_sig`,
 and the API grep guard that mission `0009-c` could not write.
 
-**One AC-11 site remains open workspace-wide:**
-`octo-protocol` §`verify_ed25519_signature`, which is a Layer 1 envelope
-change and deliberately not folded in here.
+**Closed 2026-10-10.** This file named one AC#11 site as still open
+workspace-wide: `octo-protocol` §`verify_ed25519_signature`, "a Layer 1
+envelope change deliberately not folded in here". Mission `0009-ca` dispatched
+it, and renamed it `verify_authorization_signature` — the old name asserted
+Ed25519, which is exactly what stopped being true.
 
-This is one of the two sites mission `0009-c` explicitly could not dispatch.
-The other is `octo-protocol` §`verify_ed25519_signature`; see
-§The other blocked site.
+The gate entry that excused it was removed rather than re-justified. That
+matters more than the dispatch did: an `AC11_ALLOWED` entry exempts a whole
+_file_ from the inline-rebuild scan, so RFC-0871 §Adversary Analysis A6's
+enforcement point — the check every signed envelope passes through — was
+unscanned, and a new inline site beside it would not have been seen. Measured
+directly: the same planted site left all 47 vectors green with the entry
+present, and turned the scan red without it.
+
+This file's own reasoning had been right for the wrong reason. It recorded the
+site as a Layer 1 envelope change rather than a dispatch, and the distinction
+that suggested turned out to be a _naming_ problem, not an architecture one:
+the caller can supply an algorithm to an envelope verifier exactly as it does
+to every other site. Nothing about `octo-protocol` was special.
 
 ## Dependencies
 

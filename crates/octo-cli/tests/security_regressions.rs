@@ -740,6 +740,78 @@ fn adapter_canonicalize_files() -> Vec<PathBuf> {
     found
 }
 
+/// Every adapter that names a concrete algorithm at its call site must say
+/// why, and name the owner.
+///
+/// Measured: all 24 adapter call sites pass `ed25519_algorithm_id()`
+/// explicitly, and none passed anything else. That is a **known and
+/// documented** limitation — the adapters have no peer registry yet, so they
+/// cannot know which algorithm a peer's key speaks, and binding a per-peer
+/// algorithm is CD-6's work.
+///
+/// What was not true is that the assumption was *declared* everywhere. The
+/// site in `octo-adapter-p2p` says Ed25519 is named "so the call site reads
+/// as an assumption rather than an accident" — and that held at **5 of 24**
+/// sites. The other 19 hardcoded Ed25519 in silence, which is the accident
+/// the one note warns against.
+///
+/// This pins the declaration, not the algorithm. CD-6 replacing the hardcoded
+/// id is the fix; until then every site states the assumption out loud, so a
+/// reader (or a grep) can find all 24 of them and none is a surprise.
+///
+/// The floor is measured, not invented: a guard that stops matching because
+/// the discovery rule changed would otherwise pass vacuously.
+#[test]
+fn every_adapter_naming_a_concrete_algorithm_declares_the_assumption() {
+    let files = adapter_canonicalize_files();
+    assert!(
+        files.len() >= 20,
+        "this guard examined {} adapter files, expected 20 or more",
+        files.len()
+    );
+
+    let mut sites = 0usize;
+    let mut undeclared: Vec<String> = Vec::new();
+    for file in &files {
+        let raw = std::fs::read_to_string(file).unwrap();
+        let lines: Vec<&str> = raw.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            if !line.contains("ed25519_algorithm_id()") {
+                continue;
+            }
+            sites += 1;
+            // The note may sit above the statement or above the statement's own
+            // leading comments, so the window reaches a little further up.
+            let lo = i.saturating_sub(10);
+            let window = lines[lo..(i + 1).min(lines.len())].join("\n");
+            if !window.contains("CD-6") {
+                undeclared.push(format!(
+                    "{} (line {})",
+                    file.file_name().unwrap_or_default().to_string_lossy(),
+                    i + 1
+                ));
+            }
+        }
+    }
+
+    assert!(
+        undeclared.is_empty(),
+        "M-15: these adapter sites hardcode Ed25519 without declaring that it is \
+         an assumption awaiting CD-6. Silence is how a known limitation becomes an \
+         accident: state it at the call site, as the note in octo-adapter-p2p \
+         already does. Undeclared: {undeclared:?}"
+    );
+
+    // 24 measured across 20 adapters today. When CD-6 lands and these become
+    // real per-peer lookups this fails loudly, which is the point: the debt
+    // being paid should be visible, not silently absorbed.
+    assert!(
+        sites >= 24,
+        "the adapter sweep found only {sites} sites naming a concrete algorithm, \
+         against a measured 24. If this fires the discovery rule changed."
+    );
+}
+
 #[test]
 fn m15_every_adapter_canonicalize_verifies_the_envelope() {
     let files = adapter_canonicalize_files();

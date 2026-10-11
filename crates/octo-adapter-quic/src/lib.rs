@@ -901,6 +901,8 @@ impl PlatformAdapter for QuicAdapter {
 
         // QUIC carries raw wire bytes — try direct deserialization first
         if let Ok(env) = DeterministicEnvelope::from_wire_bytes(&raw.payload) {
+            // Ed25519 named explicitly so this reads as an assumption rather than an
+            // accident; per-peer algorithm binding is CD-6's work.
             // M-15: see the note on the fallback path below — parsing alone
             // accepts a structurally valid frame with a forged signature.
             env.verify(&octo_algo_ed25519::ed25519_algorithm_id(), &env.source_peer)

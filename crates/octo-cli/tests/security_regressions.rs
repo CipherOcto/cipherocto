@@ -3068,3 +3068,88 @@ fn no_verification_site_pins_its_key_to_a_fixed_size_array() {
          loses a crate to a rename, is what this is here to catch."
     );
 }
+
+/// A verification site must reach the algorithm registry the same way every
+/// other site does.
+///
+/// Both algorithm crates expose exactly one verification entry point,
+/// `verify_dispatch`, and that is what the key-shape scan above looks for. The
+/// problem is what `verify_dispatch` is not: both crates also publish
+/// `shared_registry`, and a site that calls it can do
+///
+/// ```text
+/// registry.get(id)?.verify(key, msg, sig)
+/// ```
+///
+/// which verifies correctly, dispatches correctly, and is invisible to a scan
+/// keyed on the function name — the exact shape of evasion this arc has hit
+/// three times now. A name-based measure cannot see it, so the class is closed
+/// structurally instead: the registry handle and a verification call must not
+/// appear in the same function body.
+///
+/// Narrow on purpose. Reading the registry to *ask* what a deployment supports
+/// is legitimate and must not be reported, so this fires only when the same
+/// function also verifies. Verified by planting that pairing, which this vector
+/// caught; the planted site was otherwise invisible to `verify_dispatch`.
+///
+/// What this does NOT catch: a handle taken in one function and passed to
+/// another. That is the forwarder gap the key-shape scan already documents,
+/// and it is not closed here.
+#[test]
+fn no_verification_site_reaches_the_algorithm_registry_by_hand() {
+    let root = workspace_root();
+    let mut offenders: Vec<String> = Vec::new();
+
+    let mut stack: Vec<std::path::PathBuf> = AC11_DISPATCHED.iter().map(|d| root.join(d)).collect();
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let Ok(src) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let stripped = strip_comments(&src);
+            let rel = path
+                .strip_prefix(&root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            for (sig, body) in fn_blocks(&stripped) {
+                let takes_registry = body.contains("shared_registry()")
+                    || body.contains("AlgorithmRegistry")
+                    || body.contains("global_registry(");
+                if !takes_registry {
+                    continue;
+                }
+                // A verification call that is not the sanctioned entry point.
+                let hand_rolled = body.contains(".verify(") && !body.contains("verify_dispatch(");
+                if hand_rolled {
+                    let name = sig
+                        .split("fn ")
+                        .nth(1)
+                        .and_then(|s| s.split('(').next())
+                        .unwrap_or("<unknown>")
+                        .trim();
+                    offenders.push(format!("{rel} (fn `{name}` reaches the registry by hand)"));
+                }
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "AC-11: these sites reach the algorithm registry directly instead of through \
+         verify_dispatch, so no scan keyed on the dispatch entry point can see them: \
+         {offenders:?}. Call verify_dispatch, or take the algorithm through it, so there \
+         is one way in."
+    );
+}

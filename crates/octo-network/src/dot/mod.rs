@@ -169,6 +169,9 @@ impl DotGateway {
     pub async fn process_envelope(
         &self,
         envelope: &DeterministicEnvelope,
+        // The algorithm `source_peer_key` belongs to. Dispatch source, not
+        // assumption (RFC-0009 AC#11).
+        source_peer_algorithm: &octo_ident::AlgorithmId,
         source_peer_key: &[u8; 32],
         current_epoch: u64,
     ) -> Result<ProcessingResult, DotError> {
@@ -191,7 +194,7 @@ impl DotGateway {
         }
 
         // 1. Verify envelope_id derivation (Class A)
-        envelope.verify(source_peer_key)?;
+        envelope.verify(source_peer_algorithm, source_peer_key)?;
 
         // 2. TTL check — reject expired envelopes before forwarding
         if envelope.ttl_hops == 0 {
@@ -274,7 +277,12 @@ mod tests {
         sign_envelope(&mut envelope, &signing_key);
 
         let result = gateway
-            .process_envelope(&envelope, &signing_key.verifying_key().to_bytes(), 100)
+            .process_envelope(
+                &envelope,
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &signing_key.verifying_key().to_bytes(),
+                100,
+            )
             .await;
         assert!(result.is_ok());
     }
@@ -300,7 +308,12 @@ mod tests {
         sign_envelope(&mut envelope, &signing_key);
 
         let result = gateway
-            .process_envelope(&envelope, &signing_key.verifying_key().to_bytes(), 100)
+            .process_envelope(
+                &envelope,
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &signing_key.verifying_key().to_bytes(),
+                100,
+            )
             .await;
         assert!(matches!(
             result,
@@ -332,7 +345,12 @@ mod tests {
         let other_key = SigningKey::from_bytes(&[99u8; 32]);
         let wrong_pubkey = other_key.verifying_key().to_bytes();
         let result = gateway
-            .process_envelope(&envelope, &wrong_pubkey, 100)
+            .process_envelope(
+                &envelope,
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &wrong_pubkey,
+                100,
+            )
             .await;
         assert!(matches!(result, Err(DotError::InvalidSignature { .. })));
     }
@@ -360,12 +378,24 @@ mod tests {
 
         // First insert succeeds
         assert!(gateway
-            .process_envelope(&envelope, &peer_key, 100)
+            .process_envelope(
+                &envelope,
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &peer_key,
+                100
+            )
             .await
             .is_ok());
         // Second insert is a replay
         assert!(matches!(
-            gateway.process_envelope(&envelope, &peer_key, 101).await,
+            gateway
+                .process_envelope(
+                    &envelope,
+                    &octo_algo_ed25519::ed25519_algorithm_id(),
+                    &peer_key,
+                    101
+                )
+                .await,
             Err(DotError::ReplayDetected { .. })
         ));
     }

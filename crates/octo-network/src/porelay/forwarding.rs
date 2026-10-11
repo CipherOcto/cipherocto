@@ -64,14 +64,18 @@ impl ForwardingProof {
     }
 
     /// Verify the Ed25519 signature over the signing message.
-    pub fn verify_signature(&self, public_key: &[u8; 32]) -> bool {
-        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-        let vk = match VerifyingKey::from_bytes(public_key) {
-            Ok(vk) => vk,
-            Err(_) => return false,
-        };
-        let sig = Signature::from_bytes(&self.signature);
-        vk.verify(&self.signing_message(), &sig).is_ok()
+    pub fn verify_signature(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        public_key: &[u8; 32],
+    ) -> bool {
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            public_key,
+            &self.signing_message(),
+            &self.signature,
+        )
+        .is_ok()
     }
 
     /// Verify the stored commitment against recomputed value.
@@ -82,9 +86,14 @@ impl ForwardingProof {
     }
 
     /// Full verification: signature + commitment + sequence monotonicity.
-    pub fn verify_full(&self, public_key: &[u8; 32], previous_sequence: u64) -> bool {
+    pub fn verify_full(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        public_key: &[u8; 32],
+        previous_sequence: u64,
+    ) -> bool {
         self.sequence > previous_sequence
-            && self.verify_commitment() & self.verify_signature(public_key)
+            && self.verify_commitment() & self.verify_signature(algorithm, public_key)
     }
 }
 

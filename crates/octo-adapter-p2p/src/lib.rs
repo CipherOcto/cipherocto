@@ -297,7 +297,12 @@ impl PlatformAdapter for NativeP2PAdapter {
         if let Ok(env) = DeterministicEnvelope::from_wire_bytes(&raw.payload) {
             // M-15: see the note on the fallback path below — parsing alone
             // accepts a structurally valid frame with a forged signature.
-            env.verify(&env.source_peer)
+            // The envelope's own claimed peer. There is no registry here
+            // to say which algorithm that key speaks — see the M-15
+            // note below. Ed25519 is named explicitly so the call site
+            // reads as an assumption rather than an accident; binding a
+            // real per-peer algorithm is CD-6's work.
+            env.verify(&octo_algo_ed25519::ed25519_algorithm_id(), &env.source_peer)
                 .map_err(|e| transport_err(format!("envelope verify failed: {e}")))?;
             return Ok(env);
         }
@@ -323,7 +328,10 @@ impl PlatformAdapter for NativeP2PAdapter {
         // NOT that the claimed peer is who it claims to be — binding the key to
         // a known peer is the registry work in CD-6.
         envelope
-            .verify(&envelope.source_peer)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &envelope.source_peer,
+            )
             .map_err(|e| transport_err(format!("envelope verify failed: {e}")))?;
         Ok(envelope)
     }

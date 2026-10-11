@@ -52,20 +52,33 @@ impl GatewayHeartbeat {
         buf
     }
 
-    /// Verify the Ed25519 signature.
-    pub fn verify_signature(&self, public_key: &[u8; 32]) -> bool {
-        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-        let vk = match VerifyingKey::from_bytes(public_key) {
-            Ok(vk) => vk,
-            Err(_) => return false,
-        };
-        let sig = Signature::from_bytes(&self.signature);
-        vk.verify(&self.to_signing_bytes(), &sig).is_ok()
+    /// Verify the signature, dispatching on `algorithm` (RFC-0009 AC#11).
+    ///
+    /// The key arrives from the caller as bytes, so the caller is the only
+    /// party that knows which algorithm they belong to — hence the parameter.
+    /// An unregistered algorithm fails closed.
+    pub fn verify_signature(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        public_key: &[u8; 32],
+    ) -> bool {
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            public_key,
+            &self.to_signing_bytes(),
+            &self.signature,
+        )
+        .is_ok()
     }
 
     /// Full verification: signature + sequence monotonicity.
-    pub fn verify_full(&self, public_key: &[u8; 32], previous_sequence: u64) -> bool {
-        self.sequence > previous_sequence && self.verify_signature(public_key)
+    pub fn verify_full(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        public_key: &[u8; 32],
+        previous_sequence: u64,
+    ) -> bool {
+        self.sequence > previous_sequence && self.verify_signature(algorithm, public_key)
     }
 }
 
@@ -94,6 +107,7 @@ pub enum UptimeClass {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::Signer;
 
     #[test]
     fn test_heartbeat_signing_bytes_size() {
@@ -113,6 +127,66 @@ mod tests {
     fn test_load_class_values() {
         assert_eq!(LoadClass::Idle as u8, 0x00);
         assert_eq!(LoadClass::Saturated as u8, 0xFF);
+    }
+
+    // ── AC#11: dispatch on the caller's declared algorithm ────────────────
+
+    fn signed_heartbeat() -> (ed25519_dalek::SigningKey, GatewayHeartbeat) {
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[0x33u8; 32]);
+        let mut hb = GatewayHeartbeat {
+            gateway_id: [0x11u8; 32],
+            sequence: 7,
+            active_routes: 3,
+            load_class: 0,
+            uptime_class: 1,
+            logical_timestamp: 1_700_000_000,
+            signature: [0u8; 64],
+        };
+        let sig = sk.sign(&hb.to_signing_bytes());
+        hb.signature = sig.to_bytes();
+        (sk, hb)
+    }
+
+    /// The happy path with Ed25519 named explicitly.
+    ///
+    /// **Control:** this cannot distinguish dispatch from a hardcoded
+    /// Ed25519 — see the unregistered-algorithm vector below, which can.
+    #[test]
+    fn heartbeat_dispatch_on_declared_algorithm_verifies() {
+        let (sk, hb) = signed_heartbeat();
+        let pk = sk.verifying_key().to_bytes();
+        assert!(hb.verify_signature(&octo_algo_ed25519::ed25519_algorithm_id(), &pk));
+    }
+
+    /// The fail-closed half, and the only vector that proves the dispatch.
+    ///
+    /// A genuine Ed25519 signature, a valid key, correct sequence — the only
+    /// thing wrong is that the caller named an algorithm this deployment has
+    /// not registered. Before the change this was inexpressible: the method
+    /// took a bare key and Ed25519 was the only thing it could mean.
+    #[test]
+    fn heartbeat_refuses_an_unregistered_algorithm() {
+        let (sk, hb) = signed_heartbeat();
+        let pk = sk.verifying_key().to_bytes();
+        let bogus = octo_ident::AlgorithmId::derive("not-a-registered-heartbeat-algorithm");
+        assert_ne!(bogus, octo_algo_ed25519::ed25519_algorithm_id());
+        assert!(
+            !hb.verify_signature(&bogus, &pk),
+            "an unregistered algorithm must fail closed"
+        );
+    }
+
+    /// Dispatch must not degrade the check into a lookup.
+    #[test]
+    fn heartbeat_still_refuses_a_bad_signature() {
+        let (sk, hb) = signed_heartbeat();
+        let other = ed25519_dalek::SigningKey::from_bytes(&[0x44u8; 32]);
+        let mut bad = hb.clone();
+        bad.signature = other.sign(&hb.to_signing_bytes()).to_bytes();
+        assert!(!bad.verify_signature(
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &sk.verifying_key().to_bytes()
+        ));
     }
 
     #[test]

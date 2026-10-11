@@ -17,8 +17,53 @@ metadata:
 
 ## Status
 
-Open 2026-10-10. Split out of `0009-c3` after measurement showed its blanket
-blocker was wrong for most of the set.
+**Claimed and implemented 2026-10-10.** 1525 `octo-network` lib vectors pass;
+clippy clean at `-D warnings` on `octo-network` and `octo-adapter-p2p`.
+
+Seven sites now dispatch. `porelay/heartbeat`, `porelay/forwarding`,
+`porelay/bandwidth`, `porelay/availability`, `drs/route`, `dot/envelope` and
+`gossip/reputation` are at zero, plus `GatewayAttestation::verify_signature`
+which took `ocrypt/attestation.rs` from 8 sites to 6.
+
+## The mutation result, third time identical
+
+Replacing the recorded algorithm with a hardcoded Ed25519 identifier in
+`heartbeat.verify_signature` turns **exactly one** vector red — the
+unregistered-algorithm control — and leaves the happy path and the
+bad-signature check green.
+
+That is now three for three across `octo-vault`, `octo-coordinator-types` and
+here, and it is the most important measurement in this mission. A verifier
+that ignores the algorithm entirely passes the happy path and the bad-signature
+check on every one of these sites. Neither vector is evidence that dispatch
+works. Only the fail-closed vector can tell the difference.
+
+## Two dependency edges nobody had checked
+
+`octo-network` did not depend on `octo-ident` at all — the manifest named it
+only inside a comment describing a future codec swap, which reads at a glance
+exactly like a dependency. `octo-adapter-p2p` needed the algorithm crate for
+its two envelope-verification call sites.
+
+Both are now added with the layer justification `octo-wallet` already uses.
+
+## The p2p call sites name Ed25519 explicitly, on purpose
+
+`octo-adapter-p2p` verifies against the envelope's **own claimed** source
+peer — there is no peer registry, and its own M-15 comment says binding the key
+to a known peer is future work. So it has no per-peer algorithm to read.
+
+Rather than leave the signature change implicit, the call site now names
+Ed25519 with a comment saying why. That is a stated assumption rather than a
+silent one, which is the difference AC#11 asks for: it cannot be mistaken for
+dispatch that has peer context it does not have.
+
+## The remaining two pending files are a different mission
+
+`dot/dc` and `dom/admission` read their key from a field on the wire struct, so
+dispatching means changing the wire format under RFC-0853. `KeyRotation` and
+`RevocationNotice` in `ocrypt/attestation.rs` are the same shape and hold the
+other 6 of that file's sites. All of it stays in `0009-c3`.
 
 ## Why this mission exists
 

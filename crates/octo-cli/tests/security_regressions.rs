@@ -1736,46 +1736,64 @@ const AC11_DISPATCHED: &[&str] = &[
 const AC11_PENDING: &[(&str, usize, &str)] = &[
     (
         "crates/octo-network/src/ocrypt/attestation.rs",
-        8,
-        "mission 0009-c7: NOT codec-blocked, and not one blocker either. GatewayAttestation::verify_signature takes a caller-supplied key (dispatchable); KeyRotation and RevocationNotice carry their keys as wire fields (needs an RFC-0853 format change).",
+        6,
+        "mission 0009-c7: HALF DISPATCHED. GatewayAttestation::verify_signature took a caller-supplied key and now dispatches, so this file dropped from 8 sites to 6. The remaining 6 are KeyRotation::verify and RevocationNotice, whose keys are FIELDS ON THE WIRE STRUCT — carrying an algorithm there is a wire format change under RFC-0853, which is a different blocker under a different RFC and is NOT the DID codec.",
     ),
     (
         "crates/octo-network/src/gossip/reputation.rs",
-        1,
-        "mission 0009-c7: NOT codec-blocked — the key is a caller-supplied \
-         parameter. Counted with comments stripped: this file also has \
-         a doc comment naming VerifyingKey::from_bytes, which a raw grep \
-         would have counted here and the guard correctly does not.",
+        0,
+        "mission 0009-c7: DISPATCHED. Count of zero rather than removed, \
+         so a future site here fails the gate instead of opening a new silent \
+         gap. The key arrived as a caller-supplied parameter, so no DID was \
+         parsed and the recorded DID-codec blocker never applied.",
     ),
     (
         "crates/octo-network/src/porelay/heartbeat.rs",
-        2,
-        "mission 0009-c7: NOT codec-blocked. The key arrives as a caller-supplied byte parameter and no DID is parsed, so dispatch is reachable by adding an AlgorithmId parameter — the octo-vault shape. Needs an octo-ident dependency edge, which this crate does not yet have.",
+        0,
+        "mission 0009-c7: DISPATCHED. Count of zero rather than removed, \
+         so a future site here fails the gate instead of opening a new silent \
+         gap. The key arrived as a caller-supplied parameter, so no DID was \
+         parsed and the recorded DID-codec blocker never applied.",
     ),
     (
         "crates/octo-network/src/porelay/forwarding.rs",
-        2,
-        "mission 0009-c7: NOT codec-blocked. The key arrives as a caller-supplied byte parameter and no DID is parsed, so dispatch is reachable by adding an AlgorithmId parameter — the octo-vault shape. Needs an octo-ident dependency edge, which this crate does not yet have.",
+        0,
+        "mission 0009-c7: DISPATCHED. Count of zero rather than removed, \
+         so a future site here fails the gate instead of opening a new silent \
+         gap. The key arrived as a caller-supplied parameter, so no DID was \
+         parsed and the recorded DID-codec blocker never applied.",
     ),
     (
         "crates/octo-network/src/porelay/bandwidth.rs",
-        2,
-        "mission 0009-c7: NOT codec-blocked. The key arrives as a caller-supplied byte parameter and no DID is parsed, so dispatch is reachable by adding an AlgorithmId parameter — the octo-vault shape. Needs an octo-ident dependency edge, which this crate does not yet have.",
+        0,
+        "mission 0009-c7: DISPATCHED. Count of zero rather than removed, \
+         so a future site here fails the gate instead of opening a new silent \
+         gap. The key arrived as a caller-supplied parameter, so no DID was \
+         parsed and the recorded DID-codec blocker never applied.",
     ),
     (
         "crates/octo-network/src/porelay/availability.rs",
-        2,
-        "mission 0009-c7: NOT codec-blocked. The key arrives as a caller-supplied byte parameter and no DID is parsed, so dispatch is reachable by adding an AlgorithmId parameter — the octo-vault shape. Needs an octo-ident dependency edge, which this crate does not yet have.",
+        0,
+        "mission 0009-c7: DISPATCHED. Count of zero rather than removed, \
+         so a future site here fails the gate instead of opening a new silent \
+         gap. The key arrived as a caller-supplied parameter, so no DID was \
+         parsed and the recorded DID-codec blocker never applied.",
     ),
     (
         "crates/octo-network/src/drs/route.rs",
-        2,
-        "mission 0009-c7: NOT codec-blocked. The key arrives as a caller-supplied byte parameter and no DID is parsed, so dispatch is reachable by adding an AlgorithmId parameter — the octo-vault shape. Needs an octo-ident dependency edge, which this crate does not yet have.",
+        0,
+        "mission 0009-c7: DISPATCHED. Count of zero rather than removed, \
+         so a future site here fails the gate instead of opening a new silent \
+         gap. The key arrived as a caller-supplied parameter, so no DID was \
+         parsed and the recorded DID-codec blocker never applied.",
     ),
     (
         "crates/octo-network/src/dot/envelope.rs",
-        2,
-        "mission 0009-c7: NOT codec-blocked. The key arrives as a caller-supplied byte parameter and no DID is parsed, so dispatch is reachable by adding an AlgorithmId parameter — the octo-vault shape. Needs an octo-ident dependency edge, which this crate does not yet have.",
+        0,
+        "mission 0009-c7: DISPATCHED. Count of zero rather than removed, \
+         so a future site here fails the gate instead of opening a new silent \
+         gap. The key arrived as a caller-supplied parameter, so no DID was \
+         parsed and the recorded DID-codec blocker never applied.",
     ),
     (
         "crates/octo-network/src/dot/dc.rs",

@@ -24,6 +24,19 @@ ed25519-dalek = { version = "2.1", features = ["serde"] }
 x25519-dalek = { version = "2.0", features = ["static_secrets"] }
 chacha20poly1305 = "0.10"
 libloading = "0.8"
+# RFC-0009 AC#11 (mission 0009-c7): transport-envelope verification dispatches
+# on the algorithm the caller's key belongs to instead of a hardcoded Ed25519.
+# `octo-ident` is Layer B identity substrate and `octo-algo-ed25519` is a
+# Layer E per-algorithm extension — C → B is permitted, and the arrow that
+# must never point back (E → B internals) is not taken. Same pair
+# `octo-wallet`, `octo-reputation`, `octo-vault` and `octo-coordinator-types`
+# already carry.
+#
+# Note: `octo-ident` was named in this manifest only inside a comment about a
+# future codec swap, which reads at a glance exactly like a dependency. It was
+# not one until this line.
+octo-ident = { path = "../octo-ident" }
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
 wasmtime = { version = "36.0", optional = true }
 # Mission 0850p-d: nonce generation for DcOrchestrator
 rand = "0.9"

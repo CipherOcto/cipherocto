@@ -159,16 +159,15 @@ pub fn did_from_pubkey(pubkey: &[u8; 32]) -> octo_reputation::types::RecorderDid
 pub fn verify_envelope_signature(
     env: &octo_reputation::gossip::GossipEnvelope,
     pubkey: &[u8; 32],
+    algorithm: &octo_ident::AlgorithmId,
 ) -> Result<(), &'static str> {
-    use ed25519_dalek::{Signature, VerifyingKey};
     if env.recorder_signature.len() != 64 {
         return Err("recorder_signature_wrong_length");
     }
-    let sig = Signature::from_slice(&env.recorder_signature)
-        .map_err(|_| "recorder_signature_not_canonical")?;
-    let vk = VerifyingKey::from_bytes(pubkey).map_err(|_| "pubkey_not_canonical")?;
     let msg = env.event.canonical_bytes();
-    vk.verify_strict(&msg, &sig)
+    // Dispatch, not a dalek round-trip (RFC-0009 AC#11). An unregistered
+    // algorithm fails closed here rather than being verified as Ed25519.
+    octo_algo_ed25519::verify_dispatch(algorithm, pubkey, &msg, &env.recorder_signature)
         .map_err(|_| "signature_verify_failed")?;
     if did_from_pubkey(pubkey) != env.event.recorder_did {
         return Err("stale_pubkey_mapping");
@@ -553,7 +552,11 @@ where
     if let Some(lookup) = signature_lookup {
         match lookup.lookup(&env.event.recorder_did) {
             Some(pubkey) => {
-                if let Err(reason) = verify_envelope_signature(&env, &pubkey) {
+                if let Err(reason) = verify_envelope_signature(
+                    &env,
+                    &pubkey,
+                    &octo_algo_ed25519::ed25519_algorithm_id(),
+                ) {
                     warn!(
                         recorder_did = ?env.event.recorder_did,
                         reason,

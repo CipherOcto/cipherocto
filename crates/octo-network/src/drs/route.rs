@@ -94,14 +94,18 @@ impl DeterministicRoute {
     }
 
     /// Verify the route signature against a public key.
-    pub fn verify_signature(&self, public_key: &[u8; 32]) -> bool {
-        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-        let vk = match VerifyingKey::from_bytes(public_key) {
-            Ok(vk) => vk,
-            Err(_) => return false,
-        };
-        let sig = Signature::from_bytes(&self.signature);
-        vk.verify(&self.to_signing_bytes(), &sig).is_ok()
+    pub fn verify_signature(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        public_key: &[u8; 32],
+    ) -> bool {
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            public_key,
+            &self.to_signing_bytes(),
+            &self.signature,
+        )
+        .is_ok()
     }
 
     /// Check if route is expired.

@@ -78,20 +78,24 @@ impl GatewayAttestation {
         PropagationTarget::Gdp
     }
 
-    /// Verify that the attestation signature is valid for the given public key.
+    /// Verify that the attestation signature is valid, dispatching on `algorithm`
+    /// (RFC-0009 AC#11).
     ///
-    /// Returns Ok(()) if valid, Err otherwise.
+    /// The key arrives from the caller as bytes, so the caller is the only
+    /// party that knows which algorithm it belongs to. An unregistered
+    /// algorithm fails closed.
     pub fn verify_signature(
         &self,
+        algorithm: &octo_ident::AlgorithmId,
         public_key: &[u8; 32],
     ) -> Result<(), crate::ocrypt::error::CryptoError> {
-        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-        let verifying_key = VerifyingKey::from_bytes(public_key)
-            .map_err(|_| crate::ocrypt::error::CryptoError::InvalidSignature)?;
-        let sig = Signature::from_bytes(&self.signature);
-        verifying_key
-            .verify(&self.to_signing_bytes(), &sig)
-            .map_err(|_| crate::ocrypt::error::CryptoError::InvalidSignature)
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            public_key,
+            &self.to_signing_bytes(),
+            &self.signature,
+        )
+        .map_err(|_| crate::ocrypt::error::CryptoError::InvalidSignature)
     }
 }
 

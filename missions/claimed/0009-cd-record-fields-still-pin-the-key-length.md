@@ -285,15 +285,16 @@ the record. That is the gap this mission closes.
 - [ ] `GovernanceProof::governance_pubkey`, `SuspensionAuth::governance_pubkey`
       and `ResumeProof::governance_pubkey` carry a key whose length is not
       decided by the type
-- [ ] `KeyRotation::old_public_key` and `KeyRotation::new_public_key` carry a
+- [x] `KeyRotation::old_public_key` and `KeyRotation::new_public_key` carry a
       key whose length is not decided by the type, so the two-algorithm
       rotation its `verify` exists to accept becomes reachable
+- [x] The `#[repr(C)]` wire form of `KeyRotation` is treated as a wire change,
+      with its two fixed-width key slots and two 64-byte signature slots
+      considered together rather than independently — settled: there is no wire
+      form, so the attribute was vestigial and is gone
 - [ ] The persistence encoding of all three records is examined and the change
       to it is deliberate, not incidental — these records are stored, and the
       current `[u8; 32]` may be relied on by an existing schema or column width
-- [ ] The `#[repr(C)]` wire form of `KeyRotation` is treated as a wire change,
-      with its two fixed-width key slots and two 64-byte signature slots
-      considered together rather than independently
 - [x] Both store pre-filters either delegate to the length-agnostic check inside
       `auth::verify_governance_signature` or are removed as redundant
 - [x] The `store::stoolap` comment is corrected to describe the code beneath it
@@ -347,14 +348,42 @@ invariant instead of a runtime check, which matches the reasoning `0009-cb` and
 `0009-cc` both applied to parameters. It costs a schema-visible change to
 persisted records either way.
 
-`KeyRotation` may force the question the other way. It is `#[repr(C)]`, so its
-field widths are the wire format, and a length-validated newtype over `Vec<u8>`
-has no fixed width to publish. If the rotation must stay `repr(C)` then its key
-slots stay fixed-width, and the honest outcome is that a rotation record can
-only carry one algorithm's key length — which would mean dropping the
-two-algorithm `verify` rather than pretending to support it. That is a real
-design fork and should be decided deliberately, not by whichever change compiles
-first.
+## The `KeyRotation` wire-format concern was moot
+
+This section previously recorded `KeyRotation` as blocked on a wire change,
+because it is `#[repr(C)]`. That turned out not to be a constraint at all:
+
+- It derives `Clone, Debug, PartialEq, Eq` and **no serde traits**, so it has no
+  serialised form.
+- A workspace-wide search finds no use of `ocrypt::KeyRotation` outside its own
+  file and one test in it. The similarly named `KeyRotationEvent` in
+  `quota-router-core` is an unrelated API-key type.
+
+There is no wire format, no schema, and no consumer to migrate. `#[repr(C)]` was
+vestigial and has been dropped. Both key slots are now `Vec<u8>` and `verify`
+takes two algorithms that can genuinely differ.
+
+**Both key fields are done.** `new` accepts `impl Into<Vec<u8>>`, and
+`to_signing_bytes` derives its capacity from the key lengths instead of
+assuming `32 + 32 + 8` — the same length assumption one level down, which would
+have under-reserved rather than failed.
+
+The signature fields stay `[u8; 64]`: both Ed25519 and stark-schnorr signatures
+are 64 bytes, so nothing is pinned by leaving them fixed.
+
+### And the vector the record was written for now exists
+
+`key_rotation_dispatches_both_algorithms` passes the **same** algorithm to both
+sides, so it exercises two dispatch calls without ever showing they can
+disagree — despite the name.
+
+`key_rotation_verifies_across_two_different_algorithms` is the first rotation
+whose two sides differ: Ed25519 out, stark-schnorr in, signed over the same
+signing bytes, with a 33-byte successor key. Hardcoding the successor side's
+algorithm turns exactly two vectors red — the new one and the new-side arm of
+`key_rotation_refuses_an_unregistered_algorithm_on_either_side` — and leaves
+every Ed25519-to-Ed25519 vector green, which is the signature a real two-sided
+dispatch produces.
 
 The wallet chain adds a third constraint that is neither a schema nor a wire
 format but is harder to undo than either: the slot-name derivation above. Any

@@ -120,12 +120,17 @@ pub mod attestation_type {
 /// 4. Publish rotation record
 /// 5. Old key remains valid for grace period
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[repr(C)]
 pub struct KeyRotation {
-    /// Old public key being rotated out
-    pub old_public_key: [u8; 32],
-    /// New public key being rotated in
-    pub new_public_key: [u8; 32],
+    /// Old public key being rotated out.
+    ///
+    /// A slice, not `[u8; 32]`, because this record exists to carry a rotation
+    /// between algorithms and a 32-byte slot cannot hold a key of any other
+    /// length. `verify` takes two algorithm ids precisely because the two keys
+    /// need not agree; the field widths used to make that impossible. Widened
+    /// by mission 0009-cd.
+    pub old_public_key: Vec<u8>,
+    /// New public key being rotated in. See [`Self::old_public_key`].
+    pub new_public_key: Vec<u8>,
     /// Epoch at which rotation takes effect
     pub rotation_epoch: u64,
     /// Signature by old key over (old_pk || new_pk || rotation_epoch)
@@ -136,10 +141,15 @@ pub struct KeyRotation {
 
 impl KeyRotation {
     /// Create a new key rotation record (signatures must be set separately).
-    pub fn new(old_public_key: [u8; 32], new_public_key: [u8; 32], rotation_epoch: u64) -> Self {
+    #[must_use]
+    pub fn new(
+        old_public_key: impl Into<Vec<u8>>,
+        new_public_key: impl Into<Vec<u8>>,
+        rotation_epoch: u64,
+    ) -> Self {
         Self {
-            old_public_key,
-            new_public_key,
+            old_public_key: old_public_key.into(),
+            new_public_key: new_public_key.into(),
             rotation_epoch,
             signature_by_old: [0u8; 64],
             signature_by_new: [0u8; 64],
@@ -148,7 +158,11 @@ impl KeyRotation {
 
     /// Compute signing bytes: old_public_key || new_public_key || rotation_epoch_be
     pub fn to_signing_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(32 + 32 + 8);
+        // Capacity is derived rather than assumed: a hardcoded 32 + 32 here was
+        // the same length assumption the fields themselves carried, one level
+        // down, and would have silently under-reserved for a longer key.
+        let mut bytes =
+            Vec::with_capacity(self.old_public_key.len() + self.new_public_key.len() + 8);
         bytes.extend_from_slice(&self.old_public_key);
         bytes.extend_from_slice(&self.new_public_key);
         bytes.extend_from_slice(&self.rotation_epoch.to_be_bytes());
@@ -537,6 +551,62 @@ mod tests {
         let (rot, _) = signed_rotation();
         let ed = octo_algo_ed25519::ed25519_algorithm_id();
         assert!(rot.verify(&ed, &ed).is_ok());
+    }
+
+    /// The vector the record was designed for, and the first one to exist.
+    ///
+    /// `key_rotation_dispatches_both_algorithms` above passes the **same**
+    /// algorithm to both sides, so it exercises two dispatch calls without ever
+    /// showing that they can disagree. The doc on `verify` says a rotation is
+    /// exactly the case where old and new need not share an algorithm; until the
+    /// key fields were widened that sentence described an unreachable branch.
+    ///
+    /// Ed25519 out to stark-schnorr: the old side signs with a 32-byte key and
+    /// the new side with a 33-byte one, over the same signing bytes. Both
+    /// algorithms have 64-byte signatures, so the signature fields are untouched
+    /// and the only thing under test is the key length.
+    #[test]
+    fn key_rotation_verifies_across_two_different_algorithms() {
+        use ed25519_dalek::{Signer, SigningKey};
+        use octo_algo_stark_schnorr::{public_key, sign, Felt};
+
+        octo_algo_ed25519::install().expect("install ed25519");
+        octo_algo_stark_schnorr::install().expect("install stark-schnorr");
+
+        let old_key = SigningKey::from_bytes(&[0x0Au8; 32]);
+        let old_pk = old_key.verifying_key().to_bytes();
+
+        let secret = Felt::from_hex_unchecked("0x2f1e3d4c5b6a79880716253443526170");
+        let nonce = Felt::from_hex_unchecked("0x13579bdf02468ace");
+        let new_pk = public_key(&secret).expect("derives a public key").to_wire();
+        assert_eq!(
+            new_pk.len(),
+            33,
+            "the successor key is not 32 bytes, which is the whole point"
+        );
+
+        let mut rot = KeyRotation::new(old_pk, new_pk, 500);
+        let signing_bytes = rot.to_signing_bytes();
+        rot.signature_by_old = old_key.sign(&signing_bytes).to_bytes();
+        rot.signature_by_new = sign(&secret, &signing_bytes, &nonce)
+            .expect("sign")
+            .to_wire();
+        assert_eq!(rot.signature_by_new.len(), 64);
+
+        let ed = octo_algo_ed25519::ed25519_algorithm_id();
+        let ss = octo_algo_stark_schnorr::stark_schnorr_algorithm_id();
+        assert_ne!(ed, ss, "the two sides must actually differ");
+
+        rot.verify(&ed, &ss)
+            .expect("an ed25519-to-stark-schnorr rotation must verify");
+
+        // The control. Both sides named Ed25519, a verifier that ignored its
+        // algorithm arguments and hardcoded Ed25519 would still fail here,
+        // because the successor key is 33 bytes and cannot be one.
+        assert!(
+            rot.verify(&ed, &ed).is_err(),
+            "a stark-schnorr signature must not verify as ed25519"
+        );
     }
 
     #[test]

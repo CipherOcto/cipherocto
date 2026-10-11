@@ -1,11 +1,11 @@
 ---
 name: 0009-c3-network-verification-dispatch
-description: RFC-0009 AC#11, octo-network slice. 41 hardcoded-Ed25519 verification sites under octo-network, including 27 public signatures that take a typed VerifyingKey. Blocked on the RFC-0010 canonical DID codec.
+description: RFC-0009 AC#11, octo-network slice. CLOSED — the work landed via sub-missions 0009-c7, c8, c9, ca and cb. The RFC-0010 codec blocker this file carried was false.
 metadata:
   node_type: mission
   type: implementation
   created: 2026-10-09T00:00:00.000Z
-  v: "1.0"
+  v: "2.0"
   depends_on:
     - RFC-0009
     - 0009-b-algorithm-registry
@@ -13,12 +13,90 @@ metadata:
     - 0009-c-verification-dispatch
 ---
 
-# Mission `0009-c3-network-verification-dispatch` — OPEN 2026-10-09 (BLOCKED)
+# Mission `0009-c3-network-verification-dispatch` — CLOSED 2026-10-10
 
 ## Status
 
-Open (2026-10-09). **Blocked** on the RFC-0010 canonical OctoID codec. See
-§Why this is blocked.
+**Closed 2026-10-10.** The work landed, decomposed across five sub-missions. The
+RFC-0010 codec blocker this file carried was false, and the evidence is now
+checked rather than inferred.
+
+### The blocker pointed at work that had already shipped
+
+§Why this is blocked said the mission waits on the RFC-0010 canonical OctoID
+codec, and §Unblock condition said to resume when it lands. It had landed.
+`missions/archived/completed/0010-a-canonical-did-codec-crate` is **Closed
+(2026-08-06)**, and `CanonicalCodec` is declared in `octo-ident`'s own `lib.rs`.
+This file was written 2026-10-09, two months after that closure, and blocked on
+it anyway.
+
+That is the sixth instance of one error in this arc: a blocker recorded rather
+than derived. The first five (`0009-c5`, `0009-c6`, `0009-c7`, the `octo-network`
+blanket text, and the `octo-protocol` allowlist) were all traced back to this
+file or to its table.
+
+### Where the work went
+
+| Sub-mission | What it dispatched                                                   |
+| ----------- | -------------------------------------------------------------------- |
+| `0009-c7`   | 7 caller-supplied-key sites + `GatewayAttestation::verify_signature` |
+| `0009-c8`   | 25 typed-key `dot/` envelopes                                        |
+| `0009-c9`   | the 3 "wire format" sites, after that blocker was disproved too      |
+| `0009-ca`   | `octo-protocol`'s RFC-0871 authorization verifier                    |
+| `0009-cb`   | 25 typed-key signatures changed from `&VerifyingKey` to `&[u8; 32]`  |
+
+`octo-network` now holds **zero** inline constructor sites and has moved from
+`AC11_PENDING` to `AC11_DISPATCHED`, so it is under the inline-rebuild scan for
+the first time. Its sixteen pending entries are retired.
+
+### The two categories this file predicted, both wrong
+
+§Scope counted 14 `from_bytes` sites plus 27 typed-key sites and called the
+codec the blocker for all of them. The `from_bytes` count was exactly right.
+Everything built on top of it was not:
+
+- **Not DID-derived.** Of the ten files it listed, zero parse a DID. The only
+  `pubkey_from_did` callers in the crate are `dc/admin_attest.rs` and
+  `octo-role`, neither of which is on the table.
+- **Not codec-gated.** Every site dispatched without the codec, by adding a
+  caller-supplied `AlgorithmId` — the caller being the only party that knows
+  which algorithm a key belongs to.
+- **A wire format change was not needed, and would have been worse.** The
+  "key is a field on the wire struct" category was filed as needing an RFC-0853
+  amendment. All three sites dispatched by having the _caller_ resolve the
+  algorithm, because in every one the message arrives from the party being
+  verified — a wire field would have let the verified party choose its own
+  verifier.
+
+### The vector that "cannot be written until the codec lands"
+
+§Test Vectors named
+`transport_envelope_verification_is_algorithm_agnostic` and said it was
+unwritable, calling that "the block, stated as a test". It was written:
+`dot_envelope_a_second_algorithm_reaches_the_verifier` in `0009-cb` hands
+identical key bytes under a second `AlgorithmId` and requires rejection as
+unregistered.
+
+It is a **compile-level** vector, which is the part the original could not have
+anticipated. The three vectors that did exist were all satisfiable by a body
+that ignores its algorithm argument, so none of them could tell dispatch from a
+hardcoded Ed25519 — which is true, and was demonstrated by mutation on every
+site in this arc. What none could express was whether a non-Ed25519 algorithm
+can reach the verifier at all, because for `0009-c8`'s shape that was decided by
+the _parameter type_: `verify(&self, algorithm, key: &VerifyingKey)` cannot be
+called by anyone holding an ML-DSA-768 key.
+
+### What §Re-verified and §A fourth category got right
+
+Worth keeping, because it is why the work was found at all rather than argued
+about: the pending table counted the files it named and said nothing about the
+files it never named, and `ac11_pending_table_is_complete_for_every_crate_it_covers`
+went red on arrival and found 25 sites in six files. The §41-site count this file
+asserted was never verified by anything automated, and the measured split turned
+out to be four categories rather than two.
+
+Kept in place below rather than deleted — a superseded mission stays greppable
+so a reader who inherited its reasoning can find the correction.
 
 ## Dependencies
 
@@ -158,6 +236,10 @@ That is the same shape as the vacuous-pass work, one level up: not a missing
 file but a missing _site_.
 
 ## Why this is blocked
+
+> **SUPERSEDED 2026-10-10 — kept for history, do not act on this.**
+> The codec this section blocks on landed 2026-08-06, two months before this
+> file was written. Every site was dispatched without it. See §Status.
 
 `octo-cap-macaroon::pubkey_from_did` parses `did:octo:0x<hex>` into
 `Option<[u8; 32]>`. A bare 32-byte array carries **no algorithm identifier**.
@@ -313,8 +395,9 @@ Three separable changes, in increasing cost:
    site and a dispatched site each turn the gate red. That second direction is
    the one that matters: it is what stops the table outliving its blocker, the
    way the AC#11 allowlist entry did.
-3. Dispatch the `octo-network` sites. Blocked on the codec, as
-   §Why this is blocked says.
+3. ~~Dispatch the `octo-network` sites. Blocked on the codec, as
+   §Why this is blocked says.~~ **Done** 2026-10-10, without the codec. See
+   §Status and missions `0009-c7`, `0009-c8`, `0009-c9`, `0009-ca`, `0009-cb`.
 
 ## Acceptance Criteria
 
@@ -325,10 +408,11 @@ Verified by the §Test Vectors list.
 - `no_verification_site_hardcodes_an_algorithm` — scoped to `octo-network`,
   **both shapes**. A vector that greps only `from_bytes` reports green with all
   27 typed-key sites live.
-- `transport_envelope_verification_is_algorithm_agnostic` — a DOT envelope
-  verifies under a non-Ed25519 algorithm. This is the vector that proves the
-  dispatch is real rather than cosmetic, and **it cannot be written until the
-  codec lands** — that is the block, stated as a test.
+- ~~`transport_envelope_verification_is_algorithm_agnostic` — **cannot be written
+  until the codec lands**, that is the block stated as a test.~~ **Written**,
+  2026-10-10, as `dot_envelope_a_second_algorithm_reaches_the_verifier`. The
+  codec it waited on landed two months before this file was written, and the
+  vector needed a signature change rather than a codec.
 - `octo_network_does_not_reach_into_ed25519_dalek` — no `from_bytes` outside the
   Ed25519 registration.
 
@@ -358,7 +442,8 @@ None required. Nothing is deployed.
 ## Cross-references
 
 - `rfcs/accepted/process/0009-identity-evolution-v12.md` — AC#11
-- `rfcs/accepted/process/0010-canonical-did-codec.md` — the codec this blocks on
+- `missions/archived/completed/0010-a-canonical-did-codec-crate` — the codec
+  this blocked on, closed 2026-08-06
 - `missions/claimed/0009-c-verification-dispatch` — the core slice
 - `missions/open/0009-c2-verification-dispatch-new-dependency-sites`
 - `missions/claimed/0009-b-algorithm-registry`

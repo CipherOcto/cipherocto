@@ -1,6 +1,6 @@
 ---
 name: 0009-cd-record-fields-still-pin-the-key-length
-description: RFC-0009 AC#11 follow-on. 0009-cc widened key PARAMETERS to a slice but left the record fields carrying those keys as [u8; 32], so a dispatched site still cannot receive a second algorithm's key through the record path. Confirmed in octo-reputation and, inverting the problem, in KeyRotation, whose two-algorithm verify cannot accept the second algorithm.
+description: RFC-0009 AC#11 follow-on. 0009-cc widened key PARAMETERS to a slice but left the record fields carrying those keys as [u8; 32], so a dispatched site still cannot receive a second algorithm's key through the record path. Confirmed in octo-reputation, in KeyRotation whose two-algorithm verify cannot accept a second algorithm, and at the root in HsmAdapter, the extension trait whose own signature forbids the adapter its own docs promise.
 metadata:
   node_type: mission
   type: implementation
@@ -77,29 +77,105 @@ in exactly the cases it was written for.
 `to_signing_bytes` makes the same assumption structurally, reserving
 `32 + 32 + 8` for a concatenation that is defined by those two field widths.
 
+## The root of the `octo-wallet` half: the extension point pins its own key
+
+Every other instance in this file is a record or struct that happens to be typed
+at 32 bytes. `HsmAdapter` is different — it is the **extension mechanism**, and
+its own documentation promises the extension:
+
+> This is what makes `IdentityKey::verify` dispatch instead of deciding: the
+> key's algorithm comes from the signer that produced it, so adding an algorithm
+> means adding an adapter, not editing every verification site (RFC-0009 AC#11).
+
+The trait delivers that promise for the algorithm and breaks it for the key:
+
+```rust
+fn get_public_key(&self) -> Result<[u8; 32], HsmError>;
+fn sign(&self, msg: &[u8]) -> Result<[u8; 64], HsmError>;
+fn algorithm_id(&self) -> octo_ident::AlgorithmId;
+```
+
+`algorithm_id` is required rather than defaulted, and the reasoning is recorded:
+a default returning Ed25519 would let a future Schnorr or threshold adapter be
+wired up without declaring what it is. That reasoning is correct and it is why
+an adapter is the right extension point. But an adapter is then **required by
+the trait signature** to return its public key in exactly 32 bytes and its
+signature in exactly 64. A stark-schnorr adapter has a 33-byte key and cannot
+be written.
+
+So the documented extension path — write a new adapter — cannot deliver a
+non-32-byte algorithm. The pin is not in the verification sites at all; it is
+one layer below them, in the trait that is supposed to be the way out.
+
+`IdentityKey` then copies the pin: its own `public_key: [u8; 32]` is what
+`IdentityKey::verify` and `IdentityKey::verify_prefixed` dispatch against, so
+widening those two sites without widening the adapter buys nothing.
+
 ## Scope: candidates versus confirmed
 
-The five `octo-reputation` sites and the two `KeyRotation` fields are
-**confirmed** — each was read and each reaches a `verify_dispatch` call.
+An earlier draft of this section reported **23** such fields. That number was
+wrong, and the reason is worth recording because it is the same class of error
+the workspace keeps making in a different costume.
 
-The workspace holds **23** struct fields declared as `pub <name>: [u8; 32]` where
-the name is a public-key name. That figure is a **name match** and is an upper
-bound, not a finding. Most are not verification sites at all: `octo-ident`'s
-registry and resolver backend define keys rather than verify them, and the
-`orr` onion-routing types may belong to an entirely separate scheme that never
-reaches the `AlgorithmRegistry`.
+The scan pattern required a `pub ` prefix. `IdentityKey::public_key` is
+**private**, so it was never counted — and it turned out to be a confirmed
+instance. Dropping the visibility requirement gives **35** matches workspace-wide,
+several of which sit inside `#[cfg(test)]` bodies and are not production sites.
 
-Of those 23, **16** sit in the nine crates the AC#11 gate lists as dispatched —
-7 in `octo-network`, 7 in `octo-reputation`, 1 in `octo-wallet`, 1 in
-`octo-wallet-node`. The other 7 are in `octo-core`, `octo-ident`,
-`octo-identity-resolver-node` and `octo-policy`, none of which the gate scans.
+Every figure here is a name match and is labelled one. It is an upper bound.
 
-Establishing which of the 16 actually reach a dispatch site requires
-call-graph resolution, not a text scan. That approach was prototyped and
-**rejected on measurement** for the guard that would need it: closure by name
-pulled 3265 of 5457 workspace function names into the graph and produced 15
-hits and zero true positives. Do not repeat it. The honest position is that 5
-sites are confirmed, 11 are unexamined, and a text scan cannot close the gap.
+### Confirmed — read, and each reaches a `verify_dispatch` call
+
+| Site                                        | Reaches                                  |
+| ------------------------------------------- | ---------------------------------------- |
+| `auth::GovernanceProof::governance_pubkey`  | `verify_governance_signature`            |
+| `auth::SuspensionAuth::governance_pubkey`   | `verify_governance_signature`            |
+| `auth::ResumeProof::governance_pubkey`      | `verify_governance_signature`            |
+| `ocrypt::KeyRotation::old_public_key`       | `KeyRotation::verify`, dispatch one      |
+| `ocrypt::KeyRotation::new_public_key`       | `KeyRotation::verify`, dispatch two      |
+| `wallet::identity::IdentityKey::public_key` | `IdentityKey::verify`, `verify_prefixed` |
+
+The `octo-reputation` half is decisive rather than inferred: that crate contains
+**exactly one** `verify_dispatch` call site in the whole of `src`, so those three
+fields exhaust its possibilities.
+
+### Ruled out — read, and does not reach a dispatch site
+
+- `ocrypt::OverlayIdentity::public_key` — the struct carries a signature field
+  and **no verifier anywhere in the crate reads it**. Not a length problem; a
+  different question, and out of scope here.
+- `dot::GatewayIdentity::public_key` — reaches `derive_gateway_id`, a BLAKE3
+  identity derivation. Nothing verifies it.
+- `dot::InviteEnvelope::invitee_pubkey` — reaches `compute_invite_token` and
+  `compute_invite_hash`, which hash the key rather than verify against it.
+- `orr::HopConstructionParams::relay_public_key` and
+  `orr::HopLayer::ephemeral_public_key` — **X25519**, documented as such, used
+  for key agreement through `x25519_dalek`. They never reach the
+  `AlgorithmRegistry`, which holds signature algorithms. An earlier draft
+  guessed this; it is now read and confirmed rather than assumed.
+- `auth::AttestorRegistration::pubkey`, `auth::AttestorAuth::attestor_pubkey` —
+  `AttestorAuth` records on its own doc that real signature verification is
+  deferred to the signer subsystem. A recorded deferral, not drift.
+- `auth::AnchorGovernanceSigner::pubkey` — reaches `canonical_bytes`, a 96-byte
+  encoding used for quorum counting.
+- `compat::CompatMapping::coordinator_pubkey` — a legacy DID-to-pubkey lookup.
+- `wallet::identity_record::IdentityRecord::pubkey_bytes` — a stored identity
+  record with a `serde_bytes_32` helper; an identity substrate record, not a
+  verification site.
+- `wallet_node::handlers::resolve::ResolveDIDResponse::public_key` — a response
+  DTO, documented as a placeholder for the storage-pubkey form.
+
+### Not examined
+
+Five matches were not traced: `wallet::mpc`, the `octo-ident-storage` registry
+row, a second private key field in `dot::gateway`, one in `dot::dc`, and the
+`octo-ident` rich-document row. They are recorded as open rather than assumed
+clean.
+
+Deciding this generally requires call-graph resolution, not a text scan. That
+approach was prototyped and **rejected on measurement** for the guard that would
+need it: closure by name pulled 3265 of 5457 workspace function names into the
+graph and produced 15 hits and zero true positives. Do not repeat it.
 
 ## The store pre-filters are a second instance
 
@@ -141,6 +217,14 @@ the record. That is the gap this mission closes.
 
 ## Acceptance Criteria
 
+- [ ] `HsmAdapter::get_public_key` returns a key whose length is not decided by
+      the trait, so an adapter for an algorithm with non-32-byte keys can
+      actually be written — this is the root, and the other `octo-wallet` items
+      are downstream of it
+- [ ] `HsmAdapter::sign` is considered at the same time as the key: a trait that
+      fixes the signature length at 64 has the same defect one step over
+- [ ] `IdentityKey::public_key` carries whatever the adapter returned, rather
+      than a second independent 32-byte copy
 - [ ] `GovernanceProof::governance_pubkey`, `SuspensionAuth::governance_pubkey`
       and `ResumeProof::governance_pubkey` carry a key whose length is not
       decided by the type
@@ -159,10 +243,12 @@ the record. That is the gap this mission closes.
 - [ ] A second-algorithm vector that round-trips through a **record**, not just
       through the verification function — constructed, stored, read back and
       verified — so the store path is covered and not only the helper
+- [ ] A second-algorithm vector that runs through an `HsmAdapter`, proving a
+      non-Ed25519 adapter can be written and that `IdentityKey` dispatches on
+      the algorithm it reports
 - [ ] Zero-key sentinel behaviour is unchanged for every existing 32-byte key
-- [ ] The 11 unexamined fixed-size public-key fields in dispatch-site crates are
-      each confirmed as reaching a dispatch site or ruled out, by reading them —
-      not by extending the text scan, which is known to be unsound here
+- [ ] The five untraced fields are read and each confirmed or ruled out — by
+      reading, not by extending the text scan, which is known to be unsound here
 
 ## Open question
 

@@ -30,10 +30,10 @@
 //! Layer B substrate (RFC-0011-c §9.1 Architecture); see
 //! `octo_runtime::handle` for the canonical §Layer discipline
 //! prose. Types are years-stable per
-//! [[cipherocto-design-principles]] §Stable Abstractions Principle.
+//! `docs/architecture/design-principles.md` §Stable Abstractions Principle.
 //! New variants on `AgentState` / `RuntimeEvent` / `TransportKind`
 //! land additively via `#[non_exhaustive]`
-//! ([[cipherocto-design-principles]] §Extension over enumeration).
+//! (`docs/architecture/design-principles.md` §Extension over enumeration).
 //!
 //! ## State semantics
 //!

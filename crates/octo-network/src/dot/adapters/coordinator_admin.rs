@@ -1438,7 +1438,7 @@ mod tests {
     fn t_dispatch_action_enum_is_non_exhaustive() {
         // Pin the `#[non_exhaustive]` attribute — future amendments
         // add action variants without central enum edits across the
-        // workspace per [[cipherocto-design-principles]] §Extension
+        // workspace per `docs/architecture/design-principles.md` §Extension
         // over enumeration.
         fn assert_non_exhaustive<T: ?Sized>() {}
         // The compile-time check is implicit; this test documents

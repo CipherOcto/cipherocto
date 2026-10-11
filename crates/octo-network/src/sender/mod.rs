@@ -16,7 +16,7 @@
 //!   `NetworkSender` impls indexed by transport tag.
 //! - [`SendSummary`] — observability summary for `octo network status`.
 //!
-//! Per [[cipherocto-design-principles]] §User extensibility, the trait
+//! Per `docs/architecture/design-principles.md` §User extensibility, the trait
 //! lives in Layer B (`octo-network`); per-transport impls land in
 //! separate Layer D crates. The registry is the only place that knows
 //! about every transport.
@@ -125,7 +125,7 @@ impl std::error::Error for NetworkSendError {}
 
 /// In-process registry of `NetworkSender` impls indexed by
 /// transport tag. Substrate-faithful to the per-extension
-/// registry pattern per [[cipherocto-design-principles]] §User
+/// registry pattern per `docs/architecture/design-principles.md` §User
 /// extensibility.
 #[derive(Default)]
 pub struct NetworkSenderRegistry {

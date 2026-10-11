@@ -21,11 +21,11 @@
 //! ## Layer discipline
 //!
 //! Layer B substrate (RFC-0011-c §9.1 Architecture). Types are
-//! years-stable per [[cipherocto-design-principles]] §Stable
+//! years-stable per `docs/architecture/design-principles.md` §Stable
 //! Abstractions Principle. New variants on `AgentState` /
 //! `RuntimeEvent` / `TransportKind` land via additive
 //! `#[non_exhaustive]` clauses
-//! ([[cipherocto-design-principles]] §Extension over enumeration).
+//! (`docs/architecture/design-principles.md` §Extension over enumeration).
 
 //! Submodules — added per RFC-0011-c §Follow-on §F.1-§F.5.
 //! Layer D transport-handler registry + built-in `InProcessHandler`
@@ -73,7 +73,7 @@ pub type SessionId = [u8; 32];
 /// Local wrapper around the raw 64 signature bytes — Layer A
 /// primitive `ed25519_dalek::Signature` is re-exported via the
 /// `octo-wallet` path dep and wrapped at this boundary so the Layer
-/// A/B seam stays clean per [[cipherocto-design-principles]]
+/// A/B seam stays clean per `docs/architecture/design-principles.md`
 /// §Extension over enumeration + §Stable Abstractions Principle
 /// (Layer A primitives stable;
 /// business semantics in composed Layer B).
@@ -117,7 +117,7 @@ pub const EVENT_CHANNEL_CAPACITY: usize = 1024;
 ///
 /// Substrate-authoritative; the CLI never invents new transitions.
 /// New states land as additive variants via `#[non_exhaustive]`
-/// per [[cipherocto-design-principles]] §Extension over enumeration.
+/// per `docs/architecture/design-principles.md` §Extension over enumeration.
 ///
 /// ```text
 /// REGISTERED ──[activate]──→ ACTIVE ──[run]──→ BUSY ──[idle]──→ ACTIVE
@@ -214,7 +214,7 @@ impl AgentState {
 }
 
 /// Typed UUID identifier for a `RuntimeHandle`
-/// ([[cipherocto-design-principles]] §Extension over enumeration
+/// (`docs/architecture/design-principles.md` §Extension over enumeration
 /// — typed 128-bit UUID discriminator per agent-id namespace).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -253,7 +253,7 @@ pub struct AttachPayload {
 /// Discriminated by `kind`; `addr` carries an optional per-variant
 /// transport address (e.g., Unix socket path). The
 /// `#[non_exhaustive]` attribute on `TransportKind` makes future
-/// extension surfaces (per [[cipherocto-design-principles]]
+/// extension surfaces (per `docs/architecture/design-principles.md`
 /// §Extension over enumeration) additive without central-enum edits.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Transport {
@@ -265,7 +265,7 @@ pub struct Transport {
 
 /// Transport kind enum (RFC-0011-c §F.2).
 ///
-/// `#[non_exhaustive]` per [[cipherocto-design-principles]]
+/// `#[non_exhaustive]` per `docs/architecture/design-principles.md`
 /// §Extension over enumeration. Extension surfaces land via the
 /// `Raw(Uuid)` escape hatch (typed UUID discriminator) rather than
 /// via central-enum edits.
@@ -278,7 +278,7 @@ pub enum TransportKind {
     /// (with `std::env::temp_dir()` fallback per RFC-0011-c §F.2).
     UnixSocket,
     /// Escape hatch for extension transports (carries a typed UUID
-    /// `scheme_id` per [[cipherocto-design-principles]] §Extension
+    /// `scheme_id` per `docs/architecture/design-principles.md` §Extension
     /// over enumeration). Old code fails closed on unknown
     /// discriminators.
     Raw(Uuid),
@@ -315,7 +315,7 @@ impl Transport {
 
     /// Raw escape-hatch transport with the given scheme UUID and
     /// optional address. Used by future extension crates per
-    /// [[cipherocto-design-principles]] §Extension over enumeration.
+    /// `docs/architecture/design-principles.md` §Extension over enumeration.
     #[must_use]
     pub fn raw(scheme_id: Uuid, addr: Option<String>) -> Self {
         Self {
@@ -363,7 +363,7 @@ pub struct AttachHandle {
 /// `RuntimeHandle::attach_handle()` and `spawn_agent(attach_handle)`)
 /// is renamed to `RuntimeHandleBinding`; the 6-field `AttachHandle`
 /// token lives alongside at the `octo_runtime::handle` module per
-/// [[cipherocto-design-principles]] §No parallel abstractions. The existing in-process `attach`
+/// `docs/architecture/design-principles.md` §No parallel abstractions. The existing in-process `attach`
 /// substrate path (RFC-0011-c §9.3.5) is UNCHANGED — it still
 /// consumes this renamed struct.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -583,7 +583,7 @@ pub struct AttachedSession {
 /// Pub-sub message body (RFC-0011-c §9.3.5 event stream).
 ///
 /// New variants land additively per
-/// [[cipherocto-design-principles]] §Extension over enumeration.
+/// `docs/architecture/design-principles.md` §Extension over enumeration.
 /// CLI surfaces events as JSON envelopes per RFC-0011 §Output Envelope
 /// (schema_version = 4).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -637,7 +637,7 @@ pub enum RuntimeEvent {
 ///
 /// # Layer discipline
 ///
-/// Per [[cipherocto-design-principles]] §Stable Abstractions
+/// Per `docs/architecture/design-principles.md` §Stable Abstractions
 /// Principle, this trait is Layer B — years-stable; new methods land
 /// as `#[non_exhaustive]` additions with default impls.
 #[async_trait]

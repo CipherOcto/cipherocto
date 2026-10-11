@@ -3,7 +3,7 @@
 //! Per RFC-0855p-b §Key Files L848, the `mon/election.rs` path is the
 //! canonical Layer-C consumer entry-point for the §Phase 2 election
 //! algorithm. We re-export rather than duplicate types per
-//! [[cipherocto-design-principles]] §Stable Abstractions.
+//! `docs/architecture/design-principles.md` §Stable Abstractions.
 //!
 //! See `octo-coordinator-types::election` for the canonical Layer-B
 //! definitions.

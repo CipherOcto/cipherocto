@@ -416,7 +416,7 @@ impl ReputationStore for InMemoryReputationStore {
         proof: GovernanceProof,
         now_unix: u64,
     ) -> StoreResult<RetirementEligibility> {
-        // Stubbed governance + evidence validation per [[deferred-vs-unspecified]].
+        // Stubbed governance + evidence validation per `docs/05-process/engineering-rules.md` §Deferred versus unspecified.
         crate::retirement::stub_verify_proof_shape(&proof, now_unix)?;
         crate::retirement::validate_evidence(&evidence)?;
         let arr = crate::retirement::retirement_envelope_hash(

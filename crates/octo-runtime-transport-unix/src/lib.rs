@@ -1,7 +1,7 @@
 //! `octo-runtime-transport-unix` — Unix-domain socket `Handler` impl
 //! for `TransportKind::UnixSocket` per RFC-0011-c §F.7.1.
 //!
-//! Per [[cipherocto-design-principles]] §Extension over enumeration +
+//! Per `docs/architecture/design-principles.md` §Extension over enumeration +
 //! §per-extension crates + registry: this crate implements the
 //! `octo_runtime::handle::transport::Handler` trait (Layer B) from
 //! outside the substrate (Layer D). The substrate's
@@ -42,7 +42,7 @@
 //! Layer D extension crate per RFC-0011-c §F.7.1. Depends only on the
 //! Layer B substrate (`octo-runtime`) — no `octo-cli` / `octo-wallet`
 //! reverse-deps (the per-extension crate pattern enforces one-way
-//! dependency direction per [[cipherocto-design-principles]] §Layer
+//! dependency direction per `docs/architecture/design-principles.md` §Layer
 //! direction).
 
 use std::sync::{Arc, OnceLock};
@@ -77,7 +77,7 @@ fn shared_handler() -> &'static Arc<dyn Handler> {
 /// Convenience init fn: registers `UnixSocketHandler` for
 /// `TransportKind::UnixSocket` into the supplied registry.
 ///
-/// Per [[cipherocto-design-principles]] §per-extension crates +
+/// Per `docs/architecture/design-principles.md` §per-extension crates +
 /// registry pattern, downstream consumers (e.g., `octo-cli` startup)
 /// call this init fn to install the handler. Idempotent: re-calling
 /// `register_into` yields the same `Arc<dyn Handler>` instance

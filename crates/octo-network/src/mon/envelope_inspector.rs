@@ -38,7 +38,7 @@ pub struct EnvelopeMeta {
 ///
 /// Phase 13 G16a per RFC-0011-u §Substrate Mapping Table. Additive
 /// enum on the NEW module per Phase 7 RFC-0011-o precedent; no
-/// central edit per [[cipherocto-design-principles]] §Extension over
+/// central edit per `docs/architecture/design-principles.md` §Extension over
 /// enumeration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]

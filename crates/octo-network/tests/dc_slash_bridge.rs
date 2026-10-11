@@ -5,7 +5,7 @@
 //! emits).
 //!
 //! The test does NOT spin up a real WAL stream (per
-//! [[stoolap-general-purpose-db]] red line: cipherocto consumer
+//! `docs/architecture/stoolap-integration.md` red line: cipherocto consumer
 //! schema stays cipherocto-side; the test does not require the
 //! stoolap fork). It exercises the bridge boundary with a
 //! hand-constructed `SyncError::FakeSummary`, which is the

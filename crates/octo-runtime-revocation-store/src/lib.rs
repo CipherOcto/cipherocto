@@ -4,7 +4,7 @@
 //! This crate provides the Layer D persistence adapter for the
 //! trait-dispatched `RevocationStore` substrate defined in
 //! `octo-runtime`. The trait lives in Layer B (per-extension
-//! pattern per [[cipherocto-design-principles]] §User extensibility);
+//! pattern per `docs/architecture/design-principles.md` §User extensibility);
 //! this Layer D crate provides the Stoolap-backed impl +
 //! `install_default` constructor. Layer C (`octo-cli`) wires the
 //! dependency injection via
@@ -17,7 +17,7 @@
 //! external primitive sub-category of Layer D; this ledger hosts
 //! ONLY the `revocation` table per RFC-0011-c §F.7.5. The fork
 //! NEVER hosts cipherocto business schema beyond this single
-//! revocation table — see [[stoolap-general-purpose-db]] HARD RED
+//! revocation table — see `docs/architecture/stoolap-integration.md` HARD RED
 //! LINE.
 //!
 //! ## Ledger path

@@ -3,7 +3,7 @@
 //! Layer B types. Serializable + JSON Schema export per RFC-0011-d
 //! §Key Files row "JSON Schema export".
 //!
-//! Per [[cipherocto-design-principles]] no central enum for
+//! Per `docs/architecture/design-principles.md` no central enum for
 //! extension-bearing types — `RoleSummary.role_kind_uuid` uses a
 //! typed 128-bit UUID discriminator (RFC-0855 namespace pattern),
 //! not a central enum.
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 /// 128-bit typed role-kind discriminator (RFC-0855-namespaced UUIDv5 of
 /// `urn:octo:role:0855:<slug>`).
 ///
-/// Per [[cipherocto-design-principles]] no-central-enum: new role slugs
+/// Per `docs/architecture/design-principles.md` no-central-enum: new role slugs
 /// land by adding a row to the role registry; no central enum edit.
 pub type RoleKindUuid = [u8; 16];
 

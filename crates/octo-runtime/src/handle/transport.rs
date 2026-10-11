@@ -1,6 +1,6 @@
 //! `octo-runtime::handle::transport` — transport-handler registry
 //! (RFC-0011-c §F.2 step (e) + §F.3; paired with follow-on Layer D
-//! transport crates per [[cipherocto-design-principles]] §Extension
+//! transport crates per `docs/architecture/design-principles.md` §Extension
 //! over enumeration).
 //!
 //! Substrate ships the `Handler` trait + a process-singleton
@@ -20,12 +20,12 @@
 //! per-transport protocol I/O live in Layer D transport crates that
 //! register handlers at runtime — substrate does NOT import any
 //! `std::fs` or socket-IO types (the Layer D substrate-boundary
-//! discipline per [[cipherocto-design-principles]] §No parallel
+//! discipline per `docs/architecture/design-principles.md` §No parallel
 //! abstractions + §Layer direction).
 //!
 //! ## Why an explicit registry (vs. a `match` per `TransportKind`)
 //!
-//! Per [[cipherocto-design-principles]] §Extension over enumeration:
+//! Per `docs/architecture/design-principles.md` §Extension over enumeration:
 //! extension surfaces land via per-extension crates + trait
 //! dispatch, not via central-enum edits. A trait + registry model
 //! lets new transports land without central-edits to
@@ -48,7 +48,7 @@ use crate::handle::{AttachError, AttachHandle, AttachedSession, TransportKind};
 ///
 /// # Layer discipline
 ///
-/// Per [[cipherocto-design-principles]] §Interface Segregation, the
+/// Per `docs/architecture/design-principles.md` §Interface Segregation, the
 /// trait is small and focused (one method: bind). New
 /// extension-bearing operations land as additive traits, not
 /// `Handler` mutations.

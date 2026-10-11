@@ -9,7 +9,7 @@
 //! `octo-runtime-persistence` feature flag. When the feature is OFF
 //! (no flag), they return `PersistenceError::FeatureNotEnabled`.
 //! When ON, they round-trip through a CipherOcto-fork Stoolap
-//! database per [[stoolap-fork-persistence]].
+//! database per `docs/architecture/stoolap-integration.md`.
 //!
 //! ## Revocation set (trait-dispatched per §F.7.5 paired amendment)
 //!
@@ -75,7 +75,7 @@ pub use crate::handle::SessionId;
 
 /// Per-extension trait for revocation storage backends (RFC-0011-c
 /// §F.7.5 paired amendment; per-extension-crates pattern per
-/// [[cipherocto-design-principles]] §User extensibility).
+/// `docs/architecture/design-principles.md` §User extensibility).
 ///
 /// Implementors live in Layer D crates (e.g.
 /// `octo-runtime-revocation-store` for the Stoolap-backed ledger).

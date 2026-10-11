@@ -422,7 +422,7 @@ mod tests {
         // through the substrate-boundary `sign_attach_handle_payload`
         // wrapper (RFC-0011-c §F.5) rather than signing canonical
         // bytes directly via `ed25519-dalek`. Per
-        // [[cipherocto-design-principles]] §No parallel abstractions,
+        // `docs/architecture/design-principles.md` §No parallel abstractions,
         // test fixtures use the same single-substrate-signing surface
         // the production mint path uses; if `sign_attach_handle_payload`
         // ever drifts from `canonical_payload_bytes`, this test fails.

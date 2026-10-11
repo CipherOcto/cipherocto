@@ -2,7 +2,7 @@
 //!
 //! Owns the typed request/reply correlation types + the `rpc_invoke`
 //! wrapper that the CLI builds against. Layer C substrate per
-//! [[cipherocto-design-principles]]; depends only on stable Layer 1
+//! `docs/architecture/design-principles.md`; depends only on stable Layer 1
 //! substrate (`octo-ident` for canonical DID + `octo-protocol` for
 //! `PayloadKindId` + borsh wire form).
 //!
@@ -134,7 +134,7 @@ pub struct RpcRequest<'a> {
 /// ## Layer discipline (Wave 1.5 fix 8)
 ///
 /// Phase 1 stub is sync (`pub fn`, NOT `pub async fn`) per
-/// `[[cipherocto-design-principles]]` Layer C: the substrate MUST NOT
+/// ``docs/architecture/design-principles.md`` Layer C: the substrate MUST NOT
 /// own the async runtime. The follow-on `NodeTransport::send_best`
 /// (RFC-0870k AC-6) is `async` at the **trait impl** site (Layer D
 /// transport adapter); the substrate-call site here stays sync and
@@ -162,7 +162,7 @@ pub fn rpc_invoke(request: RpcRequest<'_>, timeout_ms: u64) -> Result<RpcCorrela
     // Step 3: synthesize the correlation. Phase 1 placeholder —
     // generates a deterministic request_envelope_id from the request
     // fields via blake3 (Routed through `octo_cap_macaroon::blake3_hash`
-    // per [[cipherocto-design-principles]] "no parallel abstractions").
+    // per `docs/architecture/design-principles.md` "no parallel abstractions").
     // Real dispatch via `NodeTransport::send_best` lands in the
     // follow-on mission when the request/reply substrate ships.
     let request_envelope_id = derive_request_envelope_id(request.peer_did, request.method);
@@ -189,7 +189,7 @@ pub fn rpc_invoke(request: RpcRequest<'_>, timeout_ms: u64) -> Result<RpcCorrela
 /// request triple. Uses the substrate's blake3 hash via
 /// `octo_cap_macaroon::blake3_hash` (Layer B substrate wrapper; no
 /// parallel `blake3` crate dep in this layer per
-/// [[cipherocto-design-principles]]).
+/// `docs/architecture/design-principles.md`).
 fn derive_request_envelope_id(peer_did: &str, method: &str) -> [u8; 32] {
     let preimage = format!("{peer_did}\x00{method}");
     octo_cap_macaroon::blake3_hash(preimage.as_bytes())

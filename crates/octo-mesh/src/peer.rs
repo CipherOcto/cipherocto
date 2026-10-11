@@ -17,12 +17,12 @@
 //!
 //! ## TrustLevel — typed-discriminator, not central enum
 //!
-//! Per [[cipherocto-design-principles]] "Extension over enumeration (no
+//! Per `docs/architecture/design-principles.md` "Extension over enumeration (no
 //! central enums)", `TrustLevel` is a `String` newtype wrapping a
 //! canonical UUID discriminator (RFC-0871 typed-discriminator pattern).
 //! New trust signals extend the canonical UUID table without substrate
 //! or CLI enum edits; old code fails-closed on unknown discriminators
-//! per [[cipherocto-design-principles]] "Open/Closed".
+//! per `docs/architecture/design-principles.md` "Open/Closed".
 
 // Re-export the public surface so existing `crate::peer::TrustLevel`
 // import paths keep working unchanged across the Wave 1.5 split. The

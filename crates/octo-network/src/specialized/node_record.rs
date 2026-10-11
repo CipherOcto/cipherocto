@@ -80,7 +80,7 @@ pub struct SpecializedNodeRecord {
 /// `NodeClass` — closed enum of specialized node
 /// classes per RFC-0871 §Node Taxonomy. Matches
 /// existing role surface (RFC-0011-d role taxonomy);
-/// additive type per [[cipherocto-design-principles]]
+/// additive type per `docs/architecture/design-principles.md`
 /// §Extension over enumeration (does NOT introduce a
 /// new central enum).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

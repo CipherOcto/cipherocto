@@ -3,7 +3,7 @@
 //! Per RFC-0855p-b §Key Files L847, the `mon/coordinator.rs` path is the
 //! canonical Layer-C consumer entry-point for coordinator state-machine
 //! substrate. We re-export rather than duplicate types per
-//! [[cipherocto-design-principles]] §Stable Abstractions: state machine
+//! `docs/architecture/design-principles.md` §Stable Abstractions: state machine
 //! survives 10-year migrations; specialization (DomainCoordinator per
 //! RFC-0855p-c, mission-bound overrides per future RFC amendments) layers
 //! on top via composition, not duplication.

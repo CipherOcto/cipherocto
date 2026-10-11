@@ -3,7 +3,7 @@
 //! Per RFC-0011-c §9.8 (Error Codes) + §9.10 (Substrate `[ADD]` Signatures).
 //! Every variant is `#[non_exhaustive]` — new substrate additions land as
 //! additive variants without breaking downstream consumers (per
-//! [[cipherocto-design-principles]] §Extension over enumeration).
+//! `docs/architecture/design-principles.md` §Extension over enumeration).
 
 use thiserror::Error;
 

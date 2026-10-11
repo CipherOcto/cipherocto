@@ -1,7 +1,7 @@
 //! `octo-runtime-transport-raw` — Raw scheme UUID `Handler` impl
 //! for `TransportKind::Raw(Uuid)` per RFC-0011-c §F.7.2.
 //!
-//! Per [[cipherocto-design-principles]] §Extension over enumeration:
+//! Per `docs/architecture/design-principles.md` §Extension over enumeration:
 //! `TransportKind::Raw(Uuid)` is a typed UUID escape hatch that
 //! downstream crates use to register their own protocol handlers
 //! keyed by a 128-bit discriminator. The substrate never invents a
@@ -13,7 +13,7 @@
 //!
 //! ## Fail-CLOSED on unconfigured schemes
 //!
-//! Per the [[cipherocto-design-principles]] §Discipline at first
+//! Per the `docs/architecture/design-principles.md` §Discipline at first
 //! call site rule: a registered handler that the substrate
 //! dispatches to must surface a substrate-visible error, never
 //! silently succeed. `RawHandler` is the substrate-side fail-CLOSED

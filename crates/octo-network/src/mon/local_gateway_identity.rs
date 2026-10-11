@@ -8,7 +8,7 @@
 //! local gateway — it would derive a deterministic-but-wrong
 //! `gateway_id` using zero-defaults.
 //!
-//! Layer B per [[cipherocto-design-principles]] §Stable Abstractions
+//! Layer B per `docs/architecture/design-principles.md` §Stable Abstractions
 //! Principle. Zero Layer A change.
 
 use std::path::{Path, PathBuf};

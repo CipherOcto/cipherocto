@@ -21,7 +21,7 @@
 //! DC pubkey, adapter signature, nonce, and signed_at_epoch — replacing
 //! the v1.7 over-broad `platform_admin_id: &str` argument with a typed
 //! proof envelope. Adapter signature verification is delegated to the
-//! adapter at the substrate boundary per [[cipherocto-design-principles]]
+//! adapter at the substrate boundary per `docs/architecture/design-principles.md`
 //! §Push complexity to edges.
 
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -206,7 +206,7 @@ pub fn now_epoch() -> u64 {
 ///
 /// **Adapter signature:** the adapter is the platform-trust-root and signs
 /// the proof payload. Signature verification is delegated to the adapter at
-/// the substrate boundary per [[cipherocto-design-principles]] §Push
+/// the substrate boundary per `docs/architecture/design-principles.md` §Push
 /// complexity to edges; the substrate stores the bytes but does not perform
 /// per-platform cryptographic verification (WhatsApp / Matrix / Telegram have
 /// different admin verification APIs).

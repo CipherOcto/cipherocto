@@ -7,7 +7,7 @@
 //! during a rotation event.
 //!
 //! The discriminator mechanism is algorithm-independent (Layer B
-//! substrate-faithful per [[cipherocto-design-principles]] §Stable
+//! substrate-faithful per `docs/architecture/design-principles.md` §Stable
 //! Abstractions Principle): the wire form + lookup logic are
 //! forward-compatible regardless of which signature algorithm(s)
 //! the `key_set` eventually holds (classic Ed25519 / hybrid

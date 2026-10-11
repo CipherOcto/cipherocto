@@ -4,7 +4,7 @@
 //! per-extension crate pattern (Layer B trait; concrete per-transport impl
 //! crates in Layer D, OUT OF SCOPE per RFC-0011-h).
 //!
-//! Per [[cipherocto-design-principles]] §User extensibility, the trait is the
+//! Per `docs/architecture/design-principles.md` §User extensibility, the trait is the
 //! extension surface; concrete impls register at runtime. CLI consumes via
 //! runtime registry lookup identical to RFC-0863 `NetworkSender` pattern.
 //!

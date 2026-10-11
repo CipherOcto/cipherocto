@@ -11,7 +11,7 @@
 //!
 //! ## Why a multiplexer (vs. a `match` per `TransportKind`)
 //!
-//! Per [[cipherocto-design-principles]] §Composition over
+//! Per `docs/architecture/design-principles.md` §Composition over
 //! inheritance: `HybridHandler` composes two existing handlers
 //! rather than inheriting from a central enum dispatch. New
 //! transport combinations land by registering a hybrid against two

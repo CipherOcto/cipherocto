@@ -27,7 +27,7 @@
 //! is propagated to each child via env vars (not CLI args — args are
 //! forwarded by the cargo test harness for the test binary itself).
 //!
-//! NO PUSH per [[feedback_initiation_user_only]] + [[git-workflow]].
+//! NO PUSH per `docs/05-process/engineering-rules.md` §Git workflow + `docs/05-process/engineering-rules.md` §Git workflow.
 
 use std::env;
 use std::process::{Command, Stdio};

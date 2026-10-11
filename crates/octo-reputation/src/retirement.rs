@@ -12,7 +12,7 @@
 //!    ≥ `GOVERNANCE_QUORUM` and a non-trivial signature set.
 //!
 //! Real signature verification is **deferred** to whichever mission owns
-//! governance key provisioning — see [[deferred-vs-unspecified]]. The stub
+//! governance key provisioning — see `docs/05-process/engineering-rules.md` §Deferred versus unspecified. The stub
 //! here:
 //!
 //! - Asserts the snapshot is fresh (`MAX_GOVERNANCE_SNAPSHOT_AGE_SECS`).

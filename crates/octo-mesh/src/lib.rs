@@ -1,6 +1,6 @@
 //! `octo-mesh` — CipherOcto mesh peer-table substrate (RFC-0011-f).
 //!
-//! Layer C substrate per [[cipherocto-design-principles]]. Owns the local
+//! Layer C substrate per `docs/architecture/design-principles.md`. Owns the local
 //! peer table (`$OCTO_HOME/mesh/peers.toml`, 0700 perms, atomic write +
 //! fsync + rename) and the typed-discriminator `TrustLevel` / `EndpointUri`
 //! types the CLI projects onto RFC-0871 envelope history + RFC-0855p-c
@@ -10,7 +10,7 @@
 //! State and Binding (Layered Split)").
 //!
 //! `TrustLevel` is a typed-discriminator `String` newtype per
-//! [[cipherocto-design-principles]] "Extension over enumeration (no
+//! `docs/architecture/design-principles.md` "Extension over enumeration (no
 //! central enums)"; the substrate carries the canonical UUID table and
 //! the CLI is the canonical place to aggregate underlying signals into
 //! an operator-friendly discriminator (RFC-0011-f §Rationale "Why

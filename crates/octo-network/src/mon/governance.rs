@@ -159,7 +159,7 @@ pub const BLAKE3_GOVERNANCE_PROPOSAL_DOMAIN: &[u8] = b"cipherocto/governance/pro
 /// Substrate-faithful: the helper lives in the Layer-B mon module
 /// (NOT on `GovernanceProposal` directly) because Layer-A
 /// `octo-governance-core` is RFC-frozen per
-/// [[cipherocto-design-principles]] §Stable Abstractions Principle.
+/// `docs/architecture/design-principles.md` §Stable Abstractions Principle.
 /// The Layer-B wrapper IS the canonical entry point per the
 /// `VotingTally::into_canonical` pattern at this same module.
 ///

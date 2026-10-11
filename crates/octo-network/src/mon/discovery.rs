@@ -235,7 +235,7 @@ impl MissionAdvertisementCache {
     /// discovery advertisement show` (RFC-0011-m Phase 5 G23).
     /// Returns gateway-id-keyed iteration per RFC-0855 §8.2.
     /// Owned-key iteration decouples the iterator lifetime from
-    /// the cache lifetime per [[cipherocto-design-principles]]
+    /// the cache lifetime per `docs/architecture/design-principles.md`
     /// §No premature coupling.
     pub fn iter(&self) -> impl Iterator<Item = ([u8; 32], &MissionAdvertisement)> {
         self.entries.iter().map(|(k, v)| (*k, v))
@@ -289,7 +289,7 @@ impl MissionInvitationCache {
     /// discovery invitation show` (RFC-0011-m Phase 5 G24).
     /// Returns gateway-id-keyed iteration per RFC-0855 §8.2.
     /// Owned-key iteration decouples the iterator lifetime from
-    /// the cache lifetime per [[cipherocto-design-principles]]
+    /// the cache lifetime per `docs/architecture/design-principles.md`
     /// §No premature coupling.
     pub fn iter(&self) -> impl Iterator<Item = ([u8; 32], &MissionInvitation)> {
         self.entries.iter().map(|(k, v)| (*k, v))

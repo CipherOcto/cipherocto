@@ -1,6 +1,6 @@
 //! `octo-role` — CipherOcto role provisioning substrate.
 //!
-//! Layer B per [[cipherocto-design-principles]].
+//! Layer B per `docs/architecture/design-principles.md`.
 //! Per RFC-0011-d §7.4 (Substrate `[ADD]` signatures).
 //!
 //! ## Mission sequence

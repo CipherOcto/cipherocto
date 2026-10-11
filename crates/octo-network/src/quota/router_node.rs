@@ -136,7 +136,7 @@ mod tests {
     /// In-memory `QuotaRouterNodeAccess` impl for testing.
     /// Per-extension crates provide their own impls in
     /// Layer D (OUT OF SCOPE for this module, per RFC-0011-p
-    /// §Layer discipline + [[cipherocto-design-principles]]
+    /// §Layer discipline + `docs/architecture/design-principles.md`
     /// §User extensibility).
     struct InMemoryQuotaRouter {
         node: QuotaRouterNode,

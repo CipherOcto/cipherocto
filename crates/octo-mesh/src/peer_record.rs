@@ -4,7 +4,7 @@
 //! Split from `peer.rs` per Wave 1.5 hygiene callout — the
 //! 545-line `peer.rs` module crossed the per-module size threshold
 //! (the substrate-truth principle is "split multi-concern modules
-//! early" per `[[cipherocto-design-principles]]` §No god-objects).
+//! early" per ``docs/architecture/design-principles.md`` §No god-objects).
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

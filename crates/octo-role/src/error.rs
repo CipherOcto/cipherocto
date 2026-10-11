@@ -2,7 +2,7 @@
 //!
 //! Layer B typed substrate error. CLI translates these to `OctoCliError`
 //! variants (M7) — unidirectional mapping per
-//! [[cipherocto-design-principles]] no-premature-coupling.
+//! `docs/architecture/design-principles.md` no-premature-coupling.
 //!
 //! Per RFC-0011-d §Security 2: there is **NO** `RoleBindingConflict`
 //! variant. Re-selecting with the same `(operator_did, role_id, chain_id)`

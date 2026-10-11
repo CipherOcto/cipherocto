@@ -168,6 +168,20 @@ Against the old signature this does not compile. Verified by reverting a single
 "expected `&VerifyingKey`, found `&[u8; 32]`", including the new vector. The
 round-trip is not merely ceremony, it is compulsory.
 
+## Superseded in part — see `0009-cc`
+
+This mission fixed the _type_. It did not fix the _length_, and the two are
+separate layers: `octo-algo-stark-schnorr` public keys are 33 bytes, so
+`&[u8; 32]` still decides the key size before the dispatcher runs.
+
+The claim this file makes — that a caller holding a non-Ed25519 key can now
+reach the verifier — is true of the type and not yet true of any call the
+workspace actually makes. `0009-cc` carries the rest, and records that the one
+test appearing to cover a second algorithm is vacuous under mutation.
+
+Stated here rather than left implicit, because a reader arriving at this file
+first would otherwise take "the algorithm is dispatched" as fully established.
+
 ## One behavioural note
 
 `build_third_party_bind` used to reject a malformed `witness_id` with a

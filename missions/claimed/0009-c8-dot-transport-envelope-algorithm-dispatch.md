@@ -150,7 +150,7 @@ outside the workspace.
 ## Cross-references
 
 - `rfcs/accepted/process/0009-identity-evolution-v12.md` — AC#11
-- `missions/open/0009-c3-network-verification-dispatch` — where the
+- `missions/archived/completed/0009-c3-network-verification-dispatch` — where the
   categorization lives
 - `missions/claimed/0009-c7-network-caller-supplied-key-dispatch` — the same
   edit for byte-parameter sites, and the adapter pattern to copy

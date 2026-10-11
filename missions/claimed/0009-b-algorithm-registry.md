@@ -369,9 +369,9 @@ Do not open an RFC-0010 amendment on the strength of this mission.
   contract that survives the `list` and NULL-column cases above. There is **no**
   cross-RFC discriminator conflict; RFC-0009 retracted the claim that
   there was, and an earlier draft of this mission repeated it
-- `missions/open/0009-c-verification-dispatch` — every call site
-- `missions/open/0009-d-stark-schnorr-algorithm`
-- `missions/open/0009-e-signable-domain-separation`
+- `missions/claimed/0009-c-verification-dispatch` — every call site
+- `missions/claimed/0009-d-stark-schnorr-algorithm`
+- `missions/claimed/0009-e-signable-domain-separation`
 - `missions/open/0009-v12-identity-evolution` — the v1.2 mission this does not
   supersede
 

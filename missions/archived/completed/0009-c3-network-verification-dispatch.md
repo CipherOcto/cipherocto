@@ -445,7 +445,7 @@ None required. Nothing is deployed.
 - `missions/archived/completed/0010-a-canonical-did-codec-crate` — the codec
   this blocked on, closed 2026-08-06
 - `missions/claimed/0009-c-verification-dispatch` — the core slice
-- `missions/open/0009-c2-verification-dispatch-new-dependency-sites`
+- `missions/claimed/0009-c2-verification-dispatch-new-dependency-sites`
 - `missions/claimed/0009-b-algorithm-registry`
 
 ## Claimant

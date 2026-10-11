@@ -138,7 +138,7 @@ None required. Nothing is deployed.
 - `rfcs/accepted/process/0009-identity-evolution-v12.md` — AC#11
 - `missions/claimed/0009-c-verification-dispatch` — the pattern to copy
 - `missions/claimed/0009-b-algorithm-registry` — the registry
-- `missions/open/0009-c3-network-verification-dispatch` — the third slice
+- `missions/archived/completed/0009-c3-network-verification-dispatch` — the third slice
 
 ## Claimant
 

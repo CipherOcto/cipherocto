@@ -23,14 +23,14 @@ Implement shard routing for resource-scoped WAL segments. `shard_for_segment(wal
 
 ## Depends on (RFC + upstream missions)
 
-| Dependency                                              | Status                            | Required?                       |
-| ------------------------------------------------------- | --------------------------------- | ------------------------------- |
-|                                                         | RFC-0960 (Grand Design)           | Accepted                        | YES — shard routing context                     |
-|                                                         | RFC-0963 (Resource Shard Routing) | Accepted                        | YES — wire format                               |
-|                                                         | RFC-0962 (ExecutionEnvelope)      | Accepted                        | YES — `MultiEnvelope` cross-shard (RFC-0962 §7) |
-| RFC-0862 (Stoolap Sync Layer)                           | Accepted v1.2.0                   | YES — segment hash format       |
-| RFC-0959 (Ask Settlement)                               | Accepted v1.0                     | YES — asks routed per shard     |
-| Mission `missions/claimed/0962-a-execution-envelope.md` | Claimed (2026-07-23)              | YES — `MultiEnvelope` available |
+| Dependency                                                         | Status                            | Required?                       |
+| ------------------------------------------------------------------ | --------------------------------- | ------------------------------- |
+|                                                                    | RFC-0960 (Grand Design)           | Accepted                        | YES — shard routing context                     |
+|                                                                    | RFC-0963 (Resource Shard Routing) | Accepted                        | YES — wire format                               |
+|                                                                    | RFC-0962 (ExecutionEnvelope)      | Accepted                        | YES — `MultiEnvelope` cross-shard (RFC-0962 §7) |
+| RFC-0862 (Stoolap Sync Layer)                                      | Accepted v1.2.0                   | YES — segment hash format       |
+| RFC-0959 (Ask Settlement)                                          | Accepted v1.0                     | YES — asks routed per shard     |
+| Mission `missions/archived/completed/0962-a-execution-envelope.md` | Claimed (2026-07-23)              | YES — `MultiEnvelope` available |
 
 ## Type Coverage
 

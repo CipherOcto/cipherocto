@@ -163,7 +163,7 @@ outside the crate that has already been migrated.
 ## Cross-references
 
 - `rfcs/accepted/process/0009-identity-evolution-v12.md` — AC#11
-- `missions/open/0009-c3-network-verification-dispatch` — where the sweep and
+- `missions/archived/completed/0009-c3-network-verification-dispatch` — where the sweep and
   the corrected categorization live
 - `missions/claimed/0009-c5-vault-cache-bus-algorithm-dispatch` — the pattern
   to follow

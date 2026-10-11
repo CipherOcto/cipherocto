@@ -109,7 +109,7 @@ None required. Nothing is deployed.
 - `rfcs/accepted/process/0009-identity-evolution-v12.md` — AC#11
 - `missions/claimed/0009-c5-vault-cache-bus-algorithm-dispatch` — the first
   instance of the same false blocker, and the pattern followed here
-- `missions/open/0009-c3-network-verification-dispatch` — where these sites were
+- `missions/archived/completed/0009-c3-network-verification-dispatch` — where these sites were
   found, and whose blockers still hold
 - `crates/octo-cli/tests/security_regressions.rs` — `AC11_PENDING`
 

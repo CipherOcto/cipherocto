@@ -332,7 +332,7 @@ will still accept them, and that is precisely the gap A6 describes.
   per-key gate — **owner settled in RFC-0009 A14, neither this mission nor
   `0009-c`**; see §Known gap, do not paper over
 - `crates/quota-router-core/src/zk_verify/capability.rs` — the file under change
-- `missions/open/0009-c-verification-dispatch`
+- `missions/claimed/0009-c-verification-dispatch`
 
 ## Claimant
 

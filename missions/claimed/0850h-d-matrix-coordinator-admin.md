@@ -261,7 +261,7 @@ contract), but it must explicitly note:
 ### Phase 1 — impl + unit tests
 
 - [ ] `octo-adapter-matrix-sdk/src/lib.rs` gains an `impl
-  CoordinatorAdmin for MatrixAdapter` block with all 24 trait
+CoordinatorAdmin for MatrixAdapter` block with all 24 trait
       methods overridden (22 `async fn` + 2 sync `fn`
       `admin_capabilities` and `platform_name`; per the trait body in
       `crates/octo-network/src/dot/adapters/coordinator_admin.rs`,
@@ -285,7 +285,7 @@ contract), but it must explicitly note:
 - [ ] `cargo build --all-targets -p octo-adapter-matrix-sdk` — zero
       errors
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings -p
-  octo-adapter-matrix-sdk` — zero warnings
+octo-adapter-matrix-sdk` — zero warnings
 - [ ] `cargo fmt --check` — clean
 - [ ] `cargo test --lib -p octo-adapter-matrix-sdk` — all existing
       19 unit tests still pass (18 `#[test]` + 1 `#[tokio::test]` in
@@ -340,7 +340,7 @@ contract), but it must explicitly note:
       Section coverage is NOT 1:1 -- see the coverage-gap note above
       for the full 24-method breakdown
 - [ ] `cargo test -p octo-adapter-matrix-sdk --features live-matrix
-    --test live_matrix_test -- --ignored --nocapture` — all 13
+  --test live_matrix_test -- --ignored --nocapture` — all 13
       tests pass when run with `--test-threads=1` (live tests must
       run serially; matrix.org session is shared). Acceptance: the
       7 pre-existing tests (mx00, mx01, mx02, mx03,
@@ -513,7 +513,7 @@ CoordinatorAdmin for WhatsAppWebAdapter` block; pattern to mirror
   capability matrix that this mission updates
 - `missions/claimed/0850h-b-matrix-adapter-e2ee.md` — parent mission
   that enabled the SDK 0.18 upgrade
-- `missions/open/0855p-c-admin-attestation.md` — downstream mission
+- `missions/archived/completed/0855p-c-admin-attestation.md` — downstream mission
   that will use Matrix admin via the trait once this mission lands
 - `rfcs/draft/networking/0850p-d-dc-initiated-group-creation.md` —
   downstream RFC that lists matrix as one of the natively
@@ -533,7 +533,7 @@ CoordinatorAdmin for WhatsAppWebAdapter` block; pattern to mirror
 - Documentation drift: closes the gap where RFC-0863p-a, RFC-0851p-b,
   and RFC-0855p-c (all Accepted) claim matrix implements
   `CoordinatorAdmin` but the adapter doesn't bind the trait
-- Unblocks `missions/open/0855p-c-admin-attestation.md` for Matrix
+- Unblocks `missions/archived/completed/0855p-c-admin-attestation.md` for Matrix
 - Unblocks `rfcs/draft/networking/0850p-d-dc-initiated-group-creation.md` Matrix section
 - Unblocks `rfcs/draft/networking/0850p-e-kick-detection.md` Matrix event mapping -- the kick-detection RFC itself does NOT need the trait (it observes `m.room.member` events directly), but ships in parallel and benefits from the matrix adapter being fully wired up.
 

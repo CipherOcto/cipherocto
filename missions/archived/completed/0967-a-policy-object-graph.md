@@ -35,15 +35,15 @@ Policy objects integrate with capabilities via the `PolicyReference` caveat (RFC
 
 ## Depends on (RFC + upstream missions)
 
-| Dependency                                               | Status                | Required?                                  |
-| -------------------------------------------------------- | --------------------- | ------------------------------------------ |
-| RFC-0960 (Grand Design)                                  | Accepted (2026-07-23) | YES — defines policy + reference pattern   |
-| RFC-0967 (Policy Object Graph)                           | Accepted (2026-07-23) | YES — subgraph relation                    |
-| RFC-0965 (Caveat Extension)                              | Accepted (2026-07-23) | YES — `PolicyReference` caveat variant     |
-| RFC-0964 (Constraint Encoding)                           | Accepted (2026-07-23) | NO (sibling; for full constraint encoding) |
-| RFC-0957 (Capability Token Format)                       | Accepted (2026-07-20) | NO (consumer; W1)                          |
-| Mission `missions/claimed/0965-a-caveat-dsl.md`          | Claimed (2026-07-23)  | YES — `PolicyReference` Caveat variant     |
-| Mission `missions/claimed/0964-a-constraint-encoding.md` | Claimed (2026-07-23)  | YES (constraint substrate)                 |
+| Dependency                                                          | Status                | Required?                                  |
+| ------------------------------------------------------------------- | --------------------- | ------------------------------------------ |
+| RFC-0960 (Grand Design)                                             | Accepted (2026-07-23) | YES — defines policy + reference pattern   |
+| RFC-0967 (Policy Object Graph)                                      | Accepted (2026-07-23) | YES — subgraph relation                    |
+| RFC-0965 (Caveat Extension)                                         | Accepted (2026-07-23) | YES — `PolicyReference` caveat variant     |
+| RFC-0964 (Constraint Encoding)                                      | Accepted (2026-07-23) | NO (sibling; for full constraint encoding) |
+| RFC-0957 (Capability Token Format)                                  | Accepted (2026-07-20) | NO (consumer; W1)                          |
+| Mission `missions/archived/completed/0965-a-caveat-dsl.md`          | Claimed (2026-07-23)  | YES — `PolicyReference` Caveat variant     |
+| Mission `missions/archived/completed/0964-a-constraint-encoding.md` | Claimed (2026-07-23)  | YES (constraint substrate)                 |
 
 ## Type Coverage
 

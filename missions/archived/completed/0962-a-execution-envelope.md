@@ -23,16 +23,16 @@ Implement the `ExecutionEnvelope` object protocol (renamed from `ConsensusSessio
 
 ## Depends on (RFC + upstream missions)
 
-| Dependency                                                    | Status                       | Required?                                   |
-| ------------------------------------------------------------- | ---------------------------- | ------------------------------------------- |
-|                                                               | RFC-0960 (Grand Design)      | Accepted                                    | YES — ExecutionEnvelope primitive           |
-|                                                               | RFC-0962 (ExecutionEnvelope) | Accepted                                    | YES — wire format, signature, MultiEnvelope |
-|                                                               | RFC-0961 (CIPHERO_SQL)       | Accepted                                    | NO (consumer; deferred per W8)              |
-| RFC-0959 (Ask Settlement)                                     | Accepted v1.0                | YES — `Receipt` referenced for replay index |
-| RFC-0964 (Constraint Encoding)                                | Accepted v1.1                | NO (companion)                              |
-| RFC-0957 (Capability Token)                                   | Accepted (2026-07-20)        | YES — capability holder signature           |
-| Mission `missions/claimed/0959-a-ask-pricing-stoolap.md`      | Claimed (2026-07-20)         | YES — `Receipt` + `Reservation` types       |
-| Mission `missions/claimed/0964-a-constraint-encoding-mission` | Claimed (2026-07-23)         | NO (sibling)                                |
+| Dependency                                                               | Status                       | Required?                                   |
+| ------------------------------------------------------------------------ | ---------------------------- | ------------------------------------------- |
+|                                                                          | RFC-0960 (Grand Design)      | Accepted                                    | YES — ExecutionEnvelope primitive           |
+|                                                                          | RFC-0962 (ExecutionEnvelope) | Accepted                                    | YES — wire format, signature, MultiEnvelope |
+|                                                                          | RFC-0961 (CIPHERO_SQL)       | Accepted                                    | NO (consumer; deferred per W8)              |
+| RFC-0959 (Ask Settlement)                                                | Accepted v1.0                | YES — `Receipt` referenced for replay index |
+| RFC-0964 (Constraint Encoding)                                           | Accepted v1.1                | NO (companion)                              |
+| RFC-0957 (Capability Token)                                              | Accepted (2026-07-20)        | YES — capability holder signature           |
+| Mission `missions/claimed/0959-a-ask-pricing-stoolap.md`                 | Claimed (2026-07-20)         | YES — `Receipt` + `Reservation` types       |
+| Mission `missions/archived/completed/0964-a-constraint-encoding-mission` | Claimed (2026-07-23)         | NO (sibling)                                |
 
 ## Type Coverage
 

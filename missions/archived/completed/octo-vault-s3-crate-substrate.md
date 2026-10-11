@@ -5,7 +5,7 @@
 **LANDED 2026-08-16 (drift closure).** Mission file written to
 close the phantom pointer left by the storage restructure plan
 (`docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md`
-§3 S3 referenced `missions/open/octo-vault-s3-crate-substrate.md`
+§3 S3 referenced `missions/archived/completed/octo-vault-s3-crate-substrate.md`
 but the YAML was never authored).
 
 ## Commits
@@ -34,8 +34,7 @@ state enum = `Active | Frozen` only).
 ## Acceptance Criteria
 
 - [x] **AC-1**: `crates/octo-vault/Cargo.toml` declares the
-      Layer-B vault substrate crate (depends on `octo-storage-core`
-      + `octo-determin`; no high-level business schema)
+      Layer-B vault substrate crate (depends on `octo-storage-core` + `octo-determin`; no high-level business schema)
 - [x] **AC-2**: Vault types: `VaultId`, `ChainId`, `AssetId`,
       `VaultState`, `VaultPolicy`, `VaultMetadata`
 - [x] **AC-3**: Canonical `vault_id` derivation per §8.10 wire
@@ -49,19 +48,19 @@ state enum = `Active | Frozen` only).
       with pinned hex constants per `AssetId::derive(role_token)`
       × 9 role-token set
 - [x] **AC-7**: 4 byte-exact TV-C1 (in `crates/octo-cap-macaroon/tests/
-      tv_c1_verify_time.rs`) — verify-time invariant round-trip
+    tv_c1_verify_time.rs`) — verify-time invariant round-trip
 - [x] **AC-8**: 3 TV-0862 vault_id cross-ref (added in 0862-c10
       sweep era; `crates/octo-vault/tests/tv_0862_vault_id_cross_ref.rs`)
 
 ## Test count (33/33 green at LANDED)
 
-| Suite | Tests |
-|---|---|
-| `src/lib.rs` (unit) | 10 |
-| `tests/apply_migrations.rs` | 5 |
-| `tests/test_vectors.rs` | 15 (10 TV-V1 + 5 helpers) |
-| `tests/tv_0862_vault_id_cross_ref.rs` | 3 |
-| **TOTAL** | **33** |
+| Suite                                 | Tests                     |
+| ------------------------------------- | ------------------------- |
+| `src/lib.rs` (unit)                   | 10                        |
+| `tests/apply_migrations.rs`           | 5                         |
+| `tests/test_vectors.rs`               | 15 (10 TV-V1 + 5 helpers) |
+| `tests/tv_0862_vault_id_cross_ref.rs` | 3                         |
+| **TOTAL**                             | **33**                    |
 
 Plus 4 TV-C1 in `crates/octo-cap-macaroon/tests/tv_c1_verify_time.rs`
 (consumer-side; verify-time invariant against vault substrate) =

@@ -19,7 +19,7 @@ metadata:
 
 **Claimed and implemented 2026-10-10.** Found while sweeping for crates that
 carried production AC#11 sites while appearing in no AC#11 list; recorded in
-`missions/open/0009-c3-network-verification-dispatch` as one of three.
+`missions/archived/completed/0009-c3-network-verification-dispatch` as one of three.
 
 `ProducerTrustList` now stores a `TrustedProducerKey { algorithm, key }` and
 verification dispatches through `verify_dispatch` on the recorded algorithm.
@@ -171,7 +171,7 @@ constructor to break.
 ## Cross-references
 
 - `rfcs/accepted/process/0009-identity-evolution-v12.md` — AC#11
-- `missions/open/0009-c3-network-verification-dispatch` — the sweep that
+- `missions/archived/completed/0009-c3-network-verification-dispatch` — the sweep that
   found this, and the pending table that is tracking it
 - `missions/claimed/0009-b-algorithm-registry` — the registry
 - `crates/octo-cli/tests/security_regressions.rs` — `AC11_PENDING`

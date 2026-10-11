@@ -157,7 +157,7 @@ three in-workspace production callers plus test callers, all updated here.
 ## Cross-references
 
 - `rfcs/accepted/process/0009-identity-evolution-v12.md` — AC#11
-- `missions/open/0009-c3-network-verification-dispatch` — the categorization
+- `missions/archived/completed/0009-c3-network-verification-dispatch` — the categorization
   this inherits
 - `missions/claimed/0009-c9-ocrypt-and-dom-wire-field-dispatch` — the same
   argument applied to `intent.sender_id`, a bare 32-byte payload

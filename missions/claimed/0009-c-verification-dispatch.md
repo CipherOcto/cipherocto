@@ -377,10 +377,10 @@ on the old path "temporarily" — that is a parallel abstraction, and per
 - `rfcs/accepted/process/0009-identity-evolution-v12.md` — AC#11, AC#14, A12, A14
 - `rfcs/accepted/process/0010-canonical-did-codec.md` — the codec `0009-c3` blocks on
 - `missions/claimed/0009-b-algorithm-registry` — the registry this dispatches through
-- `missions/open/0009-c2-verification-dispatch-new-dependency-sites`
-- `missions/open/0009-c3-network-verification-dispatch`
+- `missions/claimed/0009-c2-verification-dispatch-new-dependency-sites`
+- `missions/archived/completed/0009-c3-network-verification-dispatch`
 - `missions/open/0958-b-circuit-key-identity-public-inputs`
-- `missions/open/0009-e-signable-domain-separation`
+- `missions/claimed/0009-e-signable-domain-separation`
 - `missions/claimed/0957-ext-macaroon-crate` — crate ownership conflict
 
 ## Claimant

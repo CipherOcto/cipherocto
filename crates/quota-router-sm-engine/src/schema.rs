@@ -7,7 +7,7 @@
 //!
 //! Migrations are compile-time baked via `include_str!`. Single source of
 //! truth; reproducible across builds. Cipherocto-owned schema per
-//! [[stoolap-general-purpose-db]] Path B.
+//! `docs/architecture/stoolap-integration.md` Path B.
 //!
 //! Layer B (mission `octo-storage-split` S2): the underlying migration
 //! runner is the Layer A substrate `octo_storage_core::_legacy_apply_pending`.

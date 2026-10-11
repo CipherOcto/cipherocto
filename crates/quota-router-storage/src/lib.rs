@@ -1,7 +1,7 @@
 //! Cipherocto-side persistence for the quota-router domain (moved from octo-core 2026-07-21).
 //!
 //! Owns the `asks` table schema, migration runner, DAO, and sync subscription
-//! config for the quota-router marketplace. Per [[stoolap-general-purpose-db]],
+//! config for the quota-router marketplace. Per `docs/architecture/stoolap-integration.md`,
 //! cipherocto owns consumer schema; the fork is a general-purpose DB.
 //!
 //! Modules:

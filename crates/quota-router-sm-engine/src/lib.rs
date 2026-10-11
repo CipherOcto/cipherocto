@@ -2,11 +2,11 @@
 //!
 //! Owns the `asks` + `consumed_receipt_index` schema + state machine
 //! (Mint → Settled → Consumed). Stoolap (CipherOcto fork) is the embedded
-//! SQL substrate per [[stoolap-general-purpose-db]] Path B — cipherocto
+//! SQL substrate per `docs/architecture/stoolap-integration.md` Path B — cipherocto
 //! hosts the schema and orchestrates settlement; stoolap is just a
 //! general-purpose DB engine.
 //!
-//! **Layer C specialized node** (per `cipherocto-design-principles`):
+//! **Layer C specialized node** (per `docs/architecture/design-principles.md`):
 //! this crate implements ONE node role (the settlement matching
 //! engine). It depends on the Layer A substrate (`octo_storage_core`)
 //! for the migration runner + DB constructors, and is consumed by

@@ -98,7 +98,7 @@
 //! ## Cipherocto-side migration
 //!
 //! Schema lives at `crates/quota-router-storage/migrations/v007__create_spend_ledger.sql`
-//! per [[stoolap-general-purpose-db]] (cipherocto-side, NOT stoolap fork).
+//! per `docs/architecture/stoolap-integration.md` (cipherocto-side, NOT stoolap fork).
 //!
 //! ## Layer discipline
 //!

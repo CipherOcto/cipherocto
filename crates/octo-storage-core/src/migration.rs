@@ -9,7 +9,7 @@ use std::fmt::Debug;
 /// All three required methods return `&'static str` / `u32` — never
 /// owned strings, never allocations.
 ///
-/// Per `cipherocto-design-principles` Layer A row, this trait is
+/// Per `docs/architecture/design-principles.md` Layer A row, this trait is
 /// years-stable; new fields require a `MigrationV2` (see crate docs).
 pub trait Migration: Send + Sync + Debug {
     /// Monotonically increasing version (`1..=u32::MAX`). Strictly

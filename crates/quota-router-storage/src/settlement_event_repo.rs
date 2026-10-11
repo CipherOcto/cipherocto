@@ -10,7 +10,7 @@
 //! 4. The corresponding nonce is ALSO inserted into `consumed_receipt_index` (v003)
 //!    via the `ConsumedReceiptRepository` — replay defense + audit linkage.
 //!
-//! Per [[stoolap-general-purpose-db]]: cipherocto owns this consumer schema;
+//! Per `docs/architecture/stoolap-integration.md`: cipherocto owns this consumer schema;
 //! the stoolap fork stays a general-purpose DB.
 
 use crate::ask::{compute_settlement_hash, AxesConsumed, SettlementEvent};

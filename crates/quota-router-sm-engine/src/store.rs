@@ -5,7 +5,7 @@
 //!
 //! Cipherocto wraps stoolap as an embedded SQL engine. Schema lives in
 //! cipherocto (`schema.rs` + migrations); stoolap is the storage layer
-//! per [[stoolap-general-purpose-db]] Path B.
+//! per `docs/architecture/stoolap-integration.md` Path B.
 #![allow(deprecated)]
 
 use std::sync::{Arc, Mutex};

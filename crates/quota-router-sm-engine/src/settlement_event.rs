@@ -29,7 +29,7 @@ use octo_cap_macaroon::{
 /// (RFC-0959 §2.1).
 ///
 /// Re-exported from `octo_cap_macaroon::SettlementId` (Layer A substrate;
-/// canonical home per `cipherocto-design-principles` §Canonical home rule).
+/// canonical home per `docs/architecture/design-principles.md` §Canonical home rule).
 pub use octo_cap_macaroon::SettlementId;
 
 /// Typed 32-byte wrapper for an ask ID (RFC-0959 §2.1).

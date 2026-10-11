@@ -1,6 +1,6 @@
 //! Cipherocto-side sync subscription config (Phase C integration).
 //!
-//! Per [[stoolap-general-purpose-db]] + master plan §5 Storage Architecture note:
+//! Per `docs/architecture/stoolap-integration.md` + master plan §5 Storage Architecture note:
 //! - The **fork** is a general-purpose DB and stays table-agnostic.
 //! - The **cipherocto sync engine** (in `octo-sync` workspace, git dep) declares
 //!   which tables to replicate via `DatabaseSyncAdapter` calls.
@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 /// Cipherocto-side tables that participate in sync (Phase C: Asks only).
 ///
-/// Per [[stoolap-general-purpose-db]]: this enum lists cipherocto consumer
+/// Per `docs/architecture/stoolap-integration.md`: this enum lists cipherocto consumer
 /// tables. It is NOT a list of engine/system tables (`_sys_*`) — those are
 /// owned by the fork and never crossed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

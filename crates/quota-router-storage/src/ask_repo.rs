@@ -1,7 +1,7 @@
 //! `AskRepository` — DAO over the cipherocto `asks` table (Phase C).
 #![allow(clippy::doc_lazy_continuation)]
 //!
-//! Per [[stoolap-general-purpose-db]] principle: cipherocto owns consumer schema;
+//! Per `docs/architecture/stoolap-integration.md` principle: cipherocto owns consumer schema;
 //! the fork is a general-purpose DB. Migrations live in `crates/octo-core/migrations/`
 //! and are run at startup via `migrations::apply_pending`.
 //!

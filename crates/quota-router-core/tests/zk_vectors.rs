@@ -11,7 +11,7 @@
 //! 8. zk-cross-impl-tv1: same witness + public_inputs → both proofs accepted
 //!
 //! **Migration 2026-07-22:** STWO verify lives in cipherocto workspace
-//! `zk-verifier` crate (per [[stoolap-general-purpose-db]]). The stub proof
+//! `zk-verifier` crate (per `docs/architecture/stoolap-integration.md`). The stub proof
 //! for vectors 1, 8 uses the contract documented in `zk-verifier`
 //! (`first 32 bytes == blake3(casm_hash || canonical_public)`).
 //!

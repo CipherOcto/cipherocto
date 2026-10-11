@@ -4,7 +4,7 @@
 //!
 //! **Crypto home:** this crate lives in the cipherocto workspace, NOT in the
 //! stoolap fork. STWO is a proof-system concern, orthogonal to SQL. Per
-//! [[stoolap-general-purpose-db]] principle (2026-07-22 extraction).
+//! `docs/architecture/stoolap-integration.md` principle (2026-07-22 extraction).
 //!
 //! **Stable-rust only:** the vendored STWO source in `zk-vendor/` is patched
 //! to remove nightly-only features (curve25519 SIMD intrinsics replaced

@@ -18,7 +18,7 @@
 //! or mutated. Storage backing is intentionally in-memory
 //! (`Vec<RoleBindingAuditEntry>`) for the Band A substrate; production
 //! persistence (stoolap-backed append-only ledger) is deferred to a
-//! follow-up mission (per [[stoolap-general-purpose-db]] hard red line:
+//! follow-up mission (per `docs/architecture/stoolap-integration.md` hard red line:
 //! cipherocto business/consumer schema stays cipherocto-side).
 //!
 //! **Cross-mission contract:** this module is the canonical substrate for

@@ -31,7 +31,7 @@
 //!
 //! ## Layer placement
 //!
-//! Per `cipherocto-design-principles.md` Layer A row: this function
+//! Per ``docs/architecture/design-principles.md`.md` Layer A row: this function
 //! lives in the frozen substrate (RFC-frozen, semver-major only). The
 //! RFC-0105 v2.0 amendment mandates the canonical derivation rule +
 //! namespace + 9-token enumeration; any future change requires a

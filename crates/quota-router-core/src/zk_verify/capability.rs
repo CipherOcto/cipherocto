@@ -2,7 +2,7 @@
 //!
 //! Migration 2026-07-22: crypto home moved out of the stoolap fork
 //! into cipherocto workspace crates `zk-circuit` and `zk-verifier`
-//! (per [[stoolap-general-purpose-db]]). This module remains the
+//! (per `docs/architecture/stoolap-integration.md`). This module remains the
 //! CipherOcto-domain gating layer (public-input equality, CASM hash drift
 //! check, clock skew) and delegates the STWO proof verification itself
 //! to `zk_verifier::verify_capability_zk`.

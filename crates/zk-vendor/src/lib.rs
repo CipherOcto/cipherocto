@@ -1,6 +1,6 @@
 //! CipherOcto zk-vendor: runtime FFI loader for the `stwo-sys` cdylib
 //! (STWO STARK prover, extracted from the stoolap fork per
-//! [[stoolap-general-purpose-db]] on 2026-07-22).
+//! `docs/architecture/stoolap-integration.md` on 2026-07-22).
 //!
 //! **Decoupled workspace pattern (mission 0958-a S05 Session 2 fix-up,
 //! 2026-07-31):** STWO is NOT compiled into the cipherocto workspace

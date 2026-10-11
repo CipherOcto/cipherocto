@@ -12,7 +12,7 @@
 //! thin wrapper that maps substrate errors onto the historical
 //! `UnknownMigration` shape tests still match.
 //!
-//! Per [[stoolap-general-purpose-db]] principle: consumer schema lives in
+//! Per `docs/architecture/stoolap-integration.md` principle: consumer schema lives in
 //! cipherocto-side migrations; fork stays untouched.
 
 use thiserror::Error;

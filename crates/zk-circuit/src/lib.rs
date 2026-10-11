@@ -4,7 +4,7 @@
 //!
 //! **Crypto home:** this crate lives in the cipherocto workspace, NOT in the
 //! stoolap fork. CASM compilation is a proof-system concern, orthogonal to
-//! SQL. Per [[stoolap-general-purpose-db]] principle (2026-07-22 extraction).
+//! SQL. Per `docs/architecture/stoolap-integration.md` principle (2026-07-22 extraction).
 //!
 //! **Stable-rust only:** no nightly, no `#![feature(...)]`. STWO's nightly
 //! is patched inside the separate `zk-vendor/` crate via source drop.
@@ -201,7 +201,7 @@ pub enum HashError {
 /// Cairo source for the bundled capability circuit (RFC-0958 §Algorithms).
 ///
 /// Loaded at compile time from `cairo/src/lib.cairo` (cipherocto
-/// workspace; Phase B.2 per [[stoolap-general-purpose-db]]). The path is
+/// workspace; Phase B.2 per `docs/architecture/stoolap-integration.md`). The path is
 /// resolved relative to this file: `crates/zk-circuit/src/lib.rs` →
 /// `../../../cairo/src/lib.cairo` → repo-root `cairo/src/lib.cairo`.
 pub const BUNDLED_CAIRO_SOURCE: &str = include_str!("../../../cairo/src/lib.cairo");

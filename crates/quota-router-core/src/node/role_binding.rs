@@ -69,7 +69,7 @@ pub fn validate_destination_binding(decl: &RoleBindingDeclaration) -> bool {
 /// Role-binding transition errors (RFC-0971 §Phase 1 + §Lifecycle
 /// Requirements §Role-Binding State Machine).
 ///
-/// Per [[deferred-vs-unspecified]] named-owner rule: variants are
+/// Per `docs/05-process/engineering-rules.md` §Deferred versus unspecified named-owner rule: variants are
 /// concrete with named owners for any future additions.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RoleBindingError {

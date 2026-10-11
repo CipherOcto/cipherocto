@@ -682,7 +682,7 @@ impl AskSigned {
     pub fn verify(
         &self,
         algorithm_id: &octo_ident::AlgorithmId,
-        asker_public_key: &Ed25519PublicKey,
+        asker_public_key: &[u8],
     ) -> Result<(), AskSignedError> {
         // 1. Re-derive AskId from payload; must equal embedded ask_id.
         let derived = self.payload.ask_id();
@@ -1376,7 +1376,7 @@ pub fn sign_settlement_receipt(
 pub fn verify_settlement_receipt(
     algorithm_id: &octo_ident::AlgorithmId,
     receipt: &SettlementReceipt,
-    router_public_key: &Ed25519PublicKey,
+    router_public_key: &[u8],
     expected_settlement_hash: &[u8; 32],
 ) -> Result<(), SettlementError> {
     let computed = compute_settlement_hash(&receipt.event)?;

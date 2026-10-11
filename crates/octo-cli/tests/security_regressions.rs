@@ -2679,6 +2679,153 @@ fn top_level_args(inner: &str) -> Vec<String> {
 /// which is how a guard starts reporting things nobody can act on. The gap is
 /// stated here rather than papered over, because a reader who assumes this is
 /// total will not go looking for the forwarder class.
+/// Fixed-size array type aliases declared in a file: name -> length.
+///
+/// `pub type Ed25519PublicKey = [u8; 32];` pins a key exactly as hard as a
+/// literal annotation does, one indirection away from any scan that looks for
+/// the literal.
+fn fixed_size_aliases(src: &str) -> std::collections::HashMap<String, usize> {
+    let mut out = std::collections::HashMap::new();
+    let mut i = 0usize;
+    while let Some(k) = src[i..].find("type ") {
+        let start = i + k + "type ".len();
+        let name: String = src[start..]
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        // `start` is always past `i`, so the scan advances even when the
+        // candidate below turns out not to be an alias.
+        i = start;
+        if name.is_empty() {
+            continue;
+        }
+        let rest = &src[start + name.len()..];
+        let Some(eq) = rest.find('=') else {
+            continue;
+        };
+        let after = rest[eq + 1..].trim_start();
+        if let Some(num) = after.strip_prefix("[u8;") {
+            // `[u8; 32]` is written with a space by convention here, and
+            // skipping that would make the helper silently find nothing while
+            // looking for exactly the thing it was written to find.
+            let num = num.trim_start();
+            let len: String = num.chars().take_while(char::is_ascii_digit).collect();
+            if !len.is_empty() {
+                out.insert(name, len.parse().unwrap_or(0));
+            }
+        }
+    }
+    out
+}
+
+/// The declared type of `name` in a function signature, with any reference,
+/// `mut`, and lifetime prefix stripped.
+///
+/// Returns the type as written rather than a bare identifier, because the two
+/// shapes the guard must tell apart are both legal and neither is a name:
+/// `key: &Ed25519PublicKey` -> `Ed25519PublicKey` (resolvable against the
+/// alias table) and `key: &[u8]` -> `[u8]` (not). Returning `None` for the
+/// second would conflate "declared as a slice" with "not a parameter here",
+/// and a helper that cannot tell those apart is not much of a helper.
+fn declared_type_of<'a>(sig: &'a str, name: &str) -> Option<&'a str> {
+    let re = format!("{name}:");
+    let at = sig.find(&re)?;
+    let mut rest = sig[at + re.len()..].trim_start();
+    if rest.starts_with('\'') {
+        // `key: &'a Foo` — drop the lifetime binder, not the `&` after it.
+        rest = rest[1..].split_once('\'')?.1.trim_start();
+    }
+    let rest = rest.strip_prefix("&").unwrap_or(rest);
+    let rest = rest.strip_prefix("mut ").unwrap_or(rest);
+    let ty = rest
+        .split([',', ')', '{', '\n'])
+        .next()
+        .unwrap_or("")
+        .trim();
+    if ty.is_empty() {
+        None
+    } else {
+        Some(ty)
+    }
+}
+
+#[test]
+fn the_alias_helpers_find_the_indirection_they_exist_for() {
+    // The whole point of the alias check is one case. Pin it against the real
+    // file, because a helper that finds nothing looks exactly like a helper
+    // that found nothing because there was nothing to find.
+    let src =
+        std::fs::read_to_string(workspace_root().join("crates/quota-router-storage/src/ask.rs"))
+            .expect("read ask.rs");
+    let stripped = strip_comments(&src);
+    let aliases = fixed_size_aliases(&stripped);
+    assert_eq!(
+        aliases.get("Ed25519PublicKey").copied(),
+        Some(32),
+        "the alias helper must resolve Ed25519PublicKey to its width, got {aliases:?}"
+    );
+
+    // And the alias is still load-bearing elsewhere in the file, so it is a
+    // live example rather than a declaration left over from the fix.
+    assert!(
+        stripped.contains("Ed25519PublicKey"),
+        "the alias should still be declared; if it was removed the alias check \
+         has no live subject in this crate and needs a new one"
+    );
+
+    // The guard's whole decision is one map lookup: parameter type -> width.
+    // Pin both halves of that lookup on synthetic signatures, so this test
+    // fails if either half silently stops working, independently of whatever
+    // the live file happens to look like today.
+    let pinned = "fn f(key: &Ed25519PublicKey) { }";
+    assert_eq!(declared_type_of(pinned, "key"), Some("Ed25519PublicKey"));
+    assert_eq!(
+        aliases
+            .get(declared_type_of(pinned, "key").unwrap_or_default())
+            .copied(),
+        Some(32),
+        "the alias spelling of a pinned key must resolve to a width"
+    );
+    assert_eq!(
+        declared_type_of("fn f(key: &[u8]) { }", "key"),
+        Some("[u8]")
+    );
+    assert_eq!(
+        aliases
+            .get(declared_type_of("fn f(key: &[u8]) { }", "key").unwrap_or_default())
+            .copied(),
+        None,
+        "a slice must not resolve to a width, or every slice param would be \
+         reported as a fixed-size key"
+    );
+    // A by-value array is also a pin, spelled with no `&` at all.
+    assert_eq!(
+        declared_type_of("fn f(key: [u8; 32]) { }", "key"),
+        Some("[u8; 32]")
+    );
+
+    // `AskSigned::verify` and `verify_settlement_receipt` were the two sites
+    // the alias check found. Both now take a slice, so the check has nothing
+    // left to report here. Pinning the widened shape is what stops a later
+    // change from quietly reintroducing the pin under the same alias.
+    let (sig, _body) = fn_blocks(&stripped)
+        .into_iter()
+        .find(|(s, _)| s.contains("fn verify("))
+        .expect("AskSigned::verify");
+    assert_eq!(
+        declared_type_of(&sig, "asker_public_key"),
+        Some("[u8]"),
+        "the key must be a slice, not the fixed-width alias, got {sig}"
+    );
+    assert_eq!(
+        aliases
+            .get(declared_type_of(&sig, "asker_public_key").unwrap_or_default())
+            .copied(),
+        None,
+        "the widened parameter must not resolve to a fixed width, got {sig}"
+    );
+}
+
 #[test]
 fn no_verification_site_pins_its_key_to_a_fixed_size_array() {
     let root = workspace_root();
@@ -2708,6 +2855,18 @@ fn no_verification_site_pins_its_key_to_a_fixed_size_array() {
                 .replace('\\', "/");
             let src = std::fs::read_to_string(&path).unwrap();
             let stripped = strip_comments(&src);
+            // Fixed-size array aliases declared in THIS file. A binding typed
+            // with one of these is just as fixed-size as a literal, and a scan
+            // that matches only `&[u8;` cannot see the difference.
+            //
+            // **This indirection hid two real sites.** `AskSigned::verify` and
+            // `verify_settlement_receipt` both dispatch on `algorithm_id` —
+            // so they satisfied the AC-11 dispatch vector — while taking
+            // `key: &Ed25519PublicKey`, and `Ed25519PublicKey` is
+            // `pub type ... = [u8; 32]`. Neither could carry a 33-byte key,
+            // and neither was reported, because the pin was spelled in the
+            // alias rather than at the parameter.
+            let aliases = fixed_size_aliases(&stripped);
 
             for (sig, body) in fn_blocks(&stripped) {
                 if !body.contains("verify_dispatch(") {
@@ -2756,6 +2915,18 @@ fn no_verification_site_pins_its_key_to_a_fixed_size_array() {
                         || body.contains(&format!("let mut {binding}: [u8;"))
                     {
                         offenders.push(format!("{rel} (key `{binding}` is a fixed-size array)"));
+                        continue;
+                    }
+                    // The same pin, spelled as an alias. Resolved from the
+                    // signature rather than the call, because `verify_dispatch`
+                    // passes a bare identifier and the declared type lives in
+                    // the parameter list.
+                    if let Some(len) = declared_type_of(&sig, binding.as_str())
+                        .and_then(|ty| aliases.get(ty).copied())
+                    {
+                        offenders.push(format!(
+                            "{rel} (key `{binding}` is an alias for [u8; {len}])"
+                        ));
                     }
                 }
             }

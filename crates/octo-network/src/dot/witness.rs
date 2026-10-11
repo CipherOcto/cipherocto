@@ -176,7 +176,7 @@ pub struct WitnessContext<'a> {
 /// rule.
 ///
 /// Rule list (per RFC-0850p-c §8):
-/// 1. Signature is valid (verified inside via `envelope.verify(founder_pubkey)`).
+/// 1. Signature is valid (verified inside via `envelope.verify(&octo_algo_ed25519::ed25519_algorithm_id(), founder_pubkey)`).
 /// 2. `nonce` is fresh (checked via `nonce_table`).
 /// 3. Cross-platform spoof check: `envelope.platform == local_platform`.
 /// 4. `domain_id` is non-zero.
@@ -198,11 +198,12 @@ pub struct WitnessContext<'a> {
 /// key from the identity registry.
 pub fn validate_bind(
     envelope: &BindEnvelope,
+    algorithm: &octo_ident::AlgorithmId,
     founder_pubkey: &ed25519_dalek::VerifyingKey,
     ctx: &mut WitnessContext,
 ) -> ValidationOutcome {
     // Rule 1: signature (R17 R1-HIGH-3 fix: verified inside).
-    if envelope.verify(founder_pubkey).is_err() {
+    if envelope.verify(algorithm, founder_pubkey).is_err() {
         return ValidationOutcome::Reject {
             rule: 1,
             reason: "signature verification failed".into(),
@@ -489,7 +490,12 @@ mod tests {
             nonce_table: &mut table,
             first_bind_seen: None,
         };
-        let outcome = validate_bind(&env, &key.verifying_key(), &mut ctx);
+        let outcome = validate_bind(
+            &env,
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &key.verifying_key(),
+            &mut ctx,
+        );
         assert!(outcome.is_accept(), "expected Accept, got {:?}", outcome);
     }
 
@@ -513,7 +519,12 @@ mod tests {
             nonce_table: &mut table,
             first_bind_seen: None,
         };
-        let outcome = validate_bind(&env, &key.verifying_key(), &mut ctx);
+        let outcome = validate_bind(
+            &env,
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &key.verifying_key(),
+            &mut ctx,
+        );
         match outcome {
             ValidationOutcome::Reject { rule, .. } => assert_eq!(rule, 3),
             _ => panic!("expected Reject (rule 3)"),
@@ -543,7 +554,12 @@ mod tests {
             nonce_table: &mut table,
             first_bind_seen: None,
         };
-        let outcome = validate_bind(&env, &key.verifying_key(), &mut ctx);
+        let outcome = validate_bind(
+            &env,
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &key.verifying_key(),
+            &mut ctx,
+        );
         match outcome {
             ValidationOutcome::Reject { rule, .. } => assert_eq!(rule, 4),
             _ => panic!("expected Reject (rule 4)"),
@@ -571,7 +587,12 @@ mod tests {
             nonce_table: &mut table,
             first_bind_seen: None,
         };
-        let outcome = validate_bind(&env, &key.verifying_key(), &mut ctx);
+        let outcome = validate_bind(
+            &env,
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &key.verifying_key(),
+            &mut ctx,
+        );
         match outcome {
             ValidationOutcome::Reject { rule, .. } => assert_eq!(rule, 6),
             _ => panic!("expected Reject (rule 6)"),
@@ -598,7 +619,12 @@ mod tests {
             nonce_table: &mut table,
             first_bind_seen: None,
         };
-        let outcome = validate_bind(&env, &key.verifying_key(), &mut ctx);
+        let outcome = validate_bind(
+            &env,
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &key.verifying_key(),
+            &mut ctx,
+        );
         match outcome {
             ValidationOutcome::Reject { rule, .. } => assert_eq!(rule, 7),
             _ => panic!("expected Reject (rule 7)"),
@@ -625,7 +651,12 @@ mod tests {
             nonce_table: &mut table,
             first_bind_seen: None,
         };
-        let outcome = validate_bind(&env, &key.verifying_key(), &mut ctx);
+        let outcome = validate_bind(
+            &env,
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &key.verifying_key(),
+            &mut ctx,
+        );
         match outcome {
             ValidationOutcome::Reject { rule, .. } => assert_eq!(rule, 9),
             _ => panic!("expected Reject (rule 9)"),
@@ -652,7 +683,12 @@ mod tests {
             nonce_table: &mut table,
             first_bind_seen: None,
         };
-        let outcome = validate_bind(&env, &key.verifying_key(), &mut ctx);
+        let outcome = validate_bind(
+            &env,
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &key.verifying_key(),
+            &mut ctx,
+        );
         match outcome {
             ValidationOutcome::Reject { rule, .. } => assert_eq!(rule, 9),
             _ => panic!("expected Reject (rule 9)"),
@@ -683,7 +719,12 @@ mod tests {
             nonce_table: &mut table,
             first_bind_seen: None,
         };
-        let outcome = validate_bind(&env, &key_b.verifying_key(), &mut ctx);
+        let outcome = validate_bind(
+            &env,
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &key_b.verifying_key(),
+            &mut ctx,
+        );
         match outcome {
             ValidationOutcome::Reject { rule, .. } => assert_eq!(rule, 1),
             _ => panic!("expected Reject (rule 1)"),
@@ -797,8 +838,19 @@ mod tests {
             nonce_table: &mut table,
             first_bind_seen: None,
         };
-        assert!(env.verify(&key.verifying_key()).is_ok());
-        assert!(validate_bind(&env, &key.verifying_key(), &mut ctx).is_accept());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &key.verifying_key()
+            )
+            .is_ok());
+        assert!(validate_bind(
+            &env,
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &key.verifying_key(),
+            &mut ctx
+        )
+        .is_accept());
     }
 
     // R17 R1-HIGH-2 regression test: a nonce seen 100 epochs ago MUST

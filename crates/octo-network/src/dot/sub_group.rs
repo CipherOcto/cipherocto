@@ -17,7 +17,7 @@
 //! order, with fixed-size integers big-endian, byte arrays verbatim, and
 //! `String`/`Vec<u8>` length-prefixed by a big-endian `u32` count.
 
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use thiserror::Error;
 
 use super::binding::{header, write_string, ENVELOPE_TYPE, ENVELOPE_VERSION};
@@ -311,7 +311,11 @@ impl CreateSubGroupEnvelope {
     }
 
     /// Verify the signature against the DC's public key.
-    pub fn verify(&self, dc_pubkey: &VerifyingKey) -> Result<(), DotError> {
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        dc_pubkey: &VerifyingKey,
+    ) -> Result<(), DotError> {
         self.validate().map_err(|e| {
             DotError::Serialization(format!("CreateSubGroupEnvelope: invalid: {e}"))
         })?;
@@ -323,12 +327,15 @@ impl CreateSubGroupEnvelope {
                 &self.sub_group_hash[..8]
             )));
         }
-        let sig = Signature::from_bytes(&self.signature);
-        dc_pubkey
-            .verify(&self.sub_group_hash, &sig)
-            .map_err(|_e| DotError::InvalidSignature {
-                envelope_id: self.sub_group_hash,
-            })?;
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            dc_pubkey.as_bytes(),
+            &self.sub_group_hash,
+            &self.signature,
+        )
+        .map_err(|_e| DotError::InvalidSignature {
+            envelope_id: self.sub_group_hash,
+        })?;
         Ok(())
     }
 }
@@ -469,7 +476,9 @@ mod tests {
             Err(SubGroupError::SubDomainIdMismatch { .. })
         ));
         // Verification also fails.
-        assert!(env.verify(&pubkey).is_err());
+        assert!(env
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .is_err());
     }
 
     #[test]
@@ -489,7 +498,9 @@ mod tests {
         env.nonce = [0xEEu8; 32];
 
         env.sign(&key).unwrap();
-        assert!(env.verify(&pubkey).is_ok());
+        assert!(env
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .is_ok());
     }
 
     #[test]
@@ -510,7 +521,9 @@ mod tests {
         env.sign(&key).unwrap();
         // Tamper with proposed_group_jid after signing.
         env.proposed_group_jid = "tampered@g.us".to_string();
-        assert!(env.verify(&pubkey).is_err());
+        assert!(env
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .is_err());
     }
 
     #[test]
@@ -529,7 +542,12 @@ mod tests {
         env.initial_invite_count = 3;
         env.nonce = [0xEEu8; 32];
         env.sign(&key).unwrap();
-        assert!(env.verify(&other.verifying_key()).is_err());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &other.verifying_key()
+            )
+            .is_err());
     }
 
     #[test]
@@ -546,7 +564,9 @@ mod tests {
         env.initial_invite_count = 5;
         env.nonce = [0xAAu8; 32];
         env.sign(&key).unwrap();
-        assert!(env.verify(&pubkey).is_ok());
+        assert!(env
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .is_ok());
     }
 
     #[test]

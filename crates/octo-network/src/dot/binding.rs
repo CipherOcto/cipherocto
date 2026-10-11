@@ -39,7 +39,7 @@
 //! all fields and is part of the signed payload, so it cannot be mutated
 //! after signing.
 
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use thiserror::Error;
 
 use super::error::DotError;
@@ -206,19 +206,26 @@ impl WitnessAssertion {
     }
 
     /// Verify against the witness's public key.
-    pub fn verify(&self, witness_pubkey: &ed25519_dalek::VerifyingKey) -> Result<(), DotError> {
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        witness_pubkey: &VerifyingKey,
+    ) -> Result<(), DotError> {
         let computed = self.compute_assertion_hash();
         if computed != self.assertion_hash {
             return Err(DotError::Serialization(
                 "WitnessAssertion: assertion_hash mismatch".into(),
             ));
         }
-        let sig = Signature::from_bytes(&self.signature);
-        witness_pubkey
-            .verify(&self.assertion_hash, &sig)
-            .map_err(|_| DotError::InvalidSignature {
-                envelope_id: self.assertion_hash,
-            })?;
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            witness_pubkey.as_bytes(),
+            &self.assertion_hash,
+            &self.signature,
+        )
+        .map_err(|_| DotError::InvalidSignature {
+            envelope_id: self.assertion_hash,
+        })?;
         Ok(())
     }
 }
@@ -391,7 +398,11 @@ impl BindEnvelope {
     }
 
     /// Verify the signature against the founder's public key.
-    pub fn verify(&self, founder_pubkey: &VerifyingKey) -> Result<(), DotError> {
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        founder_pubkey: &VerifyingKey,
+    ) -> Result<(), DotError> {
         // Recompute hash and compare
         let computed = self.compute_bind_hash();
         if computed != self.bind_hash {
@@ -401,12 +412,15 @@ impl BindEnvelope {
                 &self.bind_hash[..8]
             )));
         }
-        let sig = Signature::from_bytes(&self.signature);
-        founder_pubkey
-            .verify(&self.bind_hash, &sig)
-            .map_err(|_e| DotError::InvalidSignature {
-                envelope_id: self.bind_hash,
-            })?;
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            founder_pubkey.as_bytes(),
+            &self.bind_hash,
+            &self.signature,
+        )
+        .map_err(|_e| DotError::InvalidSignature {
+            envelope_id: self.bind_hash,
+        })?;
         Ok(())
     }
 }
@@ -453,7 +467,11 @@ impl BindAck {
     }
 
     /// Verify against the witness's public key.
-    pub fn verify(&self, witness_pubkey: &VerifyingKey) -> Result<(), DotError> {
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        witness_pubkey: &VerifyingKey,
+    ) -> Result<(), DotError> {
         let computed = self.compute_ack_hash();
         if computed != self.ack_hash {
             return Err(DotError::Serialization(format!(
@@ -462,12 +480,15 @@ impl BindAck {
                 &self.ack_hash[..8]
             )));
         }
-        let sig = Signature::from_bytes(&self.signature);
-        witness_pubkey
-            .verify(&self.ack_hash, &sig)
-            .map_err(|_| DotError::InvalidSignature {
-                envelope_id: self.ack_hash,
-            })?;
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            witness_pubkey.as_bytes(),
+            &self.ack_hash,
+            &self.signature,
+        )
+        .map_err(|_| DotError::InvalidSignature {
+            envelope_id: self.ack_hash,
+        })?;
         Ok(())
     }
 }
@@ -518,19 +539,26 @@ impl UnbindEnvelope {
     }
 
     /// Verify against the issuer's public key.
-    pub fn verify(&self, issuer_pubkey: &VerifyingKey) -> Result<(), DotError> {
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        issuer_pubkey: &VerifyingKey,
+    ) -> Result<(), DotError> {
         let computed = self.compute_unbind_hash();
         if computed != self.unbind_hash {
             return Err(DotError::Serialization(
                 "UnbindEnvelope: unbind_hash mismatch".into(),
             ));
         }
-        let sig = Signature::from_bytes(&self.signature);
-        issuer_pubkey
-            .verify(&self.unbind_hash, &sig)
-            .map_err(|_| DotError::InvalidSignature {
-                envelope_id: self.unbind_hash,
-            })?;
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            issuer_pubkey.as_bytes(),
+            &self.unbind_hash,
+            &self.signature,
+        )
+        .map_err(|_| DotError::InvalidSignature {
+            envelope_id: self.unbind_hash,
+        })?;
         Ok(())
     }
 }
@@ -591,19 +619,26 @@ impl PlatformLossEnvelope {
     }
 
     /// Verify against the local node's public key.
-    pub fn verify(&self, local_pubkey: &VerifyingKey) -> Result<(), DotError> {
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        local_pubkey: &VerifyingKey,
+    ) -> Result<(), DotError> {
         let computed = self.compute_loss_hash();
         if computed != self.loss_hash {
             return Err(DotError::Serialization(
                 "PlatformLossEnvelope: loss_hash mismatch".into(),
             ));
         }
-        let sig = Signature::from_bytes(&self.signature);
-        local_pubkey
-            .verify(&self.loss_hash, &sig)
-            .map_err(|_| DotError::InvalidSignature {
-                envelope_id: self.loss_hash,
-            })?;
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            local_pubkey.as_bytes(),
+            &self.loss_hash,
+            &self.signature,
+        )
+        .map_err(|_| DotError::InvalidSignature {
+            envelope_id: self.loss_hash,
+        })?;
         Ok(())
     }
 }
@@ -788,7 +823,9 @@ mod tests {
             signature: [0u8; 64],
         };
         env.sign(&key);
-        assert!(env.verify(&pubkey).is_ok());
+        assert!(env
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .is_ok());
     }
 
     #[test]
@@ -812,7 +849,7 @@ mod tests {
         // Mutate a body field after signing
         env.group_jid = "attacker@g.us".into();
         // The bind_hash is now stale; verify must reject.
-        let result = env.verify(&pubkey);
+        let result = env.verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey);
         assert!(result.is_err(), "mutation after signing must be detected");
     }
 
@@ -857,7 +894,9 @@ mod tests {
             signature: [0u8; 64],
         };
         ack.sign(&key);
-        assert!(ack.verify(&pubkey).is_ok());
+        assert!(ack
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .is_ok());
     }
 
     // R17 R1-CRITICAL-1 regression test: changing the nonce must change
@@ -899,7 +938,9 @@ mod tests {
             signature: [0u8; 64],
         };
         env.sign(&key);
-        assert!(env.verify(&pubkey).is_ok());
+        assert!(env
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .is_ok());
     }
 
     #[test]
@@ -918,7 +959,9 @@ mod tests {
             signature: [0u8; 64],
         };
         env.sign(&key);
-        assert!(env.verify(&pubkey).is_ok());
+        assert!(env
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .is_ok());
     }
 
     #[test]
@@ -966,6 +1009,8 @@ mod tests {
         };
         env.sign(&key);
         // Verify with the wrong pubkey must fail.
-        assert!(env.verify(&other).is_err());
+        assert!(env
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &other)
+            .is_err());
     }
 }

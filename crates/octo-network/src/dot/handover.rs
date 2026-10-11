@@ -19,7 +19,7 @@
 //! order, with fixed-size integers big-endian, byte arrays verbatim, and
 //! `String`/`Vec<u8>` length-prefixed by a big-endian `u32` count.
 
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use thiserror::Error;
 
 use super::binding::{header, write_string, GroupBinding, ENVELOPE_TYPE, ENVELOPE_VERSION};
@@ -340,14 +340,21 @@ impl SlashEvent {
     /// inside the `map_err` closure, so it only runs on the error
     /// path. Previously it ran unconditionally on every successful
     /// verify, wasting ~1µs of CPU per call.
-    pub fn verify(&self, coordinator_pubkey: &VerifyingKey) -> Result<(), DotError> {
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        coordinator_pubkey: &VerifyingKey,
+    ) -> Result<(), DotError> {
         let payload = self.payload_bytes();
-        let sig = Signature::from_bytes(&self.signature);
-        coordinator_pubkey
-            .verify(&payload, &sig)
-            .map_err(|_| DotError::InvalidSignature {
-                envelope_id: *blake3::hash(&payload).as_bytes(),
-            })?;
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            coordinator_pubkey.as_bytes(),
+            &payload,
+            &self.signature,
+        )
+        .map_err(|_| DotError::InvalidSignature {
+            envelope_id: *blake3::hash(&payload).as_bytes(),
+        })?;
         Ok(())
     }
 }
@@ -395,14 +402,15 @@ impl SlashTally {
     pub fn append(
         &mut self,
         event: SlashEvent,
+        algorithm: &octo_ident::AlgorithmId,
         coordinator_pubkey: &VerifyingKey,
         current_epoch: u64,
     ) -> Result<(), HandoverError> {
-        event
-            .verify(coordinator_pubkey)
-            .map_err(|_| HandoverError::SlashTallyInvalid {
+        event.verify(algorithm, coordinator_pubkey).map_err(|_| {
+            HandoverError::SlashTallyInvalid {
                 index: self.slash_events.len(),
-            })?;
+            }
+        })?;
         self.slash_events.push(event);
         self.last_updated_epoch = current_epoch;
         Ok(())
@@ -549,7 +557,11 @@ impl HandoverRequestEnvelope {
     }
 
     /// Verify the signature against the coordinator's public key.
-    pub fn verify(&self, coordinator_pubkey: &VerifyingKey) -> Result<(), DotError> {
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        coordinator_pubkey: &VerifyingKey,
+    ) -> Result<(), DotError> {
         let computed = self.compute_handover_hash();
         if computed != self.handover_hash {
             return Err(DotError::Serialization(format!(
@@ -569,12 +581,15 @@ impl HandoverRequestEnvelope {
                 .map_err(|_| DotError::InvalidSignature {
                     envelope_id: self.handover_hash,
                 })?;
-        let sig = Signature::from_bytes(&sig_bytes);
-        coordinator_pubkey
-            .verify(&self.handover_hash, &sig)
-            .map_err(|_e| DotError::InvalidSignature {
-                envelope_id: self.handover_hash,
-            })?;
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            coordinator_pubkey.as_bytes(),
+            &self.handover_hash,
+            &sig_bytes,
+        )
+        .map_err(|_e| DotError::InvalidSignature {
+            envelope_id: self.handover_hash,
+        })?;
         Ok(())
     }
 }
@@ -657,7 +672,11 @@ impl HandoverAckEnvelope {
     }
 
     /// Verify against the witness's public key.
-    pub fn verify(&self, witness_pubkey: &VerifyingKey) -> Result<(), DotError> {
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        witness_pubkey: &VerifyingKey,
+    ) -> Result<(), DotError> {
         let computed = self.compute_ack_hash();
         if computed != self.ack_hash {
             return Err(DotError::Serialization(format!(
@@ -666,12 +685,15 @@ impl HandoverAckEnvelope {
                 &self.ack_hash[..8]
             )));
         }
-        let sig = Signature::from_bytes(&self.signature);
-        witness_pubkey
-            .verify(&self.ack_hash, &sig)
-            .map_err(|_e| DotError::InvalidSignature {
-                envelope_id: self.ack_hash,
-            })?;
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            witness_pubkey.as_bytes(),
+            &self.ack_hash,
+            &self.signature,
+        )
+        .map_err(|_e| DotError::InvalidSignature {
+            envelope_id: self.ack_hash,
+        })?;
         Ok(())
     }
 }
@@ -758,7 +780,11 @@ impl HandoverDoneEnvelope {
     }
 
     /// Verify against the new coordinator's public key.
-    pub fn verify(&self, new_coordinator_pubkey: &VerifyingKey) -> Result<(), DotError> {
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        new_coordinator_pubkey: &VerifyingKey,
+    ) -> Result<(), DotError> {
         let computed = self.compute_done_hash();
         if computed != self.done_hash {
             return Err(DotError::Serialization(format!(
@@ -767,12 +793,15 @@ impl HandoverDoneEnvelope {
                 &self.done_hash[..8]
             )));
         }
-        let sig = Signature::from_bytes(&self.signature);
-        new_coordinator_pubkey
-            .verify(&self.done_hash, &sig)
-            .map_err(|_e| DotError::InvalidSignature {
-                envelope_id: self.done_hash,
-            })?;
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            new_coordinator_pubkey.as_bytes(),
+            &self.done_hash,
+            &self.signature,
+        )
+        .map_err(|_e| DotError::InvalidSignature {
+            envelope_id: self.done_hash,
+        })?;
         Ok(())
     }
 }
@@ -869,7 +898,11 @@ impl HandoverCancelEnvelope {
     }
 
     /// Verify the signature against the incumbent coordinator's public key.
-    pub fn verify(&self, incumbent_pubkey: &VerifyingKey) -> Result<(), DotError> {
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        incumbent_pubkey: &VerifyingKey,
+    ) -> Result<(), DotError> {
         let computed = self.compute_payload_hash();
         if computed != self.payload_hash {
             return Err(DotError::Serialization(format!(
@@ -878,12 +911,15 @@ impl HandoverCancelEnvelope {
                 &self.payload_hash[..8]
             )));
         }
-        let sig = Signature::from_bytes(&self.signature);
-        incumbent_pubkey
-            .verify(&self.payload_hash, &sig)
-            .map_err(|_e| DotError::InvalidSignature {
-                envelope_id: self.payload_hash,
-            })?;
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            incumbent_pubkey.as_bytes(),
+            &self.payload_hash,
+            &self.signature,
+        )
+        .map_err(|_e| DotError::InvalidSignature {
+            envelope_id: self.payload_hash,
+        })?;
         Ok(())
     }
 }
@@ -1112,11 +1148,15 @@ mod tests {
         let key = make_key(11);
         let pubkey = key.verifying_key();
         let ev = make_slash_event(0x000E, [0x77u8; 32], 100);
-        assert!(ev.verify(&pubkey).is_ok());
+        assert!(ev
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .is_ok());
         // Tampered evidence -> signature fails.
         let mut bad = ev.clone();
         bad.slash_evidence_hash = [0x00u8; 32];
-        assert!(bad.verify(&pubkey).is_err());
+        assert!(bad
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .is_err());
     }
 
     #[test]
@@ -1128,6 +1168,7 @@ mod tests {
         tally
             .append(
                 make_slash_event(0x000E, [0x77u8; 32], 50),
+                &octo_algo_ed25519::ed25519_algorithm_id(),
                 &coord_pubkey,
                 50,
             )
@@ -1135,6 +1176,7 @@ mod tests {
         tally
             .append(
                 make_slash_event(0x000F, [0x88u8; 32], 100),
+                &octo_algo_ed25519::ed25519_algorithm_id(),
                 &coord_pubkey,
                 100,
             )
@@ -1168,7 +1210,12 @@ mod tests {
         };
         ev.sign(&real_key);
 
-        let result = tally.append(ev, &claimed_pubkey, 50);
+        let result = tally.append(
+            ev,
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &claimed_pubkey,
+            50,
+        );
         assert!(matches!(
             result,
             Err(HandoverError::SlashTallyInvalid { index: 0 })
@@ -1190,6 +1237,7 @@ mod tests {
         tally
             .append(
                 make_slash_event(0x000E, [0x77u8; 32], 100),
+                &octo_algo_ed25519::ed25519_algorithm_id(),
                 &slash_coord_pubkey,
                 100,
             )
@@ -1220,7 +1268,9 @@ mod tests {
         env.nonce = [0xAAu8; 32];
 
         env.sign(&key);
-        assert!(env.verify(&pubkey).is_ok());
+        assert!(env
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .is_ok());
     }
 
     #[test]
@@ -1239,7 +1289,9 @@ mod tests {
         env.nonce = [0xAAu8; 32];
         env.sign(&key);
         env.current_epoch = 999;
-        assert!(env.verify(&pubkey).is_err());
+        assert!(env
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .is_err());
     }
 
     #[test]
@@ -1256,7 +1308,12 @@ mod tests {
             200,
         );
         env.sign(&key);
-        assert!(env.verify(&other.verifying_key()).is_err());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &other.verifying_key()
+            )
+            .is_err());
     }
 
     #[test]
@@ -1266,7 +1323,9 @@ mod tests {
         let mut env = HandoverAckEnvelope::new([0xA1u8; 32], *pubkey.as_bytes(), 250);
         env.nonce = [0xC1u8; 32];
         env.sign(&key);
-        assert!(env.verify(&pubkey).is_ok());
+        assert!(env
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .is_ok());
     }
 
     // R17 R1-CRITICAL-1 regression test: changing the nonce must change
@@ -1312,7 +1371,9 @@ mod tests {
         env.nonce = [0xC1u8; 32];
         env.sign(&key);
         env.witness_epoch = 999;
-        assert!(env.verify(&pubkey).is_err());
+        assert!(env
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .is_err());
     }
 
     #[test]
@@ -1322,7 +1383,9 @@ mod tests {
         let mut env = HandoverDoneEnvelope::new([0xD1u8; 32], *pubkey.as_bytes(), 500);
         env.nonce = [0xE1u8; 32];
         env.sign(&key);
-        assert!(env.verify(&pubkey).is_ok());
+        assert!(env
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .is_ok());
     }
 
     // R17 R1-CRITICAL-1 regression test: changing the nonce must change
@@ -1368,7 +1431,9 @@ mod tests {
         env.nonce = [0xE1u8; 32];
         env.sign(&key);
         env.accepted_epoch = 999;
-        assert!(env.verify(&pubkey).is_err());
+        assert!(env
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .is_err());
     }
 
     #[test]
@@ -1425,7 +1490,9 @@ mod tests {
             });
         }
         env.sign(&key);
-        assert!(env.verify(&pubkey).is_ok());
+        assert!(env
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .is_ok());
     }
 
     #[test]
@@ -1470,7 +1537,9 @@ mod tests {
         );
         env.nonce = [0x44u8; 16];
         env.sign(&key);
-        assert!(env.verify(&pubkey).is_ok());
+        assert!(env
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .is_ok());
     }
 
     // TV-HO-3: HORC payload_hash changes when nonce changes.
@@ -1494,7 +1563,12 @@ mod tests {
         let mut env = HandoverCancelEnvelope::new([0x11u8; 32], [0x22u8; 32], [0x33u8; 32], 200);
         env.nonce = [0x01; 16];
         env.sign(&key);
-        assert!(env.verify(&other.verifying_key()).is_err());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &other.verifying_key()
+            )
+            .is_err());
     }
 
     // TV-HO-5: HANDOVER_RACE_WINDOW + HORQ_BACKWARD_WINDOW + HANDOVER_FORWARD_SKEW_BOOST

@@ -22,6 +22,10 @@ aes = "0.8"
 ecb = "0.2"
 
 octo-network = { path = "../octo-network" }
+# RFC-0009 AC#11: names the algorithm explicitly at the envelope-verify
+# call site so the assumption is stated rather than implicit. Layer E
+# per-algorithm extension — the same edge the other transport adapters take.
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

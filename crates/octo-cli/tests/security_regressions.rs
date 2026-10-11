@@ -418,16 +418,53 @@ fn strip_comments(src: &str) -> String {
 /// `::`, whitespace, or a delimiter. Requiring the left boundary is enough,
 /// since the needle itself ends on `(` or an identifier and a trailing
 /// `FooSignature::from_bytes_x` would not match on the right either.
-fn contains_path_call(haystack: &str, needle: &str) -> bool {
+/// Every constructor that makes a line an AC#11 verification site.
+///
+/// `Signature::from_slice` was added to this list after a mutation planted
+/// one in a file the pending table records as **zero** sites, and all
+/// 47 vectors stayed green. The zeroed counts exist precisely to make a
+/// new site fail the gate; this constructor walked straight past them.
+///
+/// The cause was two matchers for one question: the count summed two
+/// constructors with a raw substring match, while the completeness scan
+/// looked for three with path-boundary matching. Anything that decides
+/// "is this a site, and how many" must go through `ac11_site_count` so the
+/// two cannot disagree again.
+const AC11_SITE_CONSTRUCTORS: [&str; 3] = [
+    "VerifyingKey::from_bytes",
+    "Signature::from_bytes",
+    "Signature::from_slice",
+];
+
+/// How many AC#11 verification sites `body` holds.
+///
+/// Counting matters, not just presence: a pending entry pins a number so
+/// that deleting one site and adding another in the same file still
+/// changes the total.
+fn ac11_site_count(body: &str) -> usize {
+    AC11_SITE_CONSTRUCTORS
+        .iter()
+        .map(|ctor| count_path_calls(body, ctor))
+        .sum()
+}
+
+/// Number of times `needle` occurs in `haystack` starting a **whole path
+/// segment**. See `contains_path_call` for why the left boundary is required.
+fn count_path_calls(haystack: &str, needle: &str) -> usize {
     let bytes = haystack.as_bytes();
     let n = needle.len();
     if n == 0 || n > bytes.len() {
-        return false;
+        return 0;
     }
     bytes
         .windows(n)
         .enumerate()
-        .any(|(i, w)| w == needle.as_bytes() && (i == 0 || !is_ident_byte(bytes[i - 1])))
+        .filter(|(i, w)| *w == needle.as_bytes() && (*i == 0 || !is_ident_byte(bytes[i - 1])))
+        .count()
+}
+
+fn contains_path_call(haystack: &str, needle: &str) -> bool {
+    count_path_calls(haystack, needle) > 0
 }
 
 fn is_ident_byte(b: u8) -> bool {
@@ -1875,63 +1912,66 @@ const AC11_PENDING: &[(&str, usize, &str)] = &[
     ),
     (
         "crates/quota-router-core/src/receipt.rs",
-        3,
+        4,
         "the only production one is wrap_receipt_envelope, which seeds the \
          signature with an all-zero value for the caller to overwrite via \
          sign_envelope, so nothing verifies this placeholder. The count is of \
          the whole file, test code included, because the assertion reads the \
-         file rather than a prefix of it. Pending rather than allowlisted only \
-         because the crate is not on the scanned list; if it is added, the \
-         production one becomes an allowlist entry with the same reasoning as \
-         the sm-engine one.",
+         file rather than a prefix of it. Recounted 3 to 4 when the pending \
+         count and the completeness scan were merged onto one matcher: the \
+         serde Deserialize for Signature rebuilds one with from_slice, which \
+         the old two-constructor count could not see. Pending rather than \
+         allowlisted only because the crate is not on the scanned list; if it \
+         is added, the production one becomes an allowlist entry with the same \
+         reasoning as the sm-engine one.",
     ),
     (
         "crates/octo-network/src/dot/decommission.rs",
-        2,
-        "mission 0009-c3, FOURTH category: the key arrives as an already-typed \
-         VerifyingKey parameter, so this is a public-signature change rather than a \
-         body edit. Listed here because the completeness check found it unrecorded, not \
-         because anyone had catalogued it.",
+        0,
+        "mission 0009-c8: DISPATCHED. Count of zero rather than removed, so a \
+         future site here fails the gate instead of opening a new silent gap. \
+         The key arrived as an already-typed VerifyingKey parameter, so the \
+         Ed25519 assertion lived in the public signature, not the body.",
     ),
     (
         "crates/octo-network/src/dot/sub_group.rs",
-        1,
-        "mission 0009-c3, FOURTH category: the key arrives as an already-typed \
-         VerifyingKey parameter, so this is a public-signature change rather than a \
-         body edit. Listed here because the completeness check found it unrecorded, not \
-         because anyone had catalogued it.",
+        0,
+        "mission 0009-c8: DISPATCHED. Count of zero rather than removed, so a \
+         future site here fails the gate instead of opening a new silent gap. \
+         The key arrived as an already-typed VerifyingKey parameter, so the \
+         Ed25519 assertion lived in the public signature, not the body.",
     ),
     (
         "crates/octo-network/src/dot/dc_envelopes.rs",
-        7,
-        "mission 0009-c3, FOURTH category: the key arrives as an already-typed \
-         VerifyingKey parameter, so this is a public-signature change rather than a \
-         body edit. Listed here because the completeness check found it unrecorded, not \
-         because anyone had catalogued it.",
+        0,
+        "mission 0009-c8: DISPATCHED. Count of zero rather than removed, so a \
+         future site here fails the gate instead of opening a new silent gap. \
+         The key arrived as an already-typed VerifyingKey parameter, so the \
+         Ed25519 assertion lived in the public signature, not the body.",
     ),
     (
         "crates/octo-network/src/dot/kick_envelopes.rs",
-        5,
-        "mission 0009-c3, FOURTH category: the key arrives as an already-typed \
-         VerifyingKey parameter, so this is a public-signature change rather than a \
-         body edit. Listed here because the completeness check found it unrecorded, not \
-         because anyone had catalogued it.",
+        0,
+        "mission 0009-c8: DISPATCHED. Count of zero rather than removed, so a \
+         future site here fails the gate instead of opening a new silent gap. \
+         The key arrived as an already-typed VerifyingKey parameter, so the \
+         Ed25519 assertion lived in the public signature, not the body.",
     ),
     (
         "crates/octo-network/src/dot/binding.rs",
-        5,
-        "mission 0009-c3, FOURTH category: the key arrives as an already-typed \
-         VerifyingKey parameter, so this is a public-signature change rather than a \
-         body edit. Listed here because the completeness check found it unrecorded, not \
-         because anyone had catalogued it.",
+        0,
+        "mission 0009-c8: DISPATCHED. Count of zero rather than removed, so a \
+         future site here fails the gate instead of opening a new silent gap. \
+         The key arrived as an already-typed VerifyingKey parameter, so the \
+         Ed25519 assertion lived in the public signature, not the body.",
     ),
     (
         "crates/octo-network/src/dot/handover.rs",
-        5,
-        "mission 0009-c3, FOURTH category: the key arrives as an already-typed \
-         VerifyingKey parameter, so this is a public-signature change rather than a \
-         body edit. Listed here because the completeness check found it unrecorded, not \
-         because anyone had catalogued it.",
+        0,
+        "mission 0009-c8: DISPATCHED. Count of zero rather than removed, so a \
+         future site here fails the gate instead of opening a new silent gap. \
+         The key arrived as an already-typed VerifyingKey parameter, so the \
+         Ed25519 assertion lived in the public signature, not the body.",
     ),
 ];
 
@@ -2328,10 +2368,7 @@ fn ac11_pending_table_is_complete_for_every_crate_it_covers() {
                     .to_string_lossy()
                     .replace('\\', "/");
                 let body = strip_comments(&std::fs::read_to_string(&path).unwrap());
-                let has_site = contains_path_call(&body, "VerifyingKey::from_bytes")
-                    || contains_path_call(&body, "Signature::from_bytes")
-                    || contains_path_call(&body, "Signature::from_slice");
-                if !has_site {
+                if ac11_site_count(&body) == 0 {
                     continue;
                 }
                 let listed = AC11_PENDING.iter().any(|(p, _, _)| *p == rel)
@@ -2387,12 +2424,11 @@ fn ac11_pending_sites_are_counted_and_still_present() {
              opposite answers to the same question."
         );
 
-        // Both constructors count. AC#11 names two, and a pending entry covering
-        // only one would read as zero sites for a file whose site is the other
-        // one — which is precisely how these three stayed unrecorded.
+        // One matcher, shared with the completeness scan above. These two used
+        // to disagree — it is why `Signature::from_slice` reached a file
+        // recorded as zero sites without turning anything red.
         let body = strip_comments(&std::fs::read_to_string(&abs).unwrap());
-        let actual = body.matches("VerifyingKey::from_bytes").count()
-            + body.matches("Signature::from_bytes").count();
+        let actual = ac11_site_count(&body);
         assert_eq!(
             actual, *expected,
             "AC-11: {path} has {actual} un-dispatched sites, the table says \

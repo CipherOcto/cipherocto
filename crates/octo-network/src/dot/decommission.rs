@@ -19,7 +19,7 @@
 use std::collections::BTreeMap;
 
 use blake3;
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 
 use super::binding::header;
 use super::dc_envelopes::UnbindReason;
@@ -90,19 +90,26 @@ impl UnbindAllDoneEnvelope {
     }
 
     /// Verify against the DC's public key.
-    pub fn verify(&self, dc_pubkey: &VerifyingKey) -> Result<(), DotError> {
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        dc_pubkey: &VerifyingKey,
+    ) -> Result<(), DotError> {
         let computed = self.compute_done_hash();
         if computed != self.done_hash {
             return Err(DotError::Serialization(
                 "UnbindAllDoneEnvelope: done_hash mismatch".into(),
             ));
         }
-        let sig = Signature::from_bytes(&self.signature);
-        dc_pubkey
-            .verify(&self.done_hash, &sig)
-            .map_err(|_| DotError::InvalidSignature {
-                envelope_id: self.done_hash,
-            })?;
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            dc_pubkey.as_bytes(),
+            &self.done_hash,
+            &self.signature,
+        )
+        .map_err(|_| DotError::InvalidSignature {
+            envelope_id: self.done_hash,
+        })?;
         Ok(())
     }
 }
@@ -176,19 +183,26 @@ impl UnbindAllAuditEnvelope {
     }
 
     /// Verify against the initiator's public key.
-    pub fn verify(&self, initiator_pubkey: &VerifyingKey) -> Result<(), DotError> {
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        initiator_pubkey: &VerifyingKey,
+    ) -> Result<(), DotError> {
         let computed = self.compute_audit_hash();
         if computed != self.audit_hash {
             return Err(DotError::Serialization(
                 "UnbindAllAuditEnvelope: audit_hash mismatch".into(),
             ));
         }
-        let sig = Signature::from_bytes(&self.signature);
-        initiator_pubkey
-            .verify(&self.audit_hash, &sig)
-            .map_err(|_| DotError::InvalidSignature {
-                envelope_id: self.audit_hash,
-            })?;
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            initiator_pubkey.as_bytes(),
+            &self.audit_hash,
+            &self.signature,
+        )
+        .map_err(|_| DotError::InvalidSignature {
+            envelope_id: self.audit_hash,
+        })?;
         Ok(())
     }
 }
@@ -430,7 +444,12 @@ mod tests {
             signature: [0u8; 64],
         };
         env.sign(&key);
-        assert!(env.verify(&key.verifying_key()).is_ok());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &key.verifying_key()
+            )
+            .is_ok());
     }
 
     #[test]
@@ -449,7 +468,12 @@ mod tests {
         };
         env.sign(&key);
         env.ack_count = 10;
-        assert!(env.verify(&key.verifying_key()).is_err());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &key.verifying_key()
+            )
+            .is_err());
     }
 
     #[test]
@@ -471,7 +495,12 @@ mod tests {
             signature: [0u8; 64],
         };
         env.sign(&key);
-        assert!(env.verify(&key.verifying_key()).is_ok());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &key.verifying_key()
+            )
+            .is_ok());
     }
 
     #[test]
@@ -628,7 +657,12 @@ mod tests {
         env.nonce = [4u8; 32];
         env.sign(&key);
         assert_ne!(env.done_hash, original_hash);
-        assert!(env.verify(&key.verifying_key()).is_ok());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &key.verifying_key()
+            )
+            .is_ok());
     }
 
     #[test]

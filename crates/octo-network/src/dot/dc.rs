@@ -369,8 +369,13 @@ impl DcOrchestrator {
             });
         }
 
+        // The witness key is derived from `witness_assertion.witness_id`,
+        // a field ON THE WIRE, so the envelope carries no algorithm to read
+        // (RFC-0009 AC#11 category 2 — a format change, not a dispatch fix).
+        // Ed25519 is named explicitly so the assumption is stated rather than
+        // implicit, and the assertion's own verify call still dispatches.
         witness_assertion
-            .verify(&witness_pubkey)
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &witness_pubkey)
             .map_err(|e| BindingError::InvalidAssertion {
                 reason: format!("assertion signature did not verify: {e}"),
             })?;
@@ -606,7 +611,12 @@ mod tests {
                 5,
             )
             .unwrap();
-        assert!(env.verify(&orch.dc_key.verifying_key()).is_ok());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &orch.dc_key.verifying_key()
+            )
+            .is_ok());
     }
 
     #[test]
@@ -684,7 +694,12 @@ mod tests {
             [3u8; 32],
             100,
         );
-        assert!(inv.verify(&orch.dc_key.verifying_key()).is_ok());
+        assert!(inv
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &orch.dc_key.verifying_key()
+            )
+            .is_ok());
     }
 
     #[test]
@@ -700,7 +715,12 @@ mod tests {
             1,
             None, // fresh decommission
         );
-        assert!(env.verify(&orch.dc_key.verifying_key()).is_ok());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &orch.dc_key.verifying_key()
+            )
+            .is_ok());
     }
 
     #[test]
@@ -721,7 +741,12 @@ mod tests {
             Some(original_nonce),
         );
         assert_eq!(env.nonce, original_nonce);
-        assert!(env.verify(&orch.dc_key.verifying_key()).is_ok());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &orch.dc_key.verifying_key()
+            )
+            .is_ok());
     }
 
     #[test]
@@ -729,7 +754,12 @@ mod tests {
         let mut orch = test_orchestrator();
         let wkey = SigningKey::from_bytes(&[2u8; 32]);
         let ack = orch.build_unbind_all_ack(&wkey, [5u8; 32], [1u8; 32], 101);
-        assert!(ack.verify(&wkey.verifying_key()).is_ok());
+        assert!(ack
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &wkey.verifying_key()
+            )
+            .is_ok());
     }
 
     #[test]
@@ -774,7 +804,13 @@ mod tests {
             )
             .expect("third-party bind should succeed");
         // Envelope signed by DC.
-        assert!(result.envelope.verify(&orch.dc_key.verifying_key()).is_ok());
+        assert!(result
+            .envelope
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &orch.dc_key.verifying_key()
+            )
+            .is_ok());
         // witness_seal ties the bind to the assertion.
         let mut seal_buf = Vec::with_capacity(64);
         seal_buf.extend_from_slice(&result.envelope.bind_hash);

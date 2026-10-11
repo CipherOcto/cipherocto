@@ -22,7 +22,7 @@
 //! - `super::slash::SlashCode::SelfKicked` and `::FalseWitness`
 
 use blake3;
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 
 use super::binding::{header, WitnessAssertion};
 use super::error::DotError;
@@ -178,19 +178,26 @@ impl SelfKickedEnvelope {
     }
 
     /// Verify against the local node's public key.
-    pub fn verify(&self, local_pubkey: &VerifyingKey) -> Result<(), DotError> {
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        local_pubkey: &VerifyingKey,
+    ) -> Result<(), DotError> {
         let computed = self.compute_self_kicked_hash();
         if computed != self.self_kicked_hash {
             return Err(DotError::Serialization(
                 "SelfKickedEnvelope: self_kicked_hash mismatch".into(),
             ));
         }
-        let sig = Signature::from_bytes(&self.signature);
-        local_pubkey
-            .verify(&self.self_kicked_hash, &sig)
-            .map_err(|_| DotError::InvalidSignature {
-                envelope_id: self.self_kicked_hash,
-            })?;
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            local_pubkey.as_bytes(),
+            &self.self_kicked_hash,
+            &self.signature,
+        )
+        .map_err(|_| DotError::InvalidSignature {
+            envelope_id: self.self_kicked_hash,
+        })?;
         Ok(())
     }
 }
@@ -252,19 +259,26 @@ impl KickDetectedEnvelope {
     }
 
     /// Verify against the witness/DC's public key.
-    pub fn verify(&self, issuer_pubkey: &VerifyingKey) -> Result<(), DotError> {
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        issuer_pubkey: &VerifyingKey,
+    ) -> Result<(), DotError> {
         let computed = self.compute_kick_detected_hash();
         if computed != self.kick_detected_hash {
             return Err(DotError::Serialization(
                 "KickDetectedEnvelope: kick_detected_hash mismatch".into(),
             ));
         }
-        let sig = Signature::from_bytes(&self.signature);
-        issuer_pubkey
-            .verify(&self.kick_detected_hash, &sig)
-            .map_err(|_| DotError::InvalidSignature {
-                envelope_id: self.kick_detected_hash,
-            })?;
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            issuer_pubkey.as_bytes(),
+            &self.kick_detected_hash,
+            &self.signature,
+        )
+        .map_err(|_| DotError::InvalidSignature {
+            envelope_id: self.kick_detected_hash,
+        })?;
         Ok(())
     }
 }
@@ -319,19 +333,26 @@ impl MemberRemovedEnvelope {
     }
 
     /// Verify against the DC's public key.
-    pub fn verify(&self, dc_pubkey: &VerifyingKey) -> Result<(), DotError> {
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        dc_pubkey: &VerifyingKey,
+    ) -> Result<(), DotError> {
         let computed = self.compute_member_removed_hash();
         if computed != self.member_removed_hash {
             return Err(DotError::Serialization(
                 "MemberRemovedEnvelope: member_removed_hash mismatch".into(),
             ));
         }
-        let sig = Signature::from_bytes(&self.signature);
-        dc_pubkey
-            .verify(&self.member_removed_hash, &sig)
-            .map_err(|_| DotError::InvalidSignature {
-                envelope_id: self.member_removed_hash,
-            })?;
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            dc_pubkey.as_bytes(),
+            &self.member_removed_hash,
+            &self.signature,
+        )
+        .map_err(|_| DotError::InvalidSignature {
+            envelope_id: self.member_removed_hash,
+        })?;
         Ok(())
     }
 }
@@ -383,19 +404,26 @@ impl RejoinRequestEnvelope {
     }
 
     /// Verify against the requester's public key.
-    pub fn verify(&self, requester_pubkey: &VerifyingKey) -> Result<(), DotError> {
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        requester_pubkey: &VerifyingKey,
+    ) -> Result<(), DotError> {
         let computed = self.compute_request_hash();
         if computed != self.request_hash {
             return Err(DotError::Serialization(
                 "RejoinRequestEnvelope: request_hash mismatch".into(),
             ));
         }
-        let sig = Signature::from_bytes(&self.signature);
-        requester_pubkey
-            .verify(&self.request_hash, &sig)
-            .map_err(|_| DotError::InvalidSignature {
-                envelope_id: self.request_hash,
-            })?;
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            requester_pubkey.as_bytes(),
+            &self.request_hash,
+            &self.signature,
+        )
+        .map_err(|_| DotError::InvalidSignature {
+            envelope_id: self.request_hash,
+        })?;
         Ok(())
     }
 }
@@ -457,19 +485,26 @@ impl RejoinGrantEnvelope {
     }
 
     /// Verify against the DC's public key.
-    pub fn verify(&self, dc_pubkey: &VerifyingKey) -> Result<(), DotError> {
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        dc_pubkey: &VerifyingKey,
+    ) -> Result<(), DotError> {
         let computed = self.compute_grant_hash();
         if computed != self.grant_hash {
             return Err(DotError::Serialization(
                 "RejoinGrantEnvelope: grant_hash mismatch".into(),
             ));
         }
-        let sig = Signature::from_bytes(&self.signature);
-        dc_pubkey
-            .verify(&self.grant_hash, &sig)
-            .map_err(|_| DotError::InvalidSignature {
-                envelope_id: self.grant_hash,
-            })?;
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            dc_pubkey.as_bytes(),
+            &self.grant_hash,
+            &self.signature,
+        )
+        .map_err(|_| DotError::InvalidSignature {
+            envelope_id: self.grant_hash,
+        })?;
         Ok(())
     }
 
@@ -549,7 +584,12 @@ mod tests {
             signature: [0u8; 64],
         };
         env.sign(&key);
-        assert!(env.verify(&key.verifying_key()).is_ok());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &key.verifying_key()
+            )
+            .is_ok());
     }
 
     #[test]
@@ -567,7 +607,12 @@ mod tests {
         };
         env.sign(&key);
         env.detected_at_epoch = 200;
-        assert!(env.verify(&key.verifying_key()).is_err());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &key.verifying_key()
+            )
+            .is_err());
     }
 
     #[test]
@@ -587,7 +632,12 @@ mod tests {
             signature: [0u8; 64],
         };
         env.sign(&wkey);
-        assert!(env.verify(&wkey.verifying_key()).is_ok());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &wkey.verifying_key()
+            )
+            .is_ok());
     }
 
     #[test]
@@ -604,7 +654,12 @@ mod tests {
             signature: [0u8; 64],
         };
         env.sign(&dckey);
-        assert!(env.verify(&dckey.verifying_key()).is_ok());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &dckey.verifying_key()
+            )
+            .is_ok());
     }
 
     #[test]
@@ -621,7 +676,12 @@ mod tests {
             signature: [0u8; 64],
         };
         env.sign(&key);
-        assert!(env.verify(&key.verifying_key()).is_ok());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &key.verifying_key()
+            )
+            .is_ok());
     }
 
     #[test]
@@ -641,7 +701,12 @@ mod tests {
             signature: [0u8; 64],
         };
         env.sign(&dckey);
-        assert!(env.verify(&dckey.verifying_key()).is_ok());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &dckey.verifying_key()
+            )
+            .is_ok());
         assert!(!env.is_expired(150));
         assert!(env.is_expired(200));
         assert!(env.is_expired(250));

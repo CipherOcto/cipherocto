@@ -450,6 +450,30 @@ Closing this properly means implementing FROST — a threshold scheme with
 RFC 9591's deterministic nonce derivation — which is a piece of work far outside
 this arc's scope. The finding is recorded so the criterion is not read as met.
 
+### The revocation gates, and the verifier that does not exist
+
+AC#14 requires that "a verifier MUST perform both revocation gates", failing
+closed on an unavailable or stale snapshot. Measured across the workspace:
+
+- `VerificationMethod::revoked_at` is defined, and `is_revoked()` reads it.
+- **No production path calls `is_revoked()`.** Every call site is a test.
+- Every other `revoked_at` in the tree belongs to a different subsystem —
+  `revoked_at_unix` in the runtime session-revocation store and the policy
+  registry — and has nothing to do with key revocation.
+
+So the revocation _flag_ is modelled and readable, and the revocation _gate_
+AC#14 asks a verifier to perform does not exist.
+
+That makes the two gates unwritable as specified, for the same reason the FROST
+gate is: there is nothing to assert against. The two available moves are to
+invent the verifier — inventing the thing under test — or to assert only that
+the predicate returns true, which tests the data model rather than the criterion
+and would read as evidence for a gate that was never built.
+
+Neither was done. The distinction worth keeping is that these are not missing
+_tests_ for missing _features_. The feature's data model exists and looks right.
+What is absent is the enforcement, which is the part AC#14 is about.
+
 ### Attribution of the remaining fourteen
 
 Each was matched against the tree by keyword overlap, then read. That check
@@ -463,12 +487,15 @@ showed it. Renamed.
 | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `software_custody_is_distinguishable_from_hardware`                         | **repaired** — existed as `custody_posture_is_distinguishable`, same crate, same property                                           |
 | `compromised_key_revoked_without_identity_revocation`                       | **deliberately absent** — AC#14 names it precisely so the gap stays visible; the RFC states it is "not yet enforced on the ZK path" |
-| `revoked_identity_replay_rejected`, `stale_revocation_snapshot_is_rejected` | **genuine gap** — `revoked_at` and `is_revoked` exist; nothing asserts a verifier fails closed on a stale or unavailable snapshot   |
+| `revoked_identity_replay_rejected`, `stale_revocation_snapshot_is_rejected` | **not writable as specified** — see §The revocation gates below                                                                     |
 | `frost_nonce_determinism_100k_iterations`                                   | **unsatisfiable as written** — see §The FROST gate below                                                                            |
 | six further FROST/chain gates                                               | **genuine gaps** — no test shares more than two generic keywords with any name in the tree                                          |
 | four BLS/DKG gates                                                          | **genuine gaps** — same, and the closest match for the rogue-key attack is a sybil test in a different subsystem                    |
 
-**Counts after the repairs: 25 stated, 11 resolving, 14 not.** Three of the
+**Counts after the repairs: 25 stated, 11 resolving, 14 not.** Of those fourteen,
+three are now understood precisely enough to say what closing them requires: one
+deliberate, two need an enforcement path that does not exist, one needs FROST,
+and the rest have no counterpart in the tree at all. Three of the
 fifteen have been fixed this way, which is enough to say the class is real and
 common rather than a curiosity of one criterion.
 
@@ -565,6 +592,7 @@ That is the distinction the guard actually depends on.
 - [x] Every adapter site naming a concrete algorithm declares that it is an assumption, and names CD-6 as the owner.
 - [x] AC#11's, AC#12's and AC#15's named gate tests resolve under the names the RFC states.
 - [x] Every remaining unresolved RFC gate is attributed, so a ratchet could be built from measured reasons rather than inference.
+- [x] Gates that cannot be written without inventing the thing under test are recorded as such, not satisfied by a vacuous test.
 - [x] Workspace `cargo check --all-targets` clean; clippy clean under `--features full`.
 
 ## The three-class lesson

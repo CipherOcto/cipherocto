@@ -342,7 +342,113 @@ pub fn mint_attach_handle(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use octo_algo_stark_schnorr::{public_key, sign, Felt};
     use octo_wallet::IdentityKey;
+    use std::sync::atomic::Ordering;
+
+    /// A `HsmAdapter` for an algorithm whose key is not 32 bytes. Only
+    /// possible since mission `0009-cd` widened the trait.
+    struct StarkHolder {
+        secret: Felt,
+        nonce_counter: std::sync::atomic::AtomicU64,
+    }
+
+    impl octo_wallet::hsm::HsmAdapter for StarkHolder {
+        fn get_public_key(&self) -> Result<Vec<u8>, octo_wallet::hsm::HsmError> {
+            Ok(public_key(&self.secret)
+                .expect("derives a public key")
+                .to_wire()
+                .to_vec())
+        }
+        fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, octo_wallet::hsm::HsmError> {
+            let n = self.nonce_counter.fetch_add(1, Ordering::SeqCst);
+            Ok(sign(&self.secret, msg, &Felt::from(n))
+                .expect("sign")
+                .to_wire()
+                .to_vec())
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn algorithm_id(&self) -> octo_wallet::AlgorithmId {
+            octo_algo_stark_schnorr::stark_schnorr_algorithm_id()
+        }
+    }
+
+    /// The attach-handle token path under a second algorithm, end to end.
+    ///
+    /// Every other vector here verifies an Ed25519 key, and `verify_bytes`
+    /// reads the algorithm off the signable prefix. A verifier that ignored
+    /// that prefix and hardcoded Ed25519 would pass all of them.
+    ///
+    /// This also pins what the width refusal in `sign_attach_handle_payload`
+    /// is and is not. It converts the signature to `[u8; 64]` and refuses
+    /// anything else, which reads like an Ed25519 assumption and is not one:
+    /// stark-schnorr signatures are 64 bytes too. The check is about width
+    /// alone, and this vector is what makes that claim testable rather than
+    /// merely asserted.
+    #[test]
+    fn an_attach_handle_token_verifies_under_stark_schnorr() {
+        octo_algo_ed25519::install().expect("install ed25519");
+        octo_algo_stark_schnorr::install().expect("install stark-schnorr");
+
+        let secret = Felt::from_hex_unchecked("0x2f1e3d4c5b6a79880716253443526170");
+        let signer = std::sync::Arc::new(StarkHolder {
+            secret,
+            nonce_counter: std::sync::atomic::AtomicU64::new(1),
+        });
+        let mut holder = IdentityKey::with_signer(signer)
+            .expect("with_signer")
+            .with_verification_method_id(octo_wallet::VerificationMethodId::derive(
+                "attach-holder",
+            ));
+        holder.activate(1_700_000_000).expect("activate");
+
+        let pubkey = holder.public_key_bytes();
+        assert_eq!(
+            pubkey.len(),
+            33,
+            "the token path carries the key as a slice"
+        );
+
+        let session_id = [0xab; 32];
+        let payload = AttachPayload {
+            agent_id: Uuid::from_bytes([0xcd; 16]),
+            since_cursor: 42,
+        };
+        let sig = sign_attach_handle_payload(&holder, session_id, &payload, 1_000, 2_000)
+            .expect("a 64-byte signature is within the token schema");
+        assert_eq!(sig.0.len(), 64);
+
+        verify_attach_handle_payload(
+            pubkey,
+            &holder_prefix(&holder),
+            &session_id,
+            &payload,
+            1_000,
+            2_000,
+            &sig,
+        )
+        .expect("a stark-schnorr attach token must verify under stark-schnorr");
+
+        // The control: the same signature presented under an Ed25519 prefix,
+        // which is what a verifier ignoring the prefix would do. The 33-byte
+        // key cannot be an Ed25519 one, so this fails at the signature.
+        let ed_prefix = activated_holder();
+        assert!(
+            verify_attach_handle_payload(
+                pubkey,
+                &holder_prefix(&ed_prefix),
+                &session_id,
+                &payload,
+                1_000,
+                2_000,
+                &sig,
+            )
+            .is_err(),
+            "a stark-schnorr token must not verify under an ed25519 prefix"
+        );
+    }
 
     fn activated_holder() -> IdentityKey {
         // The `key_id` is not optional here: `sign_attach_handle_payload`

@@ -76,3 +76,12 @@ octo-attach-key-rotation = []
 optional = true
 git = "https://github.com/cipherocto/stoolap"
 rev = "527e8eb"
+
+[dev-dependencies]
+# Second registered algorithm (Layer A, RFC-0009 AC#11). Dev-only. Every other
+# vector in this module verifies an Ed25519 key, and a verifier that ignored
+# its `algorithm_id` argument would pass all of them. A stark-schnorr key is
+# 33 bytes, which makes the difference observable, and the attach-handle token
+# path carries the key as a slice so it can carry one.
+octo-algo-stark-schnorr = { path = "../octo-algo-stark-schnorr" }
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }

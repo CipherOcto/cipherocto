@@ -1014,6 +1014,20 @@ pub enum MacaroonError {
     /// must be explicit."
     #[error("WrappedOnly chain has no Caveat::Vault ancestor (chainless — safe default rejects)")]
     WrappedChainHasNoVault,
+
+    /// The caveat list carries two `Caveat::AskBinding` entries with
+    /// **different** ask ids (mission `0969-c`).
+    ///
+    /// Attenuation is monotonic, so a second ask binding is reachable: an
+    /// attenuator can append one to a capability that already has another, and
+    /// `attenuate` rejects neither duplicates nor contradictory values. A
+    /// capability that says "this ask" and "that ask" has no single answer, and
+    /// an accessor that returned the first would silently let one of them win.
+    ///
+    /// Repeated *identical* bindings are not this error — they agree, so the
+    /// answer is unambiguous and the accessor returns the shared value.
+    #[error("capability carries {count} distinct ask bindings; ask identity is ambiguous")]
+    AmbiguousAskBinding { count: usize },
 }
 
 /// Maximum depth of a `WrappedOnly` chain (RFC-0965 §3.7 — "Maximum

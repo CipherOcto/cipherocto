@@ -16,9 +16,49 @@ metadata:
 
 ## Status
 
-Open. Filed while attempting to land a production verification hook — the root
-cause behind `0009-cf`, `0009-cg`, `0009-ci` and `0009-cj`. This is the missing
-piece those four are waiting on.
+Open, with one of the three blockers delivered. The accessor the RFC names now
+exists; the semantics question it exposed is answered, and what remains is the
+trait implementation and the dispatch catch-up.
+
+Filed while attempting to land a production verification hook — the root cause
+behind `0009-cf`, `0009-cg`, `0009-ci` and `0009-cj`.
+
+## What has landed
+
+`CapabilityToken::ask_binding()` — the accessor RFC-0969 §Algorithms names — now
+exists on the token. Ask binding is `Caveat::AskBinding` on the macaroon rather
+than a struct field, so the accessor reads the caveat list.
+
+Writing it surfaced a design question that the RFC's one-line call does not
+mention: **what happens when a capability carries two different ask bindings?**
+That is reachable. Attenuation is monotonic and `attenuate` rejects neither a
+repeated caveat nor a contradictory one, so an attenuator can append a second
+`AskBinding` to a capability that already has one. A capability asserting two
+asks has no single answer, and an accessor that returned the first would let
+caveat order — not anything the verifier chose — decide what the verifier
+believes.
+
+So `ask_binding()` returns `Result<Option<AskId>, MacaroonError>`, and the new
+`MacaroonError::AmbiguousAskBinding` fires on two or more **distinct** bindings.
+Repeated _identical_ bindings agree, so they return the shared value rather than
+an error. `Ok(None)` is a value, not a failure — it is the normal state for
+non-market tokens and HopCapability.
+
+Five tests, three mutations verified red:
+
+| Mutation                                         | Tests that caught it        |
+| ------------------------------------------------ | --------------------------- |
+| ambiguity silently resolves to the first binding | 2 (both ambiguity tests)    |
+| always reports unbound                           | 4 (every bound-path test)   |
+| identical repeats wrongly treated as ambiguous   | 1 — exactly the test for it |
+
+The third matters: it caught by exactly one test, which is what shows that test
+is not redundant with the others.
+
+**This does not resolve where the verifier's `ask_id` should come from.** It
+supplies the token-side answer the RFC specifies. The open question in
+§Why this is filed rather than attempted is whether the registry's
+`HolderRecord.ask_id` must agree with it, and it remains open.
 
 ## The finding
 
@@ -131,9 +171,11 @@ on both `octo-cap-macaroon` and `octo-wallet`) and the layering is legal.
 
 What it needs first is a decision this mission should not make alone:
 
-- **Where does `ask_id` come from?** From a `Caveat::AskBinding` on the macaroon,
-  from the registry's `HolderRecord`, or from both with a consistency check. The
-  RFC says `cap_token.ask_binding()` and the code has neither.
+- **Where does `ask_id` come from?** Half answered. The token side now exists
+  (`CapabilityToken::ask_binding()`). Whether the registry's
+  `HolderRecord.ask_id` must _agree_ with it, and what a verifier reports when
+  the capability is unbound, is still unspecified — nothing today extracts one
+  from the other or reconciles them.
 - **What does a verifier report for an ask-unbound capability?** The interface
   cannot say "unbound". Refusing is fail-closed and breaks non-market tokens;
   a sentinel is silent and depends on the dual semantics being dead.
@@ -143,7 +185,7 @@ What it needs first is a decision this mission should not make alone:
 ## Acceptance Criteria
 
 - [ ] `CapabilityVerification` can represent an ask-unbound capability, or the RFC states what a verifier reports for one and `evaluate_linkage` cannot compare it into a false link.
-- [ ] `CapabilityToken` exposes the RFC's ask-binding accessor, or RFC-0969 §Algorithms is amended to name the caveat-based accessor that replaces it.
+- [x] `CapabilityToken` exposes the RFC's ask-binding accessor, or RFC-0969 §Algorithms is amended to name the caveat-based accessor that replaces it. **Done** — `ask_binding()` reads `Caveat::AskBinding` from the macaroon, since `CapabilityToken` carries no `ask_id` field.
 - [ ] Dispatch semantics are settled. **The RFC already answered this one** — v1.2's 4-way table is unambiguous and `BothSchemesUnsupported` / `NoAuth` are its names. The remaining question is only whether the implementation adopts it or the RFC is reopened, and adopting it is the default unless there is a recorded reason not to.
 - [ ] A production `impl CapabilityVerifier` exists that calls real verification and is reachable from `GatewayAuthenticator::new` outside tests.
 - [ ] Its failure modes are fail-closed per cause, not collapsed into one variant — `VerifyError` has seven variants and `CapError` has three.

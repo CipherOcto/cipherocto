@@ -352,6 +352,72 @@ impl CapabilityToken {
         Ok(next)
     }
 
+    /// The ask this capability is bound to (RFC-0969 §Algorithms).
+    ///
+    /// RFC-0969's verifier algorithm is written as
+    /// `ask_id: cap_token.ask_binding()`. This is that accessor. Ask binding is
+    /// **not** a field on `CapabilityToken` — it is `Caveat::AskBinding` on the
+    /// macaroon — so this reads the caveat list rather than a struct field.
+    ///
+    /// # Returns
+    /// - `Ok(Some(id))` — the capability is bound to exactly one ask.
+    /// - `Ok(None)` — no `AskBinding` caveat. This is the normal state for
+    ///   non-market tokens and for HopCapability, so it is a value, not an error.
+    /// - `Err(MacaroonError::AmbiguousAskBinding)` — two or more **distinct**
+    ///   ask ids are present.
+    ///
+    /// # Why the ambiguous case refuses rather than picking
+    ///
+    /// Attenuation is monotonic and `attenuate` rejects neither a repeated
+    /// caveat nor a contradictory one, so a second ask binding is reachable. A
+    /// capability asserting two different asks has no single answer, and
+    /// returning the first would silently let one side of the contradiction win
+    /// — with the result depending on caveat order rather than on anything the
+    /// verifier chose.
+    ///
+    /// Repeated *identical* bindings are not ambiguous: they agree, so the
+    /// value is unambiguous and is returned.
+    ///
+    /// This matters beyond tidiness. `CapabilityVerification.ask_id` in
+    /// RFC-0969 is a bare `[u8; 32]` with no representation for "unbound", and
+    /// `evaluate_linkage` compares those bytes directly. A caller that needs to
+    /// represent absence has to handle `Ok(None)` itself — the type will not do
+    /// it. Mission `0969-c`.
+    pub fn ask_binding(&self) -> Result<Option<crate::caveat::AskId>, MacaroonError> {
+        let mut found: Option<crate::caveat::AskId> = None;
+        for caveat in &self.macaroon.caveats {
+            let Caveat::AskBinding(id) = caveat else {
+                continue;
+            };
+            match found {
+                None => found = Some(*id),
+                Some(existing) if existing == *id => {}
+                Some(_) => {
+                    // Count how many distinct bindings are present so the error
+                    // reports the ambiguity rather than just flagging it.
+                    let distinct = self
+                        .macaroon
+                        .caveats
+                        .iter()
+                        .filter_map(|c| match c {
+                            Caveat::AskBinding(id) => Some(*id),
+                            _ => None,
+                        })
+                        .fold(Vec::new(), |mut acc: Vec<crate::caveat::AskId>, id| {
+                            if !acc.contains(&id) {
+                                acc.push(id);
+                            }
+                            acc
+                        });
+                    return Err(MacaroonError::AmbiguousAskBinding {
+                        count: distinct.len(),
+                    });
+                }
+            }
+        }
+        Ok(found)
+    }
+
     /// Verify the holder signature.
     ///
     /// # Errors
@@ -481,6 +547,106 @@ mod tests {
         )
         .expect("mint");
         (token, signer)
+    }
+
+    /// A token with no ask caveat reports absence, which is the normal
+    /// state for non-market tokens and HopCapability.
+    #[test]
+    fn an_unbound_capability_reports_no_ask() {
+        let (token, _) = minted_token();
+        assert_eq!(
+            token.ask_binding().expect("unambiguous"),
+            None,
+            "no AskBinding caveat must read as unbound, not as an error"
+        );
+    }
+
+    /// The control for every refusal below: returning `None` unconditionally
+    /// would also pass the ambiguous test.
+    #[test]
+    fn a_bound_capability_reports_its_ask() {
+        let signer = sample_signer();
+        let ask: crate::caveat::AskId = [0x5Au8; 32];
+        let token = CapabilityToken::mint(
+            &[9u8; 32],
+            &signer,
+            "did:octo:z-test",
+            &[Caveat::AskBinding(ask)],
+        )
+        .expect("mint");
+        assert_eq!(token.ask_binding().expect("unambiguous"), Some(ask));
+    }
+
+    /// Attenuation is monotonic and does not reject a repeated caveat, so a
+    /// second *identical* binding is reachable. It agrees with the first, so the
+    /// answer is unambiguous and must be returned rather than refused.
+    #[test]
+    fn a_repeated_identical_binding_is_not_ambiguous() {
+        let signer = sample_signer();
+        let ask: crate::caveat::AskId = [0x5Au8; 32];
+        let token = CapabilityToken::mint(
+            &[9u8; 32],
+            &signer,
+            "did:octo:z-test",
+            &[Caveat::AskBinding(ask)],
+        )
+        .expect("mint");
+        let doubled = token
+            .attenuate(Caveat::AskBinding(ask), &empty_catalog())
+            .expect("attenuate");
+        assert_eq!(
+            doubled.ask_binding().expect("two identical bindings agree"),
+            Some(ask)
+        );
+    }
+
+    /// The property that matters. Two different bindings mean the capability
+    /// names two asks, and returning the first would let caveat order decide
+    /// which one the verifier believes.
+    #[test]
+    fn contradictory_bindings_are_refused_rather_than_resolved() {
+        let signer = sample_signer();
+        let token = CapabilityToken::mint(
+            &[9u8; 32],
+            &signer,
+            "did:octo:z-test",
+            &[Caveat::AskBinding([0x5Au8; 32])],
+        )
+        .expect("mint");
+        let contradicted = token
+            .attenuate(Caveat::AskBinding([0xA5u8; 32]), &empty_catalog())
+            .expect("attenuate");
+
+        let err = contradicted
+            .ask_binding()
+            .expect_err("two distinct bindings must not resolve to either one");
+        match err {
+            MacaroonError::AmbiguousAskBinding { count } => {
+                assert_eq!(count, 2, "the error must report the ambiguity");
+            }
+            other => panic!("expected AmbiguousAskBinding, got {other:?}"),
+        }
+    }
+
+    /// Order must not decide the answer. The same contradictory capability
+    /// attenuates the other way round, and must still refuse.
+    #[test]
+    fn the_ambiguity_does_not_depend_on_caveat_order() {
+        let signer = sample_signer();
+        let token = CapabilityToken::mint(
+            &[9u8; 32],
+            &signer,
+            "did:octo:z-test",
+            &[Caveat::AskBinding([0xA5u8; 32])],
+        )
+        .expect("mint");
+        let contradicted = token
+            .attenuate(Caveat::AskBinding([0x5Au8; 32]), &empty_catalog())
+            .expect("attenuate");
+        assert!(
+            contradicted.ask_binding().is_err(),
+            "reversing the caveats must not make the capability resolvable"
+        );
     }
 
     #[test]

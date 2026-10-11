@@ -18,10 +18,16 @@ metadata:
 Complete. Filed by asking what the key-shape guard could not see, not by
 finding another site.
 
-Two real sites were fixed, the guard that missed them was hardened twice, and
-nine cross-algorithm vectors now stand across five crates. Each is
-mutation-verified against the implementation, and each turns red under exactly
-the mutation it exists to catch.
+**Four real sites were fixed across three crates, the guard that missed the
+first two was hardened twice, and eleven cross-algorithm vectors now stand
+across six crates.** Each vector is mutation-verified against the
+implementation, and each turns red under exactly the mutation it exists to
+catch.
+
+The arc did not stop at the two sites the alias check found. It went on to ask
+what else the same mistake had produced, and found two more shapes — one where
+the algorithm sat beside a pinned key, one where a pinned **signature** sat
+beside a dispatched algorithm. Both are recorded below.
 
 ## The finding
 
@@ -96,6 +102,84 @@ Mutation confirms it rather than arguing it. Forcing the Ed25519 identifier at
 module green. The same mutation at `verify_settlement_receipt` turns that vector
 red and leaves the other thirteen green.
 
+## Two more instances of the same mistake
+
+The alias check found two sites. It did not find the next two, because those
+are spelled differently — but they are the same defect, and finding them is
+what turned this from a two-site cleanup into a class.
+
+### The algorithm named beside a pinned key
+
+`RouterKeyResolver` in `octo-settlement-core` takes the signing key as
+`Option<[u8; 32]>` and, right beside it, `router_algorithm_id` — documented as
+the way to name a router's algorithm, citing the reasoning that a verifier must
+not supply its own.
+
+Those two could not both be true. A resolver could override
+`router_algorithm_id` to an algorithm whose key is not 32 bytes —
+stark-schnorr's is 33 — and would then have had no way to return the key that
+algorithm needs. The override was **unimplementable for its stated purpose**.
+The dispatch argument was load-bearing in name only, which is the phrase this
+whole arc keeps arriving at by different routes.
+
+The key is now a borrowed slice — borrowed rather than owned because this runs
+once per receipt in a chain walk, and a lookup should not allocate.
+
+The vector here is the first in that crate to show a second algorithm
+verifying rather than merely refused. Both existing vectors are credited
+accurately in the test: hardcoding Ed25519 does turn the refusal test red, so
+the pair catches "assumes Ed25519" and "refuses too much". Neither catches an
+implementation that supports only Ed25519, and only the new one does.
+
+The vector also pins an ordering fact that is easy to get backwards.
+`settlement_hash` is `receipt_id_for`, which hashes `router_sig`, so it must be
+computed _after_ the signature is in place. Getting that backwards produces a
+`ChainIntegrity` error that reads like a signature problem.
+
+### The pinned signature beside a dispatched algorithm
+
+`ExecutionEnvelope.signature` in `quota-router-sm-engine` was the concrete
+`ed25519_dalek::Signature` type, while `verify_envelope_signature` took an
+`algorithm_id` beside it and dispatched on it. An envelope could hold no
+signature from any other algorithm, so the dispatch argument could never reach a
+second value in practice.
+
+This one was invisible to the key-shape guard for two reasons at once: the pin
+was in a **record field** rather than a parameter, and the conversion to bytes
+happened behind a **method call** rather than a type annotation. A guard reading
+signatures cannot see either.
+
+The field is now bytes and the serde shim that produced it is gone. The wire
+form is unchanged — the shim emitted `serialize_bytes` over the same 64 bytes —
+but that is a claim about two implementations agreeing, so it is pinned by a
+test rather than asserted in a doc comment.
+
+Dropping the shim also retired the file's inline-constructor allowlist entry,
+which the gate itself reported as superseded. The entry was removed and
+documented in the guard rather than re-justified.
+
+## What is left, measured
+
+After these fixes, a scan of the dispatched crates for algorithm-specific
+**verification** types finds exactly one live occurrence, and it is correctly
+out of scope:
+
+`octo-protocol` wraps `ed25519_dalek::Signature` in `Ed25519SignatureBytes`
+and pins the key to 32 bytes. Its key pin is owned by the DID wire form — the
+payload must decode to exactly 32 bytes — and the module states that this crate
+owns the wire shape only, with concrete structure living in downstream
+extension crates. Widening either would be a protocol decision, not a dispatch
+fix.
+
+That measurement is why **no guard was added** for this class. A guard that
+fires on exactly one legitimate occurrence on the day it is written needs an
+exemption from birth, and a guard that never reports anything true gets muted
+within a month. The measurement is recorded instead, which is what someone
+deciding to build the guard would need.
+
+`ed25519_dalek::SigningKey` is deliberately not in that set: signing genuinely
+is Ed25519-only, because `SignatureAlgorithm` has no `sign` method.
+
 ## The two hardening passes
 
 Both were driven by asking what the guard still could not see, and both are
@@ -169,6 +253,11 @@ That is the distinction the guard actually depends on.
 - [x] A cross-algorithm vector exists for each of the two fixed sites, mutation-verified against the implementation.
 - [x] Both helpers have a unit test that pins the indirection they exist to resolve.
 - [x] No verification site reaches the algorithm registry except through `verify_dispatch`.
+- [x] `RouterKeyResolver::router_key` returns a slice, so `router_algorithm_id` is implementable.
+- [x] `ExecutionEnvelope::signature` is bytes, so `verify_envelope_signature` can dispatch over more than one value.
+- [x] The envelope signature wire form is pinned by a test rather than asserted in prose.
+- [x] The forwarder class is triaged by reading, with the one fixed-width verification parameter attributed to the DID wire format.
+- [x] The remaining algorithm-specific verification types in dispatched crates are measured and attributed, not assumed.
 - [x] Workspace `cargo check --all-targets` clean; clippy clean under `--features full`.
 
 ## The three-class lesson

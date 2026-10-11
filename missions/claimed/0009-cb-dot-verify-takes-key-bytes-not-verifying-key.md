@@ -182,6 +182,16 @@ test appearing to cover a second algorithm is vacuous under mutation.
 Stated here rather than left implicit, because a reader arriving at this file
 first would otherwise take "the algorithm is dispatched" as fully established.
 
+**Both halves are now done.** Mission `0009-cc` widened the same 25 signatures
+from `&[u8; 32]` to `&[u8]`, so the key _length_ no longer pre-decides the
+algorithm either. `octo-algo-stark-schnorr`'s keys are 33 bytes and now verify
+through these sites; `a_stark_schnorr_revocation_proof_verifies_through_the_dispatched_path`
+in `crates/octo-wallet/tests/lifecycle_replay.rs` is the round trip, and
+mutation turns it red when the algorithm is hardcoded.
+
+Taken together, this mission and `0009-cc` are what changed "the body calls
+`verify_dispatch`" into "a second algorithm can actually be used".
+
 ## One behavioural note
 
 `build_third_party_bind` used to reject a malformed `witness_id` with a

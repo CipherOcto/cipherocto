@@ -1,6 +1,6 @@
 ---
 name: 0969-c-gateway-verifier-diverges-from-rfc-and-has-no-production-implementation
-description: RFC-0969 specifies a capability verifier that reads ask_id via cap_token.ask_binding(). No such method exists — ask binding is a caveat on the macaroon. The RFC's v1.1 amendment removed cross-scheme linkage because dispatch rejects dual-scheme requests, but the implementation still evaluates it and still emits RoutingDecision::Dual. And the CapabilityVerifier trait the gateway authenticator requires has no production implementation anywhere.
+description: RFC-0969 specifies a capability verifier that reads ask_id via cap_token.ask_binding(). No such method exists — ask binding is a caveat on the macaroon. RFC-0969 v1.2 also replaced the dual-scheme dispatch table with a 4-way table rejecting both-schemes-present, but the implementation still carries the removed linkage machinery forward — relocated three days after the amendment, with BothSchemesUnsupported and NoAuth absent from the workspace entirely. And the CapabilityVerifier trait the gateway authenticator requires has no production implementation anywhere.
 metadata:
   node_type: mission
   type: implementation
@@ -63,33 +63,64 @@ So an implementer following the RFC reaches for an accessor that is not there an
 has to decide what to substitute. There is no obvious answer: the ask id is
 inside a caveat list, and nothing today extracts it.
 
-### 3. The dispatch semantics predate the RFC's own amendment
+### 3. The implementation carries pre-v1.2 semantics forward, written _after_ the amendment that removed them
 
-RFC-0969's v1.1 amendment removed cross-scheme linkage, on the stated grounds
-that dispatch rejects dual-scheme requests:
+**This corrects an earlier reading of my own finding, which had the direction
+backwards.** I first recorded the implementation as predating the amendment. The
+dates say otherwise:
 
-> `AskBindingMissing` — REMOVED (single-scheme verification always has ask_id
-> populated)
-> `AskBindingMismatch` — REMOVED (cross-scheme linkage rejected at dispatch)
+| Event                                                                               | Date           |
+| ----------------------------------------------------------------------------------- | -------------- |
+| RFC-0969 v1.2 dispatch amendment                                                    | **2026-08-08** |
+| `0969-a-gateway-relocation`, which relocated `GatewayAuthenticator` into this crate | **2026-08-11** |
 
-and the RFC's TV5 was retired as unreachable because "identity linkage requires
-both schemes, which dispatch rejects".
+The relocation landed **three days after** the amendment, and it carried the
+superseded semantics forward. That is a harder finding than an implementation
+lagging its spec: the two were in the same file at the same time, and the
+superseded half was moved rather than removed.
 
-**The implementation still does the removed thing.** `parse_auth_headers`
-contains no dual rejection, `evaluate_linkage` compares bearer and capability
-`ask_id` fields, and `authenticate` still returns `RoutingDecision::Dual`.
+RFC-0969 v1.2 replaced the linkage machinery outright. Its dispatch table:
 
-This matters for a specific reason: `CapabilityVerification.ask_id` is a
-`[u8; 32]` with **no representation for "this capability is not ask-bound"**.
-`HolderRecord::ask_id` is genuinely `Option<[u8; 32]>` — `None` for non-market
-tokens and for HopCapability. Under dual semantics a verifier that fills an
-unbound capability with a sentinel would be compared against the bearer's ask id
-by `evaluate_linkage`, which does raw byte equality and has no zero case. That is
-a false-linkage path. Under the RFC's v1.1 single-scheme semantics it cannot
-occur, because the capability path is never compared to anything.
+| Headers present | `RoutingDecision`            |
+| --------------- | ---------------------------- |
+| bearer only     | `Bearer`                     |
+| capability only | `Capability`                 |
+| **both**        | **`BothSchemesUnsupported`** |
+| neither         | **`NoAuth`**                 |
 
-The divergence is therefore not cosmetic — it is the difference between an
-interface defect being reachable and being inert.
+and the amendment explicitly **removed** `LinkageResult::Indeterminate` +
+`RoutingDecision::Dual` machinery, plus four `AuthError` variants
+(`IdentityMismatch`, `AskBindingMissing`, `HolderPubMissing`,
+`AskBindingMismatch`) replaced by a single `BothSchemesUnsupported`.
+
+Measured in the implementation:
+
+| RFC-0969 v1.2 requires          | Implementation                                                                    |
+| ------------------------------- | --------------------------------------------------------------------------------- |
+| `BothSchemesUnsupported`        | **absent — zero matches anywhere in `crates/`**                                   |
+| `NoAuth`                        | **absent — zero matches anywhere in `crates/`**                                   |
+| `RoutingDecision::Dual` removed | **present** — `Dual` is still a variant                                           |
+| `AuthError` loses 4 variants    | **all four still present**, including `IdentityMismatch` and `AskBindingMismatch` |
+| dual-scheme requests rejected   | `parse_auth_headers` accepts them; `authenticate` returns `RoutingDecision::Dual` |
+| identity linkage removed        | `evaluate_linkage` still compares `subject_did` **and** `ask_id`                  |
+
+The RFC's own §v1.2 row records that the relocation was prompted by an audit
+finding "`0 production callers per audit 2026-08-08`". So the orphan status was
+known at amendment time, and the semantics were still carried into the new home.
+
+### Why the divergence is not cosmetic
+
+`CapabilityVerification.ask_id` is a `[u8; 32]` with **no representation for
+"this capability is not ask-bound"**. `HolderRecord::ask_id` is genuinely
+`Option<[u8; 32]>` — `None` for non-market tokens and for HopCapability.
+
+Under the RFC's v1.2 single-scheme semantics a sentinel can never be compared
+against anything, because a capability is never evaluated beside a bearer. Under
+the semantics the implementation actually has, `evaluate_linkage` compares
+`ask_id` with raw byte equality and no zero case — so it can.
+
+**The divergence is the difference between that interface defect being reachable
+and being inert.**
 
 ## Why this is filed rather than attempted
 
@@ -113,10 +144,23 @@ What it needs first is a decision this mission should not make alone:
 
 - [ ] `CapabilityVerification` can represent an ask-unbound capability, or the RFC states what a verifier reports for one and `evaluate_linkage` cannot compare it into a false link.
 - [ ] `CapabilityToken` exposes the RFC's ask-binding accessor, or RFC-0969 §Algorithms is amended to name the caveat-based accessor that replaces it.
-- [ ] Dispatch semantics are settled: either the implementation rejects dual-scheme requests per RFC-0969 v1.1, or the RFC revises the amendment. One of the two, not neither.
+- [ ] Dispatch semantics are settled. **The RFC already answered this one** — v1.2's 4-way table is unambiguous and `BothSchemesUnsupported` / `NoAuth` are its names. The remaining question is only whether the implementation adopts it or the RFC is reopened, and adopting it is the default unless there is a recorded reason not to.
 - [ ] A production `impl CapabilityVerifier` exists that calls real verification and is reachable from `GatewayAuthenticator::new` outside tests.
 - [ ] Its failure modes are fail-closed per cause, not collapsed into one variant — `VerifyError` has seven variants and `CapError` has three.
 - [ ] `a_forged_capability_is_refused_by_the_gateway` — mutation-verified, and named for what it proves rather than for the pipeline that hosts it.
+
+## Questions the RFCs answer on their own
+
+Recorded so they are not re-opened as open questions:
+
+- **Does the implementation lag the RFC, or does the RFC need to move?** The RFC
+  moved on 2026-08-08 with an explicit dispatch table and an explicit list of
+  removed variants. The implementation relocated on 2026-08-11 carrying the
+  removed machinery. The default is that the implementation catches up.
+- **Is the zero-`ask_id` false-linkage path reachable today?** No — because no
+  production `CapabilityVerifier` exists to report an unbound ask at all. It
+  becomes reachable the moment the trait gets an implementation that fills a
+  sentinel. That ordering is the thing to protect.
 
 ## What must not happen
 

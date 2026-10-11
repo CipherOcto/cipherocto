@@ -994,17 +994,25 @@ ask_id: cap_token.ask_binding(),
 `ask_id` field. Ask binding exists here as `Caveat::AskBinding` on the macaroon.
 An implementer following the RFC reaches for an accessor that is not there.
 
-**The dispatch semantics predate the RFC's own amendment.** RFC-0969's v1.1
-amendment removed cross-scheme linkage because "dispatch rejects dual-scheme
-requests", and retired TV5 as unreachable for that reason. The implementation
-still evaluates linkage and still emits `RoutingDecision::Dual`; `parse_auth_headers`
-has no dual rejection.
+**The dispatch semantics were carried forward, not left behind.** RFC-0969 v1.2
+replaced the linkage machinery with a 4-way table that rejects both-schemes-present
+(`BothSchemesUnsupported`, `NoAuth`) and explicitly removed `RoutingDecision::Dual`
+plus four `AuthError` variants. **That amendment landed 2026-08-08. The
+`0969-a` relocation that moved this code into `quota-router-core` landed
+2026-08-11 — three days later — carrying the removed half with it.**
+`BothSchemesUnsupported` and `NoAuth` have zero matches anywhere in `crates/`.
 
-That third point is not bookkeeping. `CapabilityVerification.ask_id` is a
+This corrects an earlier note in this arc that read the divergence as the
+implementation lagging its spec. It is the opposite: the two were in the same file
+at the same time, and the superseded semantics were relocated rather than
+dropped. The RFC's own amendment row records that the move was prompted by an
+audit finding "0 production callers", so the orphan status was known at the time.
+
+That divergence is not bookkeeping. `CapabilityVerification.ask_id` is a
 `[u8; 32]` with no way to say "unbound", while `HolderRecord::ask_id` is genuinely
 `Option`. Under the RFC's single-scheme semantics a sentinel can never be
-compared against anything; under the implementation's dual semantics it can, and
-`evaluate_linkage` compares raw bytes with no zero case. **The RFC/implementation
+compared against anything; under the dual semantics the code actually has,
+`evaluate_linkage` compares raw bytes with no zero case — so it can. **The
 divergence is the difference between that interface defect being reachable and
 being inert.**
 
@@ -1013,6 +1021,12 @@ reconciled, and the three ways above are each independently sufficient to stop
 the implementation. Building it anyway would mean inventing the ask-binding
 semantics, which is precisely the kind of guess this arc has been replacing with
 measurements.
+
+Two of the three questions turn out to be answerable from the RFCs rather than
+open: the dispatch table is unambiguous, so the implementation catching up is
+the default, and the false-linkage path is unreachable today only because no
+production verifier exists to report an unbound ask — an ordering worth
+protecting rather than a property worth relying on.
 
 ## What this arc handed on
 

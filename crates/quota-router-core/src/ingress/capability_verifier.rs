@@ -479,4 +479,136 @@ mod tests {
         assert!(matches!(a, Err(CapError::AskUnbound)));
         assert!(matches!(b, Err(CapError::AskUnbound)));
     }
+
+    // ----- Reachability through the real authenticator -----
+    //
+    // Everything above tests `ProductionCapabilityVerifier::verify` directly.
+    // That leaves the reachability claim untested, and reachability is the
+    // property that was actually false for this trait's whole life: the
+    // injection point has always worked, there was simply nothing real to
+    // inject.
+    //
+    // These two tests are deliberately about the *composition*. Neither can
+    // exist without a production impl, and neither passes with a stub, so they
+    // fail in the world this change was made against rather than describing it.
+
+    use super::super::authenticator::{BearerVerifier, GatewayAuthenticator, RoutingDecision};
+    use octo_wallet::capability::dispatch::{AuthError, BearerError, BearerVerification};
+    use octo_wallet::capability::macaroon::{CapabilityCatalog, Macaroon};
+
+    /// The bearer leg has no production verifier (its substrate is still a
+    /// stub), so a capability-only request needs one only to satisfy the
+    /// constructor. It is never called on this path.
+    struct UnusedBearerVerifier;
+
+    impl BearerVerifier for UnusedBearerVerifier {
+        fn verify(&self, _token: &str) -> Result<BearerVerification, BearerError> {
+            panic!("bearer leg must not run on a capability-only request")
+        }
+    }
+
+    #[derive(Debug)]
+    struct EmptyCatalog;
+
+    impl CapabilityCatalog for EmptyCatalog {
+        fn lookup(&self, _id: &[u8; 32]) -> Option<Macaroon> {
+            None
+        }
+    }
+
+    /// An authenticator whose capability verifier is the real one.
+    fn gateway(reg: &TestRegistry) -> GatewayAuthenticator {
+        GatewayAuthenticator::new(
+            clock(),
+            Arc::new(TestRegistry::empty()),
+            Arc::new(UnusedBearerVerifier),
+            Arc::new(ProductionCapabilityVerifier::new(
+                clock(),
+                Arc::new(TestRegistry {
+                    records: Mutex::new(reg.records.lock().unwrap().clone()),
+                    revoked: Mutex::new(reg.revoked.lock().unwrap().clone()),
+                    broken: reg.broken,
+                }),
+            )),
+            Arc::new(EmptyCatalog),
+        )
+    }
+
+    fn cap_header(wire: &str) -> Vec<(String, String)> {
+        vec![("Authorization".to_owned(), format!("CipherOcto-Cap {wire}"))]
+    }
+
+    /// A real, ask-bound, registered capability authenticates end to end.
+    ///
+    /// Header parse → v1.2 dispatch → the injected verifier → real verification
+    /// → `AuthenticatedRequest`. This is the composition no test asserted before,
+    /// because there was nothing real to compose.
+    #[test]
+    fn the_gateway_authenticates_a_real_ask_bound_capability() {
+        let m = mint(&[Caveat::AskBinding(ASK)]);
+        let reg = TestRegistry::empty();
+        register(&reg, &m, Some(ASK));
+
+        let out = gateway(&reg)
+            .authenticate_v12(&cap_header(&m.wire))
+            .expect("a real ask-bound capability must authenticate");
+
+        assert_eq!(out.routing_decision, RoutingDecision::Capability);
+        assert_eq!(
+            out.ask_id, ASK,
+            "the ask survives to the authenticated request"
+        );
+        assert_eq!(out.subject_did, m.holder_did);
+        let cap = out.capability.expect("capability leg must be populated");
+        assert_eq!(cap.ask_id, ASK);
+    }
+
+    /// The same composition refuses a capability the registry cannot vouch for.
+    ///
+    /// Paired with the test above because reachability proven only in the
+    /// accepting direction would also be satisfied by an authenticator that
+    /// skipped verification entirely.
+    #[test]
+    fn the_gateway_refuses_a_capability_the_registry_cannot_vouch_for() {
+        let m = mint(&[Caveat::AskBinding(ASK)]);
+        let reg = TestRegistry::empty();
+        // Same wire, but the registered holder key is somebody else's.
+        let impostor = mint(&[Caveat::AskBinding(ASK)]);
+        let rec = HolderRecord::from_capability(
+            &CapabilityTokenLike {
+                cap_root_hash: m.cap_root_hash,
+                class: CapabilityClass::V1,
+            },
+            &impostor.holder_pub,
+            &m.holder_did,
+            Some(ASK),
+            NOW_MS + 3_600_000,
+        );
+        reg.insert(rec).unwrap();
+
+        match gateway(&reg).authenticate_v12(&cap_header(&m.wire)) {
+            Err(AuthError::BothInvalid {
+                bearer_err: None,
+                cap_err: Some(CapError::InvalidSignature),
+            }) => {}
+            other => panic!("expected an invalid-signature refusal at the gateway, got {other:?}"),
+        }
+    }
+
+    /// An ask-unbound capability is refused at the gateway, not just at the
+    /// verifier boundary — the refusal survives into `AuthError`.
+    #[test]
+    fn the_gateway_refuses_an_ask_unbound_capability() {
+        let m = mint(&[]);
+        let reg = TestRegistry::empty();
+        register(&reg, &m, None);
+
+        match gateway(&reg).authenticate_v12(&cap_header(&m.wire)) {
+            Err(AuthError::BothInvalid {
+                bearer_err: None,
+                cap_err: Some(CapError::AskUnbound),
+            }) => {}
+            other => panic!("expected AskUnbound at the gateway, got {other:?}"),
+        }
+    }
 }

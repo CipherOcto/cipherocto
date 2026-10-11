@@ -1137,6 +1137,37 @@ The generalisation: two of three suspected findings dissolved on inspection,
 and one "undefined symbol" was a limitation of the scan rather than a defect in
 the code. A sweep is a source of hypotheses, not conclusions.
 
+### The sweep is closed: two of nineteen were real
+
+Every candidate was read. The full denominator, recorded because a sweep without
+one reads as a hit rate it did not have.
+
+| Candidate                                                    | Verdict                                                                             |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `compute_settlement_hash_v2` (struct doc)                    | **real** — the function never existed                                               |
+| `verify_bearer_token` / `verify_capability_token` (two docs) | **real** — neither exists                                                           |
+| `verify_inference_fold_flat`                                 | exists in `cairo/src/lib.cairo`; the Rust docs correctly say the fold is Cairo-side |
+| `verify_chain_against_tip`                                   | exists in `cairo/src/lib.cairo`                                                     |
+| `validate_capabilities`                                      | RFC-0850 S8.2 name; the code documents its mapping to `capabilities()`              |
+| `verify_strict`                                              | `ed25519_dalek::Verifier::verify_strict`                                            |
+| `ensure_v017`                                                | documents a rename to `ensure_v020`                                                 |
+| `ensure_version_table`                                       | documents its own removal in favour of the substrate runner                         |
+| `check_authentication_*`, `check_password`                   | external Telegram MTProto crate methods                                             |
+| `compute_exponential_backoff_delay`, `verify_cairo`, rest    | external or unrelated                                                               |
+
+A ~10% yield, and both real hits were the phantom-name class this arc had
+already found four times.
+
+**Three of the seventeen were the same failure mode as the `CHAIN_DEPTH`
+near-miss: a name that exists somewhere other than where the scan looked.** Two
+of those are Cairo, which a Rust-only symbol index cannot see, and one is a
+documented RFC method-name mapping. A scan that reports those as defects is not
+being cautious — it is wrong, and it would have cost three false findings.
+
+That is the strongest argument for closing a sweep by hand. The automation
+produced nineteen hypotheses and two conclusions, and the difference between
+them was reading.
+
 ## What this arc handed on
 
 Five findings were scoped and filed as missions, because they are implementation

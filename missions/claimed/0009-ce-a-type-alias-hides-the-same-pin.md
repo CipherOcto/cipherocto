@@ -18,8 +18,9 @@ metadata:
 Complete. Filed by asking what the key-shape guard could not see, not by
 finding another site.
 
-**Five real sites were fixed across four crates, two guards were hardened or
-added, and twelve cross-algorithm vectors now stand across seven crates.** Each vector is mutation-verified against the
+**Five real sites were fixed across four crates, three guards were hardened or
+added, and the largest remaining AC#11 population — 24 adapter call sites — is
+measured, declared, and owned rather than assumed clean.** Each vector is mutation-verified against the
 implementation, and each turns red under exactly the mutation it exists to
 catch.
 
@@ -247,6 +248,46 @@ Five sites, four spellings, one defect. Only the first two were caught by a
 scan keyed on the property. The other three needed either alias resolution or
 the crate to be on the list at all.
 
+## The largest AC#11 population: 24 adapters, one shape
+
+The coverage guard keyed on the dispatch call. That raised the next question —
+what about crates that verify _without_ dispatching — and the honest answer
+needed a sharper marker than "contains `verify_dispatch`".
+
+A call to `.verify(` whose **first argument is an algorithm identifier** is
+precise where the bare call was not: it matches `env.verify(&ed25519_id(), …)`
+and does not match `RootSecretKnowledge.verify(&ctx)`, which is a capability
+policy check and has nothing to do with signatures.
+
+That measurement found **20 platform adapters, 24 call sites, all naming
+`ed25519_algorithm_id()`, and not one passing anything else.**
+
+That is a real AC#11 limitation and it is already owned. The adapters have no
+peer registry, so they cannot know which algorithm a peer's key speaks; binding
+a per-peer algorithm is CD-6's work, and the `M-15` guard already checks the
+call shape at every one of them.
+
+### The assumption was declared at five sites, not twenty-four
+
+One adapter says Ed25519 is named explicitly "so the call site reads as an
+assumption rather than an accident". Measured, that sentence was true at **5 of
+24** sites. The other nineteen hardcoded Ed25519 in silence — which is the
+accident the one note warns against, arriving nineteen times.
+
+All nineteen now say it. The fix is prose, deliberately: the assumption is real
+and known, so the honest move is to make it findable rather than to pretend it
+away.
+
+`every_adapter_naming_a_concrete_algorithm_declares_the_assumption` pins the
+**declaration, not the algorithm**, and that distinction is the whole design.
+When CD-6 replaces these with real per-peer lookups, the measured floor fails
+loudly — so the debt being paid is visible rather than silently absorbed by a
+guard that was quietly edited to accommodate it. That is the exact failure this
+arc spent its earlier passes on, and the guard is built not to repeat it.
+
+Mutation-verified: removing one declaration turns it red and names the file and
+line.
+
 ## The two hardening passes
 
 Both were driven by asking what the guard still could not see, and both are
@@ -327,6 +368,7 @@ That is the distinction the guard actually depends on.
 - [x] The remaining algorithm-specific verification types in dispatched crates are measured and attributed, not assumed.
 - [x] `verify_governance_signature` takes key and signature as slices and routes through `verify_dispatch`.
 - [x] No crate containing the dispatch call is absent from every AC-11 list.
+- [x] Every adapter site naming a concrete algorithm declares that it is an assumption, and names CD-6 as the owner.
 - [x] Workspace `cargo check --all-targets` clean; clippy clean under `--features full`.
 
 ## The three-class lesson

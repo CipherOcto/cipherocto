@@ -448,6 +448,41 @@ fn tv11_ask_binding_mismatch_routed_through_authenticate() {
 // AC-C11 — TV12: Cross-Impl Routing Determinism
 // =========================================================================
 
+/// TV11 as RFC-0969 **v1.2** retargeted it: "Both-Schemes-Present
+/// (Asking-Binding Mismatch Input) — Rejected by Dispatch".
+///
+/// The v1.2 amendment changed what TV11 means. It used to assert that an
+/// ask-binding mismatch surfaced as `AuthError::AskBindingMismatch`; the
+/// amendment removed that variant along with the rest of the cross-scheme
+/// linkage machinery, because under the 4-way dispatch table a request
+/// carrying both schemes never reaches linkage at all — it is refused as
+/// client misconfiguration.
+///
+/// `tv11_ask_binding_mismatch_routed_through_authenticate` above still asserts
+/// the **pre-amendment** expectation. That test is left in place; it exercises
+/// the pre-v1.2 `authenticate()` path, which still exists. This one gives the
+/// gate its current subject, so the name TV11 in the RFC resolves to a test
+/// that asserts what TV11 now says.
+#[test]
+fn tv11_both_schemes_present_rejected_by_dispatch() {
+    // The exact input TV11 describes: a bearer and a capability whose ask
+    // bindings differ. Under v1.2 the disagreement is irrelevant — both
+    // schemes being present is itself the refusal.
+    let headers = vec![
+        ("Authorization".to_owned(), "Bearer tok-bearer".to_owned()),
+        ("X-Capability-Token".to_owned(), "tok-capability".to_owned()),
+    ];
+
+    let err = authenticator_production()
+        .authenticate_v12(&headers)
+        .expect_err("both schemes present must be refused by dispatch");
+
+    assert!(
+        matches!(err, AuthError::BothSchemesUnsupported),
+        "TV11 expects dispatch rejection, got {err:?}"
+    );
+}
+
 #[test]
 fn tv12_cross_impl_routing_decision_is_identical() {
     // Two distinct `GatewayAuthenticator` impls (StubBearerVerifier +

@@ -60,6 +60,40 @@ supplies the token-side answer the RFC specifies. The open question in
 §Why this is filed rather than attempted is whether the registry's
 `HolderRecord.ask_id` must agree with it, and it remains open.
 
+## RFC-0969 gate sweep: three findings, one now closed
+
+The doc sweep was closed, so this round swept the RFC's **own gates** — the
+move that produced the RFC-0009 gate table earlier in the arc. RFC-0969 names
+TV1–TV12; the implementation ships twelve tests, which sounds complete and is
+not.
+
+| Gate                              | State                                                                                                                                                                                                                                                                                                                                |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **TV9** (Dual-Issuance Atomicity) | **no test exists anywhere.** The RFC's own criteria list it separately as an "Integration test", so its absence from the unit file is expected — but it is absent entirely. It is also **unsatisfiable today**: `mint_dual`, the function it would test, is a stub that returns `Err(MintError::RootSecretMissing)` unconditionally. |
+| **TV11**                          | **was a stale gate, now has a subject.** The v1.2 amendment retargeted TV11 to "Both-Schemes-Present — Rejected by Dispatch". The only test carrying the name still asserted the _pre-amendment_ expectation, that an ask mismatch surfaces as `AuthError::AskBindingMismatch` — a variant the amendment removed.                    |
+| **TV12**                          | **two tests claim the number** — `tv12_cross_impl_routing_decision_is_identical` and `tv12_cross_impl_determinism_holds_for_indeterminate_path`.                                                                                                                                                                                     |
+
+### TV11, closed
+
+`tv11_both_schemes_present_rejected_by_dispatch` now exists alongside the stale
+one. Both pass: the new test drives `authenticate_v12` with a bearer and a
+capability whose bindings differ, and asserts `AuthError::BothSchemesUnsupported`.
+
+The stale test is **left in place** — it exercises the pre-v1.2 `authenticate()`
+path, which still exists, and deleting it is not on the table. Having both is
+what makes the transition visible: the same gate name, two assertions, one of
+which encodes superseded behaviour. Mutation-verified — removing the v1.2
+refusal turns the new test red and leaves the old one green, so the new test is
+measuring the v1.2 property specifically rather than duplicating coverage.
+
+### What TV9 and the duplicate TV12 need
+
+Both are recorded rather than fixed. TV9 needs `mint_dual` to exist before a
+test for it means anything, and writing a test for a stub would be the exact
+"passes while measuring nothing" trap this arc has refused twice. The TV12
+collision needs a decision about which vector the RFC means, and the RFC is a
+draft-facing artefact whose numbering should be settled there.
+
 ## What has landed, part 3: a guard, because the shape recurs
 
 The verifier trait having no production implementation is not a one-off. It is

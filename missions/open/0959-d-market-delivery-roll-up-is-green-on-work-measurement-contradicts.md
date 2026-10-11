@@ -112,7 +112,7 @@ See mission `0969-c`, which records that convergence.
 Ordered, because the first item is bookkeeping and the rest are work that
 belonged to missions which were never opened.
 
-- [ ] The `0959-a1` acceptance line states what is covered rather than a blanket `[x]`. **Cheapest, and it is the actual defect.**
+- [x] The `0959-a1` acceptance line states what is covered rather than a blanket `[x]`. **Done 2026-10-12** — the checkbox became `[~]` and a per-vector coverage table replaced the blanket claim. **This was the actual defect**, and it was bookkeeping.
 - [x] `0959-b2-deliver-algorithm` exists as a mission, owning `deliver_at_settlement` and TV1/TV2/TV3/TV5/TV6/TV10/TV12. Filed 2026-10-12 — it had been deferred to by `0959-b` since 2026-08-06 with no file behind it.
 - [x] `0959-b3-settlement-chain` exists as a mission, owning `append_deal_settled` and TV8/TV11. Filed 2026-10-12, same origin.
 - [ ] `BearerCapsule` carries real cryptography — X25519 agreement, ChaCha20-Poly1305 `encrypted_capsule`, Ed25519 `seller_signature` — and something verifies that signature on the receiving side. **Owned by `0959-b2` when it exists; not by this mission.**

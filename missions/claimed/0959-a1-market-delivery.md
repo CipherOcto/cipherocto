@@ -22,7 +22,7 @@ Implement the dual-mode delivery flow at deal settlement time. Extend the RFC-09
 
 The sub-missions (0959-b, 0959-c) implement the ACs by RFC-0959-A1 §Test Vectors. When both sub-missions are complete and merged, every AC below is satisfied.
 
-- [x] All 12 RFC-0959-A1 §Test Vectors pass (TV1: Minimal Delivery, TV2: Atomicity Rollback — Bearer Insert Fails, TV3: Atomicity Rollback — Capability Insert Fails, TV4: Gossip Retry, TV5: Backward Compat — Legacy Verifier, TV6: Replay Defense, TV7: Cross-Node Delivery, TV8: Chain Hash Continuity, TV9: Debug Redaction, TV10: Chain-Tip TOCTOU Race, TV11: Idempotency via UNIQUE, TV12: Buyer Identity Binding) → **GREEN roll-up complete** (2026-08-07 audit-closure): 10 vectors (TV1, TV2, TV3, TV5, TV6, TV8, TV9, TV10, TV11, TV12) → `missions/claimed/0959-b-market-delivery-impl.md` (Band A closed 2026-08-06); 2 vectors (TV4, TV7) → `missions/archived/completed/0959-c-delivery-gossip-integration.md` (Band A closed 2026-08-06, audit-closure rolled up 2026-08-07 with 9/9 ACs GREEN). Roll-up captures accurate state.
+- [~] All 12 RFC-0959-A1 §Test Vectors pass (TV1: Minimal Delivery, TV2: Atomicity Rollback — Bearer Insert Fails, TV3: Atomicity Rollback — Capability Insert Fails, TV4: Gossip Retry, TV5: Backward Compat — Legacy Verifier, TV6: Replay Defense, TV7: Cross-Node Delivery, TV8: Chain Hash Continuity, TV9: Debug Redaction, TV10: Chain-Tip TOCTOU Race, TV11: Idempotency via UNIQUE, TV12: Buyer Identity Binding) → **GREEN roll-up complete** (2026-08-07 audit-closure): 10 vectors (TV1, TV2, TV3, TV5, TV6, TV8, TV9, TV10, TV11, TV12) → `missions/claimed/0959-b-market-delivery-impl.md` (Band A closed 2026-08-06); 2 vectors (TV4, TV7) → `missions/archived/completed/0959-c-delivery-gossip-integration.md` (Band A closed 2026-08-06, audit-closure rolled up 2026-08-07 with 9/9 ACs GREEN). Roll-up captures accurate state.
   - **Contested 2026-10-12** by mission `0959-d`. The delivery **types** are real and heavily used — `MarketDeliveryEnvelope` and `DealSettled` have 38 and 52 references respectively, and the atomicity substrate (`HolderRegistry::insert_dual`) is genuinely implemented. But three specific axes of the claim did not survive measurement:
     1. **`BearerCapsule` is a structural stub.** One definition workspace-wide, in `bearer_capsule_stub.rs`, self-described as a stub. No cryptography: `encrypted_capsule` is arbitrary bytes and `seller_signature` is an unverified array. `market_delivery.rs` imports the stub rather than defining a real type. `ChaCha20-Poly1305` exists in `octo-wallet` only in `keystore.rs`, never in the capability or market-delivery path.
     2. **`deliver_at_settlement` has no implementation.** One occurrence workspace-wide, inside a doc comment in `macaroon.rs` referencing its own step 3.
@@ -41,6 +41,24 @@ The sub-missions (0959-b, 0959-c) implement the ACs by RFC-0959-A1 §Test Vector
     it recorded its own gaps accurately.
 
     **What remains contested is this roll-up itself.** Twelve GREEN vectors
+    against a child mission that marks ten of them unchecked and deferred is the
+    defect, and it is a bookkeeping fix rather than an engineering one.
+
+    **Current coverage, corrected 2026-10-12.** The `[x]` above became `[~]`
+    because it did not hold. What is actually true today:
+
+    | Vectors                             | State                                                                                                                 |
+    | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+    | TV9 (Debug Redaction)               | partial — 7 unit tests cover redaction across the envelope types; the full `format!("{:?}")` grep test is not written |
+    | TV1, TV2, TV3, TV5, TV6, TV10, TV12 | owned by `0959-b2-deliver-algorithm`, filed 2026-10-12, **not started**                                               |
+    | TV8, TV11                           | owned by `0959-b3-settlement-chain`, filed 2026-10-12, **not started**                                                |
+    | TV4, TV7                            | `0959-c`, closed — the only vectors with a real closing record                                                        |
+
+    So one vector is partial, nine are unbuilt behind missions that did not exist
+    until this week, and two were closed by `0959-c`. The 2026-08-07
+    audit-closure remains in the history above as a record of what was believed
+    then; what is believed now is this table.
+    Twelve GREEN vectors
     against a child mission that marks ten of them unchecked and deferred is the
     defect, and it is a bookkeeping fix rather than an engineering one.
 - [x] All 5 RFC-0959-A1 §Adversary Analysis findings covered (A9: Delivery-vs-settlement race, A10: Atomicity rollback exploitation, A11: Gossip partition → envelope not received, plus 2 from RFC-0959 base spec preserved) → **GREEN roll-up complete** (2026-08-07 audit-closure): A9 + A10 → `missions/claimed/0959-b-market-delivery-impl.md` (`chain_tip_lock` CAS breaks TOCTOU race + atomicity rollback exploitation); A11 → `missions/archived/completed/0959-c-delivery-gossip-integration.md` (bounded retry loop defeats gossip partition); 2 RFC-0959 base spec findings preserved unchanged.

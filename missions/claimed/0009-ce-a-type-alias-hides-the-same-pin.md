@@ -450,6 +450,40 @@ Closing this properly means implementing FROST — a threshold scheme with
 RFC 9591's deterministic nonce derivation — which is a piece of work far outside
 this arc's scope. The finding is recorded so the criterion is not read as met.
 
+### The capability chain: modelled, documented, and not implemented
+
+Worth separating from everything above, because it is the only case found where
+the **defence itself** is absent rather than the test for it.
+
+RFC-0009 threat model A10 states the defence plainly: `verify_chain_parent`
+checks `blake3(parent || child || depth) == chain_parent`, so forgery requires
+inverting BLAKE3. Its gate is `chain_parent_forgery_breaks_verification`.
+
+Measured:
+
+- `compute_chain_parent` and `verify_chain_parent` **do not exist** anywhere in
+  the workspace.
+- `CapabilityTokenV2::chain_parent` is documented as "BLAKE3-256 binding of
+  `parent_cap_key || child_cap_key || child_depth.to_be_bytes()` (per RFC-0009
+  `compute_chain_parent`)" — a defence that is described on the field and not
+  implemented.
+- Nothing reads the field to make a decision. Every occurrence is an assignment,
+  a `Debug` print, or a test asserting the value round-trips.
+- **Every production mint sets `chain_depth: 0` and `chain_parent: [0u8; 32]`.**
+  The single non-zero depth in the tree is a fixture in `octo-cap-zk`'s tests.
+
+So hierarchical capability chaining is not implemented. Every token the issuer
+has ever minted is a root token, and the parent binding is inert.
+
+**Stated carefully, because the risk is latent rather than live.** There is no
+chain to forge today, precisely because the feature is unused — the attack
+surface is empty for the same reason the defence is missing. What is wrong now
+is the documentation: a field doc asserts a cryptographic binding that no code
+performs, which is exactly the kind of claim a future implementer would trust.
+Someone adding chained issuance to these fields would get no rejection for a
+wrong parent unless they also implement the check, and the field doc currently
+tells them it is already handled.
+
 ### The revocation gates, and the verifier that does not exist
 
 AC#14 requires that "a verifier MUST perform both revocation gates", failing
@@ -489,7 +523,7 @@ showed it. Renamed.
 | `compromised_key_revoked_without_identity_revocation`                       | **deliberately absent** — AC#14 names it precisely so the gap stays visible; the RFC states it is "not yet enforced on the ZK path" |
 | `revoked_identity_replay_rejected`, `stale_revocation_snapshot_is_rejected` | **not writable as specified** — see §The revocation gates below                                                                     |
 | `frost_nonce_determinism_100k_iterations`                                   | **unsatisfiable as written** — see §The FROST gate below                                                                            |
-| six further FROST/chain gates                                               | **genuine gaps** — no test shares more than two generic keywords with any name in the tree                                          |
+| five further FROST gates                                                    | **genuine gaps** — same absence of any counterpart; the four BLS/DKG gates below likewise                                           |
 | four BLS/DKG gates                                                          | **genuine gaps** — same, and the closest match for the rogue-key attack is a sybil test in a different subsystem                    |
 
 **Counts after the repairs: 25 stated, 11 resolving, 14 not.** Of those fourteen,
@@ -593,6 +627,7 @@ That is the distinction the guard actually depends on.
 - [x] AC#11's, AC#12's and AC#15's named gate tests resolve under the names the RFC states.
 - [x] Every remaining unresolved RFC gate is attributed, so a ratchet could be built from measured reasons rather than inference.
 - [x] Gates that cannot be written without inventing the thing under test are recorded as such, not satisfied by a vacuous test.
+- [x] Where a documented defence has no implementation, that is recorded rather than papered over with a test of the surrounding data model.
 - [x] Workspace `cargo check --all-targets` clean; clippy clean under `--features full`.
 
 ## The three-class lesson

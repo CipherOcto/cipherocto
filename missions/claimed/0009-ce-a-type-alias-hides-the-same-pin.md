@@ -1168,6 +1168,45 @@ That is the strongest argument for closing a sweep by hand. The automation
 produced nineteen hypotheses and two conclusions, and the difference between
 them was reading.
 
+## A sweep that could not answer its question, and was not made to
+
+Finding one contested completion record raises the obvious question: is it
+isolated or systemic? The doc-sweep machinery seemed to transfer — point it at
+`missions/`, check every `[x]` acceptance criterion's backticked symbol names
+against the workspace.
+
+**It cannot answer that, and no finding is filed from it.** The reasoning is
+worth keeping because the failure mode is the familiar one.
+
+| Pass                                          | Undefined rate | Diagnosis                                                                                                                                  |
+| --------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1                                             | 34.6%          | **broken index** — `struct\|enum\|fn` never captured _enum variants_, so `AlreadyConsumed`, `Active`, `None`, `Result` all read as missing |
+| 2 (variants, `impl…for` types, aliases added) | 26.8%          | still dominated by citations a top-level symbol index cannot match                                                                         |
+
+The 26.8% residual reads as: git commit SHAs (`b99b1709`), struct **fields**
+(`audience_did`, `chain_hash` — verified as field usages, not symbols), test
+function names, CI check names (`feedback_clippy_zero_warnings`), and — decisively
+— **code in crates outside this workspace**.
+
+That last one is the blocker. `0111-decimal-display-error.md` cites
+`decimal_to_string`, which returns zero hits here, and is entirely correct: the
+mission documents the code as living in `determin/src/decimal.rs` in a pinned
+external fork with "no local source drop."
+
+So the population cannot be separated into real and spurious findings without
+indexing external crates and _fields_ and _test names_ — at which point the
+check is no longer measuring "does this claim hold" but "does this string appear
+in a symbol position", which is a different and much weaker property.
+
+**No guard was built from it, and nothing was filed.** A false "systemic" claim
+would have been worse than no claim: it would have put seventeen other missions
+under suspicion on the strength of a number that was measuring the scan's own
+gaps. This is the `CHAIN_DEPTH` lesson for the third time — the tool returned a
+confident answer, and the answer was about itself.
+
+The practical consequence stands: **auditing contested completion records stays a
+manual activity.** The 0959-a1 case was found by reading, not by scanning.
+
 ## What this arc handed on
 
 Five findings were scoped and filed as missions, because they are implementation

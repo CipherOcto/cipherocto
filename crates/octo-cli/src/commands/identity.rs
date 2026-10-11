@@ -1680,7 +1680,7 @@ pub(crate) fn acquire_passphrase(
     passphrase_stdin: bool,
 ) -> Result<zeroize::Zeroizing<String>, OctoCliError> {
     if passphrase_stdin {
-        // Gate per [[feedback_initiation_user_only]] + the
+        // Gate per `docs/05-process/engineering-rules.md` §Git workflow + the
         // `ensure_stdin_secret_allowed` helper at `error.rs`.
         // Operators MUST pass `--allow-stdin-secret` alongside
         // `--passphrase-stdin` so the default-build refusal

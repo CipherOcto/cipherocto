@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 /// Canonical settlement receipt struct. Field shape byte-identical to
 /// RFC-0959 §Data Structures + RFC-0014 §Module Layout `receipt`,
 /// extended per RFC-0014-v2 (Layer A frozen extension under
-/// [[cipherocto-design-principles]] §Extension over enumeration).
+/// `docs/architecture/design-principles.md` §Extension over enumeration).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Receipt {
     /// Monotonic receipt ID (per-stream; sink enforces monotonicity).
@@ -58,7 +58,7 @@ pub struct Receipt {
 /// Canonical receipt status enum (RFC-0014-v2 §Extension +
 /// RFC-0016-a §6.5 `ReceiptSummary::from_canonical`).
 ///
-/// `#[non_exhaustive]` per [[cipherocto-design-principles]]
+/// `#[non_exhaustive]` per `docs/architecture/design-principles.md`
 /// §Extension over enumeration: future status variants land
 /// additively (e.g., `Expired`, `Refunded`) without breaking
 /// downstream matchers. The `Unknown` variant is the

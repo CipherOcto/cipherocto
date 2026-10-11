@@ -132,7 +132,7 @@ pub struct AuditFilter {
 /// Substrate hard ceiling for `list_receipts` results (TV-AUD-4c).
 /// Re-exported via `octo_audit::MAX_LIMIT` so consumers can
 /// reference the canonical substrate value rather than duplicating
-/// the constant (per no-parallel-abstractions principle).
+/// the constant (per `docs/architecture/design-principles.md` §No parallel abstractions principle).
 pub const MAX_LIMIT: u32 = 10_000;
 
 /// List receipt IDs (`Vec<u64>` of `receipt_id` values) matching

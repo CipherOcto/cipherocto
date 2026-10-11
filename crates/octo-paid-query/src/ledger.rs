@@ -3,7 +3,7 @@
 //!
 //! ## Layer E (per-extension)
 //!
-//! This module sits at Layer E per [[cipherocto-design-principles]].
+//! This module sits at Layer E per `docs/architecture/design-principles.md`.
 //! The trait defines the **drain primitive** that downstream consumers
 //! (the wallet-node `WALLET_PAID_QUERY_VERIFY` handler) call after a
 //! `Proceed` decision. The default backend is in-memory; production
@@ -13,7 +13,7 @@
 //!
 //! `HolderRegistry` (Layer A substrate) owns `HolderRecord`-shaped
 //! capability metadata per RFC-0957-A1 §Algorithms. Per
-//! [[cipherocto-design-principles]] ("no parallel abstractions" +
+//! `docs/architecture/design-principles.md` ("no parallel abstractions" +
 //! "single responsibility"), the spend ledger is a separate concern
 //! from capability storage — different storage layout, different
 //! consistency model (drain is atomic-per-(holder, macaroon); lookup

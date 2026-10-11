@@ -247,7 +247,7 @@ pub fn show(
 ///      substrate never widens beyond 32 bytes).
 ///
 /// [Hex32 migration]: RFC-0011-h amendment (deferred; tracked in
-/// `docs/audits/` per [[deferred-vs-unspecified]]).
+/// `docs/audits/` per `docs/05-process/engineering-rules.md` §Deferred versus unspecified).
 fn parse_did_hexbytes(s: &str) -> HexBytes {
     use std::sync::OnceLock;
     static KEY: OnceLock<[u8; 32]> = OnceLock::new();

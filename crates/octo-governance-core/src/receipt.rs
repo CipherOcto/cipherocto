@@ -10,7 +10,7 @@
 //!   `attestation_id` (BLAKE3-256 envelope PK), `subject_did`
 //!   (RFC-0010 canonical form), `kind_ref` (TypedDiscriminator;
 //!   see RFC-0011-g §Attestation Kind Resolution +
-//!   cipherocto-design-principles §Extension over enumeration),
+//!   `docs/architecture/design-principles.md` §Extension over enumeration),
 //!   `signer_did` (active identity DID), `evidence_hash`
 //!   (BLAKE3-256 over canonical evidence bytes; raw evidence
 //!   bytes NEVER reach this struct per RFC-0011-g §7.8 Redaction),

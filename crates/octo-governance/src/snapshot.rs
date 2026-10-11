@@ -31,7 +31,7 @@ pub const TTL_SNAPSHOT_SECONDS: u64 = 600;
 /// translates them to substrate `ProposalState` discriminants
 /// before calling `snapshot()`. The substrate surface here carries
 /// substrate-native discriminants only — the RFC label translation
-/// is a CLI concern per [[cipherocto-design-principles]]
+/// is a CLI concern per `docs/architecture/design-principles.md`
 /// "no parallel abstractions" (don't put the CLI label set in the
 /// Layer B substrate).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

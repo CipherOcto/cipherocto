@@ -8,7 +8,7 @@
 //! `octo-vault` is Layer B (RFC-driven, additive only). The trait
 //! definitions live in Layer B; concrete impls live in Layer C crates
 //! (octo-wallet-node / quota-router-sm-engine / octo-policy) per
-//! `cipherocto-design-principles` — impl in Layer C avoids Layer B →
+//! `docs/architecture/design-principles.md` — impl in Layer C avoids Layer B →
 //! Layer C dependency inversion.
 
 #![allow(missing_docs, clippy::double_must_use)]

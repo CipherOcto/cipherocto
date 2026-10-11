@@ -41,7 +41,7 @@ use crate::Octo;
 
 /// Agent lifecycle subcommands.
 ///
-/// `#[non_exhaustive]` per [[cipherocto-design-principles]]
+/// `#[non_exhaustive]` per `docs/architecture/design-principles.md`
 /// §Extension over enumeration: future states / subcommands (e.g.,
 /// `pause`, `drain`) land additively without central-enum edits.
 #[derive(Subcommand, Debug, Clone)]
@@ -1054,7 +1054,7 @@ mod run {
                 //       other non-lifecycle-state substrate errors
                 //       (HSM adapter failures, key serialization,
                 //       store open, etc.) collapse to Internal for
-                //       sanitization per the [[no-parallel-abstractions]]
+                //       sanitization per the `docs/architecture/design-principles.md` §No parallel abstractions
                 //       principle.
                 holder
                     .activate(now_unix)
@@ -1468,7 +1468,7 @@ pub struct AgentRunOutput {
 /// per the operator's `output.redact_paths` flag — see
 /// the redact module). The struct redaction contract
 /// matches `AgentRunOutput` sibling fields per
-/// [[cipherocto-design-principles]] §Attenuation invariants.
+/// `docs/architecture/design-principles.md` §Attenuation invariants.
 #[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
 pub struct TokenWrittenReceipt {
     /// Hex-encoded session id (RFC-0011-c §F.1 wire form; 64
@@ -1714,7 +1714,7 @@ mod attach {
         // library consumers that don't want to construct a
         // nested runtime, and that facade is the canonical
         // substrate-side improvement direction (per the
-        // layer-model disposition in [[cipherocto-design-principles]]
+        // layer-model disposition in `docs/architecture/design-principles.md`
         // §No parallel abstractions).
         let attached = {
             let rt = tokio::runtime::Builder::new_current_thread()

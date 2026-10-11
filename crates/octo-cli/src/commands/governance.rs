@@ -51,7 +51,7 @@ use crate::Octo;
 /// Layer discipline: `octo-governance` defines the trait (Layer
 /// B RFC-driven additive). The CLI supplies the impl; the
 /// substrate does NOT depend on `octo-wallet` directly (Layer B
-/// independence per `cipherocto-design-principles`).
+/// independence per `docs/architecture/design-principles.md`).
 pub struct WalletSignerAdapter {
     /// Active identity; `Arc` so the adapter survives across
     /// the substrate `attest()` / `vote()` call lifetimes.
@@ -178,7 +178,7 @@ pub enum GovernanceAction {
         /// §Command Taxonomy). Unknown kinds fail-closed at the
         /// substrate (TypedDiscriminator pattern per
         /// RFC-0011-g §Attestation Kind Resolution +
-        /// `cipherocto-design-principles` §Extension over
+        /// `docs/architecture/design-principles.md` §Extension over
         /// enumeration).
         #[arg(value_name = "KIND_REF")]
         kind_ref: String,
@@ -520,7 +520,7 @@ fn map_governance_error(err: GovernanceError) -> OctoCliError {
         }
         // Layer A frozen-core additive contract — future variants
         // route through the wildcard arm to preserve forward
-        // compatibility (per cipherocto-design-principles
+        // compatibility (per `docs/architecture/design-principles.md`
         // §Rust crate-level stability Layer A row).
         _ => OctoCliError::Internal(sanitize_substrate_error(&err.to_string())),
     }

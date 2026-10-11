@@ -13,7 +13,7 @@
 //!
 //! ## Layer model
 //!
-//! Layer B (per `cipherocto-design-principles`): RFC-driven, additive only
+//! Layer B (per `docs/architecture/design-principles.md`): RFC-driven, additive only
 //! (years-stable). This crate lies above the Layer A substrate
 //! (`octo_storage_core`) and below Layer C consumers
 //! (`octo-ident`-backed DIDs, `quota-router-storage` Ask/Receipt types).
@@ -164,7 +164,7 @@ pub use octo_cap_macaroon::{
 /// Vault substrate errors.
 ///
 /// `Display` is operator-facing; `Debug` is substrate-internal (auto-derived).
-/// Per `cipherocto-design-principles` Layer B: enum variants are additive;
+/// Per `docs/architecture/design-principles.md` Layer B: enum variants are additive;
 /// fields are stable; never embed raw SQL / migration names / owner-DID
 /// payloads across the boundary without redaction review.
 #[derive(Debug, Error)]
@@ -249,7 +249,7 @@ pub struct VaultPolicy(Vec<u8>);
 impl VaultPolicy {
     /// Empty / default policy (allow-all).
     // SAFETY: placeholder until C.2 (octo-cap-macaroon) defines canonical
-    // encoding per review §20.3 (deferred per `deferred-vs-unspecified`
+    // encoding per review §20.3 (deferred per `docs/05-process/engineering-rules.md` §Deferred versus unspecified
     // memory card — work will happen, not deferred-to-post-v1).
     pub fn empty() -> Self {
         Self(Vec::new())

@@ -3,9 +3,9 @@
 //! Layer C wrapper over the [`octo_vault`] substrate. Operator invocation
 //! → clap parse → substrate port binding → JSON envelope render.
 //!
-//! ## Substrate port binding (RFC-0011-e §Substrate Additions + [[cipherocto-design-principles]])
+//! ## Substrate port binding (RFC-0011-e §Substrate Additions + `docs/architecture/design-principles.md`)
 //!
-//! Per `[[cipherocto-design-principles]]` Layer direction:
+//! Per ``docs/architecture/design-principles.md`` Layer direction:
 //!
 //! - The substrate ([`octo_vault::VaultOwnerIndex`] / [`octo_vault::VaultAssetResolver`] /
 //!   [`octo_vault::TransferEventLog`]) declares the port SHAPE only (Layer B
@@ -145,7 +145,7 @@ pub enum VaultAction {
     ///
     /// There is deliberately **no `--soft-sign` flag** (or any
     /// equivalent): the HSM signing path is mandatory per RFC-0011-e
-    /// §Security: HSM Downgrade + `[[cipherocto-design-principles]]`.
+    /// §Security: HSM Downgrade + ``docs/architecture/design-principles.md``.
     Transfer {
         /// Source vault (64-char lowercase hex); must be owned by the
         /// active DID.
@@ -599,7 +599,7 @@ impl TransferEventLog for HomeTransferEventLog {
 /// Answers the single question "may this DID initiate a transfer?". The
 /// CLI **queries** this gate; it does NOT implement role provisioning —
 /// that is RFC-0011-d's surface, and duplicating it here would be a
-/// parallel abstraction per `[[cipherocto-design-principles]]`.
+/// parallel abstraction per ``docs/architecture/design-principles.md``.
 ///
 /// The canonical substrate hook named by RFC-0011-e is
 /// `octo_vault::role_can_transfer(active_did)`. That function does not

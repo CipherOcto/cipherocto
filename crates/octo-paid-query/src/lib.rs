@@ -1,7 +1,7 @@
 //! Paid-query caveat bridge (RFC-0871 §Implementation Phases Phase 5,
 //! mission 0871e-paid-query-caveat).
 //!
-//! Layer E extension crate per [[cipherocto-design-principles]] —
+//! Layer E extension crate per `docs/architecture/design-principles.md` —
 //! per-extension crate pattern (RFC-0957 §Per-Extension Crate
 //! Layout). This crate owns the **paid-query caveat bridge** between
 //! `octo-wallet` (capability substrate), `octo-cap-macaroon` (macaroon

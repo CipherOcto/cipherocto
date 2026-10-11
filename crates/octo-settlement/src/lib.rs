@@ -8,7 +8,7 @@
 //!
 //! ## Layer model
 //!
-//! Per `cipherocto-design-principles` Layer B, this crate is
+//! Per `docs/architecture/design-principles.md` Layer B, this crate is
 //! **RFC-driven, additive only**. The re-export surface mirrors the
 //! substrate's public API byte-for-byte.
 

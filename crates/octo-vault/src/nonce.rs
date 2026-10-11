@@ -9,7 +9,7 @@
 //! ## Layer model
 //!
 //! Routes through `octo_cap_macaroon::blake3_hash` (Layer A frozen
-//! substrate per `cipherocto-design-principles`) — no direct `blake3`
+//! substrate per `docs/architecture/design-principles.md`) — no direct `blake3`
 //! crate dep in this crate's production source. The input bytes are
 //! concatenated in the canonical order (domain-separator-prefixed
 //! raw concatenation, no length prefixes) and hashed in one shot.

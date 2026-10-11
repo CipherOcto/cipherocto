@@ -14,7 +14,7 @@
 //! This substrate exposes a software-only signing path
 //! (`sign_envelope`, `ed25519_dalek::SigningKey::sign`). Production
 //! Layer C producer binaries MUST supply an HSM-backed impl per
-//! `cipherocto-design-principles` memory: "HSM mandatory for signing
+//! `docs/architecture/design-principles.md` memory: "HSM mandatory for signing
 //! operations". The substrate deliberately does NOT enforce HSM at
 //! this layer (would couple Layer B to specific HSM vendor). Layer C
 //! is the enforcement boundary. See `sign_envelope` doc-comment for
@@ -253,7 +253,7 @@ impl ProducerTrustList {
 /// **R4 SECURITY (HSM scope):** this is a software-only signing path —
 /// it is appropriate for substrate tests + Layer D transport fixtures,
 /// but production Layer C producer binaries MUST supply an HSM-backed
-/// `sign_envelope` impl (per `cipherocto-design-principles` memory:
+/// `sign_envelope` impl (per `docs/architecture/design-principles.md` memory:
 /// "HSM mandatory for signing operations"). The substrate deliberately
 /// does NOT enforce HSM at this layer; doing so would couple Layer B
 /// to a specific HSM vendor, violating separation of concerns. Layer C
@@ -282,7 +282,7 @@ pub fn sign_envelope(preimage: &[u8], signing_key: &SigningKey) -> [u8; 64] {
 /// invalidation on every envelope (per-key invalidation reserved for
 /// Cycle 2). Lock ordering rule: subscriber holds `cache: Mutex` only,
 /// never `process_drain_lock`; producers hold `process_drain_lock` only,
-/// never the cache — see [`cipherocto-design-principles`] §Lock-ordering
+/// never the cache — see [`docs/architecture/design-principles.md`] §Lock-ordering
 /// cross-boundary.
 #[must_use]
 pub fn spawn_cache_subscriber(

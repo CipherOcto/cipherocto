@@ -3423,7 +3423,7 @@ fn network_status(args: &StatusArgs, cli: &Octo) -> Result<(), OctoCliError> {
 /// Pre-companion G9 (trait absent in current substrate), surfaces
 /// exit 89 `NetworkSubstrateUnavailable` per RFC-0011-o §Error
 /// Handling. Companion-gated dispatch is the substrate-first
-/// ordering invariant per [[no-phantom-mission-pointers]].
+/// ordering invariant per `docs/05-process/engineering-rules.md` §No phantom mission pointers.
 fn network_slash_bridge_list(args: &SlashBridgeListArgs, cli: &Octo) -> Result<(), OctoCliError> {
     let registry = slash_bridge_registry(cli);
     let bridge = registry.ok_or_else(|| OctoCliError::NetworkSubstrateUnavailable {

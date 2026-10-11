@@ -11,7 +11,7 @@
 //! leakage" threat model. Patterns 11-13 catch PGP / OpenSSH / PEM
 //! private-key blocks; Patterns 14-18 catch capability-secret-b64 /
 //! BIP39 mnemonic / JWT three-segment / WIF base58 / X.509 cert
-//! serial. Per [[cipherocto-design-principles]] §No premature
+//! serial. Per `docs/architecture/design-principles.md` §No premature
 //! coupling, the base 10 stays in place — the RFC-0016-a extension
 //! adds the 8 patterns as additive static regexes
 //! (`RE_PGP_PRIVATE` / `RE_OPENSSH_PRIVATE` / `RE_PEM_PRIVATE` /

@@ -3,7 +3,7 @@
 //!
 //! Split from `vault_operations.rs` per Wave 1.5 hygiene callout — the
 //! 767-line module crossed the per-module size threshold (per
-//! [[cipherocto-design-principles]] §No god-objects).
+//! `docs/architecture/design-principles.md` §No god-objects).
 
 use octo_cap_macaroon::{AssetId, VaultId};
 use serde::{Deserialize, Serialize};
@@ -76,6 +76,6 @@ pub enum TransferStatus {
     /// pins `TransferStatus` as the single carrier of dry-run state
     /// (`preview_only` was dropped from the envelope), and a duplicate
     /// Layer C enum would be a parallel abstraction per
-    /// [[cipherocto-design-principles]].
+    /// `docs/architecture/design-principles.md`.
     DryRun = 3,
 }

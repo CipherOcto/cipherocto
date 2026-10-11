@@ -23,7 +23,7 @@ use thiserror::Error;
 /// ## Layer discipline (per CLAUDE.md §Architectural Principles)
 ///
 /// `#[non_exhaustive]` is the Layer A frozen-core
-/// "additive only" contract (per cipherocto-design-principles
+/// "additive only" contract (per `docs/architecture/design-principles.md`
 /// §Rust crate-level stability Layer A row). Adding a new
 /// variant is non-breaking (consumers must use a wildcard
 /// arm). Removing or renaming a variant is semver-major.
@@ -67,7 +67,7 @@ pub enum GovernanceError {
 
     /// Unknown attestation `kind_ref` (TypedDiscriminator not
     /// registered in the substrate registry). RFC-0011-g
-    /// §Attestation Kind Resolution + cipherocto-design-principles
+    /// §Attestation Kind Resolution + `docs/architecture/design-principles.md`
     /// §Extension over enumeration (fail-closed on unknown
     /// discriminators).
     #[error("unknown attestation kind: {kind_ref}")]

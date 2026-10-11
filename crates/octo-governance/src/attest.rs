@@ -91,7 +91,7 @@ pub trait EnvelopeSigner {
 
 /// TypedDiscriminator for the attestation kind per RFC-0011-g
 /// §Attestation Kind Resolution +
-/// `cipherocto-design-principles` §Extension over enumeration.
+/// `docs/architecture/design-principles.md` §Extension over enumeration.
 /// Resolution is via a static registry seeded by the substrate
 /// at startup; unknown kinds fail-closed with
 /// `GovernanceError::UnknownAttestationKind`.
@@ -116,7 +116,7 @@ pub enum AttestationKindResolution {
 /// Unknown values fail-closed with
 /// `GovernanceError::UnknownAttestationKind { kind_ref }` per
 /// RFC-0011-g §Attestation Kind Resolution +
-/// `cipherocto-design-principles` §Extension over enumeration.
+/// `docs/architecture/design-principles.md` §Extension over enumeration.
 fn resolve_kind(kind_ref: &str) -> Result<AttestationKind, GovernanceError> {
     match kind_ref {
         "route-quality:uptime-30d" => Ok(AttestationKind::RouteQualityUptime30d),

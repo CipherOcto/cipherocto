@@ -6,7 +6,7 @@
 //!
 //! Composition-over-inheritance: each fixture implements a port trait,
 //! not an enum. New variants land as new structs without touching the
-//! substrate (per `cipherocto-design-principles` §Extension over
+//! substrate (per `docs/architecture/design-principles.md` §Extension over
 //! enumeration).
 
 #![allow(missing_docs)]

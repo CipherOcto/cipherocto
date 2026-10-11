@@ -3,7 +3,7 @@
 //!
 //! Split from `vault_operations.rs` per Wave 1.5 hygiene callout — the
 //! 767-line module crossed the per-module size threshold (per
-//! [[cipherocto-design-principles]] §No god-objects).
+//! `docs/architecture/design-principles.md` §No god-objects).
 
 use octo_cap_macaroon::{ChainId, VaultId};
 use serde::{Deserialize, Serialize};

@@ -26,7 +26,7 @@ fn main() {
     // closure façade in `octo-runtime`. Default builds (no feature)
     // skip this block and rely on the Layer B
     // `InMemoryRevocationStore` (per-extension-crates + registry
-    // pattern per [[cipherocto-design-principles]] §User
+    // pattern per `docs/architecture/design-principles.md` §User
     // extensibility). On install failure we WARN and fall back to
     // the Layer B default — a corrupted / read-only ledger must
     // NOT prevent the CLI from running.

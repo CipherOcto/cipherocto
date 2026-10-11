@@ -3,7 +3,7 @@
 //!
 //! Split from `vault_operations.rs` per Wave 1.5 hygiene callout.
 //!
-//! Per [[cipherocto-design-principles]] "Storage is not a protocol",
+//! Per `docs/architecture/design-principles.md` "Storage is not a protocol",
 //! the substrate here only declares the port trait. Production impl
 //! lives at `octo-vault-stoolap` (Layer D transport adapter).
 

@@ -2,7 +2,7 @@
 //!
 //! Re-export hub for the focused sibling modules split out per the
 //! Wave 1.5 hygiene callout (the original 767-line module crossed the
-//! per-module size threshold per `[[cipherocto-design-principles]]`
+//! per-module size threshold per ``docs/architecture/design-principles.md``
 //! §No god-objects).
 //!
 //! Substrate-truth layer model:

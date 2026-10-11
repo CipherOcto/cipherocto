@@ -30,7 +30,7 @@ use uuid::Uuid;
 /// event (RFC-0015-a §6.1 + §6.4 paired-acceptance bridge).
 ///
 /// Held as primitives (typed-discriminator pattern from
-/// [[cipherocto-design-principles]] §Extension over enumeration):
+/// `docs/architecture/design-principles.md` §Extension over enumeration):
 /// `agent_id` is the canonical UUID; `from` / `to` are the
 /// lowercase `AgentState::as_str()` labels (`"registered"`,
 /// `"running"`, `"terminated"`); `reason` is the optional

@@ -1764,6 +1764,13 @@ const AC11_DISPATCHED: &[&str] = &[
     // Mission 0009-c2: sites that needed a new registry dependency edge.
     "crates/quota-router-storage/src",
     "crates/octo-settlement-core/src",
+    // Mission 0009-cb: the crate's last inline constructor was the
+    // `VerifyingKey::from_bytes` in `dot/dc.rs`, which existed only because
+    // `verify` took a key *type* rather than key bytes. Taking bytes removed
+    // it, and with 16 zero-count pending entries retired the whole crate
+    // belongs here: under the inline-rebuild scan, which is a stronger check
+    // than a count, since it catches a site whatever the total is.
+    "crates/octo-network/src",
 ];
 
 /// Crates that **have** un-dispatched AC#11 sites and are known to.
@@ -1835,98 +1842,6 @@ const AC11_DISPATCHED: &[&str] = &[
 /// category — not a codec that already landed.
 const AC11_PENDING: &[(&str, usize, &str)] = &[
     (
-        "crates/octo-network/src/ocrypt/attestation.rs",
-        0,
-        "mission 0009-c9: DISPATCHED, and the blocker recorded against it was false. \
-         It said RevocationNotice's key is a field on the wire struct. It is not: \
-         compromised_key_id and successor_key_id are IDENTIFIERS, and the verifying \
-         key arrived as a parameter, so this was the GatewayAttestation shape that \
-         0009-c7 already dispatched. KeyRotation really does carry keys on the wire, \
-         but a wire algorithm field is the worse answer there, not the blocked one: \
-         the rotation comes from the peer whose keys are being verified, so a field \
-         would let the verified party pick its own verifier. Both algorithms come \
-         from the caller's registry instead, and KeyRotation takes two because a \
-         rotation is exactly where old and new need not share an algorithm. Count \
-         of zero rather than removed, so a future site here fails the gate.",
-    ),
-    (
-        "crates/octo-network/src/gossip/reputation.rs",
-        0,
-        "mission 0009-c7: DISPATCHED. Count of zero rather than removed, \
-         so a future site here fails the gate instead of opening a new silent \
-         gap. The key arrived as a caller-supplied parameter, so no DID was \
-         parsed and the recorded DID-codec blocker never applied.",
-    ),
-    (
-        "crates/octo-network/src/porelay/heartbeat.rs",
-        0,
-        "mission 0009-c7: DISPATCHED. Count of zero rather than removed, \
-         so a future site here fails the gate instead of opening a new silent \
-         gap. The key arrived as a caller-supplied parameter, so no DID was \
-         parsed and the recorded DID-codec blocker never applied.",
-    ),
-    (
-        "crates/octo-network/src/porelay/forwarding.rs",
-        0,
-        "mission 0009-c7: DISPATCHED. Count of zero rather than removed, \
-         so a future site here fails the gate instead of opening a new silent \
-         gap. The key arrived as a caller-supplied parameter, so no DID was \
-         parsed and the recorded DID-codec blocker never applied.",
-    ),
-    (
-        "crates/octo-network/src/porelay/bandwidth.rs",
-        0,
-        "mission 0009-c7: DISPATCHED. Count of zero rather than removed, \
-         so a future site here fails the gate instead of opening a new silent \
-         gap. The key arrived as a caller-supplied parameter, so no DID was \
-         parsed and the recorded DID-codec blocker never applied.",
-    ),
-    (
-        "crates/octo-network/src/porelay/availability.rs",
-        0,
-        "mission 0009-c7: DISPATCHED. Count of zero rather than removed, \
-         so a future site here fails the gate instead of opening a new silent \
-         gap. The key arrived as a caller-supplied parameter, so no DID was \
-         parsed and the recorded DID-codec blocker never applied.",
-    ),
-    (
-        "crates/octo-network/src/drs/route.rs",
-        0,
-        "mission 0009-c7: DISPATCHED. Count of zero rather than removed, \
-         so a future site here fails the gate instead of opening a new silent \
-         gap. The key arrived as a caller-supplied parameter, so no DID was \
-         parsed and the recorded DID-codec blocker never applied.",
-    ),
-    (
-        "crates/octo-network/src/dot/envelope.rs",
-        0,
-        "mission 0009-c7: DISPATCHED. Count of zero rather than removed, \
-         so a future site here fails the gate instead of opening a new silent \
-         gap. The key arrived as a caller-supplied parameter, so no DID was \
-         parsed and the recorded DID-codec blocker never applied.",
-    ),
-    (
-        "crates/octo-network/src/dot/dc.rs",
-        1,
-        "mission 0009-c7: NOT codec-blocked. The key is a field on the message itself, so carrying an algorithm means a WIRE FORMAT change under RFC-0853. Different blocker, different RFC.",
-    ),
-    (
-        "crates/octo-network/src/dom/admission.rs",
-        0,
-        "mission 0009-c9: DISPATCHED. The recorded blocker said sender_id is a wire \
-         field so the algorithm would have to ride the wire too. verify_dispatch takes \
-         a bare byte slice, so nothing forces that: the caller supplies the algorithm, \
-         as it does at every other site in this arc. And a wire field would be the worse \
-         answer, not the blocked one — the intent comes from the very sender being \
-         verified, so a field would let it choose its own verifier. sender_id still \
-         keys the sequence tracker as an identity; the algorithm applies to the \
-         verification only. Count of zero rather than removed.",
-    ),
-    // Swept 2026-10-10: every remaining production site workspace-wide, in
-    // crates no other list covered. The `octo-network` entries above are all
-    // `VerifyingKey::from_bytes`; these three are the `Signature::from_bytes`
-    // half, which is why they were invisible for as long as it was.
-    (
         "crates/octo-coordinator-types/src/slashing.rs",
         0,
         "mission 0009-c6: DISPATCHED. Count of zero rather than removed, so a \
@@ -1958,54 +1873,6 @@ const AC11_PENDING: &[(&str, usize, &str)] = &[
          allowlisted only because the crate is not on the scanned list; if it \
          is added, the production one becomes an allowlist entry with the same \
          reasoning as the sm-engine one.",
-    ),
-    (
-        "crates/octo-network/src/dot/decommission.rs",
-        0,
-        "mission 0009-c8: DISPATCHED. Count of zero rather than removed, so a \
-         future site here fails the gate instead of opening a new silent gap. \
-         The key arrived as an already-typed VerifyingKey parameter, so the \
-         Ed25519 assertion lived in the public signature, not the body.",
-    ),
-    (
-        "crates/octo-network/src/dot/sub_group.rs",
-        0,
-        "mission 0009-c8: DISPATCHED. Count of zero rather than removed, so a \
-         future site here fails the gate instead of opening a new silent gap. \
-         The key arrived as an already-typed VerifyingKey parameter, so the \
-         Ed25519 assertion lived in the public signature, not the body.",
-    ),
-    (
-        "crates/octo-network/src/dot/dc_envelopes.rs",
-        0,
-        "mission 0009-c8: DISPATCHED. Count of zero rather than removed, so a \
-         future site here fails the gate instead of opening a new silent gap. \
-         The key arrived as an already-typed VerifyingKey parameter, so the \
-         Ed25519 assertion lived in the public signature, not the body.",
-    ),
-    (
-        "crates/octo-network/src/dot/kick_envelopes.rs",
-        0,
-        "mission 0009-c8: DISPATCHED. Count of zero rather than removed, so a \
-         future site here fails the gate instead of opening a new silent gap. \
-         The key arrived as an already-typed VerifyingKey parameter, so the \
-         Ed25519 assertion lived in the public signature, not the body.",
-    ),
-    (
-        "crates/octo-network/src/dot/binding.rs",
-        0,
-        "mission 0009-c8: DISPATCHED. Count of zero rather than removed, so a \
-         future site here fails the gate instead of opening a new silent gap. \
-         The key arrived as an already-typed VerifyingKey parameter, so the \
-         Ed25519 assertion lived in the public signature, not the body.",
-    ),
-    (
-        "crates/octo-network/src/dot/handover.rs",
-        0,
-        "mission 0009-c8: DISPATCHED. Count of zero rather than removed, so a \
-         future site here fails the gate instead of opening a new silent gap. \
-         The key arrived as an already-typed VerifyingKey parameter, so the \
-         Ed25519 assertion lived in the public signature, not the body.",
     ),
 ];
 
@@ -2068,6 +1935,7 @@ fn ac11_no_verification_site_rebuilds_a_key_or_signature_inline() {
     let root = workspace_root();
     let mut offenders: Vec<String> = Vec::new();
     let mut scanned_dirs = 0usize;
+    let mut scanned_total = 0usize;
 
     let mut dirs: Vec<&str> = AC11_DISPATCHED.to_vec();
     // These two are scanned *only* because of this line — neither is in
@@ -2090,47 +1958,71 @@ fn ac11_no_verification_site_rebuilds_a_key_or_signature_inline() {
 
     for dir in dirs {
         let abs = root.join(dir);
-        let Ok(entries) = std::fs::read_dir(&abs) else {
-            panic!(
-                "AC-11: {dir} is on the scanned list but does not exist. AC#11 covers \
-                 every crate here, so a renamed or moved crate silently drops out of \
-                 coverage while this gate still reports green. Repoint the entry."
-            );
-        };
+        // Existence is asserted separately from the walk below. Binding the
+        // `read_dir` result here was fine when the walk consumed it, and became
+        // an unused variable once the walk opened each directory itself.
+        assert!(
+            abs.is_dir(),
+            "AC-11: {dir} is on the scanned list but does not exist. AC#11 covers \
+             every crate here, so a renamed or moved crate silently drops out of \
+             coverage while this gate still reports green. Repoint the entry."
+        );
         // Counted before the allowlist skip, so a crate whose only sources are
         // excepted files still counts as read.
         let mut scanned = 0usize;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+        // RECURSIVE. This used to be a flat `read_dir`, which read only the
+        // files sitting directly in `src/`. For a crate that keeps its
+        // modules in subdirectories that is almost nothing: `octo-network/src`
+        // holds exactly one `.rs` file at the top level, so adding the crate
+        // here scanned one file and reported success — while `dot/`, `dom/`,
+        // `porelay/` and the other sixteen subdirectories went unread.
+        //
+        // Proved by planting a `VerifyingKey::from_bytes` in
+        // `porelay/heartbeat.rs` with the entry present: all 47 vectors green.
+        // Five of the seven crates already listed here have subdirectories
+        // that were equally unscanned.
+        //
+        // The completeness guard below already walked recursively; this one
+        // did not, which is how a crate could be "covered" by one vector and
+        // dark to the other.
+        let mut stack = vec![abs.clone()];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
                 continue;
-            }
-            scanned += 1;
-            let rel = path
-                .strip_prefix(&root)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .replace('\\', "/");
-            if AC11_ALLOWED.iter().any(|(allowed, _)| *allowed == rel) {
-                continue;
-            }
-            let src = std::fs::read_to_string(&path).unwrap();
-            let body = strip_comments(&src);
-            // AC#11 names TWO constructors, not one. Grepping only the key
-            // half let a live `Signature::from_bytes` sit in `octo-wallet` —
-            // a crate this gate certifies as dispatched — for the whole of
-            // the verification-dispatch work, because `IdentityKey::sign`
-            // returned an `ed25519_dalek::Signature` and this pattern could
-            // not see it. Both halves are checked now.
-            for ctor in ["VerifyingKey::from_bytes", "Signature::from_bytes"] {
-                if contains_path_call(&body, ctor) {
-                    offenders.push(format!("{rel} ({ctor})"));
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                    continue;
+                }
+                scanned += 1;
+                let rel = path
+                    .strip_prefix(&root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if AC11_ALLOWED.iter().any(|(allowed, _)| *allowed == rel) {
+                    continue;
+                }
+                let src = std::fs::read_to_string(&path).unwrap();
+                let body = strip_comments(&src);
+                // All three constructors, through the shared matcher, so this
+                // scan and the pending count cannot drift apart again.
+                for ctor in AC11_SITE_CONSTRUCTORS {
+                    if contains_path_call(&body, ctor) {
+                        offenders.push(format!("{rel} ({ctor})"));
+                    }
                 }
             }
         }
         if scanned > 0 {
             scanned_dirs += 1;
         }
+        scanned_total += scanned;
     }
 
     assert!(
@@ -2143,6 +2035,24 @@ fn ac11_no_verification_site_rebuilds_a_key_or_signature_inline() {
         scanned_dirs > 0,
         "AC-11: no directory on the scanned list yielded a Rust source, so this \
          gate read nothing and reported success vacuously."
+    );
+    // The stronger half of the same floor. `scanned_dirs > 0` is satisfied by
+    // a single file, which is exactly how this scan hid: `read_dir` is not
+    // recursive, so a crate whose modules live in subdirectories contributed
+    // its `lib.rs` and nothing else, and every vector stayed green.
+    //
+    // 347 files across the ten scanned crates today; a non-recursive walk of
+    // the same list reads 120, measured by disabling the recursion step. The
+    // floor sits between the two, so ordinary churn cannot trip it and a
+    // regression to the flat version fails here instead of passing quietly
+    // for another arc.
+    assert!(
+        scanned_total >= 250,
+        "AC-11: the inline-rebuild scan read only {scanned_total} files across \
+         {scanned_dirs} directories, expected at least 250. The walk has \
+         probably gone back to being non-recursive: a flat walk of the same \
+         list reads 120 files, and for octo-network it meant lib.rs and none \
+         of its seventeen subdirectories."
     );
 }
 

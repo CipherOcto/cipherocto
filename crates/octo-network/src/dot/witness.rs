@@ -199,7 +199,7 @@ pub struct WitnessContext<'a> {
 pub fn validate_bind(
     envelope: &BindEnvelope,
     algorithm: &octo_ident::AlgorithmId,
-    founder_pubkey: &ed25519_dalek::VerifyingKey,
+    founder_pubkey: &[u8; 32],
     ctx: &mut WitnessContext,
 ) -> ValidationOutcome {
     // Rule 1: signature (R17 R1-HIGH-3 fix: verified inside).
@@ -493,7 +493,7 @@ mod tests {
         let outcome = validate_bind(
             &env,
             &octo_algo_ed25519::ed25519_algorithm_id(),
-            &key.verifying_key(),
+            &key.verifying_key().to_bytes(),
             &mut ctx,
         );
         assert!(outcome.is_accept(), "expected Accept, got {:?}", outcome);
@@ -522,7 +522,7 @@ mod tests {
         let outcome = validate_bind(
             &env,
             &octo_algo_ed25519::ed25519_algorithm_id(),
-            &key.verifying_key(),
+            &key.verifying_key().to_bytes(),
             &mut ctx,
         );
         match outcome {
@@ -557,7 +557,7 @@ mod tests {
         let outcome = validate_bind(
             &env,
             &octo_algo_ed25519::ed25519_algorithm_id(),
-            &key.verifying_key(),
+            &key.verifying_key().to_bytes(),
             &mut ctx,
         );
         match outcome {
@@ -590,7 +590,7 @@ mod tests {
         let outcome = validate_bind(
             &env,
             &octo_algo_ed25519::ed25519_algorithm_id(),
-            &key.verifying_key(),
+            &key.verifying_key().to_bytes(),
             &mut ctx,
         );
         match outcome {
@@ -622,7 +622,7 @@ mod tests {
         let outcome = validate_bind(
             &env,
             &octo_algo_ed25519::ed25519_algorithm_id(),
-            &key.verifying_key(),
+            &key.verifying_key().to_bytes(),
             &mut ctx,
         );
         match outcome {
@@ -654,7 +654,7 @@ mod tests {
         let outcome = validate_bind(
             &env,
             &octo_algo_ed25519::ed25519_algorithm_id(),
-            &key.verifying_key(),
+            &key.verifying_key().to_bytes(),
             &mut ctx,
         );
         match outcome {
@@ -686,7 +686,7 @@ mod tests {
         let outcome = validate_bind(
             &env,
             &octo_algo_ed25519::ed25519_algorithm_id(),
-            &key.verifying_key(),
+            &key.verifying_key().to_bytes(),
             &mut ctx,
         );
         match outcome {
@@ -722,7 +722,7 @@ mod tests {
         let outcome = validate_bind(
             &env,
             &octo_algo_ed25519::ed25519_algorithm_id(),
-            &key_b.verifying_key(),
+            &key_b.verifying_key().to_bytes(),
             &mut ctx,
         );
         match outcome {
@@ -841,13 +841,13 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &key.verifying_key()
+                &key.verifying_key().to_bytes()
             )
             .is_ok());
         assert!(validate_bind(
             &env,
             &octo_algo_ed25519::ed25519_algorithm_id(),
-            &key.verifying_key(),
+            &key.verifying_key().to_bytes(),
             &mut ctx
         )
         .is_accept());

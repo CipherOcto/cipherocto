@@ -17,7 +17,7 @@
 //! order, with fixed-size integers big-endian, byte arrays verbatim, and
 //! `String`/`Vec<u8>` length-prefixed by a big-endian `u32` count.
 
-use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey};
 use thiserror::Error;
 
 use super::binding::{header, write_string, ENVELOPE_TYPE, ENVELOPE_VERSION};
@@ -314,7 +314,7 @@ impl CreateSubGroupEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        dc_pubkey: &VerifyingKey,
+        dc_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         self.validate().map_err(|e| {
             DotError::Serialization(format!("CreateSubGroupEnvelope: invalid: {e}"))
@@ -329,7 +329,7 @@ impl CreateSubGroupEnvelope {
         }
         octo_algo_ed25519::verify_dispatch(
             algorithm,
-            dc_pubkey.as_bytes(),
+            dc_pubkey,
             &self.sub_group_hash,
             &self.signature,
         )
@@ -477,7 +477,10 @@ mod tests {
         ));
         // Verification also fails.
         assert!(env
-            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
             .is_err());
     }
 
@@ -499,7 +502,10 @@ mod tests {
 
         env.sign(&key).unwrap();
         assert!(env
-            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
             .is_ok());
     }
 
@@ -522,7 +528,10 @@ mod tests {
         // Tamper with proposed_group_jid after signing.
         env.proposed_group_jid = "tampered@g.us".to_string();
         assert!(env
-            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
             .is_err());
     }
 
@@ -545,7 +554,7 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &other.verifying_key()
+                &other.verifying_key().to_bytes()
             )
             .is_err());
     }
@@ -565,7 +574,10 @@ mod tests {
         env.nonce = [0xAAu8; 32];
         env.sign(&key).unwrap();
         assert!(env
-            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
             .is_ok());
     }
 

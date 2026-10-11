@@ -5,19 +5,35 @@ metadata:
   node_type: mission
   type: implementation
   created: 2026-10-10T00:00:00.000Z
-  v: "1.0"
+  v: "2.0"
   depends_on:
     - RFC-0009
     - 0009-b-algorithm-registry
     - 0009-c8-dot-transport-envelope-algorithm-dispatch
 ---
 
-# Mission `0009-cb-dot-verify-takes-key-bytes-not-verifying-key` — OPEN 2026-10-10
+# Mission `0009-cb-dot-verify-takes-key-bytes-not-verifying-key` — COMPLETE 2026-10-10
 
 ## Status
 
-Open 2026-10-10. Found by re-reading `0009-c8`'s own output rather than its
+Complete 2026-10-10. Found by re-reading `0009-c8`'s own output rather than its
 test results.
+
+All 25 verifiers take `&[u8; 32]`. `octo-network` is at zero inline
+constructors and has moved from `AC11_PENDING` to `AC11_DISPATCHED`.
+
+## The shape already existed — this is c7, not a new idea
+
+`dot/envelope.rs`, dispatched in `0009-c7`, already read:
+
+```rust
+pub fn verify(&self, algorithm: &octo_ident::AlgorithmId, public_key: &[u8; 32])
+```
+
+So `c7` and `c8` were running two different conventions for the same operation,
+and the `VerifyingKey` half is the parallel abstraction this project treats as a
+hard no. The fix restores one convention rather than inventing another, which
+is why all 25 had to move together.
 
 ## The defect
 
@@ -113,10 +129,52 @@ the signature is right.
 ## Acceptance Criteria
 
 - All six `dot/` files at a pending count of zero, and `octo-network` absent
-  from `AC11_PENDING`.
-- `octo-network` present in `AC11_DISPATCHED`, which puts the whole crate under
-  the inline-rebuild scan for the first time.
-- The compile-level vector exists and is red before the change, green after.
+  from `AC11_PENDING`. Done.
+- `octo-network` present in `AC11_DISPATCHED`. Done.
+- The compile-level vector exists. Done.
+
+## What the change turned up
+
+Moving the crate to `AC11_DISPATCHED` was supposed to put it under the
+inline-rebuild scan. It did not.
+
+`ac11_no_verification_site_rebuilds_a_key_or_signature_inline` used a flat
+`read_dir`, which reads only the files sitting directly in `src/`. For
+`octo-network` that is exactly one file — `lib.rs`. A `VerifyingKey::from_bytes`
+planted in `porelay/heartbeat.rs` left all 47 vectors green with the entry
+present, and turned the scan red the moment the walk was made recursive.
+
+Five of the seven crates already in `AC11_DISPATCHED` have subdirectories that
+were equally unscanned. Recursive, the same ten crates read **347** files
+instead of **120** — a 7.5x increase in what this vector had been checking.
+
+The completeness guard below it already walked recursively, which is how
+`octo-network` was caught in `0ba3c1a5` at all: one vector covered the crate
+and the other was blind to it, and the green one was the blind one.
+
+A floor now asserts at least 250 files, measured between the two figures.
+Disabling the recursion step was verified to trip it with the real number in
+the message.
+
+## What the compile-level vector showed
+
+`dot_envelope_a_second_algorithm_reaches_the_verifier` hands the identical 32
+key bytes to `verify` under a second `AlgorithmId` and requires rejection as
+unregistered, while the same bytes under Ed25519 still verify — so the
+rejection came from the algorithm, not the key.
+
+Against the old signature this does not compile. Verified by reverting a single
+`verify` to `&VerifyingKey`: the compiler rejects every raw-byte call site with
+"expected `&VerifyingKey`, found `&[u8; 32]`", including the new vector. The
+round-trip is not merely ceremony, it is compulsory.
+
+## One behavioural note
+
+`build_third_party_bind` used to reject a malformed `witness_id` with a
+distinct "not a valid ed25519 public key" parse error. It still rejects one,
+now inside `verify_dispatch` as an invalid key. Same accept/reject outcome,
+less specific message. Recorded because a diagnostic was narrowed, not because
+a check was lost.
 
 ## Validation
 

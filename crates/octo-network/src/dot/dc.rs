@@ -347,14 +347,6 @@ impl DcOrchestrator {
         witness_assertion: &WitnessAssertion,
         current_epoch: u64,
     ) -> Result<ThirdPartyBindResult, BindingError> {
-        // Verify the witness assertion signature. We need the witness's
-        // public key; derive it from `witness_id` if it's stored as the
-        // raw 32-byte form, otherwise reject.
-        let witness_pubkey = ed25519_dalek::VerifyingKey::from_bytes(&witness_assertion.witness_id)
-            .map_err(|e| BindingError::InvalidAssertion {
-                reason: format!("witness_id is not a valid ed25519 public key: {e}"),
-            })?;
-
         // The assertion must be fresh: the witness_epoch should be
         // within `witness_assertion_max_age_epochs` of `current_epoch`.
         const WITNESS_ASSERTION_MAX_AGE_EPOCHS: u64 = 50;
@@ -369,13 +361,21 @@ impl DcOrchestrator {
             });
         }
 
-        // The witness key is derived from `witness_assertion.witness_id`,
-        // a field ON THE WIRE, so the envelope carries no algorithm to read
-        // (RFC-0009 AC#11 category 2 — a format change, not a dispatch fix).
-        // Ed25519 is named explicitly so the assumption is stated rather than
-        // implicit, and the assertion's own verify call still dispatches.
+        // The witness key travels on the wire as `witness_assertion.witness_id`.
+        // Nothing decodes it into a key type here, and that is the point:
+        // `verify` takes raw bytes, so the algorithm argument is what selects
+        // the verifier. Building a `VerifyingKey` at this call site would fix
+        // Ed25519 in the type one frame before dispatch got a vote.
+        //
+        // The envelope carries no algorithm to read, so Ed25519 is named
+        // explicitly and the assumption is stated rather than implicit. A
+        // malformed `witness_id` still fails, now inside `verify_dispatch` as
+        // an invalid key rather than as a distinct parse error. Same reject.
         witness_assertion
-            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &witness_pubkey)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &witness_assertion.witness_id,
+            )
             .map_err(|e| BindingError::InvalidAssertion {
                 reason: format!("assertion signature did not verify: {e}"),
             })?;
@@ -614,7 +614,7 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &orch.dc_key.verifying_key()
+                &orch.dc_key.verifying_key().to_bytes()
             )
             .is_ok());
     }
@@ -697,7 +697,7 @@ mod tests {
         assert!(inv
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &orch.dc_key.verifying_key()
+                &orch.dc_key.verifying_key().to_bytes()
             )
             .is_ok());
     }
@@ -718,7 +718,7 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &orch.dc_key.verifying_key()
+                &orch.dc_key.verifying_key().to_bytes()
             )
             .is_ok());
     }
@@ -744,7 +744,7 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &orch.dc_key.verifying_key()
+                &orch.dc_key.verifying_key().to_bytes()
             )
             .is_ok());
     }
@@ -757,7 +757,7 @@ mod tests {
         assert!(ack
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &wkey.verifying_key()
+                &wkey.verifying_key().to_bytes()
             )
             .is_ok());
     }
@@ -808,7 +808,7 @@ mod tests {
             .envelope
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &orch.dc_key.verifying_key()
+                &orch.dc_key.verifying_key().to_bytes()
             )
             .is_ok());
         // witness_seal ties the bind to the assertion.

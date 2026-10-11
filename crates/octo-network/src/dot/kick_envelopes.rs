@@ -22,7 +22,7 @@
 //! - `super::slash::SlashCode::SelfKicked` and `::FalseWitness`
 
 use blake3;
-use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey};
 
 use super::binding::{header, WitnessAssertion};
 use super::error::DotError;
@@ -181,7 +181,7 @@ impl SelfKickedEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        local_pubkey: &VerifyingKey,
+        local_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         let computed = self.compute_self_kicked_hash();
         if computed != self.self_kicked_hash {
@@ -191,7 +191,7 @@ impl SelfKickedEnvelope {
         }
         octo_algo_ed25519::verify_dispatch(
             algorithm,
-            local_pubkey.as_bytes(),
+            local_pubkey,
             &self.self_kicked_hash,
             &self.signature,
         )
@@ -262,7 +262,7 @@ impl KickDetectedEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        issuer_pubkey: &VerifyingKey,
+        issuer_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         let computed = self.compute_kick_detected_hash();
         if computed != self.kick_detected_hash {
@@ -272,7 +272,7 @@ impl KickDetectedEnvelope {
         }
         octo_algo_ed25519::verify_dispatch(
             algorithm,
-            issuer_pubkey.as_bytes(),
+            issuer_pubkey,
             &self.kick_detected_hash,
             &self.signature,
         )
@@ -336,7 +336,7 @@ impl MemberRemovedEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        dc_pubkey: &VerifyingKey,
+        dc_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         let computed = self.compute_member_removed_hash();
         if computed != self.member_removed_hash {
@@ -346,7 +346,7 @@ impl MemberRemovedEnvelope {
         }
         octo_algo_ed25519::verify_dispatch(
             algorithm,
-            dc_pubkey.as_bytes(),
+            dc_pubkey,
             &self.member_removed_hash,
             &self.signature,
         )
@@ -407,7 +407,7 @@ impl RejoinRequestEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        requester_pubkey: &VerifyingKey,
+        requester_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         let computed = self.compute_request_hash();
         if computed != self.request_hash {
@@ -417,7 +417,7 @@ impl RejoinRequestEnvelope {
         }
         octo_algo_ed25519::verify_dispatch(
             algorithm,
-            requester_pubkey.as_bytes(),
+            requester_pubkey,
             &self.request_hash,
             &self.signature,
         )
@@ -488,7 +488,7 @@ impl RejoinGrantEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        dc_pubkey: &VerifyingKey,
+        dc_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         let computed = self.compute_grant_hash();
         if computed != self.grant_hash {
@@ -496,15 +496,10 @@ impl RejoinGrantEnvelope {
                 "RejoinGrantEnvelope: grant_hash mismatch".into(),
             ));
         }
-        octo_algo_ed25519::verify_dispatch(
-            algorithm,
-            dc_pubkey.as_bytes(),
-            &self.grant_hash,
-            &self.signature,
-        )
-        .map_err(|_| DotError::InvalidSignature {
-            envelope_id: self.grant_hash,
-        })?;
+        octo_algo_ed25519::verify_dispatch(algorithm, dc_pubkey, &self.grant_hash, &self.signature)
+            .map_err(|_| DotError::InvalidSignature {
+                envelope_id: self.grant_hash,
+            })?;
         Ok(())
     }
 
@@ -587,7 +582,7 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &key.verifying_key()
+                &key.verifying_key().to_bytes()
             )
             .is_ok());
     }
@@ -610,7 +605,7 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &key.verifying_key()
+                &key.verifying_key().to_bytes()
             )
             .is_err());
     }
@@ -635,7 +630,7 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &wkey.verifying_key()
+                &wkey.verifying_key().to_bytes()
             )
             .is_ok());
     }
@@ -657,7 +652,7 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &dckey.verifying_key()
+                &dckey.verifying_key().to_bytes()
             )
             .is_ok());
     }
@@ -679,7 +674,7 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &key.verifying_key()
+                &key.verifying_key().to_bytes()
             )
             .is_ok());
     }
@@ -704,7 +699,7 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &dckey.verifying_key()
+                &dckey.verifying_key().to_bytes()
             )
             .is_ok());
         assert!(!env.is_expired(150));

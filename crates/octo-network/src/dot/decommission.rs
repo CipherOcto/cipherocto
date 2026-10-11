@@ -19,7 +19,7 @@
 use std::collections::BTreeMap;
 
 use blake3;
-use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey};
 
 use super::binding::header;
 use super::dc_envelopes::UnbindReason;
@@ -93,7 +93,7 @@ impl UnbindAllDoneEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        dc_pubkey: &VerifyingKey,
+        dc_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         let computed = self.compute_done_hash();
         if computed != self.done_hash {
@@ -101,15 +101,10 @@ impl UnbindAllDoneEnvelope {
                 "UnbindAllDoneEnvelope: done_hash mismatch".into(),
             ));
         }
-        octo_algo_ed25519::verify_dispatch(
-            algorithm,
-            dc_pubkey.as_bytes(),
-            &self.done_hash,
-            &self.signature,
-        )
-        .map_err(|_| DotError::InvalidSignature {
-            envelope_id: self.done_hash,
-        })?;
+        octo_algo_ed25519::verify_dispatch(algorithm, dc_pubkey, &self.done_hash, &self.signature)
+            .map_err(|_| DotError::InvalidSignature {
+                envelope_id: self.done_hash,
+            })?;
         Ok(())
     }
 }
@@ -186,7 +181,7 @@ impl UnbindAllAuditEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        initiator_pubkey: &VerifyingKey,
+        initiator_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         let computed = self.compute_audit_hash();
         if computed != self.audit_hash {
@@ -196,7 +191,7 @@ impl UnbindAllAuditEnvelope {
         }
         octo_algo_ed25519::verify_dispatch(
             algorithm,
-            initiator_pubkey.as_bytes(),
+            initiator_pubkey,
             &self.audit_hash,
             &self.signature,
         )
@@ -447,7 +442,7 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &key.verifying_key()
+                &key.verifying_key().to_bytes()
             )
             .is_ok());
     }
@@ -471,7 +466,7 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &key.verifying_key()
+                &key.verifying_key().to_bytes()
             )
             .is_err());
     }
@@ -498,7 +493,7 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &key.verifying_key()
+                &key.verifying_key().to_bytes()
             )
             .is_ok());
     }
@@ -660,7 +655,7 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &key.verifying_key()
+                &key.verifying_key().to_bytes()
             )
             .is_ok());
     }

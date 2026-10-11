@@ -19,7 +19,7 @@
 //! for the full requirements.
 
 use blake3;
-use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey};
 
 use super::binding::{header, write_bytes, write_string, GroupVisibility};
 use super::error::DotError;
@@ -98,7 +98,7 @@ impl CreateGroupEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        dc_pubkey: &VerifyingKey,
+        dc_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         let computed = self.compute_cgroup_hash();
         if computed != self.cgroup_hash {
@@ -108,7 +108,7 @@ impl CreateGroupEnvelope {
         }
         octo_algo_ed25519::verify_dispatch(
             algorithm,
-            dc_pubkey.as_bytes(),
+            dc_pubkey,
             &self.cgroup_hash,
             &self.signature,
         )
@@ -197,7 +197,7 @@ impl CreateGroupAckEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        witness_pubkey: &VerifyingKey,
+        witness_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         let computed = self.compute_ack_hash();
         if computed != self.ack_hash {
@@ -207,7 +207,7 @@ impl CreateGroupAckEnvelope {
         }
         octo_algo_ed25519::verify_dispatch(
             algorithm,
-            witness_pubkey.as_bytes(),
+            witness_pubkey,
             &self.ack_hash,
             &self.signature,
         )
@@ -264,7 +264,7 @@ impl CreateGroupDoneEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        dc_pubkey: &VerifyingKey,
+        dc_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         let computed = self.compute_done_hash();
         if computed != self.done_hash {
@@ -272,15 +272,10 @@ impl CreateGroupDoneEnvelope {
                 "CreateGroupDoneEnvelope: done_hash mismatch".into(),
             ));
         }
-        octo_algo_ed25519::verify_dispatch(
-            algorithm,
-            dc_pubkey.as_bytes(),
-            &self.done_hash,
-            &self.signature,
-        )
-        .map_err(|_| DotError::InvalidSignature {
-            envelope_id: self.done_hash,
-        })?;
+        octo_algo_ed25519::verify_dispatch(algorithm, dc_pubkey, &self.done_hash, &self.signature)
+            .map_err(|_| DotError::InvalidSignature {
+                envelope_id: self.done_hash,
+            })?;
         Ok(())
     }
 }
@@ -331,7 +326,7 @@ impl CreateGroupFailEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        dc_pubkey: &VerifyingKey,
+        dc_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         let computed = self.compute_fail_hash();
         if computed != self.fail_hash {
@@ -339,15 +334,10 @@ impl CreateGroupFailEnvelope {
                 "CreateGroupFailEnvelope: fail_hash mismatch".into(),
             ));
         }
-        octo_algo_ed25519::verify_dispatch(
-            algorithm,
-            dc_pubkey.as_bytes(),
-            &self.fail_hash,
-            &self.signature,
-        )
-        .map_err(|_| DotError::InvalidSignature {
-            envelope_id: self.fail_hash,
-        })?;
+        octo_algo_ed25519::verify_dispatch(algorithm, dc_pubkey, &self.fail_hash, &self.signature)
+            .map_err(|_| DotError::InvalidSignature {
+                envelope_id: self.fail_hash,
+            })?;
         Ok(())
     }
 }
@@ -422,7 +412,7 @@ impl InviteEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        dc_pubkey: &VerifyingKey,
+        dc_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         let computed_token = self.compute_invite_token();
         if computed_token != self.invite_token {
@@ -438,7 +428,7 @@ impl InviteEnvelope {
         }
         octo_algo_ed25519::verify_dispatch(
             algorithm,
-            dc_pubkey.as_bytes(),
+            dc_pubkey,
             &self.invite_hash,
             &self.signature,
         )
@@ -540,7 +530,7 @@ impl UnbindAllEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        dc_pubkey: &VerifyingKey,
+        dc_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         let computed = self.compute_unbind_hash();
         if computed != self.unbind_hash {
@@ -550,7 +540,7 @@ impl UnbindAllEnvelope {
         }
         octo_algo_ed25519::verify_dispatch(
             algorithm,
-            dc_pubkey.as_bytes(),
+            dc_pubkey,
             &self.unbind_hash,
             &self.signature,
         )
@@ -614,7 +604,7 @@ impl UnbindAllAckEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        witness_pubkey: &VerifyingKey,
+        witness_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         let computed = self.compute_ack_hash();
         if computed != self.ack_hash {
@@ -624,7 +614,7 @@ impl UnbindAllAckEnvelope {
         }
         octo_algo_ed25519::verify_dispatch(
             algorithm,
-            witness_pubkey.as_bytes(),
+            witness_pubkey,
             &self.ack_hash,
             &self.signature,
         )
@@ -686,7 +676,7 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &sk.verifying_key()
+                &sk.verifying_key().to_bytes()
             )
             .is_ok());
     }
@@ -704,7 +694,7 @@ mod tests {
         let bogus = octo_ident::AlgorithmId::derive("not-a-registered-dot-algorithm");
         assert_ne!(bogus, octo_algo_ed25519::ed25519_algorithm_id());
         assert!(
-            env.verify(&bogus, &sk.verifying_key()).is_err(),
+            env.verify(&bogus, &sk.verifying_key().to_bytes()).is_err(),
             "an unregistered algorithm must fail closed"
         );
     }
@@ -719,9 +709,50 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &sk.verifying_key()
+                &sk.verifying_key().to_bytes()
             )
             .is_err());
+    }
+
+    /// The vector that was missing, and the reason it is a *compile*-level
+    /// vector rather than another assertion.
+    ///
+    /// The three above cannot tell dispatch from a body that ignores its
+    /// algorithm argument — hardcoding Ed25519 turns exactly one of them red
+    /// and that is all any of them can say. What none of them can express is
+    /// whether an algorithm *other than Ed25519* can reach the verifier at
+    /// all, because that was a property of the parameter type: `verify` took
+    /// `&ed25519_dalek::VerifyingKey`, so a caller holding an ML-DSA-768 key
+    /// could not construct the argument no matter what it passed.
+    ///
+    /// So this test is written to be checked by the compiler. The identical
+    /// 32 bytes are handed to `verify` under a *second* `AlgorithmId`, and the
+    /// verifier must reject it as unregistered — proving the argument decided
+    /// which verifier ran. Against the old signature this call did not
+    /// compile; the assertion never got the chance to lie.
+    #[test]
+    fn dot_envelope_a_second_algorithm_reaches_the_verifier() {
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[0x77u8; 32]);
+        let env = signed_cgroup(&sk, 1);
+
+        // The same raw key bytes, named as a different algorithm.
+        let other = octo_ident::AlgorithmId::derive("ml-dsa-768-under-a-different-name");
+        assert_ne!(other, octo_algo_ed25519::ed25519_algorithm_id());
+
+        // Rejected as unregistered, not as a bad signature and not by a type
+        // error: the bytes are identical to the happy path.
+        assert!(
+            env.verify(&other, &sk.verifying_key().to_bytes()).is_err(),
+            "a second algorithm must reach the dispatcher and fail closed there"
+        );
+        // And the same bytes under Ed25519 still verify, so the rejection
+        // above came from the algorithm and not from the key.
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &sk.verifying_key().to_bytes()
+            )
+            .is_ok());
     }
 
     fn test_dc_key() -> SigningKey {
@@ -757,7 +788,7 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &key.verifying_key()
+                &key.verifying_key().to_bytes()
             )
             .is_ok());
     }
@@ -778,7 +809,7 @@ mod tests {
         assert!(ack
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &wkey.verifying_key()
+                &wkey.verifying_key().to_bytes()
             )
             .is_ok());
     }
@@ -821,7 +852,7 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &key.verifying_key()
+                &key.verifying_key().to_bytes()
             )
             .is_ok());
     }
@@ -842,7 +873,7 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &key.verifying_key()
+                &key.verifying_key().to_bytes()
             )
             .is_ok());
     }
@@ -871,7 +902,7 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &key.verifying_key()
+                &key.verifying_key().to_bytes()
             )
             .is_ok());
     }
@@ -900,7 +931,7 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &key.verifying_key()
+                &key.verifying_key().to_bytes()
             )
             .is_err());
     }
@@ -924,7 +955,7 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &key.verifying_key()
+                &key.verifying_key().to_bytes()
             )
             .is_ok());
     }
@@ -945,7 +976,7 @@ mod tests {
         assert!(ack
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &wkey.verifying_key()
+                &wkey.verifying_key().to_bytes()
             )
             .is_ok());
     }

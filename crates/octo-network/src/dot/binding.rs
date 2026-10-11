@@ -39,7 +39,7 @@
 //! all fields and is part of the signed payload, so it cannot be mutated
 //! after signing.
 
-use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey};
 use thiserror::Error;
 
 use super::error::DotError;
@@ -209,7 +209,7 @@ impl WitnessAssertion {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        witness_pubkey: &VerifyingKey,
+        witness_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         let computed = self.compute_assertion_hash();
         if computed != self.assertion_hash {
@@ -219,7 +219,7 @@ impl WitnessAssertion {
         }
         octo_algo_ed25519::verify_dispatch(
             algorithm,
-            witness_pubkey.as_bytes(),
+            witness_pubkey,
             &self.assertion_hash,
             &self.signature,
         )
@@ -401,7 +401,7 @@ impl BindEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        founder_pubkey: &VerifyingKey,
+        founder_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         // Recompute hash and compare
         let computed = self.compute_bind_hash();
@@ -414,7 +414,7 @@ impl BindEnvelope {
         }
         octo_algo_ed25519::verify_dispatch(
             algorithm,
-            founder_pubkey.as_bytes(),
+            founder_pubkey,
             &self.bind_hash,
             &self.signature,
         )
@@ -470,7 +470,7 @@ impl BindAck {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        witness_pubkey: &VerifyingKey,
+        witness_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         let computed = self.compute_ack_hash();
         if computed != self.ack_hash {
@@ -482,7 +482,7 @@ impl BindAck {
         }
         octo_algo_ed25519::verify_dispatch(
             algorithm,
-            witness_pubkey.as_bytes(),
+            witness_pubkey,
             &self.ack_hash,
             &self.signature,
         )
@@ -542,7 +542,7 @@ impl UnbindEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        issuer_pubkey: &VerifyingKey,
+        issuer_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         let computed = self.compute_unbind_hash();
         if computed != self.unbind_hash {
@@ -552,7 +552,7 @@ impl UnbindEnvelope {
         }
         octo_algo_ed25519::verify_dispatch(
             algorithm,
-            issuer_pubkey.as_bytes(),
+            issuer_pubkey,
             &self.unbind_hash,
             &self.signature,
         )
@@ -622,7 +622,7 @@ impl PlatformLossEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        local_pubkey: &VerifyingKey,
+        local_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         let computed = self.compute_loss_hash();
         if computed != self.loss_hash {
@@ -632,7 +632,7 @@ impl PlatformLossEnvelope {
         }
         octo_algo_ed25519::verify_dispatch(
             algorithm,
-            local_pubkey.as_bytes(),
+            local_pubkey,
             &self.loss_hash,
             &self.signature,
         )
@@ -762,7 +762,7 @@ pub enum BindingError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::SigningKey;
+    use ed25519_dalek::{SigningKey, VerifyingKey};
 
     fn test_key(seed: u8) -> SigningKey {
         SigningKey::from_bytes(&[seed; 32])
@@ -824,7 +824,10 @@ mod tests {
         };
         env.sign(&key);
         assert!(env
-            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
             .is_ok());
     }
 
@@ -849,7 +852,10 @@ mod tests {
         // Mutate a body field after signing
         env.group_jid = "attacker@g.us".into();
         // The bind_hash is now stale; verify must reject.
-        let result = env.verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey);
+        let result = env.verify(
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &pubkey.to_bytes(),
+        );
         assert!(result.is_err(), "mutation after signing must be detected");
     }
 
@@ -895,7 +901,10 @@ mod tests {
         };
         ack.sign(&key);
         assert!(ack
-            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
             .is_ok());
     }
 
@@ -939,7 +948,10 @@ mod tests {
         };
         env.sign(&key);
         assert!(env
-            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
             .is_ok());
     }
 
@@ -960,7 +972,10 @@ mod tests {
         };
         env.sign(&key);
         assert!(env
-            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
             .is_ok());
     }
 
@@ -1010,7 +1025,10 @@ mod tests {
         env.sign(&key);
         // Verify with the wrong pubkey must fail.
         assert!(env
-            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &other)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &other.to_bytes()
+            )
             .is_err());
     }
 }

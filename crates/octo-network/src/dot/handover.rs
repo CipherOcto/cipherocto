@@ -19,7 +19,7 @@
 //! order, with fixed-size integers big-endian, byte arrays verbatim, and
 //! `String`/`Vec<u8>` length-prefixed by a big-endian `u32` count.
 
-use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey};
 use thiserror::Error;
 
 use super::binding::{header, write_string, GroupBinding, ENVELOPE_TYPE, ENVELOPE_VERSION};
@@ -343,12 +343,12 @@ impl SlashEvent {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        coordinator_pubkey: &VerifyingKey,
+        coordinator_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         let payload = self.payload_bytes();
         octo_algo_ed25519::verify_dispatch(
             algorithm,
-            coordinator_pubkey.as_bytes(),
+            coordinator_pubkey,
             &payload,
             &self.signature,
         )
@@ -403,7 +403,7 @@ impl SlashTally {
         &mut self,
         event: SlashEvent,
         algorithm: &octo_ident::AlgorithmId,
-        coordinator_pubkey: &VerifyingKey,
+        coordinator_pubkey: &[u8; 32],
         current_epoch: u64,
     ) -> Result<(), HandoverError> {
         event.verify(algorithm, coordinator_pubkey).map_err(|_| {
@@ -560,7 +560,7 @@ impl HandoverRequestEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        coordinator_pubkey: &VerifyingKey,
+        coordinator_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         let computed = self.compute_handover_hash();
         if computed != self.handover_hash {
@@ -583,7 +583,7 @@ impl HandoverRequestEnvelope {
                 })?;
         octo_algo_ed25519::verify_dispatch(
             algorithm,
-            coordinator_pubkey.as_bytes(),
+            coordinator_pubkey,
             &self.handover_hash,
             &sig_bytes,
         )
@@ -675,7 +675,7 @@ impl HandoverAckEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        witness_pubkey: &VerifyingKey,
+        witness_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         let computed = self.compute_ack_hash();
         if computed != self.ack_hash {
@@ -687,7 +687,7 @@ impl HandoverAckEnvelope {
         }
         octo_algo_ed25519::verify_dispatch(
             algorithm,
-            witness_pubkey.as_bytes(),
+            witness_pubkey,
             &self.ack_hash,
             &self.signature,
         )
@@ -783,7 +783,7 @@ impl HandoverDoneEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        new_coordinator_pubkey: &VerifyingKey,
+        new_coordinator_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         let computed = self.compute_done_hash();
         if computed != self.done_hash {
@@ -795,7 +795,7 @@ impl HandoverDoneEnvelope {
         }
         octo_algo_ed25519::verify_dispatch(
             algorithm,
-            new_coordinator_pubkey.as_bytes(),
+            new_coordinator_pubkey,
             &self.done_hash,
             &self.signature,
         )
@@ -901,7 +901,7 @@ impl HandoverCancelEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        incumbent_pubkey: &VerifyingKey,
+        incumbent_pubkey: &[u8; 32],
     ) -> Result<(), DotError> {
         let computed = self.compute_payload_hash();
         if computed != self.payload_hash {
@@ -913,7 +913,7 @@ impl HandoverCancelEnvelope {
         }
         octo_algo_ed25519::verify_dispatch(
             algorithm,
-            incumbent_pubkey.as_bytes(),
+            incumbent_pubkey,
             &self.payload_hash,
             &self.signature,
         )
@@ -1149,13 +1149,19 @@ mod tests {
         let pubkey = key.verifying_key();
         let ev = make_slash_event(0x000E, [0x77u8; 32], 100);
         assert!(ev
-            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
             .is_ok());
         // Tampered evidence -> signature fails.
         let mut bad = ev.clone();
         bad.slash_evidence_hash = [0x00u8; 32];
         assert!(bad
-            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
             .is_err());
     }
 
@@ -1169,7 +1175,7 @@ mod tests {
             .append(
                 make_slash_event(0x000E, [0x77u8; 32], 50),
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &coord_pubkey,
+                &coord_pubkey.to_bytes(),
                 50,
             )
             .unwrap();
@@ -1177,7 +1183,7 @@ mod tests {
             .append(
                 make_slash_event(0x000F, [0x88u8; 32], 100),
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &coord_pubkey,
+                &coord_pubkey.to_bytes(),
                 100,
             )
             .unwrap();
@@ -1213,7 +1219,7 @@ mod tests {
         let result = tally.append(
             ev,
             &octo_algo_ed25519::ed25519_algorithm_id(),
-            &claimed_pubkey,
+            &claimed_pubkey.to_bytes(),
             50,
         );
         assert!(matches!(
@@ -1238,7 +1244,7 @@ mod tests {
             .append(
                 make_slash_event(0x000E, [0x77u8; 32], 100),
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &slash_coord_pubkey,
+                &slash_coord_pubkey.to_bytes(),
                 100,
             )
             .unwrap();
@@ -1269,7 +1275,10 @@ mod tests {
 
         env.sign(&key);
         assert!(env
-            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
             .is_ok());
     }
 
@@ -1290,7 +1299,10 @@ mod tests {
         env.sign(&key);
         env.current_epoch = 999;
         assert!(env
-            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
             .is_err());
     }
 
@@ -1311,7 +1323,7 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &other.verifying_key()
+                &other.verifying_key().to_bytes()
             )
             .is_err());
     }
@@ -1324,7 +1336,10 @@ mod tests {
         env.nonce = [0xC1u8; 32];
         env.sign(&key);
         assert!(env
-            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
             .is_ok());
     }
 
@@ -1372,7 +1387,10 @@ mod tests {
         env.sign(&key);
         env.witness_epoch = 999;
         assert!(env
-            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
             .is_err());
     }
 
@@ -1384,7 +1402,10 @@ mod tests {
         env.nonce = [0xE1u8; 32];
         env.sign(&key);
         assert!(env
-            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
             .is_ok());
     }
 
@@ -1432,7 +1453,10 @@ mod tests {
         env.sign(&key);
         env.accepted_epoch = 999;
         assert!(env
-            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
             .is_err());
     }
 
@@ -1491,7 +1515,10 @@ mod tests {
         }
         env.sign(&key);
         assert!(env
-            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
             .is_ok());
     }
 
@@ -1538,7 +1565,10 @@ mod tests {
         env.nonce = [0x44u8; 16];
         env.sign(&key);
         assert!(env
-            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &pubkey)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
             .is_ok());
     }
 
@@ -1566,7 +1596,7 @@ mod tests {
         assert!(env
             .verify(
                 &octo_algo_ed25519::ed25519_algorithm_id(),
-                &other.verifying_key()
+                &other.verifying_key().to_bytes()
             )
             .is_err());
     }

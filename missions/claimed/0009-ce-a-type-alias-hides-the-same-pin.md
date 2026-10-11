@@ -420,15 +420,37 @@ The fifteen are not all the same kind of thing, and the difference matters:
   BLS). Some are likely present under other names — AC#9's gate is a whole test
   _file_ rather than a named function — but that has not been checked.
 
-**No guard was added for this.** A ratchet over the unresolved set would be the
-natural artifact, but writing fifteen entries requires attributing each one, and
-three of the four inspected above turned out to differ in kind from the others.
-Committing a list whose reasons are half-inferred would repeat exactly the error
-this arc exists to catch: a plausible-looking record that has not been measured.
+### Attribution of the remaining fourteen
 
-So the measurement is recorded and the attribution is left as its own piece of
-work. This is the one place in this file where the honest move is to stop rather
-than to build something that looks finished.
+Each was matched against the tree by keyword overlap, then read. That check
+found a third naming drift and corrected an attribution made above: AC#15's
+custody test **does** exist, as `custody_posture_is_distinguishable` in the same
+crate, asserting exactly the property AC#15 names. The earlier note that said
+"substrate present, behaviour untested" was wrong, and reading the test is what
+showed it. Renamed.
+
+| Gate                                                                        | Where it stands                                                                                                                     |
+| --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `software_custody_is_distinguishable_from_hardware`                         | **repaired** — existed as `custody_posture_is_distinguishable`, same crate, same property                                           |
+| `compromised_key_revoked_without_identity_revocation`                       | **deliberately absent** — AC#14 names it precisely so the gap stays visible; the RFC states it is "not yet enforced on the ZK path" |
+| `revoked_identity_replay_rejected`, `stale_revocation_snapshot_is_rejected` | **genuine gap** — `revoked_at` and `is_revoked` exist; nothing asserts a verifier fails closed on a stale or unavailable snapshot   |
+| `frost_nonce_determinism_100k_iterations`                                   | **genuine gap**, and AC#8b's file gate fails with it — `tests/integration/frost_nonce_determinism.rs` does not exist                |
+| six further FROST/chain gates                                               | **genuine gaps** — no test shares more than two generic keywords with any name in the tree                                          |
+| four BLS/DKG gates                                                          | **genuine gaps** — same, and the closest match for the rogue-key attack is a sybil test in a different subsystem                    |
+
+**Counts after the repairs: 25 stated, 11 resolving, 14 not.** Three of the
+fifteen have been fixed this way, which is enough to say the class is real and
+common rather than a curiosity of one criterion.
+
+Note also that some of these are §Threat-model gates rather than AC gates — the
+extraction covers both, because both are evidence the RFC says must exist. A
+guard over them would have to resolve a named function _or_ a named file, which
+is why it is not a mechanical extension of the function scan above.
+
+**No guard was added.** The attribution is now done rather than inferred, so a
+ratchet is buildable — but it must span two kinds of evidence, and half of it
+would be a list of known-missing gates whose real value is the reminder to
+implement them. That is a mission, not a test.
 
 ## The two hardening passes
 
@@ -511,7 +533,8 @@ That is the distinction the guard actually depends on.
 - [x] `verify_governance_signature` takes key and signature as slices and routes through `verify_dispatch`.
 - [x] No crate containing the dispatch call is absent from every AC-11 list.
 - [x] Every adapter site naming a concrete algorithm declares that it is an assumption, and names CD-6 as the owner.
-- [x] AC#11's and AC#12's named gate tests resolve under the names the RFC states.
+- [x] AC#11's, AC#12's and AC#15's named gate tests resolve under the names the RFC states.
+- [x] Every remaining unresolved RFC gate is attributed, so a ratchet could be built from measured reasons rather than inference.
 - [x] Workspace `cargo check --all-targets` clean; clippy clean under `--features full`.
 
 ## The three-class lesson

@@ -599,8 +599,12 @@ mod tests {
         );
     }
 
+    /// **Named by RFC-0009 AC#15.** The criterion names this test; it existed
+    /// as `custody_posture_is_distinguishable`, which described the same property in
+    /// the same crate and so did not resolve under the RFC's spelling. Third
+    /// instance of this class in the RFC's own gate names.
     #[test]
-    fn custody_posture_is_distinguishable() {
+    fn software_custody_is_distinguishable_from_hardware() {
         // A software-held ZK key must not read as equivalent to a
         // hardware-held Ed25519 key. Both are valid; conflating them is the
         // failure, so the variants must be distinct values.

@@ -56,6 +56,29 @@ chain exercised was two hops, and G3 names a 3-hop chain as its latency
 scenario. Two hops cannot distinguish "the chain hash commits to depth" from
 "the chain hash is the last envelope's id", because both hold at n=2.
 
+## The RFC already specifies the fix, exactly
+
+This was checked before implementing, because "make it chain" invites inventing
+a formula. RFC-0970 specifies it normatively and the implementation diverges
+from a formula that is written down:
+
+| Where                                      | What it says                                                                                                                                                            |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| §Data Structures, `HopEnvelope.chain_hash` | `H_n = BLAKE3(H_{n-1} ‖ canonical_ser(hop_capability_n))`, with `H_0 = BLAKE3(canonical_ser(InnerRequestRef))`                                                          |
+| §Summary point 10                          | "`verify_chain_hash` real implementation — accumulates `(HopCapability, chain_hash, hop_index)`, reverses the chain, compares computed vs stored hash **at each step**" |
+| §Algorithms, `wrap_for_hop` signature      | takes `prev_chain_hash: &[u8; 32]`                                                                                                                                      |
+| §Algorithms step 6                         | `let new_chain_hash = BLAKE3(prev_chain_hash, &canonical_ser(&cap)?);`                                                                                                  |
+
+The implementation's `wrap_for_hop` has **no `prev_chain_hash` parameter at all**
+and substitutes `BLAKE3(hop_secret)`. So this is not an under-specified design
+gap — it is a divergence from an explicit normative formula that happens to have a
+one-line replacement.
+
+The RFC also specifies the two types the implementation is missing:
+`InnerRequestRef` (with the R16-N3 note "this type was referenced but never
+defined") for computing `H_0`, and the per-step comparison loop inside
+`verify_chain_hash`.
+
 ## What landed alongside this finding
 
 - `tv2_three_hop_chain_verifies` — the missing vector.
@@ -68,6 +91,16 @@ scenario. Two hops cannot distinguish "the chain hash commits to depth" from
   Written with its direction stated explicitly, rather than as `assert!(is_ok())`,
   which would read as coverage of G4 while measuring the opposite.
 
+## Scope, measured
+
+The fix is contained to **one file**. All 29 `wrap_for_hop` references are
+inside `crates/octo-wallet/src/capability/hop_envelope.rs` — no other crate
+calls it. `InnerRequestRef` has zero occurrences anywhere in the tree, which
+confirms the RFC's own R16-N3 note that it "was referenced but never defined"
+rather than being a local omission.
+
+So the blast radius of adding `prev_chain_hash` is one module and its own tests.
+
 ## Acceptance Criteria
 
 - [ ] `chain_hash` accumulates: it commits to the parent hop's hash, so a three-hop chain's tip differs from any of its prefixes _and_ changing any hop changes the tip.
@@ -76,6 +109,7 @@ scenario. Two hops cannot distinguish "the chain hash commits to depth" from
 - [ ] `tampering_with_a_middle_hop_is_not_detected` is **inverted** and passes against the fixed implementation. Leaving it green after the fix is the failure.
 - [ ] `verify_chain_hash_matches_last_envelope` is rewritten so its expectation is independent of the value it is checking.
 - [ ] TV8 resolves to a test that is not `x == x`.
+- [ ] `InnerRequestRef` is defined so `H_0 = BLAKE3(canonical_ser(InnerRequestRef))` can be computed, rather than a placeholder for the first hop.
 
 ## What must not happen
 

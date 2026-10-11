@@ -165,12 +165,32 @@ fields exhaust its possibilities.
 - `wallet_node::handlers::resolve::ResolveDIDResponse::public_key` — a response
   DTO, documented as a placeholder for the storage-pubkey form.
 
-### Not examined
+### The last five, now resolved
 
-Five matches were not traced: `wallet::mpc`, the `octo-ident-storage` registry
-row, a second private key field in `dot::gateway`, one in `dot::dc`, and the
-`octo-ident` rich-document row. They are recorded as open rather than assumed
-clean.
+- `dot::GatewayIdentity::new` and `dot::build_invite` — **constructor
+  parameters**, not fields. They are the only ways to build
+  `GatewayIdentity` and `InviteEnvelope`, so they reinforce the pins on those
+  two already-ruled-out records rather than adding an instance. Worth noting
+  because a scan cannot tell a constructor from a declaration, and the workspace
+  has already once counted constructor calls as verification sites.
+- `wallet::mpc::Xor2Of3Signer::public_key` — a 2-of-3 XOR threshold signer, and
+  **not** an `HsmAdapter`. It is outside the adapter extension path entirely and
+  reaches no dispatch site.
+- `octo-ident-storage`'s registry row — that crate contains **zero**
+  `verify_dispatch` call sites, so it is outside this mission's scope by the
+  criterion used throughout.
+- `octo-ident`'s `VerificationMethod::ed25519` — a constructor, and the one
+  place in the workspace where a fixed-size key is **honest about it**: the
+  algorithm is in the method's name. It is the contrast that makes the others
+  look wrong, and it is worth keeping as the pattern to copy when a type
+  genuinely must stay 32 bytes.
+
+### A note on the shape of the 35
+
+The figure counts constructor parameters and test-body locals alongside struct
+declarations, because no text scan distinguishes them. That is most of why the
+confirmed set is six rather than thirty-five, and it is the same distinction the
+mission's own predecessor was written to correct.
 
 Deciding this generally requires call-graph resolution, not a text scan. That
 approach was prototyped and **rejected on measurement** for the guard that would
@@ -247,8 +267,9 @@ the record. That is the gap this mission closes.
       non-Ed25519 adapter can be written and that `IdentityKey` dispatches on
       the algorithm it reports
 - [ ] Zero-key sentinel behaviour is unchanged for every existing 32-byte key
-- [ ] The five untraced fields are read and each confirmed or ruled out — by
-      reading, not by extending the text scan, which is known to be unsound here
+- [x] The five previously untraced fields are read and each confirmed or ruled
+      out — by reading, not by extending the text scan, which is known to be
+      unsound here
 
 ## Open question
 

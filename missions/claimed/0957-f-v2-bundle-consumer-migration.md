@@ -2,7 +2,23 @@
 
 ## Status
 
-open (2026-08-11).
+Landed in part (2026-08-11). Sites 1 and 2 shipped; **site 3 did not**, and the
+gap between what this file specified and what the code does is recorded below.
+
+The status line this section previously carried said `open` while the file sat in
+`missions/claimed/`. Both were wrong in the same direction — it read as work in
+progress when most of it had already shipped, which is how the stale claims below
+survived long enough to be copied into `octo-cap-zk`'s field documentation.
+
+| Part                               | State                                                                  |
+| ---------------------------------- | ---------------------------------------------------------------------- |
+| V1 substrate removal (`bundle.rs`) | landed — the file and all three V1 symbols are gone                    |
+| Site 1 — `octo-wallet-node` mint   | landed                                                                 |
+| Site 2 — capability issuer         | landed                                                                 |
+| Site 3 — `capability_v2` field     | the **field** landed; the **circuit** it was specified to feed did not |
+
+The unbuilt part of site 3 is tracked in mission `0009-ci`. The `chain_parent`
+binding site 3 inherited but nobody computes is `0009-cf`.
 
 **Substrate:** Mission `0957-f-v2-bundle` LANDED (commit `b6bc190b`)
 provides `CapabilityBundleV2` + `CapabilityTokenV2` in
@@ -20,9 +36,15 @@ has **zero production call sites**. The 3 sites RFC-0009 v1.2 names
 This mission therefore **wraps the raw `Macaroon` emission path at those
 3 sites with `CapabilityBundleV2` envelopes** (instead of migrating V1
 consumers — V1 has no consumers to migrate). V1 wire version becomes
-dead code and gets removed in the same commit. Net result matches RFC
-intent: production traffic carries V2 wire form with `chain_depth` +
-`chain_parent` binding.
+dead code and gets removed in the same commit.
+
+**Correction to the original wording of this section.** It concluded: "Net
+result matches RFC intent: production traffic carries V2 wire form with
+`chain_depth` + `chain_parent` binding." Production traffic does carry the
+V2 wire form. It does **not** carry a `chain_parent` binding — that value
+is never computed by anything and never checked by anything, and every
+production mint writes the zero value. The field travels as reserved
+space. See `0009-cf`.
 
 ## V1 substrate disposition
 
@@ -99,11 +121,31 @@ round-trips `canonical_ser` bytes for the AC-3 zk-circuit rewrite.
 
 **V2 adoption:** `ProofBundle` gains an optional `capability_v2:
 Option<CapabilityBundleV2>` field carrying the underlying capability
-the proof attests to. `ProofBundle::from_bytes` accepts both V1 (raw
-macaroon bytes) AND V2 (`b"cipherocto/bundle/v2" || bundle_id ||
-borsh_bundle_bytes`) wire forms, dispatching via a 16-byte prefix
-discriminator (`CIPHEROCTO_V2_BUNDLE_PREFIX`). The ZK circuit
-constraints accept V2 `chain_depth` as a public input.
+the proof attests to.
+
+**Two parts of this section never shipped. Both are recorded here because this
+file is where the stale version of the claim originated, and it was copied
+verbatim into the `capability_v2` field documentation before anyone checked it.**
+
+1. **"The ZK circuit constraints accept V2 `chain_depth` as a public input."**
+   They do not. `PublicInputs` has no `chain_depth` field, no `chain_parent`
+   field, and no `issuer_did` field, and no source in `zk-circuit`, `zk-verifier`
+   or `zk-vendor` mentions any of them. The field carries the bundle as data and
+   does not affect what the proof proves. Tracked as `0009-ci`.
+
+   The likely reason this survived is a near-miss: `cairo/src/lib.cairo` defines
+   `CHAIN_DEPTH = 3`, which is the **caveat** chain depth and is unrelated.
+   Grepping `chain_depth` across the circuit returns that constant, which looks
+   like confirmation and is not.
+
+2. **"`ProofBundle::from_bytes` accepts both V1 and V2 wire forms, dispatching via
+   a 16-byte prefix discriminator (`CIPHEROCTO_V2_BUNDLE_PREFIX`)."** There is
+   no `from_bytes` on `ProofBundle`. The prefix discriminator does exist and is
+   real, but it lives on `CapabilityBundleV2Envelope` in `octo-cap-macaroon`,
+   which validates the prefix on decode — a different mechanism serving a
+   different purpose. This section also gives the prefix as
+   `b"cipherocto/bundle/v2"`; the implemented constant is
+   `b"cipherocto/v2\x00\x00\x00"`.
 
 ## Wire form discriminator
 
@@ -150,32 +192,42 @@ impl CapabilityBundleV2Envelope {
 
 ## Acceptance Criteria
 
-- [ ] `CapabilityBundleV2Envelope` struct in
+Checked against the tree rather than left as written. `from_bytes` does not exist,
+so the two criteria that depend on it could not have been met by any commit.
+
+- [x] `CapabilityBundleV2Envelope` struct in
       `crates/octo-cap-macaroon/src/bundle_v2.rs` with
-      `CIPHEROCTO_V2_BUNDLE_PREFIX` + `wrap` + `canonical_ser` +
-      `canonical_de`.
-- [ ] `octo-wallet-node` mint handler emits
+      `CIPHEROCTO_V2_BUNDLE_PREFIX` + `canonical_ser` + `canonical_de`.
+      The constructor landed as `new`, not `wrap` as specified here.
+- [x] `octo-wallet-node` mint handler emits
       `CapabilityBundleV2Envelope::canonical_ser()` bytes (not raw
       `Macaroon`).
-- [ ] `octo-capability-issuer-node` issue handler emits
+- [x] `octo-capability-issuer-node` issue handler emits
       `CapabilityBundleV2Envelope` (root: `chain_depth = 0`,
       `chain_parent = [0; 32]`).
-- [ ] `octo-cap-zk::ProofBundle` gains
-      `capability_v2: Option<CapabilityBundleV2>` field; `from_bytes`
-      dispatch via 16-byte prefix.
-- [ ] V1 `CapabilityBundle` deleted (file + re-exports + 11 unit TV).
-- [ ] V2 envelope unit TV (new): `v2_envelope_prefix_is_16_bytes`,
+- [~] `octo-cap-zk::ProofBundle` gains
+  `capability_v2: Option<CapabilityBundleV2>` field — **landed**.
+  `from_bytes` dispatch via 16-byte prefix — **not built, and not
+  buildable as written because `from_bytes` does not exist.**
+  Unbuilt part carried to `0009-ci`.
+- [x] V1 `CapabilityBundle` deleted (file + re-exports + 11 unit TV).
+- [x] V2 envelope unit TV (new): `v2_envelope_prefix_is_16_bytes`,
       `v2_envelope_canonical_ser_roundtrip`, `v2_envelope_rejects_wrong_prefix`,
       `v2_envelope_rejects_truncated_bytes`,
       `v2_envelope_legacy_v1_bytes_fail_decode` (V1 raw macaroon bytes do
       NOT parse as V2 envelope — discriminator catches them).
+      All five exist under the exact names given here.
 - [ ] Integration TV: `octo-wallet-node` mint end-to-end produces
       envelope bytes verifiable by `octo-cap-zk::ProofBundle::from_bytes`.
-- [ ] All existing 188 `octo-cap-macaroon` lib tests still pass.
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings`
+      **Not satisfiable** — depends on a function that was never written. The
+      envelope decodes through `CapabilityBundleV2Envelope::canonical_de`, not
+      through `ProofBundle`.
+- [x] All existing `octo-cap-macaroon` lib tests still pass. (The count
+      written here, 188, is stale; the suite has since grown to 415.)
+- [x] `cargo clippy --all-targets --all-features -- -D warnings`
       passes across all 4 touched crates (`octo-cap-macaroon`,
       `octo-wallet-node`, `octo-capability-issuer-node`, `octo-cap-zk`).
-- [ ] `cargo fmt --all -- --check` passes.
+- [x] `cargo fmt --all -- --check` passes.
 
 ## Implementation Guide
 
@@ -217,6 +269,7 @@ half (substrate only) already landed in commit `b6bc190b`.
 
 ## Version History
 
-| Version | Date       | Status | Changes                                                                                                                                                           |
-| ------- | ---------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v0.1    | 2026-08-11 | open   | Filed after recon revealed V1 substrate is dead; scope pivoted from "V1→V2 migration" to "introduce V2 envelope at raw-Macaroon boundaries + delete V1 substrate" |
+| Version | Date       | Status  | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------- | ---------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.2    | 2026-10-12 | partial | Reconciled the file against the tree. Status said `open` while the file sat in `claimed/` and sites 1-2 had shipped; corrected to landed-in-part. Two claims here never shipped and had propagated: the circuit was specified to accept V2 `chain_depth` as a public input and does not (`0009-ci`), and `ProofBundle::from_bytes` was specified as the V1/V2 prefix dispatcher and does not exist, making the integration-TV criterion unsatisfiable as written. Also corrected the "chain_parent binding" conclusion, the prefix literal (`b"cipherocto/bundle/v2"` specified vs `b"cipherocto/v2\x00\x00\x00"` implemented), the constructor name (`wrap` specified, `new` implemented), and the stale 188-test count. |
+| v0.1    | 2026-08-11 | open    | Filed after recon revealed V1 substrate is dead; scope pivoted from "V1→V2 migration" to "introduce V2 envelope at raw-Macaroon boundaries + delete V1 substrate"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |

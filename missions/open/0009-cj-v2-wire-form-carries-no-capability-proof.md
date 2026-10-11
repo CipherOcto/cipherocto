@@ -1,6 +1,6 @@
 ---
 name: 0009-cj-v2-wire-form-carries-no-capability-proof
-description: CapabilityBundleV2 as produced by both mint sites contains no macaroon, no signature and no caveat set. Its holder_record_bytes field is documented as a serialized HolderRecord that must be decoded via HolderRecord::canonical_de, but both producers write raw non-JSON bytes, and the documented decode fails on every bundle production emits. The wire form that replaced the capability on the response path carries no proof material.
+description: CapabilityBundleV2 as produced by both mint sites contains no macaroon, no signature and no caveat set. Its holder_record_bytes field is documented as a serialized HolderRecord that must be decoded via HolderRecord::canonical_de, but both producers write raw non-JSON bytes, and the documented decode fails on every bundle production emits. One producer writes the capability root secret into it. Root cause found: RFC-0009 §Forward compatibility specifies holder_record: HolderRecord and discharge_macaroon: DischargeMacaroon as TYPED fields, and the implementation replaced both with Vec<u8> to avoid a layer dependency — which removed the type system from the check and is why two producers could disagree about what the field holds. The wire form that replaced the capability on the response path carries no proof material.
 metadata:
   node_type: mission
   type: implementation
@@ -114,6 +114,46 @@ bundle it cannot use.
 lacks expiry field; root TTL lives in caveat" — and the caveats are among the
 things the envelope does not carry. The expiry was moved out of reach along with
 everything else.
+
+## Root cause: the RFC specified typed fields, and the implementation byte-ified them
+
+This is the part that makes the finding fixable rather than merely real.
+
+RFC-0009 §Forward compatibility gives the schema explicitly:
+
+```rust
+pub struct CapabilityBundleV2 {
+    pub bundle_version: u8, // = 2
+    pub token: CapabilityTokenV2,
+    pub holder_record: HolderRecord,          // typed
+    pub discharge_macaroon: DischargeMacaroon, // typed
+}
+```
+
+The implementation has `holder_record_bytes: Vec<u8>` and
+`discharge_macaroon_bytes: Vec<u8>`, and `bundle_v2`'s own doc records the second
+as a deliberate **deviation from RFC-0009 v1.2** — taken to keep
+`octo-cap-macaroon` free of `quota-router-storage` deps (a Layer 4 → Layer B
+edge) and to avoid a `Vec<Caveat>` borsh derive cascade.
+
+So the divergence is documented, deliberate, and defensible on its own terms.
+What was not considered is what the byte indirection **costs**:
+
+**It removes the type system from the check.** With
+`holder_record: HolderRecord`, neither producer _could_ have written a
+`capability_id` or a capability root secret into it — the compiler would have
+rejected both. With `Vec<u8>`, both compiled, both shipped, and the field's
+contract became a comment. That is why the two producers disagree with each
+other, and it is why one of them put a secret in there: the type that would have
+refused it was replaced by bytes and nothing replaced it.
+
+This is §Stable Abstractions Principle failing in an unusual direction. The
+abstraction was _removed_ to avoid a dependency, and the dependency was the thing
+enforcing the contract. The resolution is probably not "put the concrete type
+back" — the layer concern that motivated the deviation is real, and this arc has
+a record of overrides that ignored it. It is more likely a constructor that
+takes a `HolderRecord` and serializes it, so the type still does the checking
+even if the wire stays bytes.
 
 ## Why this is filed rather than closed
 

@@ -420,6 +420,36 @@ The fifteen are not all the same kind of thing, and the difference matters:
   BLS). Some are likely present under other names — AC#9's gate is a whole test
   _file_ rather than a named function — but that has not been checked.
 
+### The FROST gate, and the test that would have been a lie
+
+AC#8b requires `tests/integration/frost_nonce_determinism.rs` to exist and
+assert that 100K operations produce deterministic nonces. Measured:
+
+- No `frost` dependency exists in any `Cargo.toml` in the workspace.
+- No `frost` source exists in `octo-wallet`.
+- `ThresholdSigner` and `Xor2Of3Signer` **do** exist, in `octo-wallet/src/mpc.rs`
+  — the XOR-based MVP the RFC's Commit 2 names.
+- `BLS12381ThresholdSigner`, `SchnorrThresholdSigner` and a `threshold_signer`
+  field do not exist. Zero occurrences each.
+
+So threshold signing is partly present and FROST is absent, and AC#8b gates a
+FROST property against an implementation that was never written.
+
+**The test was deliberately not written.** `Xor2Of3Signer::sign_combined`
+reconstructs the secret from the shares and signs with plain Ed25519. There is
+no nonce in that path at all — Ed25519 is deterministic by construction. A 100K
+determinism test against it would pass instantly and assert nothing about FROST
+nonce derivation, because the property under test would not exist in the code
+being tested.
+
+That is the exact shape this arc exists to prevent: a file that exists, a test
+that passes, and a criterion that reads as satisfied while measuring nothing. A
+missing gate is visible. A vacuous one is worse, because it looks like evidence.
+
+Closing this properly means implementing FROST — a threshold scheme with
+RFC 9591's deterministic nonce derivation — which is a piece of work far outside
+this arc's scope. The finding is recorded so the criterion is not read as met.
+
 ### Attribution of the remaining fourteen
 
 Each was matched against the tree by keyword overlap, then read. That check
@@ -434,7 +464,7 @@ showed it. Renamed.
 | `software_custody_is_distinguishable_from_hardware`                         | **repaired** — existed as `custody_posture_is_distinguishable`, same crate, same property                                           |
 | `compromised_key_revoked_without_identity_revocation`                       | **deliberately absent** — AC#14 names it precisely so the gap stays visible; the RFC states it is "not yet enforced on the ZK path" |
 | `revoked_identity_replay_rejected`, `stale_revocation_snapshot_is_rejected` | **genuine gap** — `revoked_at` and `is_revoked` exist; nothing asserts a verifier fails closed on a stale or unavailable snapshot   |
-| `frost_nonce_determinism_100k_iterations`                                   | **genuine gap**, and AC#8b's file gate fails with it — `tests/integration/frost_nonce_determinism.rs` does not exist                |
+| `frost_nonce_determinism_100k_iterations`                                   | **unsatisfiable as written** — see §The FROST gate below                                                                            |
 | six further FROST/chain gates                                               | **genuine gaps** — no test shares more than two generic keywords with any name in the tree                                          |
 | four BLS/DKG gates                                                          | **genuine gaps** — same, and the closest match for the rogue-key attack is a sybil test in a different subsystem                    |
 

@@ -186,7 +186,8 @@ What it needs first is a decision this mission should not make alone:
 - [ ] `CapabilityVerification` can represent an ask-unbound capability, or the RFC states what a verifier reports for one and `evaluate_linkage` cannot compare it into a false link.
 - [x] `CapabilityToken` exposes the RFC's ask-binding accessor, or RFC-0969 §Algorithms is amended to name the caveat-based accessor that replaces it. **Done** — `ask_binding()` reads `Caveat::AskBinding` from the macaroon, since `CapabilityToken` carries no `ask_id` field.
 - [ ] Dispatch semantics are settled. **The RFC already answered this one** — v1.2's 4-way table is unambiguous and `BothSchemesUnsupported` / `NoAuth` are its names. The remaining question is only whether the implementation adopts it or the RFC is reopened, and adopting it is the default unless there is a recorded reason not to.
-- [ ] A production mint path attaches a `Caveat::AskBinding`, so a capability that is ask-bound can exist. **This is the prerequisite for the verifier criterion below**, and it does not exist today.
+- [ ] A production mint path attaches a `Caveat::AskBinding`, so a capability that is ask-bound can exist. **This is the prerequisite for the verifier criterion below**, and it does not exist today. Owned by RFC-0959 §Phase 3, where the item is already an unchecked box — this is not new work, it is work that RFC already tracks and nobody has ticked.
+- [ ] `CapabilityVerification.ask_id` can represent "unbound", matching the `Option` RFC-0970 already assumes `ask_binding()` returns. A bare `[u8; 32]` cannot, and that value flows into `AuthenticatedRequest.ask_id` and on into settlement.
 - [ ] A production `impl CapabilityVerifier` exists that calls real verification and is reachable from `GatewayAuthenticator::new` outside tests.
 - [ ] Its failure modes are fail-closed per cause, not collapsed into one variant — `VerifyError` has seven variants and `CapError` has three.
 - [ ] `a_forged_capability_is_refused_by_the_gateway` — mutation-verified, and named for what it proves rather than for the pipeline that hosts it.
@@ -203,6 +204,54 @@ Recorded so they are not re-opened as open questions:
   production `CapabilityVerifier` exists to report an unbound ask at all. It
   becomes reachable the moment the trait gets an implementation that fills a
   sentinel. That ordering is the thing to protect.
+
+## The semantics question is answered by the RFCs, not by a decision
+
+The last open item was what a verifier reports for an ask-unbound capability.
+It does not need to be chosen — three accepted RFCs already say.
+
+**RFC-0970 §Forwarding Hop Auth Envelope states the accessor's return type:**
+
+> `ask_binding()` returns `Option<[u8; 32]>` so the types don't match
+
+That is the method just implemented, with the `Option` the RFC names. Two things
+follow. The accessor was _expected to exist_ — RFC-0970 was written against it.
+And unbound is a **first-class state**, not a failure, because the return type
+carries `Option`.
+
+The same RFC passage calls out a sibling `audience_did_for_check()` as a
+"phantom method", which is the identical defect class as RFC-0969's missing
+`ask_binding()`: a spec calling a method the substrate never had. Two accepted
+RFCs, the same mistake.
+
+**Ask binding is a market-path concern, not a universal one:**
+
+| Evidence                    | Says                                                                                               |
+| --------------------------- | -------------------------------------------------------------------------------------------------- |
+| RFC-0957 caveat schema      | `AskBinding(AskId), // bind capability to a specific Ask (RFC-0959)`                               |
+| RFC-0959 §Economic exploits | `ask_id` binding is the mitigation for _rate-table switch after settlement_ — a marketplace attack |
+| RFC-0959 §Phase 3           | unchecked: "Bind Ask identity into RFC-0957 `AskBinding` caveat payload"                           |
+| `HolderRecord::ask_id`      | `None` for non-market tokens and for `HopCapability`                                               |
+
+So: attach the binding on the settlement path, not on every mint, and let
+`Ok(None)` stand everywhere else.
+
+### The consequence, which is a type change rather than a choice
+
+A verifier that reports `ask_id` faithfully must be able to say "unbound".
+`CapabilityVerification.ask_id` is a bare `[u8; 32]` and cannot.
+
+Under RFC-0969's v1.2 single-scheme dispatch this is only a reporting defect —
+the value is never compared — but it is still a defect, because a capability-only
+request flows that `ask_id` straight into `AuthenticatedRequest.ask_id` and on
+into settlement. Today the only thing preventing a fabricated binding is that no
+production verifier exists. That is the same "unreachable today, reachable the
+moment someone fills in the trait" property as before, one type over.
+
+The honest fix is `Option<[u8; 32]>` on `CapabilityVerification`, matching what
+RFC-0970 already assumes. Whether to land that before or after the v1.2 dispatch
+catch-up is a sequencing judgement: removing the dead linkage first retires the
+comparison hazard, and doing the type change first leaves work to be undone.
 
 ## Where `ask_id` comes from: answered, and the answer is "nowhere"
 

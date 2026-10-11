@@ -1064,6 +1064,37 @@ merely missing — the thing it would enforce has never been produced. Five
 separate-looking findings were one absence, and the absence now has a measured
 floor under it.
 
+## The accessor was already specified — and nobody implemented it
+
+The last open question was what a verifier reports for an ask-unbound
+capability. It does not need choosing: **RFC-0970 already states the return
+type.**
+
+> `ask_binding()` returns `Option<[u8; 32]>` so the types don't match
+
+The accessor landed this arc returns exactly that, `Option` included. Two things
+follow, and both are worth having on the record.
+
+The method was **expected to exist**. RFC-0970 was written against a
+`ask_binding()` that was never there — the same defect as RFC-0969's missing
+`cap_token.ask_binding()`. And RFC-0970's own passage calls out a sibling
+`audience_did_for_check()` as a _phantom method_. **Two accepted RFCs, the same
+mistake: a spec calling a method the substrate never had.** That is a pattern,
+not a coincidence.
+
+And unbound is **first-class**, not a failure — the return type carries
+`Option`. Which settles the design question that had been deferred three times:
+the gateway verifier must handle `None` as normal, and
+`CapabilityVerification.ask_id: [u8; 32]` — a bare array that cannot represent
+absence — is therefore the wrong type. Not a hard call, once the RFCs are read.
+
+Ask binding is also a **market-path** concern, not a universal one. RFC-0957
+documents the caveat as "bind capability to a specific Ask (RFC-0959)", and
+RFC-0959 lists the binding as the mitigation for _rate-table switch after
+settlement_ — a marketplace attack. RFC-0959 §Phase 3 already carries it as an
+unchecked box. So the mint-side prerequisite is not new work; it is work an
+accepted RFC has been tracking unticked.
+
 ## What this arc handed on
 
 Five findings were scoped and filed as missions, because they are implementation

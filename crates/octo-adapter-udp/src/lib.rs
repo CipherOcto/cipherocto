@@ -191,7 +191,8 @@ impl PlatformAdapter for UdpAdapter {
         };
         let env = decode()?;
         // Ed25519 named explicitly so this reads as an assumption rather than an
-        // accident; per-peer algorithm binding is CD-6's work.
+        // accident. CD-6's registry binds the key to a known peer; naming the
+        // algorithm per peer is a step beyond what that plan specifies.
         env.verify(&octo_algo_ed25519::ed25519_algorithm_id(), &env.source_peer)
             .map_err(|e| PlatformAdapterError::Unreachable {
                 platform: "udp".into(),

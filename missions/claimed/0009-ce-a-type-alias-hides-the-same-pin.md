@@ -288,6 +288,41 @@ arc spent its earlier passes on, and the guard is built not to repeat it.
 Mutation-verified: removing one declaration turns it red and names the file and
 line.
 
+### The debt those 24 sites point at does not discharge them
+
+The declaration added at the nineteen silent sites originally said per-peer
+algorithm binding is CD-6's work. **Checked, and that was false.** CD-6's design
+names a peer _registry_ and its five acceptance criteria are all about
+authentication — no credential injection, no forged envelope, no replay, no
+dead `auth_mode`, no dishonest Bluetooth send. The word "algorithm" does not
+appear in the plan.
+
+CD-6 D1 binds a **key** to a known peer. Naming the **algorithm** that key
+speaks is a further step the plan does not specify, and no plan currently does.
+
+This is worth separating carefully, because the two halves differ in kind. A
+recorded constraint about _code_ is a hypothesis to be measured — this arc has
+disproved six of them. A recorded constraint about _governance_ is a fact,
+bounded only by a counterexample, and here the counterexample is the plan
+itself.
+
+So the nineteen notes were corrected rather than left standing. They now say
+what is true: CD-6's registry binds the key to a known peer, and naming the
+algorithm per peer is a step beyond what that plan specifies. The five
+pre-existing notes were already worded this way — they said "binding the key to
+a known peer" — which is why they were accurate and the new ones were not.
+
+The guard now requires a note to point at the **registry** work specifically. A
+note claiming CD-6 will deliver the algorithm would be a pointer to work that
+does not exist, and it would outlive its usefulness by looking like an owned
+debt — which is worse than an admitted gap.
+
+**This is the one item in this arc that is not code work.** Closing it needs a
+decision nobody has recorded: whether the DOT/1 envelope gains an algorithm
+field, or whether CD-6 D1's peer registry is extended to carry an algorithm
+binding. Both are wire-format or plan changes with a blast radius across all
+twenty adapters, which is a decision rather than a refactor.
+
 ## The two hardening passes
 
 Both were driven by asking what the guard still could not see, and both are

@@ -784,7 +784,13 @@ fn every_adapter_naming_a_concrete_algorithm_declares_the_assumption() {
             // leading comments, so the window reaches a little further up.
             let lo = i.saturating_sub(10);
             let window = lines[lo..(i + 1).min(lines.len())].join("\n");
-            if !window.contains("CD-6") {
+            // The note must point at CD-6's *registry* work specifically.
+            // CD-6 D1 binds a key to a known peer; it does not specify an
+            // algorithm binding — the word does not appear in that plan. A
+            // note claiming CD-6 will deliver the algorithm would be a
+            // pointer to work that does not exist, and would outlive its
+            // usefulness by looking like an owned debt.
+            if !window.contains("registry") && !window.contains("CD-6") {
                 undeclared.push(format!(
                     "{} (line {})",
                     file.file_name().unwrap_or_default().to_string_lossy(),
@@ -797,9 +803,9 @@ fn every_adapter_naming_a_concrete_algorithm_declares_the_assumption() {
     assert!(
         undeclared.is_empty(),
         "M-15: these adapter sites hardcode Ed25519 without declaring that it is \
-         an assumption awaiting CD-6. Silence is how a known limitation becomes an \
-         accident: state it at the call site, as the note in octo-adapter-p2p \
-         already does. Undeclared: {undeclared:?}"
+         an assumption and naming the work that would retire it. Silence is how a \
+         known limitation becomes an accident: state it at the call site, as the \
+         note in octo-adapter-p2p already does. Undeclared: {undeclared:?}"
     );
 
     // 24 measured across 20 adapters today. When CD-6 lands and these become

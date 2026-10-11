@@ -1771,6 +1771,11 @@ const AC11_DISPATCHED: &[&str] = &[
     // belongs here: under the inline-rebuild scan, which is a stronger check
     // than a count, since it catches a site whatever the total is.
     "crates/octo-network/src",
+    // Mission 0009-ca: the last allowlisted file, `authorization.rs`, was
+    // dispatched and its entry removed, so the crate no longer needs to be
+    // scanned by hand below. RFC-0871's authorization verification is under
+    // this scan now, not excused from it.
+    "crates/octo-protocol/src",
 ];
 
 /// Crates that **have** un-dispatched AC#11 sites and are known to.
@@ -1862,17 +1867,28 @@ const AC11_PENDING: &[(&str, usize, &str)] = &[
     (
         "crates/quota-router-core/src/receipt.rs",
         4,
-        "the only production one is wrap_receipt_envelope, which seeds the \
-         signature with an all-zero value for the caller to overwrite via \
-         sign_envelope, so nothing verifies this placeholder. The count is of \
-         the whole file, test code included, because the assertion reads the \
-         file rather than a prefix of it. Recounted 3 to 4 when the pending \
-         count and the completeness scan were merged onto one matcher: the \
-         serde Deserialize for Signature rebuilds one with from_slice, which \
-         the old two-constructor count could not see. Pending rather than \
-         allowlisted only because the crate is not on the scanned list; if it \
-         is added, the production one becomes an allowlist entry with the same \
-         reasoning as the sm-engine one.",
+        "CORRECTED, because the previous text here was wrong in two \
+         checkable ways. It said 'the only production one is \
+         wrap_receipt_envelope'. There are THREE production sites, and only \
+         two of them are placeholders. Measured: line 128 seeds \
+         signature with an all-zero value for sign_envelope to overwrite, \
+         line 196 does the same for router_sig, and neither is verified \
+         anywhere. Line 89 is a different shape entirely and was \
+         misdescribed as a placeholder: it is the serde deserialize shim, \
+         which rebuilds a Signature from attacker-supplied wire bytes with \
+         no algorithm involved at all. That is the shape a verifier will \
+         eventually consume, and the module doc says replay nodes are meant \
+         to verify this envelope. No such verifier exists in the workspace \
+         yet, which is why AC#11's verification-site clause is not literally \
+         triggered today. A serde impl has no caller to supply an algorithm \
+         to, so it cannot be dispatched the way the other sites were; what \
+         it can do is state the shape honestly so the verifier that lands \
+         does not assume the signature already names its algorithm. The \
+         fourth site is a test. Counted 3 to 4 when the pending count and \
+         the completeness scan were merged onto one matcher in 0009-c8: the \
+         old two-constructor count could not see from_slice at all. Pending \
+         rather than allowlisted only because the crate is not on the \
+         scanned list.",
     ),
 ];
 
@@ -1960,23 +1976,26 @@ fn ac11_no_verification_site_rebuilds_a_key_or_signature_inline() {
     let mut scanned_total = 0usize;
 
     let mut dirs: Vec<&str> = AC11_DISPATCHED.to_vec();
-    // These two are scanned *only* because of this line — neither is in
-    // `AC11_DISPATCHED`. For `octo-protocol` that is because it holds the one
-    // allowlisted file, so the crate is walked even though that file is
-    // skipped, and a NEW hardcoded site beside the exception is still caught.
+    // This crate is scanned *only* because of this line — it is not in
+    // `AC11_DISPATCHED`.
     //
-    // `octo-cap-macaroon` is here for a different reason now, and the reason
-    // matters: it was here because `token.rs` was allowlisted, and it stopped
-    // being allowlisted in the same change. The justification comment above it
-    // went stale immediately, which made this line look like leftover tidying.
+    // It was here because `token.rs` was allowlisted, and it stopped being
+    // allowlisted in the same change. The justification comment went stale
+    // immediately, which made this line look like leftover tidying.
     //
     // It is not. Removing it silently un-scans the entire crate. Verified:
     // with this line gone, a `VerifyingKey::from_bytes` reintroduced into
     // `token.rs` passes this gate. Do not remove it on the grounds that the
     // crate is no longer excused — the crate was never listed here to begin
     // with.
+    //
+    // `octo-protocol` was the second crate on this line, for the mirror-image
+    // reason: scanned because it held the one allowlisted file. `0009-ca`
+    // dispatched that file and removed the entry, which left the line and its
+    // justification stale in exactly the way the paragraph above describes.
+    // Rather than leave it, `octo-protocol` moved into `AC11_DISPATCHED`,
+    // which is where a fully dispatched crate belongs.
     dirs.push("crates/octo-cap-macaroon/src");
-    dirs.push("crates/octo-protocol/src");
 
     for dir in dirs {
         let abs = root.join(dir);

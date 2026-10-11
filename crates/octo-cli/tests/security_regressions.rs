@@ -819,6 +819,34 @@ fn m15_every_adapter_canonicalize_verifies_the_envelope() {
                  source_peer. A hardcoded key would make the check theatre.",
                 file.display()
             );
+            // The call must carry the algorithm the caller supplied, as its
+            // first argument (RFC-0009 AC#11; the signature took that shape in
+            // mission `0009-c7`).
+            //
+            // **This check exists because its absence cost fourteen adapters.**
+            // When `0009-c7` moved the algorithm to first position, it stranded
+            // every caller still passing the bare `.verify(&env.source_peer)`
+            // form, and this guard was edited in the same change so the bare
+            // form stopped matching. The gate went green over fourteen crates
+            // that did not compile. A guard edited to accommodate a half-finished
+            // migration is no longer a guard.
+            //
+            // The test is **arity, not naming**. Matching on an
+            // `_algorithm_id()` spelling would be the third name-based measure
+            // in this arc to produce a wrong number, and it would fail the moment
+            // a fifth algorithm appears. What must hold is structural: the
+            // envelope carries no algorithm, so anything preceding the key is
+            // caller-supplied by construction, and a single-argument call is
+            // precisely the pre-`0009-c7` shape.
+            assert!(
+                count_top_level_args(call) >= 2,
+                "M-15: {} has a `{call}` with no algorithm argument. Since \
+                 `0009-c7` the verifier dispatches on the algorithm the CALLER \
+                 names, and the envelope carries none, so a one-argument call is \
+                 the pre-dispatch shape — it verifies under whatever the \
+                 implementation assumes rather than what the peer speaks.",
+                file.display()
+            );
         }
         // The verification must guard the value the function RETURNS. Adapters
         // with two decode paths (quic, p2p, webrtc: binary + DOT/1 text
@@ -838,6 +866,43 @@ fn m15_every_adapter_canonicalize_verifies_the_envelope() {
              verified value — the check does not guard delivery.",
             file.display()
         );
+    }
+}
+
+/// Arguments at the top level of a call, counted with paren depth tracked.
+///
+/// Depth matters: `.verify(&alg_id(), &env.source_peer)` contains a comma
+/// inside `alg_id()`'s own parentheses, and a naive `split(',')` reports two
+/// arguments for the one-argument call `.verify(f(), &k)`. Counting only
+/// depth-zero commas is what makes the arity check mean what it says.
+fn count_top_level_args(call: &str) -> usize {
+    let open = match call.find('(') {
+        Some(i) => i,
+        None => return 0,
+    };
+    let bytes = call.as_bytes();
+    let mut depth = 0i32;
+    let mut commas = 0usize;
+    let mut any_content = false;
+    for &b in &bytes[open..] {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            b',' if depth == 1 => commas += 1,
+            b' ' | b'\n' | b'\t' | b'\r' if depth == 1 => {}
+            _ if depth == 1 => any_content = true,
+            _ => {}
+        }
+    }
+    if any_content {
+        commas + 1
+    } else {
+        0
     }
 }
 

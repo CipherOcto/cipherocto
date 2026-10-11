@@ -316,11 +316,40 @@ its algorithm argument, because every one of them signed with Ed25519.
 function never mentions `verify_dispatch`, so this vector skips it. Verified by
 planting one: green. The five that exist were fixed by hand the same day.
 
-Catching them means following the call graph, and a half-version would have to
-guess which `verify_*` names are verifiers — which is precisely how a guard
-starts reporting things nobody can act on. The gap is written into the guard's
-own doc comment so a reader who assumes it is total goes looking for that
-class instead of trusting a green result.
+Catching them means following the call graph. That was prototyped and measured
+before any Rust was written, and it does not work — recorded so nobody attempts
+it a third time.
+
+**The prototype.** Take the set of function names whose body contains
+`verify_dispatch`, then iterate to a fixpoint adding any name called by
+something already in the set. Flag a fixed-size key parameter on any function
+whose name lands in that closure.
+
+**The result.** The closure explodes: **3,265 of 5,457** function names enter
+it. Method names are not unique across types, so `new`, `verify` and `default`
+pull in almost everything, including functions with nothing to do with
+verification.
+
+**The verdict: 15 hits, not one of them a forwarder.** Onion-layer
+`session_key`s and a `relay_private_key` (symmetric, genuinely 32 bytes), a
+`cache_key_hash` in a circuit breaker, `signing_key`s for proof aggregation,
+two `*_key_id` fields that are identifiers rather than keys, and
+`verify_platform_admin_proof` again — the role-binding comparison that looks
+like a verifier and is not.
+
+Zero true positives against fifteen false ones. A correct version would need
+type or path resolution to disambiguate method names, which is an analysis of
+the crate rather than a scan of its text, and it would have to stay correct as
+the code moves underneath it.
+
+So the gap stays open and stated. The forwarder class was swept by hand — six
+sites, all fixed — and that sweep is what says there are no more. What remains
+unguarded is a _new_ forwarder appearing, which is a real cost and is written
+down rather than hidden.
+
+The gap is also written into the guard's own doc comment, so a reader who
+assumes it is total goes looking for that class instead of trusting a green
+result.
 
 ## Validation
 

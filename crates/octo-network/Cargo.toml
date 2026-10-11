@@ -80,6 +80,14 @@ octo-sync = { path = "../../octo-sync", features = ["test-util"] }
 octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
 # Mission 0855p-b / 0968 Phase 4 — 2-node mesh integration test
 octo-adapter-p2p = { path = "../octo-adapter-p2p" }
+# Second registered algorithm (Layer A, RFC-0009 AC#11). Dev-only, and the
+# reason is specific: a stark-schnorr key is 33 bytes where Ed25519 is 32, so
+# it is the one key in the workspace that PROVES a verification site takes a
+# key by slice rather than by a 32-byte array. Signing with it is what turns
+# "the body calls verify_dispatch" into "a second algorithm is usable here".
+# A test that only rejected an Ed25519 proof proved nothing — mutation showed
+# a hardcoded verifier passing it.
+octo-algo-stark-schnorr = { path = "../octo-algo-stark-schnorr" }
 
 [features]
 default = []

@@ -1038,3 +1038,64 @@ mod tests {
         }
     }
 }
+
+// ── Mission 0009-cc: a second algorithm, end to end, in this layer ────────
+//
+// The vectors above prove the *body* dispatches. This one proves a non-Ed25519
+// key can reach it, which is the property every one of them was blind to —
+// including through the mutation that proved dispatch was real. A hardcoded
+// verifier passes all three of them.
+//
+// What makes it possible at all: `verify` takes the key as a slice. It did not
+// for the whole of the dispatch work, where `&[u8; 32]` looked like it had
+// fixed the problem after `0009-cb` removed the `VerifyingKey` type. A
+// stark-schnorr public key is 33 bytes and could not have been passed.
+
+#[test]
+fn dot_envelope_verifies_under_stark_schnorr() {
+    use octo_algo_stark_schnorr::{public_key, sign, Felt};
+
+    octo_algo_ed25519::install().expect("install ed25519");
+    octo_algo_stark_schnorr::install().expect("install stark-schnorr");
+
+    let secret = Felt::from_hex_unchecked("0x2f1e3d4c5b6a79880716253443526170");
+    let nonce = Felt::from_hex_unchecked("0x13579bdf02468ace");
+    let key = public_key(&secret).expect("derives a public key");
+    let wire = key.to_wire();
+    assert_eq!(wire.len(), 33, "stark-schnorr keys are 33 bytes");
+
+    let mut env = CreateGroupEnvelope {
+        domain_id: [0x11; 32],
+        mission_id: [0x22; 32],
+        platform: "whatsapp".into(),
+        proposed_group_metadata: b"{}".to_vec(),
+        initial_invite_count: 2,
+        dc_id: [0x42; 32],
+        nonce: [0x55; 32],
+        current_epoch: 1,
+        coordinator_term_id: 1,
+        group_visibility: GroupVisibility::Public,
+        cgroup_hash: [0u8; 32],
+        signature: [0u8; 64],
+    };
+    env.cgroup_hash = env.compute_cgroup_hash();
+    // The envelope's signature field is a 64-byte array and a stark-schnorr
+    // signature is 64 bytes, so it fits without touching the wire format.
+    env.signature = sign(&secret, &env.cgroup_hash, &nonce)
+        .expect("sign")
+        .to_wire();
+
+    let algorithm = octo_algo_stark_schnorr::stark_schnorr_algorithm_id();
+    assert!(
+        env.verify(&algorithm, &wire).is_ok(),
+        "a stark-schnorr envelope must verify under stark-schnorr"
+    );
+
+    // And the same envelope under Ed25519 must not, so the acceptance above
+    // came from the algorithm and not from the signature merely parsing.
+    assert!(
+        env.verify(&octo_algo_ed25519::ed25519_algorithm_id(), &wire)
+            .is_err(),
+        "a stark-schnorr envelope must not verify as Ed25519"
+    );
+}

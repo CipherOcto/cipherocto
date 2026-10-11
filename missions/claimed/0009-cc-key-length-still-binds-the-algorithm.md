@@ -288,6 +288,28 @@ mirror-image error of widening a macaroon root secret.
 So the forwarder class is now six sites, all fixed, and the sweep says there
 are no more rather than assuming it.
 
+### The second-algorithm vector, in the layer that has 25 of them
+
+`octo-wallet`'s lifecycle path got the round trip in `0009-cc`. The 25 `dot/`
+envelopes did not — they were widened and compiling, but nothing had ever
+signed one with anything but Ed25519.
+
+`dot_envelope_verifies_under_stark_schnorr` closes that. It builds a
+`CreateGroupEnvelope`, signs its `cgroup_hash` with a 33-byte stark-schnorr key,
+verifies through `CreateGroupEnvelope::verify`, and checks the same envelope is
+refused under Ed25519 so the acceptance came from the algorithm.
+
+The signature field needed no change to make this possible: it is a 64-byte
+array and a stark-schnorr signature is 64 bytes.
+
+Hardcoding the algorithm in `CreateGroupEnvelope::verify` turns it red. So now
+both ends of the arc carry a vector a hardcoded verifier cannot pass — the
+wallet lifecycle path and the transport-envelope layer that started it.
+
+This is why the `dot/` layer needed the widening at all. Every vector it had
+for the whole of the dispatch work would pass against a verifier that ignored
+its algorithm argument, because every one of them signed with Ed25519.
+
 ### What it does not catch
 
 **Forwarders.** A function that takes the key and hands it to another _verify_

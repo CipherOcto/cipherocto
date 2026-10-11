@@ -2489,3 +2489,234 @@ fn ac11_every_out_of_scope_crate_is_justified_and_disjoint() {
         );
     }
 }
+
+/// Split a Rust source file into `(signature, body)` per function.
+///
+/// The point is scope. An earlier version of the key-shape guard matched a
+/// binding name against a declaration found *anywhere in the file*, which
+/// flagged a wire record field, an identity key field and two test fakes
+/// whose parameter names happened to collide with a real verifier's. None of
+/// those is a verification parameter, and a guard whose first report is
+/// inactionable gets muted.
+///
+/// Scoping to a function body removes all four: those declarations are either
+/// at file scope or inside a different `fn` than the `verify_dispatch` call.
+fn fn_blocks(src: &str) -> Vec<(String, String)> {
+    let lines: Vec<&str> = src.lines().collect();
+    let starts: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| {
+            let t = l.trim_start();
+            (t.starts_with("fn ")
+                || t.starts_with("pub fn ")
+                || t.starts_with("pub(crate) fn ")
+                || t.starts_with("async fn ")
+                || t.starts_with("pub async fn "))
+                && l.contains("fn ")
+                && !t.starts_with("//")
+        })
+        .map(|(i, _)| i)
+        .collect();
+    let mut out = Vec::new();
+    for (n, &s) in starts.iter().enumerate() {
+        let indent = lines[s].len() - lines[s].trim_start().len();
+        let end = starts
+            .get(n + 1)
+            .copied()
+            .unwrap_or(lines.len())
+            .min(lines.len());
+        // Signature: up to the first line that opens a block.
+        let mut sig_end = s;
+        while sig_end < end && !lines[sig_end].contains('{') {
+            sig_end += 1;
+        }
+        let sig = lines[s..=sig_end.min(end - 1)].join("\n");
+        let body = lines[(sig_end + 1).min(end)..end]
+            .iter()
+            .take_while(|l| {
+                // Stop at a closing brace at or left of the fn's own indent.
+                let t = l.trim();
+                let ind = l.len() - l.trim_start().len();
+                !(t == "}" && ind <= indent)
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+        let _ = &lines;
+        out.push((sig, body));
+    }
+    out
+}
+
+/// Split a call's argument text into top-level arguments.
+fn top_level_args(inner: &str) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
+    let mut depth = 0i32;
+    let mut cur = String::new();
+    for c in inner.chars() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            _ => {}
+        }
+        if c == ',' && depth == 0 {
+            args.push(std::mem::take(&mut cur));
+            continue;
+        }
+        cur.push(c);
+    }
+    args.push(cur);
+    args
+}
+
+/// A verification site's key must be a slice, never a fixed-size array.
+///
+/// This is the *second* half of what AC#11 asks for, and it went unseen for
+/// the whole of the dispatch work. Every site was converted from
+/// `key: &VerifyingKey` to `key: &[u8; 32]`, which removed a **type**-level
+/// Ed25519 assertion and left a **length**-level one:
+/// `octo-algo-stark-schnorr` public keys are 33 bytes, so a `[u8; 32]`
+/// parameter could never carry the second algorithm. The body dispatched
+/// correctly and the signature still decided which algorithms were
+/// expressible — `0009-cb` fixed the type, `0009-cc` the length.
+///
+/// Missions `0009-cc` and its follow-on found 43 sites by hand. The count is
+/// worth stating because two earlier estimates were wrong in instructive ways:
+/// 79 came from grepping parameter *names* and counted macaroon secrets and
+/// field elements, and a first pass at 38 counted only parameters that reach
+/// `verify_dispatch` directly, missing five **forwarders** that hand the key
+/// to another verify function.
+///
+/// This vector is the automated version, and it is what makes 43 a
+/// floor rather than a number somebody has to remember.
+///
+/// **Method.** Per function: slice signature and body, find `verify_dispatch(`
+/// in the body, take its **second** argument — the first version read the
+/// first comma-separated argument, which is the algorithm, so it passed with a
+/// fixed-size key reinstated — and check whether that binding is declared with
+/// a fixed size *in the same function*.
+///
+/// Scoping is what makes it usable. A file-level version of this reported six
+/// hits, none actionable: a wire record field, `IdentityKey`'s own key, a slug
+/// helper and two test fakes whose names collided.
+///
+/// **What this does NOT catch: forwarders.** A function that takes the key and
+/// hands it to another *verify* function never mentions `verify_dispatch`, so
+/// this vector skips it — verified by planting one, which this vector stayed
+/// green through. Five exist in this workspace and were fixed by hand the same
+/// day (`verify_full` in heartbeat and forwarding, `validate_bind` in witness,
+/// `append` in handover, and `dot/gateway.rs`).
+///
+/// Catching them means following the call graph: a key that reaches
+/// `verify_dispatch` through another function. That is a real analysis, and a
+/// half-version of it would guess at which `verify_*` names are verifiers —
+/// which is how a guard starts reporting things nobody can act on. The gap is
+/// stated here rather than papered over, because a reader who assumes this is
+/// total will not go looking for the forwarder class.
+#[test]
+fn no_verification_site_pins_its_key_to_a_fixed_size_array() {
+    let root = workspace_root();
+    let mut offenders: Vec<String> = Vec::new();
+    let mut files_read = 0usize;
+    let mut sites_seen = 0usize;
+
+    let mut stack: Vec<std::path::PathBuf> = AC11_DISPATCHED.iter().map(|d| root.join(d)).collect();
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            files_read += 1;
+            let rel = path
+                .strip_prefix(&root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let src = std::fs::read_to_string(&path).unwrap();
+            let stripped = strip_comments(&src);
+
+            for (sig, body) in fn_blocks(&stripped) {
+                if !body.contains("verify_dispatch(") {
+                    continue;
+                }
+                let mut from = 0usize;
+                while let Some(k) = body[from..].find("verify_dispatch(") {
+                    let start = from + k + "verify_dispatch(".len();
+                    from = start;
+                    let bytes = body.as_bytes();
+                    let mut depth = 1i32;
+                    let mut end = start;
+                    while end < bytes.len() && depth > 0 {
+                        match bytes[end] {
+                            b'(' => depth += 1,
+                            b')' => depth -= 1,
+                            _ => {}
+                        }
+                        end += 1;
+                    }
+                    let args = top_level_args(&body[start..end.saturating_sub(1)]);
+                    if args.len() < 2 {
+                        continue;
+                    }
+                    sites_seen += 1;
+                    let binding = args[1]
+                        .trim()
+                        .trim_start_matches('&')
+                        .split(':')
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .trim_start_matches("mut ")
+                        .to_string();
+                    if binding.is_empty()
+                        || !binding.chars().all(|c| c.is_alphanumeric() || c == '_')
+                    {
+                        continue;
+                    }
+                    let by_ref = format!("{binding}: &[u8;");
+                    let by_val = format!("{binding}: [u8;");
+                    let as_let = format!("let {binding}: [u8;");
+                    if sig.contains(&by_ref)
+                        || sig.contains(&by_val)
+                        || body.contains(&as_let)
+                        || body.contains(&format!("let mut {binding}: [u8;"))
+                    {
+                        offenders.push(format!("{rel} (key `{binding}` is a fixed-size array)"));
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "AC-11: these verification sites pin their key to a fixed-size array, so \
+         the algorithm parameter cannot reach any other length: {offenders:?}. \
+         Take the key as a slice and let the registered algorithm report \
+         BadKeyLength, which is also the only form that names the algorithm \
+         and its expected size."
+    );
+    // Measured, not guessed. The first version of this asserted 60 and went
+    // red on arrival against an actual 53 — a floor invented from a hunch is
+    // the same error as counting constructors instead of sites, in the other
+    // direction: it demands coverage that does not exist and gets muted.
+    //
+    // 45 sits below the measured 53 with room for churn, and far above what
+    // any plausible regression leaves behind. Dropping the recursive walk, or
+    // losing one large crate to a renamed path, lands well under it.
+    assert!(
+        sites_seen >= 45,
+        "the key-shape scan saw only {sites_seen} dispatch sites across {files_read} \
+         files, against a measured 53. A regression that stops walking, or that \
+         loses a crate to a rename, is what this is here to catch."
+    );
+}

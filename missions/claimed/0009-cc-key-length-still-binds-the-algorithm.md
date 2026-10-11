@@ -234,6 +234,40 @@ Same call as the mission-link guard earlier in the session, same reason: the
 first exception a guard reports is one nobody can act on, and that is how a
 guard teaches people to ignore it.
 
+## The guard, rebuilt with function scoping
+
+Withdrawn for being file-scoped, then rebuilt per function: slice each `fn`'s
+signature and body, find `verify_dispatch(` in the body, read its second
+argument, and check whether that binding is declared with a fixed size **in
+that same function**. All four false positives disappear, because those
+declarations are at file scope or inside a different `fn` than the call.
+
+It reads **53** dispatch sites across 319 files and reports nothing.
+
+Two things about building it are worth keeping, because both are mistakes this
+arc has already made:
+
+- **The first version read argument one, the algorithm.** It passed with a
+  fixed-size key reinstated. Mutation caught it. A guard shipped in that state
+  would have been vacuous in exactly the way this arc keeps discovering.
+- **The floor was invented before it was measured.** It asserted 60 and went
+  red on arrival against an actual 53. A floor guessed from a hunch is the
+  same error as counting constructors instead of sites, in the other
+  direction — it demands coverage that does not exist. It is 45 now, with the
+  measurement recorded next to it.
+
+### What it does not catch
+
+**Forwarders.** A function that takes the key and hands it to another _verify_
+function never mentions `verify_dispatch`, so this vector skips it. Verified by
+planting one: green. The five that exist were fixed by hand the same day.
+
+Catching them means following the call graph, and a half-version would have to
+guess which `verify_*` names are verifiers — which is precisely how a guard
+starts reporting things nobody can act on. The gap is written into the guard's
+own doc comment so a reader who assumes it is total goes looking for that
+class instead of trusting a green result.
+
 ## Validation
 
 ```bash

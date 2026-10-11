@@ -1331,22 +1331,25 @@ mod tests {
 
         /// TV-K1: key = [0x00; 32], msg = empty. Reference output is the
         /// BLAKE3 keyed-mode hash of the empty string under all-zero key.
-        /// Pinned at hmac_blake3 = blake3::keyed_hash; both produce the
-        /// same byte string (verified via the `matches_blake3_keyed_ref`
-        /// test). Asserted here as a sentinel for spec drift.
+        ///
+        /// This is the sentinel for spec drift, and it has to compare against
+        /// `blake3::keyed_hash` to be one. An earlier version of this doc
+        /// claimed the equality was "verified via the `matches_blake3_keyed_ref`
+        /// test" — no such test exists, and this one asserted only that the
+        /// output was 64 hex characters. That cannot fail: a `blake3` change
+        /// that produced a different hash of the same length would pass, while
+        /// the doc asserted a pin that was not there.
         #[test]
         fn tv_k1_zero_key_empty_msg() {
             let key = [0u8; 32];
             let msg: &[u8] = b"";
             let out = hmac_blake3(&key, msg);
-            // 64 hex chars (32 bytes). Output is the BLAKE3 keyed-hash of
-            // empty msg under zero key. If the `blake3` crate ever changes
-            // its keyed-mode behavior, this output changes and the test
-            // fails.
+            assert_eq!(hex(&out).len(), 64, "output must be 32 bytes");
             assert_eq!(
-                hex(&out).len(),
-                64,
-                "output must be 32 bytes (64 hex chars)"
+                out,
+                *blake3::keyed_hash(&key, msg).as_bytes(),
+                "hmac_blake3 must be blake3::keyed_hash — this is the pin the \
+                 sentinel exists to hold"
             );
         }
 

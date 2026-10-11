@@ -450,6 +450,41 @@ Closing this properly means implementing FROST — a threshold scheme with
 RFC 9591's deterministic nonce derivation — which is a piece of work far outside
 this arc's scope. The finding is recorded so the criterion is not read as met.
 
+### The wider class, and one more instance of it
+
+The `chain_parent` finding suggested a general shape — **documentation asserting
+a cryptographic property that no code performs** — so it was measured rather than
+acted on.
+
+Every doc comment in the workspace was scanned for backticked, function-shaped
+identifiers that resolve to no `fn` and no code identifier. 293 such names. Most
+are test-vector labels and CLI flags; 80 of them sit on lines that also mention
+a cryptographic word. That is far too noisy to guard: a check over it would fire
+dozens of times on legitimate references to fields and explicitly-future
+columns. **No guard was added**, which is the same call made for the
+signature-side class.
+
+Two of the 80 were worth reading, and the second was a real find.
+
+`tv_k1_zero_key_empty_msg` is documented as the sentinel for BLAKE3 spec drift,
+and states that `hmac_blake3 = blake3::keyed_hash` is "verified via the
+`matches_blake3_keyed_ref` test". No such test exists. The test in question
+asserted only that the output was 64 hex characters — and its own inline
+comment claimed that "if the `blake3` crate ever changes its keyed-mode
+behavior, this output changes and the test fails".
+
+**It could not have failed.** The claim in `hmac_blake3` is true — it is
+literally `*blake3::keyed_hash(key, msg).as_bytes()` — but nothing verified it.
+A `blake3` change producing a different hash of the same length would have
+passed.
+
+This is the same shape as the FROST test this arc declined to write, except that
+it already existed: a test that reads as a pin and holds nothing. The fix was to
+make the sentinel do what its documentation says, and mutation confirms it now
+discriminates — replacing `keyed_hash` with an unkeyed `hash` turns it red,
+while the old length check would have stayed green, since the width is
+identical.
+
 ### The capability chain: modelled, documented, and not implemented
 
 Worth separating from everything above, because it is the only case found where
@@ -628,6 +663,7 @@ That is the distinction the guard actually depends on.
 - [x] Every remaining unresolved RFC gate is attributed, so a ratchet could be built from measured reasons rather than inference.
 - [x] Gates that cannot be written without inventing the thing under test are recorded as such, not satisfied by a vacuous test.
 - [x] Where a documented defence has no implementation, that is recorded rather than papered over with a test of the surrounding data model.
+- [x] A test documented as holding a pin is mutation-verified to hold it.
 - [x] Workspace `cargo check --all-targets` clean; clippy clean under `--features full`.
 
 ## The three-class lesson

@@ -201,8 +201,28 @@ pub struct CapabilityBundleV2 {
     /// V2 holder-bound attenuation chain token (RFC-0009).
     pub token_v2: CapabilityTokenV2,
 
-    /// Serialized bytes of the `HolderRecord`. Deserialize via
-    /// `HolderRecord::canonical_de` at the boundary.
+    /// Opaque holder-record bytes. **Not a serialized `HolderRecord` in
+    /// practice**, despite the field name and despite what this comment
+    /// previously said.
+    ///
+    /// It previously read "Serialized bytes of the `HolderRecord`. Deserialize
+    /// via `HolderRecord::canonical_de` at the boundary", and the constructor
+    /// said the bytes MUST be that form. Measured against both production
+    /// producers, neither writes it:
+    ///
+    /// | Producer                            | What it writes                                          |
+    /// | ----------------------------------- | ------------------------------------------------------- |
+    /// | `octo-wallet-node` mint handler      | 32 raw bytes of `compute_capability_id(&token.macaroon)` |
+    /// | `octo-capability-issuer-node` issue  | `req.capability.to_vec()`                              |
+    ///
+    /// `HolderRecord::canonical_de` is `serde_json::from_slice`, so the
+    /// documented decode fails on every bundle either site produces — verified
+    /// by feeding each producer's real byte shape to it, not by reading. The
+    /// two producers do not agree with each other about the contents.
+    ///
+    /// Treat these bytes as opaque and producer-specific until mission
+    /// `0009-cj` settles what the field is meant to carry. Do not reach for
+    /// `HolderRecord::canonical_de` on them: it cannot succeed.
     pub holder_record_bytes: Vec<u8>,
 
     /// Borsh-bytes indirection for a serialized `DischargeMacaroon`.
@@ -259,9 +279,12 @@ pub enum BundleV2Error {
 
 impl CapabilityBundleV2 {
     /// Construct a new V2 bundle from concrete parts.
-    /// `holder_record_bytes` MUST be the serialized form of a
-    /// `HolderRecord` (the caller is responsible for producing it via
-    /// `HolderRecord::canonical_ser`).
+    ///
+    /// `holder_record_bytes` is **not** required to be a serialized
+    /// `HolderRecord`, which is what this function's documentation previously
+    /// said. No production producer passes one, and `HolderRecord::canonical_de`
+    /// cannot decode what they pass. See the field's documentation and mission
+    /// `0009-cj`.
     ///
     /// # Errors
     /// Returns `BundleV2Error::ChainDepthTooLarge` if

@@ -835,17 +835,85 @@ would have prevented this one.
 Filed as `0009-ci`, sequenced after `0009-cf`: binding an unbound value into a
 proof would move the defect rather than fix it.
 
+## The wire form that replaced the capability carries no capability
+
+Chasing `0009-cf`'s missing verification path led one level further down than the
+chain binding. The question "what verifies a V2 bundle" has no answer, and the
+next question — _what is in one_ — has a worse one.
+
+`CapabilityBundleV2` contains `channel_id` (a macaroon root id) and 32 bytes of
+`capability_id`. Both are **identifiers**. The bundle carries no macaroon, no
+signature and no caveat set. In a bearer-authorization scheme those identifiers
+prove nothing; a holder receiving one has nothing to present and a verifier has
+nothing to check.
+
+Meanwhile `octo-wallet-node`'s mint handler computes the real V1 macaroon wire
+form and discards it:
+
+```rust
+let _ = minted_wire;
+```
+
+The capability is produced and dropped. The response payload is the empty shell.
+
+### A field whose documented decode fails on every real bundle
+
+The sharpest measurable instance. `holder_record_bytes` is documented — on the
+field and again on the constructor — as "the serialized form of a `HolderRecord`",
+to be decoded with `HolderRecord::canonical_de`. That function is
+`serde_json::from_slice`, so the contract is canonical JSON.
+
+Neither production producer writes JSON:
+
+| Producer                            | What it writes                                           |
+| ----------------------------------- | -------------------------------------------------------- |
+| `octo-wallet-node` mint handler     | 32 raw bytes of `compute_capability_id(&token.macaroon)` |
+| `octo-capability-issuer-node` issue | `req.capability.to_vec()`                                |
+
+The two disagree with each other about what the field holds. And a consumer that
+follows the documentation fails on **every** bundle either one produces.
+
+That was checked by running it, not by reading it: feeding each producer's actual
+byte shape to `HolderRecord::canonical_de` returns `expected value at line 1
+column 1`. The tests in those crates pin the raw-bytes behaviour and call it
+correct — `handle_holder_record_bytes_carries_capability_root`,
+`handle_v2_envelope_holder_record_bytes_is_capability_id` — so the contract
+violation is not merely undocumented, it is **tested in**.
+
+### Why this is the same shape as everything else in the arc
+
+A field named after a type, documented as carrying that type, holding whatever the
+producer felt like putting there, and validated by tests that assert the producer
+rather than the contract. It is §Storage is not a protocol and §No premature
+coupling failing together: every future consumer must either discover the
+producer's convention out of band or guess it.
+
+There is a second, honest field of the same name one crate over —
+`CapabilityLookupResponse::holder_record_bytes` really is canonical-JSON
+`HolderRecord` bytes. One name, two meanings, one of them keeping its promise.
+
+**Latent, not live.** Every `CAPABILITY_ISSUE` reference in the workspace is
+internal to the issuer node, and production capability verification runs on V1.
+No holder is receiving an unusable capability because no holder is receiving
+anything yet.
+
+Filed as `0009-cj`.
+
 ## What this arc handed on
 
-Four findings were scoped and filed as missions, because they are implementation
+Five findings were scoped and filed as missions, because they are implementation
 work with a measured subject rather than more analysis:
 
-- `0009-cf` — the capability chain parent binding is documented and absent.
+- `0009-cf` — the capability chain parent binding. **Partly delivered**: the
+  binding now exists and is mutation-verified, but its enforcement path does not.
 - `0009-cg` — key revocation is never checked at verify time.
 - `0009-ch` — 24 adapters name their algorithm instead of looking it up, with the
   CD-6 D1 amendment already made.
 - `0009-ci` — the ZK attestation is documented as binding capability chain state
   into the circuit public inputs, and binds nothing. Sequenced after `0009-cf`.
+- `0009-cj` — the V2 wire form that replaced the capability on the response path
+  carries no macaroon, no signature and no caveats. Its `holder_record_bytes`
+  decode is documented and fails on every bundle production emits.
 
 The remaining unresolved gates — AC#8b's FROST test and the four BLS/DKG gates —
 were deliberately **not** filed as missions. Their subject does not exist at all:

@@ -63,7 +63,13 @@ pub enum LinkageResult {
 }
 
 /// `BearerVerification` (RFC-0969 §Phase 1) — decoded bearer token content
-/// from a successful `verify_bearer_token` call. Holds the canonical
+/// returned by [`BearerVerifier::verify`].
+///
+/// This doc previously named a `verify_bearer_token` function, which does not
+/// exist. The verification entry point is the trait method. The phantom name is
+/// the same class as RFC-0969's missing `cap_token.ask_binding()`, and is
+/// plausibly how that one stayed missing: a name in a doc reads as a thing that
+/// was built. Holds the canonical
 /// `subject_did` (issuer-asserted holder identity, RFC-0009 DID form) and
 /// `ask_id` (the ask this bearer was issued against).
 #[derive(Clone, PartialEq, Eq)]
@@ -82,7 +88,7 @@ impl std::fmt::Debug for BearerVerification {
 }
 
 /// `CapabilityVerification` (RFC-0969 §Phase 1) — decoded capability token
-/// content from a successful `verify_capability_token` call. Holds the
+/// content returned by [`CapabilityVerifier::verify`]. Holds the
 /// `holder_did` (RFC-0957-A1 `HolderRecord::holder_did`) and `ask_id` (the
 /// ask this capability was issued against).
 #[derive(Clone, PartialEq, Eq)]

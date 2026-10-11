@@ -1062,13 +1062,21 @@ impl CachePolicy {
 /// Settlement envelope (RFC-0959 canonical wire).
 ///
 /// v2.0 adds `cost_vault_id: Option<[u8; 32]>` + `chain_id: Option<[u8; 32]>`
-/// fields per review §20.7 (cross-chain settlement reject). v1.0 used
-/// `borsh_compat(model || axes_consumed || ask_id || nonce || timestamp ||
-/// cost_micro_octo_w || settlement_hash)`; v2.0 appends the 2 new
-/// fields (with Option-encoding prefix byte) to the canonical
-/// preimage so existing v1.0 hashes are NOT replayed as v2.0.
+/// fields per review §20.7 (cross-chain settlement reject).
 ///
-/// v2.0 canonical preimage (computed by [`compute_settlement_hash_v2`]):
+/// **Correction (2026-10-12).** This doc previously described a two-function
+/// arrangement that does not exist. It claimed the v2 preimage was "computed by
+/// `compute_settlement_hash_v2`", and that v1.0 `compute_settlement_hash` was
+/// "preserved verbatim as a deprecated alias for backward-compat with pre-v2.0
+/// settlement events in the `settlement_events` table".
+///
+/// Measured: there is **one** function — [`SettlementEnvelope::compute_settlement_hash`] —
+/// it computes the **v2** preimage, it is not deprecated, and no v1.0
+/// compatibility path exists anywhere in the workspace. The method's own doc,
+/// ~60 lines below, has always said this correctly; the two contradicted each
+/// other and this half was the wrong one.
+///
+/// The v2.0 canonical preimage that the single function hashes is exactly:
 /// ```text
 /// model_wire
 /// || serde_json::to_vec(axes_consumed)
@@ -1081,9 +1089,19 @@ impl CachePolicy {
 /// || [if Some] chain_id (32 bytes)
 /// ```
 ///
-/// v1.0 `compute_settlement_hash` is preserved verbatim as a
-/// deprecated alias for backward-compat with pre-v2.0 settlement
-/// events in the `settlement_events` table.
+/// The replay property this doc was reaching for **does** hold: because only the
+/// v2 preimage is ever computed, a v1.0 hash does not verify under it, so
+/// pre-v2.0 hashes cannot be replayed as v2.0. That is intentional and is
+/// documented on the method.
+///
+/// There is no *reverse* compatibility — a pre-v2.0 settlement event already in
+/// `settlement_events` cannot be re-verified through this path. That is
+/// consistent rather than a gap: `settlement_event_repo` treats
+/// `cost_vault_id` / `chain_id` as nullable columns added by v016 with
+/// "pre-v2.0 settlements leave them NULL", so stored v1.0 rows are historical
+/// records for audit, and verification runs against newly-arrived envelopes
+/// (`ConsumedReceiptRepository::verify_and_insert`), not against rows read back
+/// out of the table.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettlementEnvelope {
     /// Settlement hash (BLAKE3 32 bytes).

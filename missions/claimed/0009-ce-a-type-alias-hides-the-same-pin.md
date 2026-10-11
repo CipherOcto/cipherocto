@@ -1095,6 +1095,48 @@ settlement_ — a marketplace attack. RFC-0959 §Phase 3 already carries it as a
 unchecked box. So the mint-side prerequisite is not new work; it is work an
 accepted RFC has been tracking unticked.
 
+## A mechanical sweep, and what it cost to calibrate
+
+The first narrow version of this sweep — doc comments that name a verb-prefixed
+function _and_ claim it performs something — returned **zero** hits across 17,312
+indexed symbols. That was more likely a recall problem than a clean bill of
+health, so the scan was loosened to have no adjacency requirement at all: any
+backticked `verify_*` / `compute_*` / `check_*` name in a doc comment with no
+matching symbol anywhere.
+
+That returned **19 candidates across 16 files**. Every one needed reading, and
+reading them is where the value was — in both directions.
+
+**Two real findings**, both the phantom-name class:
+
+| Site                                                 | Claimed                                                                                                                        | Reality                                                                              |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `SettlementEnvelope` struct doc                      | preimage "computed by `compute_settlement_hash_v2`"; v1.0 `compute_settlement_hash` "preserved verbatim as a deprecated alias" | one function exists, it computes **v2**, it is not deprecated, no v1.0 path exists   |
+| `BearerVerification` / `CapabilityVerification` docs | results "from a successful `verify_bearer_token` / `verify_capability_token` call"                                             | neither function exists; the entry point is the trait method, defined 20 lines below |
+
+The settlement one is the crispest contradiction this arc has produced: **the
+struct doc and the method doc, 60 lines apart in the same file, describe
+different code, and the struct doc is the wrong one.** The method has always
+said "v2.0 preimage… breaks v1.0 hash replay, intentional".
+
+**Three non-findings**, recorded because the checks cost real effort and
+knowing what is sound is worth as much as knowing what is broken:
+
+- `verify_chain_against_tip` looked undefined but **exists in `cairo/src/lib.cairo`** —
+  a legitimate cross-language reference that a Rust-only symbol index cannot see.
+  The scan's own limit, not a defect.
+- `SettlementEnvelope::verify` appeared to have no production caller. It does —
+  `ConsumedReceiptRepository::verify_and_insert`, wired through
+  `settle_replay_repo`, with `HashMismatch` / `AlreadyConsumed` handled. A
+  line-content search missed it because the call site does not name the type.
+  **Nearly filed as a finding.** Checking before filing is the whole discipline.
+- The v1.0 replay-break property the old doc was reaching for **does hold**, so
+  correcting the doc does not weaken anything.
+
+The generalisation: two of three suspected findings dissolved on inspection,
+and one "undefined symbol" was a limitation of the scan rather than a defect in
+the code. A sweep is a source of hypotheses, not conclusions.
+
 ## What this arc handed on
 
 Five findings were scoped and filed as missions, because they are implementation

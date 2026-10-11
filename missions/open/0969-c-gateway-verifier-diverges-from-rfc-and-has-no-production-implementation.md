@@ -1,6 +1,6 @@
 ---
 name: 0969-c-gateway-verifier-diverges-from-rfc-and-has-no-production-implementation
-description: RFC-0969 specifies a capability verifier that reads ask_id via cap_token.ask_binding(). No such method exists — ask binding is a caveat on the macaroon. RFC-0969 v1.2 also replaced the dual-scheme dispatch table with a 4-way table rejecting both-schemes-present, but the implementation still carries the removed linkage machinery forward — relocated three days after the amendment, with BothSchemesUnsupported and NoAuth absent from the workspace entirely. And the CapabilityVerifier trait the gateway authenticator requires has no production implementation anywhere.
+description: RFC-0969 specifies a capability verifier that reads ask_id via cap_token.ask_binding(). No such method exists — ask binding is a caveat on the macaroon. RFC-0969 v1.2 also replaced the dual-scheme dispatch table with a 4-way table rejecting both-schemes-present, but the implementation still carries the removed linkage machinery forward — relocated three days after the amendment, with BothSchemesUnsupported and NoAuth absent from the workspace entirely. Partly delivered: ask_binding(), the v1.2 dispatch, and a production CapabilityVerifier have all landed; what remains is a production mint that attaches AskBinding, without which the verifier correctly refuses every mintable capability.
 metadata:
   node_type: mission
   type: implementation
@@ -90,7 +90,7 @@ it because the note reads as current — the same failure as every other stale
 doc this arc found, and the one that costs the most, because a stale blocker
 list is an argument for leaving the work alone.
 
-### The remaining blocker, stated precisely
+### The remaining blocker, stated precisely — and narrowed since
 
 `BearerCapsule` is a structural stub with the right 3-field wire shape and a
 `new()` constructor, but **no cryptography**: `encrypted_capsule` is arbitrary
@@ -99,8 +99,13 @@ workspace verifies that signature, and nothing constructs a `BearerCapsule`
 outside tests — so it is inert rather than forgeable today. The real type is
 owned by mission `0959-a1`.
 
-That is the single thread to pull. Unblocking it releases TV9, the ask-binding
-mint, and the verifier path behind it.
+That is the single thread to pull. Unblocking it releases TV9 and the
+ask-binding mint.
+
+**It did not release the verifier path, because it was never on it.** This
+section previously claimed it did. See §The blocker named by this mission did
+not block this work: the capability verifier shipped without `BearerCapsule`, and
+what is actually blocked now is narrower than this section used to say.
 
 ## RFC-0969 gate sweep: three findings, one now closed
 
@@ -345,14 +350,70 @@ What it needs first is a decision this mission should not make alone:
 
 ## Acceptance Criteria
 
-- [ ] `CapabilityVerification` can represent an ask-unbound capability, or the RFC states what a verifier reports for one and `evaluate_linkage` cannot compare it into a false link.
+- [x] `CapabilityVerification` can represent an ask-unbound capability, or the RFC states what a verifier reports for one and `evaluate_linkage` cannot compare it into a false link. **Done by refusal** — see §What landed part 4. The verifier never constructs a `CapabilityVerification` for an ask-unbound token, so no unbound `ask_id` exists to compare. The field itself is unchanged and still cannot represent absence; the route taken removes the need for it to.
 - [x] `CapabilityToken` exposes the RFC's ask-binding accessor, or RFC-0969 §Algorithms is amended to name the caveat-based accessor that replaces it. **Done** — `ask_binding()` reads `Caveat::AskBinding` from the macaroon, since `CapabilityToken` carries no `ask_id` field.
-- [ ] Dispatch semantics are settled. **The RFC already answered this one** — v1.2's 4-way table is unambiguous and `BothSchemesUnsupported` / `NoAuth` are its names. The remaining question is only whether the implementation adopts it or the RFC is reopened, and adopting it is the default unless there is a recorded reason not to.
-- [ ] A production mint path attaches a `Caveat::AskBinding`, so a capability that is ask-bound can exist. **This is the prerequisite for the verifier criterion below**, and it does not exist today. Owned by RFC-0959 §Phase 3, where the item is already an unchecked box — this is not new work, it is work that RFC already tracks and nobody has ticked.
-- [ ] `CapabilityVerification.ask_id` can represent "unbound", matching the `Option` RFC-0970 already assumes `ask_binding()` returns. A bare `[u8; 32]` cannot, and that value flows into `AuthenticatedRequest.ask_id` and on into settlement.
-- [ ] A production `impl CapabilityVerifier` exists that calls real verification and is reachable from `GatewayAuthenticator::new` outside tests.
-- [ ] Its failure modes are fail-closed per cause, not collapsed into one variant — `VerifyError` has seven variants and `CapError` has three.
-- [ ] `a_forged_capability_is_refused_by_the_gateway` — mutation-verified, and named for what it proves rather than for the pipeline that hosts it.
+- [x] Dispatch semantics are settled. **The RFC already answered this one** — v1.2's 4-way table is unambiguous and `BothSchemesUnsupported` / `NoAuth` are its names. The remaining question is only whether the implementation adopts it or the RFC is reopened, and adopting it is the default unless there is a recorded reason not to. **Adopted** — `authenticate_v12` + `routing_decision_v12`, additively; `authenticate` keeps pre-v1.2 semantics.
+- [ ] A production mint path attaches a `Caveat::AskBinding`, so a capability that is ask-bound can exist. **Still open, and now the single blocking item.** Owned by RFC-0959 §Phase 3, where the item is already an unchecked box — this is not new work, it is work that RFC already tracks and nobody has ticked.
+- [ ] `CapabilityVerification.ask_id` can represent "unbound", matching the `Option` RFC-0970 already assumes `ask_binding()` returns. A bare `[u8; 32]` cannot, and that value flows into `AuthenticatedRequest.ask_id` and on into settlement. **Deliberately not done.** Refusing unbound is strictly safer than a representable absent, and is reversible; widening the field is neither. Revisit only if the market path needs unbound capabilities at the gateway, which RFC-0959 §Phase 3 would have to argue for.
+- [x] A production `impl CapabilityVerifier` exists that calls real verification and is reachable from `GatewayAuthenticator::new` outside tests. **Done** — `quota_router_core::ingress::capability_verifier::ProductionCapabilityVerifier`, injected as `Arc<dyn CapabilityVerifier>`, so `GatewayAuthenticator::new` needed no change.
+- [x] Its failure modes are fail-closed per cause, not collapsed into one variant — `VerifyError` has seven variants and `CapError` has three. **Done** — `CapError` gains `Malformed`, `HolderUnknown`, `HolderNotActive`, `RegistryUnavailable`, `InvalidSignature`, `AttestationRefused`, `AskUnbound`, `AskBindingAmbiguous`. One variant per cause; none carries a message across.
+- [x] `a_forged_capability_is_refused_by_the_gateway` — mutation-verified, and named for what it proves rather than for the pipeline that hosts it. **Done**, and it is the only test that catches a disabled holder-signature check.
+
+## The blocker named by this mission did not block this work
+
+The mission recorded `BearerCapsule` as the thing holding the capability verifier
+back. **That is wrong, and it is wrong in a way worth naming.** `BearerCapsule` is
+the RFC-0903 _bearer_ path plus the `mint_dual` stub. Neither is on the capability
+verification path. Everything that path needs already existed:
+
+| What the verifier needs             | Where it was                                               |
+| ----------------------------------- | ---------------------------------------------------------- |
+| wire parse + registry resolve + sig | `verify_with_resolve` (shipped by `0957-d`)                |
+| the ask, off the macaroon caveats   | `CapabilityToken::ask_binding()` (shipped by this mission) |
+| holder authoritative on identity    | `VerifyContext::with_registry` (`0957-d`)                  |
+
+So the verifier was not blocked; it was unwritten. This is the third time this
+arc an inherited blocker turned out to be narrower than recorded, and the first
+where the blocked work was the work in progress.
+
+## What landed part 4: the verifier, and the refusal it is built on
+
+`ProductionCapabilityVerifier` composes `verify_with_resolve` and
+`ask_binding()`. Ten tests, four mutations, each caught by exactly the test that
+claims the property:
+
+| Mutation                                          | Caught by                                                                                                        |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| fill unbound with `[0u8; 32]` instead of refusing | `an_ask_unbound_capability_is_refused_not_zero_filled`, `two_unbound_capabilities_never_produce_the_same_ask_id` |
+| collapse all seven causes into `MacaroonInvalid`  | the five per-cause tests                                                                                         |
+| disable the holder-signature check                | `a_forged_capability_is_refused_by_the_gateway` **only**                                                         |
+| disable the revoked/active check                  | `a_revoked_holder_is_refused` **only**                                                                           |
+
+**The refusal.** An ask-unbound capability is refused (`CapError::AskUnbound`)
+rather than given a sentinel, because `evaluate_linkage` compares `ask_id` bytes
+directly: two _different_ unbound capabilities held by the same subject would
+compare equal and read as linked to a shared ask neither asserted. Refusing is
+the fail-closed direction and is reversible.
+
+**The cost, stated rather than buried.** No production mint attaches an
+`AskBinding`, so **every capability the system can mint today is refused by this
+verifier.** That is correct verifier behaviour and a broken deployment state.
+The two are tracked apart: the verifier is right, and RFC-0959 §Phase 3 is the
+open item above.
+
+## The guard retired itself, which is the point of a guard
+
+`every_verifier_trait_has_a_production_implementation_or_is_accounted_for` went
+red on the new type and named its own remedy — _"If this is a real production
+verifier, DELETE the entry for CapabilityVerifier"_. That is exactly the moment
+the guard was built for, and it is the first evidence that it measures something.
+
+`BearerVerifier` stays on the list; its substrate is still a stub.
+
+**Coverage narrowed, honestly.** With `CapabilityVerifier` removed, the guard no
+longer watches that trait at all. A stub added _alongside_ the real verifier
+would not be caught. That is a different risk from the one it was written for and
+is not covered by it — recorded here rather than left for someone to assume.
 
 ## Questions the RFCs answer on their own
 
@@ -362,10 +423,12 @@ Recorded so they are not re-opened as open questions:
   moved on 2026-08-08 with an explicit dispatch table and an explicit list of
   removed variants. The implementation relocated on 2026-08-11 carrying the
   removed machinery. The default is that the implementation catches up.
-- **Is the zero-`ask_id` false-linkage path reachable today?** No — because no
-  production `CapabilityVerifier` exists to report an unbound ask at all. It
-  becomes reachable the moment the trait gets an implementation that fills a
-  sentinel. That ordering is the thing to protect.
+- **Is the zero-`ask_id` false-linkage path reachable today?** **No, and it is now
+  closed by construction rather than by accident.** It used to be unreachable only
+  because no verifier existed to report an unbound ask. A verifier now exists and
+  refuses rather than sentinel-filling, so the sentinel path has no producer. A
+  test pins that: two unbound capabilities for the same holder never both yield
+  an `ask_id`, because neither yields one at all.
 
 ## The semantics question is answered by the RFCs, not by a decision
 

@@ -2679,6 +2679,14 @@ fn top_level_args(inner: &str) -> Vec<String> {
 /// which is how a guard starts reporting things nobody can act on. The gap is
 /// stated here rather than papered over, because a reader who assumes this is
 /// total will not go looking for the forwarder class.
+///
+/// **And a second gap, which this one closes: aliases declared elsewhere.** The
+/// alias table is built workspace-wide, not per-file, because a file that says
+/// `use octo_ident::Ed25519PublicKey;` and then takes `key:
+/// &Ed25519PublicKey` has exactly the same pin — one more hop away from the
+/// literal spelling, and further away from a reader looking for it. A per-file
+/// table finds nothing there and reports the crate clean, which is the one
+/// outcome a guard must never produce by not looking.
 /// Fixed-size array type aliases declared in a file: name -> length.
 ///
 /// `pub type Ed25519PublicKey = [u8; 32];` pins a key exactly as hard as a
@@ -2716,6 +2724,66 @@ fn fixed_size_aliases(src: &str) -> std::collections::HashMap<String, usize> {
         }
     }
     out
+}
+
+/// Fixed-size array type aliases declared anywhere under `crates/*/src`.
+///
+/// Exists so a *file-local* alias table is not mistaken for a complete one. An
+/// alias declared in another crate and pulled in with `use` pins a key just as
+/// hard, and a per-file table resolves it to nothing.
+///
+/// A name declared at two different widths is dropped rather than resolved to
+/// one of them: guessing which `Key32` a `use` statement reached is exactly the
+/// kind of unfounded claim this guard exists to avoid, and the cost of dropping
+/// it is one uncaught site rather than one false accusation of a security pin.
+/// The union is recorded so the test can assert the drop was deliberate rather
+/// than accidental.
+fn workspace_fixed_size_aliases(
+    root: &std::path::Path,
+) -> (
+    std::collections::HashMap<String, usize>,
+    std::collections::HashSet<String>,
+) {
+    let mut out: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut ambiguous: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let Ok(crates) = std::fs::read_dir(root.join("crates")) else {
+        return (out, ambiguous);
+    };
+    let mut stack: Vec<std::path::PathBuf> =
+        crates.flatten().map(|e| e.path().join("src")).collect();
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let Ok(src) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            for (name, width) in fixed_size_aliases(&strip_comments(&src)) {
+                match out.get(&name) {
+                    Some(existing) if *existing != width => {
+                        out.remove(&name);
+                        ambiguous.insert(name);
+                    }
+                    Some(_) => {}
+                    None => {
+                        if !ambiguous.contains(&name) {
+                            out.insert(name, width);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    (out, ambiguous)
 }
 
 /// The declared type of `name` in a function signature, with any reference,
@@ -2824,6 +2892,44 @@ fn the_alias_helpers_find_the_indirection_they_exist_for() {
         None,
         "the widened parameter must not resolve to a fixed width, got {sig}"
     );
+
+    // The workspace table exists for the case a file-local table cannot see:
+    // an alias declared in one crate and pulled in with `use` by another.
+    // `Ed25519PublicKey` is declared in `quota-router-storage`; find where it
+    // is actually declared rather than assuming, then confirm the workspace
+    // scan finds it from a file that does not declare it.
+    let (ws, ambiguous) = workspace_fixed_size_aliases(&workspace_root());
+    assert_eq!(
+        ws.get("Ed25519PublicKey").copied(),
+        Some(32),
+        "the workspace scan must find an alias declared outside the scan target"
+    );
+    assert!(
+        !ambiguous.contains("Ed25519PublicKey"),
+        "Ed25519PublicKey must not be ambiguous workspace-wide"
+    );
+
+    // And the drop-on-conflict rule is real, not decorative: a synthetic name
+    // at two widths resolves to nothing rather than to whichever was seen
+    // last, so the guard cannot accuse a site on a coin flip.
+    let one_wide = "pub type __GuardProbeWide = [u8; 32];";
+    let other_wide = "pub type __GuardProbeWide = [u8; 64];";
+    assert_eq!(
+        fixed_size_aliases(one_wide)
+            .get("__GuardProbeWide")
+            .copied(),
+        Some(32)
+    );
+    assert_eq!(
+        fixed_size_aliases(other_wide)
+            .get("__GuardProbeWide")
+            .copied(),
+        Some(64)
+    );
+    assert!(
+        !ws.contains_key("__GuardProbeWide"),
+        "a name declared at one width must not be resolved by accident"
+    );
 }
 
 #[test]
@@ -2834,6 +2940,7 @@ fn no_verification_site_pins_its_key_to_a_fixed_size_array() {
     let mut sites_seen = 0usize;
 
     let mut stack: Vec<std::path::PathBuf> = AC11_DISPATCHED.iter().map(|d| root.join(d)).collect();
+    let (workspace_aliases, _ambiguous) = workspace_fixed_size_aliases(&root);
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
@@ -2855,9 +2962,11 @@ fn no_verification_site_pins_its_key_to_a_fixed_size_array() {
                 .replace('\\', "/");
             let src = std::fs::read_to_string(&path).unwrap();
             let stripped = strip_comments(&src);
-            // Fixed-size array aliases declared in THIS file. A binding typed
-            // with one of these is just as fixed-size as a literal, and a scan
-            // that matches only `&[u8;` cannot see the difference.
+            // Fixed-size array aliases: this file's own, plus every alias
+            // declared anywhere in the workspace, because a `use` brings one in
+            // from another crate and the pin is identical. This file's own
+            // declaration wins on a name clash — it is the one actually in
+            // scope here.
             //
             // **This indirection hid two real sites.** `AskSigned::verify` and
             // `verify_settlement_receipt` both dispatch on `algorithm_id` —
@@ -2866,7 +2975,10 @@ fn no_verification_site_pins_its_key_to_a_fixed_size_array() {
             // `pub type ... = [u8; 32]`. Neither could carry a 33-byte key,
             // and neither was reported, because the pin was spelled in the
             // alias rather than at the parameter.
-            let aliases = fixed_size_aliases(&stripped);
+            let mut aliases = fixed_size_aliases(&stripped);
+            for (name, width) in &workspace_aliases {
+                aliases.entry(name.clone()).or_insert(*width);
+            }
 
             for (sig, body) in fn_blocks(&stripped) {
                 if !body.contains("verify_dispatch(") {

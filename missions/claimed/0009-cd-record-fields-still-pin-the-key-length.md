@@ -453,3 +453,34 @@ finding values that reach a `verify_dispatch` call. Record fields do not reach
 them is a different surface with a different blast radius (persistence), and
 folding it into a closed mission would have repeated the error the mission
 itself documents: reporting a scope that does not match what was measured.
+
+## What the "recorded constraint" lesson is actually about
+
+Six constraints recorded in this file were wrong, and every one dissolved the
+same way: by reading the code instead of believing the note. Persistence,
+the `#[repr(C)]` wire form, the slot-name migration, the 23-site scan figure,
+the `pub`-prefix undercount, and the adapter's own fixed signature width.
+
+A later sweep for the same pattern elsewhere found **no further false ones**,
+which is worth recording for what it says about the method rather than because
+it is a result:
+
+- `0951-h` is Blocked "awaiting RFC-0846 acceptance". RFC-0846 is in
+  `rfcs/planned/`. **The block is real.**
+- `0870g` and `0870i` are deferred pending a _design discussion_, with the
+  reasoning written down — that the original implementation leaned on a test
+  binary "masquerading as production code". That is a decision awaiting a
+  decision-maker, stated honestly, not drift.
+
+So the rule needs a boundary, and the counterexample supplies it:
+
+**A recorded constraint about the code is a hypothesis. A recorded constraint
+about governance is a fact.**
+
+The six that dissolved were all claims about the code — what a type permits,
+what gets written, what a name computes. Those are inferences, and the only way
+to settle one is to go and look. RFC-0846's status is not an inference; the
+file says `Planned`, and reading it costs one command. Checking a governance
+fact is cheap and conclusive, so "recorded" there means genuinely recorded.
+Conflating the two is what makes a blocker list rot: it makes a fact look like a
+guess, and a guess look like a fact.

@@ -68,6 +68,18 @@ tempfile = "3"
 # inputs to the wire-form bytes. (Layer B -> Layer B intra-dep
 # allowed per RFC-0957-A1 §Layer Discipline.)
 octo-vault = { path = "../octo-vault" }
+# Second registered algorithm (Layer A, RFC-0009 AC#11). Dev-only, and the
+# reason is specific to this crate: `AskSigned` stores a bare 33-or-fewer
+# byte signature with nothing naming the algorithm, so `AskSigned::verify`
+# takes the AlgorithmId from the caller. Every other vector in `ask.rs` is
+# blind to the difference — `AskSigned::sign` is Ed25519-only (the
+# `SignatureAlgorithm` trait has no `sign`, so signing cannot dispatch), every
+# fixture key in the module is 32 bytes, and a verifier that ignored its
+# `algorithm_id` argument and hardcoded Ed25519 would pass all of them. A
+# stark-schnorr key is 33 bytes, which makes the difference observable.
+# Dev-only because nothing in the product signs an Ask with stark-schnorr;
+# the vector exists to keep the site honest.
+octo-algo-stark-schnorr = { path = "../octo-algo-stark-schnorr" }
 
 [dependencies.octo-cap-macaroon]
 # Mission 0959-c1: settlement-time vault row lookup reuses the

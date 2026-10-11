@@ -848,6 +848,79 @@ mod ask_signed_tests {
         assert!(matches!(err, AskSignedError::EmptyIdentitySeed));
     }
 
+    /// The vector that tells dispatch apart from a hardcoded Ed25519 verifier.
+    ///
+    /// Every other vector in this module is blind to that difference. They all
+    /// reach `verify` through `ed25519_id()`, every fixture key is 32 bytes,
+    /// and a verifier that ignored its `algorithm_id` argument and inlined a
+    /// `VerifyingKey` would pass every one of them.
+    ///
+    /// A stark-schnorr key is 33 bytes and its signature is over a digest that
+    /// embeds those same 33 bytes, so neither the key nor the signed message
+    /// can be quietly reinterpreted as Ed25519. Acceptance here came from the
+    /// algorithm, not from a length that happened to line up.
+    ///
+    /// It could not have existed before this arc: the key parameter was
+    /// `&Ed25519PublicKey`, a type alias for `[u8; 32]`, so a 33-byte key was
+    /// a compile error at the call rather than a runtime verdict.
+    ///
+    /// The signed form is built directly rather than through `AskSigned::sign`
+    /// because signing genuinely cannot dispatch: `SignatureAlgorithm` has no
+    /// `sign`, only `verify`, so `sign` is per-crate by construction. That is
+    /// a property of the trait, not an oversight here — but it does mean this
+    /// vector covers the verify path only, and says so.
+    #[test]
+    fn an_ask_signed_by_a_non_ed25519_algorithm_verifies() {
+        use octo_algo_stark_schnorr::{public_key, sign, Felt};
+
+        octo_algo_ed25519::install().expect("install ed25519");
+        octo_algo_stark_schnorr::install().expect("install stark-schnorr");
+
+        let secret = Felt::from_hex_unchecked("0x5a1b2c3d4e5f60718293a4b5c6d7e8f9");
+        let nonce = Felt::from_hex_unchecked("0x2468ace013579bdf");
+        let wire = public_key(&secret).expect("derives a public key").to_wire();
+        assert_eq!(
+            wire.len(),
+            33,
+            "a stark-schnorr key is 33 bytes, Ed25519 is 32 — this is what makes \
+             the two algorithms distinguishable at this site"
+        );
+
+        let payload = sample_payload();
+        let canonical = serde_json::to_vec(&payload).expect("canonical");
+        let signature = sign(&secret, &canonical, &nonce).expect("sign").to_wire();
+        assert_eq!(signature.len(), 64, "stark-schnorr signatures are 64 bytes");
+
+        // Built by hand for the reason in the doc comment. `ask_id` and
+        // `signature` are not part of the canonical payload, so this is the
+        // same value `sign` would have produced for an Ed25519 signature of
+        // the same payload.
+        let signed = AskSigned {
+            ask_id: *blake3::hash(&canonical).as_bytes(),
+            payload,
+            signature: signature.to_vec(),
+        };
+
+        assert!(
+            signed
+                .verify(
+                    &octo_algo_stark_schnorr::stark_schnorr_algorithm_id(),
+                    &wire
+                )
+                .is_ok(),
+            "a genuine stark-schnorr signature must not be refused by the \
+             dispatched path"
+        );
+
+        // And it must not be accepted under a different algorithm. Ed25519
+        // refuses a 33-byte key on length, so this pins that the caller-supplied
+        // id is load-bearing rather than decorative.
+        assert!(
+            signed.verify(&ed25519_id(), &wire).is_err(),
+            "the same key and signature must not verify under ed25519"
+        );
+    }
+
     #[test]
     fn empty_jurisdiction_rejected() {
         let mut payload = sample_payload();

@@ -50,15 +50,49 @@ implemented by sub-mission `0959-b`.
 
 ## What is _not_ wrong, and matters to say
 
-The **types are real and heavily used.** `MarketDeliveryEnvelope` has 38
-references and `DealSettled` has 52. A supporting macaroon helper exists,
-referenced by `deliver_at_settlement` step 3. The atomicity substrate
-(`HolderRegistry::insert_dual`) is genuinely implemented over a real Stoolap
-transaction.
+**`0959-b` is honest, and was being set up to take blame it did not earn.**
 
-This is not an abandoned mission. It is a substantially-built one whose
-**completion record overstates it on three specific axes**: one type is a stub,
-one algorithm has no implementation, and the vector set cannot be located.
+Read on its own terms, `0959-b` discloses almost everything:
+
+- it says `BearerCapsule` is **re-exported** from `bearer_capsule_stub.rs`,
+  rather than claiming it authored a capsule
+- it marks **10 of the 12 vectors unchecked and `DEFERRED`**, naming the owning
+  follow-up mission for each
+- it surfaces two RFC drift items against itself: `RoleTag` shipping with
+  `{Buyer, Seller, Router}` where RFC-0971 expects `{Asker, TokenIssuer, Router}`,
+  and `DeliveryError` shipping with 6 variants where the RFC defines 14
+
+`0959-b1-mdelivery-types-drift` then did that work and is archived/completed.
+Measured today: `RoleTag` is `{Asker, TokenIssuer, Router}` and `DeliveryError`
+carries 13 variants. **The drift item landed.**
+
+So the chain of custody is sound for three steps and then stops:
+
+| Mission                     | State                                                                            | Accountable?     |
+| --------------------------- | -------------------------------------------------------------------------------- | ---------------- |
+| `0959-b` Band A             | closed; stub re-export disclosed; vectors deferred                               | **yes — honest** |
+| `0959-b1` types drift       | archived/completed; `RoleTag` + `DeliveryError` fixed                            | **yes — done**   |
+| `0959-b2-deliver-algorithm` | **never opened.** Owns `deliver_at_settlement` and TV1/TV2/TV3/TV5/TV6/TV10/TV12 | **no owner**     |
+| `0959-b3-settlement-chain`  | **never opened.** Owns `append_deal_settled` and TV8/TV11                        | **no owner**     |
+| `0959-a1` roll-up           | claims all 12 GREEN                                                              | **no**           |
+
+**The distortion is entirely in the roll-up, one level above the work.** It cites
+`0959-b` for ten vectors that `0959-b` marks unchecked and deferred, and lists
+`BearerCapsule` and `deliver_at_settlement` as implemented by a mission that
+deferred the algorithm to a file that was never created.
+
+The types are also real and heavily used: `MarketDeliveryEnvelope` has 38
+references, `DealSettled` has 52, and `HolderRegistry::insert_dual` is genuinely
+implemented over a real Stoolap transaction. This is not an abandoned mission.
+
+### Correction to this mission's own first draft
+
+The first version framed the overstatement as `0959-a1` versus measurement,
+without establishing where the blame sat between parent and sub-missions. Read
+through, it could have been taken as impugning `0959-b`, which had done nothing
+but disclose its own gaps. It did not. The remediation is consequently narrower
+and more useful than it first appeared: **open the two missing missions, and fix
+the roll-up.**
 
 ## Why the BearerCapsule stub matters beyond the roll-up
 
@@ -75,10 +109,18 @@ See mission `0969-c`, which records that convergence.
 
 ## Acceptance Criteria
 
-- [ ] `BearerCapsule` carries real cryptography — X25519 agreement, ChaCha20-Poly1305 `encrypted_capsule`, Ed25519 `seller_signature` — and something verifies that signature on the receiving side.
-- [ ] `deliver_at_settlement` exists as a function, or the RFC's §Algorithms entry is amended to name what was built instead.
+Ordered, because the first item is bookkeeping and the rest are work that
+belonged to missions which were never opened.
+
+- [ ] The `0959-a1` acceptance line states what is covered rather than a blanket `[x]`. **Cheapest, and it is the actual defect.**
+- [ ] `0959-b2-deliver-algorithm` exists as a mission, owning `deliver_at_settlement` and TV1/TV2/TV3/TV5/TV6/TV10/TV12. Its absence is why `BearerCapsule` was never given cryptography: nothing owns it.
+- [ ] `0959-b3-settlement-chain` exists as a mission, owning `append_deal_settled` and TV8/TV11.
+- [ ] `BearerCapsule` carries real cryptography — X25519 agreement, ChaCha20-Poly1305 `encrypted_capsule`, Ed25519 `seller_signature` — and something verifies that signature on the receiving side. **Owned by `0959-b2` when it exists; not by this mission.**
 - [ ] Each of the 12 vectors resolves to a test findable by the RFC's own name, or the roll-up records which are covered and which are not.
-- [ ] The `0959-a1` acceptance line states what is covered, rather than a blanket `[x]`.
+
+**`0959-b` needs nothing.** It recorded its own gaps accurately and its one
+deferred item that had an owner was delivered. Re-opening it would be penalising
+the part of the chain that behaved well.
 
 ## What must not happen
 

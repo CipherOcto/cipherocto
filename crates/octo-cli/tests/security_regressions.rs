@@ -3394,3 +3394,156 @@ fn no_verification_site_reaches_the_algorithm_registry_by_hand() {
          is one way in."
     );
 }
+
+/// Verifier traits that have **no production implementation** (mission `0969-c`).
+///
+/// Each entry pins the *complete* set of `impl <Trait> for <Type>` type names
+/// found anywhere in the workspace. The gate turns red when a name appears that
+/// is not listed — which is the moment somebody adds a real verifier — and when
+/// a listed name disappears.
+///
+/// Every recorded type is a stub living in a `#[cfg(test)]` module. One of them
+/// is named `ProductionCapabilityVerifier` and lives in `octo-wallet/tests/`.
+///
+/// **Why an exact set rather than a count.** The honest obstacle is that a text
+/// scan cannot reliably tell a production `impl` from one inside a
+/// `#[cfg(test)] mod` in a `src/` file — both look identical on the page, which
+/// is the same lesson as the two `chain_depth` concepts in Cairo that a grep
+/// could not separate. So the guard does not classify. It pins the whole set,
+/// and a human updates it. That turns "I believe these are all stubs" into a
+/// claim that fails the moment it stops being true.
+///
+/// When a real implementation lands, delete the entry rather than adding the
+/// name to it. The point of the entry is that the trait has no production impl.
+const VERIFIERS_WITHOUT_PRODUCTION_IMPL: &[(&str, &[&str])] = &[
+    (
+        "BearerVerifier",
+        &[
+            "StubBearerVerifier",
+            "RejectBearerVerifier",
+            "CountingBearer",
+        ],
+    ),
+    (
+        "CapabilityVerifier",
+        &[
+            "StubCapabilityVerifier",
+            "RejectCapabilityVerifier",
+            "CountingCap",
+        ],
+    ),
+];
+
+#[test]
+fn every_verifier_trait_has_a_production_implementation_or_is_accounted_for() {
+    let root = workspace_root();
+    let Ok(crates) = std::fs::read_dir(root.join("crates")) else {
+        panic!("crates/ not readable from {}", root.display());
+    };
+
+    // Measured: every `impl <Trait> for <Type>` in the workspace, keyed on the
+    // trait name. Collect-all rather than fail-fast so one run reports every
+    // trait that drifted.
+    let mut measured: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+        std::collections::BTreeMap::new();
+
+    let mut stack: Vec<std::path::PathBuf> =
+        crates.flatten().map(|e| e.path().join("src")).collect();
+    let mut files_read = 0usize;
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            files_read += 1;
+            let Ok(src) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            for line in strip_comments(&src).lines() {
+                let t = line.trim();
+                if !t.starts_with("impl ") || !t.contains(" for ") {
+                    continue;
+                }
+                let Some((head, tail)) = t.split_once(" for ") else {
+                    continue;
+                };
+                let trait_name = head
+                    .trim_start_matches("impl")
+                    .trim_start_matches('<')
+                    .split('<')
+                    .next()
+                    .unwrap_or("")
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                let impl_name = tail
+                    .split('{')
+                    .next()
+                    .unwrap_or("")
+                    .split('<')
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                if trait_name.is_empty() || impl_name.is_empty() {
+                    continue;
+                }
+                measured
+                    .entry(trait_name.to_owned())
+                    .or_default()
+                    .insert(impl_name.to_owned());
+            }
+        }
+    }
+
+    assert!(
+        files_read > 0,
+        "the walk read no .rs files under crates/*/src"
+    );
+
+    // Only traits the guard claims to account for are checked here. A trait
+    // gaining a first production impl is *not* this gate's business — that is
+    // the mission landing, not a regression.
+    let mut problems: Vec<String> = Vec::new();
+    for (trait_name, recorded) in VERIFIERS_WITHOUT_PRODUCTION_IMPL {
+        let found = measured.get(*trait_name);
+        let Some(found) = found else {
+            problems.push(format!(
+                "{trait_name}: no `impl` found anywhere, but the guard records {} stub(s). \
+                 The trait may have been renamed or removed — update the guard.",
+                recorded.len()
+            ));
+            continue;
+        };
+        for name in found {
+            if !recorded.contains(&name.as_str()) {
+                problems.push(format!(
+                    "{trait_name}: `{name}` is not in the recorded stub set {recorded:?}. If this \
+                     is a real production verifier, DELETE the entry for {trait_name} and record \
+                     the retirement — the entry means the trait has no production impl."
+                ));
+            }
+        }
+        for name in *recorded {
+            if !found.contains(*name) {
+                problems.push(format!(
+                    "{trait_name}: recorded stub `{name}` no longer exists. If it was replaced by a \
+                     real implementation, delete the entry; if it was merely renamed, update it."
+                ));
+            }
+        }
+    }
+
+    assert!(
+        problems.is_empty(),
+        "0969-c: the recorded set of stub-only verifier traits has drifted — {problems:?}"
+    );
+}

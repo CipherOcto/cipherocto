@@ -60,6 +60,53 @@ supplies the token-side answer the RFC specifies. The open question in
 §Why this is filed rather than attempted is whether the registry's
 `HolderRecord.ask_id` must agree with it, and it remains open.
 
+## What has landed, part 3: a guard, because the shape recurs
+
+The verifier trait having no production implementation is not a one-off. It is
+the shape this arc found repeatedly — an interface that reads as the enforcement
+point, with nothing behind it. So it is now a gate rather than a note.
+
+`every_verifier_trait_has_a_production_implementation_or_is_accounted_for`, in
+`crates/octo-cli/tests/security_regressions.rs`.
+
+Measured before building it, because a guard the measurement cannot support is a
+comment with an assertion. Every trait whose name marks it as a verification
+boundary, and where its implementations live:
+
+| Trait                  | `impl`s | Production?                    |
+| ---------------------- | ------- | ------------------------------ |
+| `AuthorityPolicy`      | 1       | yes — `octo-policy`            |
+| `PasskeyAuthenticator` | 3       | yes — `octo-adapter-whatsapp`  |
+| `BearerVerifier`       | 5       | **no** — all in `#[cfg(test)]` |
+| `CapabilityVerifier`   | 6       | **no** — all in `#[cfg(test)]` |
+
+Two of four, and the two are exactly the gateway pair. Small enough to pin
+exactly, with no sweeping allowlist.
+
+**Why it pins a set rather than classifying.** A text scan cannot reliably tell a
+production `impl` from one inside a `#[cfg(test)] mod` in a `src/` file — on the
+page they are identical. That is the `CHAIN_DEPTH` lesson again: a scan that
+finds something is not a scan that finds the _right_ thing. So the guard does not
+guess. It pins the complete set of `impl <Trait> for <Type>` names and asserts
+the measured set matches, which makes "these are all stubs" a claim that fails
+the moment it stops being true.
+
+Two mutations verified red, in both directions:
+
+| Change                                 | Result                                                                                       |
+| -------------------------------------- | -------------------------------------------------------------------------------------------- |
+| a **real production verifier appears** | red, naming the impl and telling the implementer to _delete_ the entry rather than extend it |
+| a recorded stub is renamed             | red, reporting both the new unrecorded name and the vanished recorded one                    |
+
+The first is the scenario that matters, and the message it produces is the
+useful part: the guard says the entry means "no production impl", so landing one
+means retiring the entry, not adding a name to it.
+
+The other two candidates (`AuthorityPolicy`, `PasskeyAuthenticator`) are
+deliberately **not** in the table. A trait gaining its first production
+implementation is the mission landing, not a regression, and putting them there
+would mean the guard fires on success.
+
 ## What has landed, part 2: the v1.2 dispatch, additively
 
 Full conformance needs four public items removed and the seventeen tests that

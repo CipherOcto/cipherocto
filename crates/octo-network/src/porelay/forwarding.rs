@@ -85,7 +85,7 @@ impl ForwardingProof {
     pub fn verify_full(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        public_key: &[u8; 32],
+        public_key: &[u8],
         previous_sequence: u64,
     ) -> bool {
         self.sequence > previous_sequence

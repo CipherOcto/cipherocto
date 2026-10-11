@@ -181,6 +181,59 @@ vacuous; now one test in it is not.
 - `octo-algo-stark-schnorr` — unchanged apart from the `Felt` re-export, which
   is an API addition, not a behaviour change.
 
+## Five forwarders this scope missed, found another way
+
+The 38 were found by locating parameters that reach a `verify_dispatch` call.
+That misses a **forwarder** — a function that takes the key and passes it to a
+_verify_ function rather than to the dispatcher. It compiles by coercion and
+pins the length just the same:
+
+| Site                    | Shape                                         |
+| ----------------------- | --------------------------------------------- |
+| `porelay/heartbeat.rs`  | `verify_full` forwards to `verify_signature`  |
+| `porelay/forwarding.rs` | same                                          |
+| `dot/witness.rs`        | `validate_bind` forwards to `envelope.verify` |
+| `dot/handover.rs`       | `append` forwards to `event.verify`           |
+| `dot/gateway.rs`        | forwards to `Envelope::verify`                |
+
+All five are now `&[u8]`. They were found by an attempted automated guard,
+recorded for what it got right and what it got wrong.
+
+## The guard that was written and then withdrawn
+
+The idea: assert no verification site pins its key to a fixed-size array, by
+reading each `verify_dispatch(` call, taking its **second** argument, and
+checking whether that binding is declared `[u8; N]`. Two things happened.
+
+**It had the bug this arc keeps finding.** The first version broke at the
+_first_ comma, so it read argument one — the algorithm, declared as an
+`AlgorithmId` and never an array. It passed with a fixed-size key reinstated.
+Mutation caught it; the fix reads argument two. Shipped as-is it would have
+been vacuous in exactly the way this arc keeps discovering.
+
+**Corrected, it still reports what nobody can act on.** It matches a binding
+name to a declaration _anywhere in the file_, so it flags names shared with
+things that are not verification parameters:
+
+- `octo-reputation`'s `governance_pubkey: [u8; 32]` — a **wire record field**.
+- `octo-wallet`'s `IdentityKey::public_key: [u8; 32]` — the identity's own key,
+  Ed25519 by construction.
+- `seed_slot_slug_by_pubkey` — a slug helper, not a verifier.
+- two test fakes whose parameter names collide.
+
+Six residual hits, none actionable, and the real defect is invisible to it
+without function-scoped matching it does not do.
+
+So it is withdrawn, with the five forwarders it _did_ find kept. Making it
+correct needs per-function slicing: for each `fn`, take its signature and body,
+and ask whether a `verify_dispatch(` in that body names a binding declared
+`[u8; N]` in that same function. That is real parsing work, and a guard that
+fires on six false positives will be muted long before it earns that.
+
+Same call as the mission-link guard earlier in the session, same reason: the
+first exception a guard reports is one nobody can act on, and that is how a
+guard teaches people to ignore it.
+
 ## Validation
 
 ```bash
@@ -194,7 +247,7 @@ cargo test -p octo-cli --test security_regressions
 
 None required. Nothing is deployed.
 
-## Validation
+## Results
 
 1536 `octo-network` lib vectors, 251 `octo-reputation` lib vectors, 4
 `lifecycle_replay` vectors, 47 gate vectors. Clippy clean at `-D warnings`

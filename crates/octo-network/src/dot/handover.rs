@@ -403,7 +403,7 @@ impl SlashTally {
         &mut self,
         event: SlashEvent,
         algorithm: &octo_ident::AlgorithmId,
-        coordinator_pubkey: &[u8; 32],
+        coordinator_pubkey: &[u8],
         current_epoch: u64,
     ) -> Result<(), HandoverError> {
         event.verify(algorithm, coordinator_pubkey).map_err(|_| {

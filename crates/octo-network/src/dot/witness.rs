@@ -199,7 +199,7 @@ pub struct WitnessContext<'a> {
 pub fn validate_bind(
     envelope: &BindEnvelope,
     algorithm: &octo_ident::AlgorithmId,
-    founder_pubkey: &[u8; 32],
+    founder_pubkey: &[u8],
     ctx: &mut WitnessContext,
 ) -> ValidationOutcome {
     // Rule 1: signature (R17 R1-HIGH-3 fix: verified inside).

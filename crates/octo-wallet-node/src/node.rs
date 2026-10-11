@@ -171,7 +171,7 @@ impl WalletNode {
             }
             k if k == octo_protocol::payload_kind::WALLET_ATTENUATE_CAPABILITY => {
                 let req = AttenuateRequest::from_borsh(&envelope.payload)?;
-                AttenuateHandler::new().handle(&req)
+                AttenuateHandler::new(identity).handle(&req)
             }
             k if k == octo_protocol::payload_kind::WALLET_RESOLVE_DID => {
                 let req = ResolveDIDRequest::from_borsh(&envelope.payload)?;

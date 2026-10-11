@@ -10,16 +10,22 @@
 //!
 //! Attenuation contract (RFC-0957 §3.5): the existing caveats are
 //! preserved (monotonic narrowing); the new caveat is appended; the
-//! HMAC chain is re-derived; the holder signature is marked stale
-//! (caller must re-sign via `attenuate_with_signer` to use the
-//! token — the wallet handler does NOT re-sign here since the
-//! attenuation envelope is a separate request kind).
+//! HMAC chain is re-derived; and the holder signature is **re-derived
+//! with the wallet's holder key** so the result is a verifiable token.
+//!
+//! Earlier revisions of this handler called `attenuate` (no signer),
+//! which sets `holder_sig_stale`. `verify_holder_sig` refuses a stale
+//! token outright, so every capability this handler produced was one no
+//! verifier would accept — the wallet -> attenuate -> verify path did not
+//! exist. Mission `0957-phase2d` listed exactly that under "Blocks:
+//! production attenuation end-to-end"; this handler now satisfies it.
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use octo_cap_macaroon::caveat::Caveat;
 use octo_cap_macaroon::macaroon::InMemoryCatalog;
 use octo_cap_macaroon::wire::{deserialize_wire, serialize_wire};
 use octo_protocol::ProtocolError;
+use octo_wallet::identity::IdentityKey;
 
 use super::{wallet_error_to_protocol, wire_error_to_protocol, HandlerOutput};
 
@@ -77,19 +83,21 @@ fn caveat_error_to_protocol(e: impl std::fmt::Display) -> ProtocolError {
 }
 
 /// `WALLET_ATTENUATE_CAPABILITY` handler implementation.
-pub struct AttenuateHandler {
+pub struct AttenuateHandler<'a> {
+    identity: &'a IdentityKey,
     catalog: InMemoryCatalog,
 }
 
-impl AttenuateHandler {
-    /// Construct a new `AttenuateHandler` with a default
-    /// (empty) `InMemoryCatalog`. The catalog enforces the
+impl<'a> AttenuateHandler<'a> {
+    /// Construct a new `AttenuateHandler` bound to the wallet's holder key,
+    /// with a default (empty) `InMemoryCatalog`. The catalog enforces the
     /// `WrappedOnly` chain guard (RFC-0965 §3.7) on attenuation;
     /// for non-WrappedOnly caveats, an empty catalog is sufficient
     /// (the guard is a no-op walk over an empty parent set).
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(identity: &'a IdentityKey) -> Self {
         Self {
+            identity,
             catalog: InMemoryCatalog::default(),
         }
     }
@@ -97,18 +105,19 @@ impl AttenuateHandler {
     /// Construct a handler with a pre-populated catalog (for tests
     /// that register `Caveat::Raw` names per RFC-0957-a AC #13).
     #[must_use]
-    pub fn with_catalog(catalog: InMemoryCatalog) -> Self {
-        Self { catalog }
+    pub const fn with_catalog(identity: &'a IdentityKey, catalog: InMemoryCatalog) -> Self {
+        Self { identity, catalog }
     }
 
-    /// Attenuate the existing token by appending `new_caveat`.
+    /// Attenuate the existing token by appending `new_caveat`, re-signing with
+    /// the wallet's holder key.
     ///
     /// # Errors
     /// Returns `ProtocolError::InvalidDid` if the wire-form
     /// DID lookup fails. Returns `ProtocolError::AuthorizationFailed`
     /// on borsh decode / macaroon wire deserialize failure / macaroon
     /// attenuation failure (catalog rejection, depth exceeded,
-    /// WrappedParentNotFound, etc.).
+    /// WrappedParentNotFound, etc.), or if the holder key refuses to sign.
     pub fn handle(&self, req: &AttenuateRequest) -> Result<HandlerOutput, ProtocolError> {
         // Deserialize the existing v1 wire form into a CapabilityToken.
         // The wire doesn't carry holder_did / holder_pub — caller
@@ -119,17 +128,31 @@ impl AttenuateHandler {
         // attenuation envelope arrives with a trusted wire form
         // produced by the wallet's own mint path, per RFC-0010
         // F4 + 0010-d mission).
+        //
+        // The empty DID is safe downstream and that is not an accident:
+        // `verify_with_resolve` re-deserializes with the *registry's*
+        // holder_did, which is authoritative over anything the wire
+        // claims (R7-N7). What the wire must get right is the holder
+        // signature, and that is re-derived below.
         let token = deserialize_wire(&req.existing_token_wire, String::new(), &req.holder_pub)
             .map_err(wire_error_to_protocol)?;
 
         // Parse the new caveat from canonical-JSON bytes.
         let new_caveat = parse_new_caveat(&req.new_caveat_json)?;
 
-        // Append the new caveat via CapabilityToken::attenuate. The
-        // catalog guards WrappedOnly chains; for other caveat
-        // variants, the guard is a no-op (no parents to walk).
+        // Append the new caveat AND re-sign. The catalog guards
+        // WrappedOnly chains; for other caveat variants, the guard is a
+        // no-op (no parents to walk).
+        //
+        // `attenuate_with_signer`, not `attenuate`: the unsigned variant
+        // sets `holder_sig_stale`, and `verify_holder_sig` refuses any
+        // stale token outright. An unsigned attenuation therefore produced
+        // a capability that no verifier in the workspace would accept —
+        // which is the wallet -> attenuate -> verify path this handler
+        // exists to provide. Mission 0957-phase2d recorded this under
+        // "Blocks: production attenuation end-to-end"; this is that fix.
         let attenuated = token
-            .attenuate(new_caveat, &self.catalog)
+            .attenuate_with_signer(new_caveat, self.identity, &self.catalog)
             .map_err(wallet_error_to_protocol)?;
 
         // Real wire form (RFC-0957 §3.7). Replaces the Phase 1 MVP
@@ -141,15 +164,9 @@ impl AttenuateHandler {
             octo_protocol::payload_kind::WALLET_ATTENUATE_CAPABILITY,
         )
         .with_note(format!(
-            "attenuated for {} (caveat appended; holder_sig marked stale)",
-            token.holder_did
+            "attenuated and re-signed ({} caveats)",
+            attenuated.macaroon.caveats.len()
         )))
-    }
-}
-
-impl Default for AttenuateHandler {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -230,7 +247,8 @@ mod tests {
 
     #[test]
     fn handle_rejects_unparseable_wire_form() {
-        let handler = AttenuateHandler::new();
+        let identity = sample_identity();
+        let handler = AttenuateHandler::new(&identity);
         let caveat_json = serde_json::to_vec(&Caveat::Before(2_000_000_000)).expect("caveat ser");
         let req = AttenuateRequest {
             existing_token_wire: "not-a-wire-at-all".to_owned(),
@@ -246,7 +264,8 @@ mod tests {
     /// parent (HMAC chain extended).
     #[test]
     fn handle_attenuates_real_token_extends_chain() {
-        let handler = AttenuateHandler::new();
+        let identity = sample_identity();
+        let handler = AttenuateHandler::new(&identity);
         let parent_wire = minted_token_wire();
         let parent_hash = compute_cap_root_hash_from_wire(&parent_wire).expect("parent hash");
         let caveat_json = serde_json::to_vec(&Caveat::Before(2_000_000_000)).expect("caveat ser");
@@ -274,7 +293,8 @@ mod tests {
     /// caveat. Round-trip via `deserialize_wire` recovers both.
     #[test]
     fn handle_attenuates_with_model_caveat() {
-        let handler = AttenuateHandler::new();
+        let identity = sample_identity();
+        let handler = AttenuateHandler::new(&identity);
         let caveat_json =
             serde_json::to_vec(&Caveat::Model("gpt-4".to_owned())).expect("caveat ser");
         let req = AttenuateRequest {
@@ -312,7 +332,8 @@ mod tests {
     /// TV3 — handler rejects an empty wire form (parse failure).
     #[test]
     fn handle_rejects_empty_wire_form() {
-        let handler = AttenuateHandler::new();
+        let identity = sample_identity();
+        let handler = AttenuateHandler::new(&identity);
         let caveat_json = serde_json::to_vec(&Caveat::Before(2_000_000_000)).expect("caveat ser");
         let req = AttenuateRequest {
             existing_token_wire: String::new(),
@@ -321,5 +342,96 @@ mod tests {
         };
         let err = handler.handle(&req).unwrap_err();
         assert!(matches!(err, ProtocolError::AuthorizationFailed(_)));
+    }
+
+    /// TV4 — **the wallet -> attenuate -> verify path exists.**
+    ///
+    /// This is the property the previous implementation could not satisfy at
+    /// any setting. Attenuation used `CapabilityToken::attenuate`, which does
+    /// not re-sign: the emitted `holder_sig` still covers the *pre*-attenuation
+    /// caveat list. The signature therefore stops matching the moment the
+    /// caveat is appended, and every capability this handler produced was
+    /// unverifiable.
+    ///
+    /// Note *how* it failed, because it is not the obvious way. `attenuate`
+    /// sets `holder_sig_stale = true`, and `verify_holder_sig` short-circuits
+    /// on that flag — but `deserialize_wire` hardcodes `holder_sig_stale` to
+    /// `false`, so the flag is erased by the wire round-trip and the stale
+    /// branch never fires on a token that arrived over the wire. The signature
+    /// check runs anyway and fails cryptographically. Fail-closed either way,
+    /// but the staleness diagnosis is lost, and the "surface stale state at
+    /// the verify boundary" safety net only protects in-process tokens.
+    #[test]
+    fn handle_output_passes_the_holder_signature_check() {
+        let identity = sample_identity();
+        let handler = AttenuateHandler::new(&identity);
+        let parent_wire = minted_token_wire();
+        let caveat_json =
+            serde_json::to_vec(&Caveat::Model("gpt-4".to_owned())).expect("caveat ser");
+        let req = AttenuateRequest {
+            existing_token_wire: parent_wire,
+            new_caveat_json: caveat_json,
+            holder_pub: identity
+                .public_key_bytes_array()
+                .expect("32-byte ed25519 key"),
+        };
+
+        let out = handler.handle(&req).expect("attenuate");
+        let payload = out.response_payload.unwrap();
+        let new_wire = std::str::from_utf8(&payload).expect("utf8");
+        let attenuated = deserialize_wire(
+            new_wire,
+            sample_did(),
+            &identity
+                .public_key_bytes_array()
+                .expect("32-byte ed25519 key"),
+        )
+        .expect("deserialize");
+
+        attenuated
+            .verify_holder_sig()
+            .expect("an attenuated capability must verify, or the wallet path is a dead end");
+    }
+
+    /// TV5 — attenuation must be verifiable **and** carry the binding, so the
+    /// ask a holder attenuates onto a capability survives to the point where a
+    /// verifier reads it.
+    ///
+    /// This is the shape the RFC-0969 gateway needs: an ask bound at mint time
+    /// or at attenuation time, readable via `ask_binding()` off a token that
+    /// actually passes verification.
+    #[test]
+    fn an_attenuated_ask_binding_is_readable_and_verifiable() {
+        let identity = sample_identity();
+        let handler = AttenuateHandler::new(&identity);
+        let ask = [0xA5u8; 32];
+        let caveat_json =
+            serde_json::to_vec(&Caveat::AskBinding(ask)).expect("caveat ser: ask binding");
+        let req = AttenuateRequest {
+            existing_token_wire: minted_token_wire(),
+            new_caveat_json: caveat_json,
+            holder_pub: identity
+                .public_key_bytes_array()
+                .expect("32-byte ed25519 key"),
+        };
+
+        let out = handler.handle(&req).expect("attenuate with an ask binding");
+        let payload = out.response_payload.unwrap();
+        let new_wire = std::str::from_utf8(&payload).expect("utf8");
+        let attenuated = deserialize_wire(
+            new_wire,
+            sample_did(),
+            &identity
+                .public_key_bytes_array()
+                .expect("32-byte ed25519 key"),
+        )
+        .expect("deserialize");
+
+        attenuated.verify_holder_sig().expect("must verify");
+        assert_eq!(
+            attenuated.ask_binding().expect("single binding"),
+            Some(ask),
+            "an attenuated ask binding must be readable by the gateway verifier"
+        );
     }
 }

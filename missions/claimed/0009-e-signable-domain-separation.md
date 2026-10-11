@@ -219,12 +219,19 @@ fields with no length prefix, and
 the boundary is ambiguous. It is not exploitable, and _not_ because of how
 base58 happens to length-encode. Moving the `from_did`/`payload` boundary
 changes the DID, and the verifier derives the verifying key _from that same
-DID_: `verify_ed25519_signature` base58-decodes the signer DID and builds the
-`VerifyingKey` from the result. A shifted DID resolves to a different key, so
-the signature check fails closed. Signer binding and key selection read one
-field, which makes the boundary self-defending — and because the argument is
-independent of base58's length behaviour, a future multibase or multicodec
-change cannot silently invalidate it.
+DID_: `verify_authorization_signature` base58-decodes the signer DID and takes
+the verifying key from the result.
+
+> **Symbol renamed 2026-10-10** (mission `0009-ca`), from
+> `verify_ed25519_signature`. It no longer builds a `VerifyingKey` either — the
+> key reaches `verify_dispatch` as raw bytes and the caller supplies the
+> algorithm. The argument this paragraph makes is unchanged and slightly
+> stronger for it: signer binding and key selection still read one field, and
+> no type now pre-decides the algorithm before the dispatcher does. A shifted DID resolves to a different key, so
+> the signature check fails closed. Signer binding and key selection read one
+> field, which makes the boundary self-defending — and because the argument is
+> independent of base58's length behaviour, a future multibase or multicodec
+> change cannot silently invalidate it.
 
 ### A defect found while checking this: `envelope_id` did not commit to the envelope
 

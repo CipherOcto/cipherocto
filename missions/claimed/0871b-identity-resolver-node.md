@@ -61,6 +61,7 @@ Build `crates/octo-identity-resolver-node/` — the identity resolver specialize
 - [x] DID spoofing rejected: `CanonicalCodec::parse(s, false)` rejects arbitrary string substitution + legacy bare form (test: `handle_rejects_invalid_did` + `handle_rejects_legacy_bare_form`)
 - [x] Replay rejected (defense in place): `ReferenceDispatcher::verify_all` + the transport layer's `EnvelopeDispatcher::dispatch` flow cover envelope_id dedup; this crate uses `verify_all` only and trusts the dispatcher wired above it to enforce envelope_id + nonce + TTL ceiling
 - [x] Unauthorized lookup rejected: `Authorization::Signature` verification via `verify_ed25519_signature` in `verify_all` — any unsigned envelope fails closed
+      (that function is now `verify_authorization_signature`, renamed by mission `0009-ca` on 2026-10-10. The tick still holds.)
 - [x] Wire-form confusion: `IDENTITY_RESOLVE` accepts canonical wire form only; no `DID_LOOKUP` alternate path exists in this mission (single payload kind = no cross-form confusion surface)
 
 ### Backward compat

@@ -102,6 +102,9 @@ Mission 0870-b-envelope-adoption closed in 2 commits on `next` branch:
 - 7 RFC-0870 payload_kind UUIDs (QUOTA_ROUTER_ANNOUNCE, …, QUOTA_FORWARD_REJECT)
 - `QUOTA_PAYLOAD_KINDS` array + `is_quota_payload_kind()` dispatcher
 - `verify_ed25519_signature` promoted to `pub` for downstream consumers
+  (renamed to `verify_authorization_signature` by mission `0009-ca` on
+  2026-10-10, when it began dispatching on a caller-supplied algorithm —
+  the old name asserted Ed25519. The promotion itself is unchanged.)
 
 **New module `quota-router-core/src/node/envelope_v2.rs` (mission 0870-b):**
 

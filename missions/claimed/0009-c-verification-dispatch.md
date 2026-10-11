@@ -74,14 +74,27 @@ point.** Both read the algorithm off a value that does not carry one:
   `0009-e10` bound it into the signed message. `token.rs` now rebuilds no
   verifying key at all, so its AC#11 allowlist entry has been removed. See
   §The allowlist outlived its blocker below.
-- **`octo-protocol` §`verify_ed25519_signature`** — `Authorization::Signature`
+- ~~**`octo-protocol` §`verify_ed25519_signature`** — `Authorization::Signature`
   carries no algorithm, and the `did:octo:z` payload is a bare 32 bytes.
   The dispatcher has nothing to dispatch on. **Same root cause as
-  `0009-c3`**: the DID wire form cannot name an algorithm.
+  `0009-c3`**: the DID wire form cannot name an algorithm.~~
 
-The remaining site is in the AC#11 vector's allowlist with its reason
-written inline, and the vector still walks that file so a _new_ hardcoded
-site there is caught rather than hidden behind the exception.
+  **RESOLVED by mission `0009-ca`, 2026-10-10.** The premise was true and the
+  conclusion was not, which is the same shape as `0009-c3` one level up: a bare
+  32-byte payload means nothing on the wire, and the caller supplies the
+  algorithm exactly as it does at every other site. The function is now
+  `verify_authorization_signature` and dispatches through `verify_dispatch`.
+
+  It had been sitting in the AC#11 vector's `AC11_ALLOWED` list. That entry is
+  **removed**, not re-justified, and removing it is the substantive part: an
+  allowlist entry exempts a whole _file_, so RFC-0871 §Adversary Analysis A6's
+  enforcement point — the check every signed envelope passes through — was
+  unscanned. Measured with one plant and one variable: the same inline site
+  left all 47 vectors green with the entry present, and turned the scan red
+  without it. `crates/octo-protocol/src` is now in `AC11_DISPATCHED`.
+
+So this mission has no remaining AC#11 sites. Nothing on this list is
+outstanding.
 
 ### §The allowlist outlived its blocker
 

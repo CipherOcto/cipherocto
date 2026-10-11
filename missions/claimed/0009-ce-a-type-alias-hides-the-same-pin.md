@@ -359,6 +359,77 @@ The guard's measured floor now means it will go red when the registry lands.
 That is deliberate: the debt being paid should be visible rather than absorbed by
 a guard quietly relaxed to accommodate it.
 
+## The RFC's own gates: two names repaired, fifteen still missing
+
+The arc had been reasoning about AC#11 from an accumulated model of it. This
+step went back to the source and read what the RFC actually says — which is the
+move that has repeatedly paid off here, since my model had drifted.
+
+Two things came out of it.
+
+### AC#11 is narrower than this arc's guards
+
+The criterion's scope statement is explicit: it names two **constructors**, and
+a site that takes an already-typed `&VerifyingKey` "calls neither and never
+chooses an algorithm, so it is outside this criterion's reach". The RFC warns
+that widening it "turns a falsifiable requirement into an unfalsifiable one".
+
+Every site this arc fixed takes an `algorithm_id` and therefore _does_ choose an
+algorithm, so all of them are genuinely in scope. But the warning is worth
+carrying: the guards here are deliberately stronger than the criterion, and
+that is a choice with a cost, not a free upgrade.
+
+### AC#11's and AC#12's named gates did not exist
+
+AC#11 names its gate test: `no_verification_site_hardcodes_an_algorithm`. It was
+implemented under a different name, so running the RFC's stated command found
+no such test. Same for AC#12's `unregistered_algorithm_id_is_rejected`.
+
+The properties were covered throughout — this was never a coverage gap. What was
+broken was that **the criterion's own evidence was not reachable by the name the
+criterion uses**, and an auditor running it could not distinguish "not verified"
+from "verified under another name". Both renamed; both pass under the RFC's
+spelling.
+
+That is the same failure this arc keeps meeting, one level up from the code.
+
+### And fifteen more gate names do not resolve at all
+
+Extending the sweep to every gate the RFC names, using its own `Test:`/`Tests:`
+phrasings:
+
+|                               | count  |
+| ----------------------------- | ------ |
+| gate names stated by RFC-0009 | 25     |
+| resolve to a test in the tree | 10     |
+| **do not resolve**            | **15** |
+
+The fifteen are not all the same kind of thing, and the difference matters:
+
+- **Deliberately absent.** `compromised_key_revoked_without_identity_revocation`
+  is named by AC#14 _precisely so the gap stays visible_ — the RFC states it is
+  "not yet enforced on the ZK path" and that RFC-0958 still resolves the DID
+  in-circuit. That is an honest gap, not drift.
+- **Substrate present, behaviour untested.** AC#15's
+  `software_custody_is_distinguishable_from_hardware`: `CustodyPosture` exists
+  and is carried on `VerificationMethod`, but no test asserts that a verifier
+  treats it as a distinct weaker posture. AC#14's two revocation gates are in
+  the same shape — `revoked_at` and `is_revoked` exist, no test asserts a
+  verifier fails closed on a stale or unavailable snapshot.
+- **Unattributed.** The remaining names belong to AC#9 and AC#10 (FROST and
+  BLS). Some are likely present under other names — AC#9's gate is a whole test
+  _file_ rather than a named function — but that has not been checked.
+
+**No guard was added for this.** A ratchet over the unresolved set would be the
+natural artifact, but writing fifteen entries requires attributing each one, and
+three of the four inspected above turned out to differ in kind from the others.
+Committing a list whose reasons are half-inferred would repeat exactly the error
+this arc exists to catch: a plausible-looking record that has not been measured.
+
+So the measurement is recorded and the attribution is left as its own piece of
+work. This is the one place in this file where the honest move is to stop rather
+than to build something that looks finished.
+
 ## The two hardening passes
 
 Both were driven by asking what the guard still could not see, and both are
@@ -440,6 +511,7 @@ That is the distinction the guard actually depends on.
 - [x] `verify_governance_signature` takes key and signature as slices and routes through `verify_dispatch`.
 - [x] No crate containing the dispatch call is absent from every AC-11 list.
 - [x] Every adapter site naming a concrete algorithm declares that it is an assumption, and names CD-6 as the owner.
+- [x] AC#11's and AC#12's named gate tests resolve under the names the RFC states.
 - [x] Workspace `cargo check --all-targets` clean; clippy clean under `--features full`.
 
 ## The three-class lesson

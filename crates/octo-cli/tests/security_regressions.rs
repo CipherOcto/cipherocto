@@ -3434,6 +3434,19 @@ const VERIFIERS_WITHOUT_PRODUCTION_IMPL: &[(&str, &[&str])] = &[(
         "StubBearerVerifier",
         "RejectBearerVerifier",
         "CountingBearer",
+        // Test-only, inside a `#[cfg(test)] mod`. Present because the gateway
+        // reachability tests need *some* bearer impl to satisfy
+        // `GatewayAuthenticator::new`, and a capability-only request must never
+        // reach it — so this one panics if called. That is the point: it is a
+        // tripwire, not a stand-in.
+        //
+        // Recorded here rather than named to dodge the guard. A name that trips
+        // the guard is the guard working; renaming to evade it would be the
+        // opposite of the intent. This is also the first entry added *to* a
+        // recorded set rather than one removed from it, and it arrived exactly
+        // the way the doc above predicts: the walk reads `src/`, cannot see the
+        // `#[cfg(test)]` boundary, and cannot tell this from a production impl.
+        "UnusedBearerVerifier",
     ],
 )];
 

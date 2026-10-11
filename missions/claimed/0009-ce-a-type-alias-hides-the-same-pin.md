@@ -776,3 +776,21 @@ and the one approximation available in-tree was not.
 
 A handle taken in one function and passed to another — the same shape, one level
 up — is uncovered by the registry guard for the same reason, and is untriaged.
+
+## What this arc handed on
+
+Three findings were scoped and filed as missions, because they are implementation
+work with a measured subject rather than more analysis:
+
+- `0009-cf` — the capability chain parent binding is documented and absent.
+- `0009-cg` — key revocation is never checked at verify time.
+- `0009-ch` — 24 adapters name their algorithm instead of looking it up, with the
+  CD-6 D1 amendment already made.
+
+The remaining unresolved gates — AC#8b's FROST test and the four BLS/DKG gates —
+were deliberately **not** filed as missions. Their subject does not exist at all:
+no FROST dependency in any manifest, no BLS threshold signer anywhere. Writing a
+threshold scheme is RFC-scale work, not a mission, and a mission file would
+imply a scoping that has not been done. They are recorded here so the count is
+honest: **25 gates stated, 11 resolving, 14 not**, and 6 of those 14 gate
+features that were never built.

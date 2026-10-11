@@ -143,7 +143,7 @@ pub enum OctoCliError {
     /// for any operator that observed the hard-error during the
     /// v1.1 cycle, and for any library caller that surfaces the
     /// variant directly. Retained per
-    /// [[cipherocto-design-principles]] §Extension over enumeration:
+    /// `docs/architecture/design-principles.md` §Extension over enumeration:
     /// `#[non_exhaustive]` library surface must not lose variants.
     #[error("`{name}` was removed; use `{replaced_by}` (see `octo --help` for the current subcommand list)")]
     StaleStub {
@@ -295,8 +295,8 @@ pub enum OctoCliError {
     /// role-gate hook lands, `vault transfer` surfaces this variant
     /// regardless of HSM availability (RFC-0011-e §Implementation
     /// Phases). The CLI does NOT implement role provisioning — that is
-    /// RFC-0011-d's surface (per `[[cipherocto-design-principles]]`
-    /// no-parallel-abstractions).
+    /// RFC-0011-d's surface (per ``docs/architecture/design-principles.md``
+    /// `docs/architecture/design-principles.md` §No parallel abstractions).
     #[error(
         "role not provisioned: transfer requires a provisioned transfer capability; see RFC-0011-d"
     )]
@@ -577,7 +577,7 @@ pub enum OctoCliError {
     /// a kind reference that did not match any registered attestation
     /// kind in the substrate registry (RFC-0011-g §Attestation Kind
     /// Resolution — TypedDiscriminator pattern per
-    /// [[cipherocto-design-principles]] §Extension over enumeration).
+    /// `docs/architecture/design-principles.md` §Extension over enumeration).
     /// The substrate carries the typed-discriminator namespace; this
     /// error surfaces the unknown kind verbatim so the operator can
     /// diff against the registered namespace. Exit 37 per RFC-0011-g
@@ -698,7 +698,7 @@ pub enum OctoCliError {
 
     /// `attach_with_token` step (e) found no registered handler for
     /// the token's `TransportKind` (RFC-0011-c §F.2 step (e) +
-    /// [[cipherocto-design-principles]] §per-extension crates +
+    /// `docs/architecture/design-principles.md` §per-extension crates +
     /// registry). Substrate ships the built-in `InProcessHandler`;
     /// extension transports (e.g., `UnixSocket`) require a
     /// follow-on Layer D transport crate

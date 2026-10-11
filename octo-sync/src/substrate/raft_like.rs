@@ -8,7 +8,7 @@
 //!
 //! # Sealed trait pattern
 //!
-//! Per [[cipherocto-design-principles]] §No parallel abstractions:
+//! Per `docs/architecture/design-principles.md` §No parallel abstractions:
 //! - `WriterElectionSealed` + `WriterElectionForceRelinquishSealed`
 //!   are implemented here (impls live in the substrate crate only).
 //! - `DidWriteCoordinatorSealed` (from `octo_ident::write_coordinator::sealed`)
@@ -337,7 +337,7 @@ struct DrainWalPayload {
 ///
 /// ## Layer discipline
 ///
-/// Per [[cipherocto-design-principles]]:
+/// Per `docs/architecture/design-principles.md`:
 ///
 /// - `octo-sync` (Layer B-substrate) — owns the concrete
 ///   `RaftLikeDrainCoordinator` impl.

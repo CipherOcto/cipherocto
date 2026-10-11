@@ -50,7 +50,7 @@
 //! UPDATE_PHASE3_TV=1 cargo test -p octo-sync --test phase3_tv_0862_tv6 phase3_tv_0862_tv6_dump -- --nocapture
 //! ```
 //!
-//! Per [[feedback-no-fabricated-commit-rule]] + RFC-0008 Class A
+//! Per `docs/05-process/engineering-rules.md` §No fabricated commit claims + RFC-0008 Class A
 //! determinism: the fixture budget is canonical; the substrate must
 //! stay under it. Any drift = a substrate performance regression.
 

@@ -3,7 +3,7 @@
 //!
 //! `BootstrapOrchestrator` discovers peers via the underlying
 //! transport overlay (libp2p / custom). The seal pattern is preserved
-//! (per [[cipherocto-design-principles]] §No parallel abstractions):
+//! (per `docs/architecture/design-principles.md` §No parallel abstractions):
 //! only the substrate crate implements this trait; concrete impls
 //! live alongside the `WriterElection` impl in production.
 

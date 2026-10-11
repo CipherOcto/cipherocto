@@ -10,7 +10,7 @@
 //!
 //! # Why a cluster substrate (not parallel consensus code)
 //!
-//! Per [[cipherocto-design-principles]] §Stable Abstractions Principle:
+//! Per `docs/architecture/design-principles.md` §Stable Abstractions Principle:
 //! the writer-election + DID-write coordinator surfaces are the
 //! abstractions; the consensus mechanism is the implementation detail.
 //! Adding CRDT (LWW) per v1.4 F12 + F13 amendment swaps the consensus

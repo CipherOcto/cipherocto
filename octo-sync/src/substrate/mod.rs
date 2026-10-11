@@ -15,7 +15,7 @@
 //! # Layer discipline
 //!
 //! `octo-sync` is a Layer B-substrate crate (per
-//! [[cipherocto-design-principles]] §Layer direction). The concrete
+//! `docs/architecture/design-principles.md` §Layer direction). The concrete
 //! `WriterElection` + `DidWriteCoordinator` impls (task #122) and the
 //! multi-instance test harness (task #123) land here. The
 //! `DidWriteCoordinator` trait itself lives in `octo-ident` (Layer B

@@ -49,7 +49,7 @@ pub struct WriterIdentity {
 ///
 /// Sealed trait pattern: only the substrate crate (`octo-sync`)
 /// implements this. Downstream crates cannot invent parallel
-/// election surfaces (per [[cipherocto-design-principles]] §No
+/// election surfaces (per `docs/architecture/design-principles.md` §No
 /// parallel abstractions + §Stable Abstractions Principle).
 ///
 /// `#[async_trait]` for dyn-compatibility (per R12 M18): the trait
@@ -83,7 +83,7 @@ pub trait WriterElection: sealed::WriterElectionSealed + Send + Sync {
 
 /// Per-RFC-0862 v1.3 §WriterElection §Force-Relinquish supertrait.
 ///
-/// Sealed (per [[cipherocto-design-principles]] §No parallel
+/// Sealed (per `docs/architecture/design-principles.md` §No parallel
 /// abstractions): only the substrate crate can implement. The seal
 /// is exposed because it appears in the trait bound chain on
 /// `WriterElectionForceRelinquish`; external crates consume the

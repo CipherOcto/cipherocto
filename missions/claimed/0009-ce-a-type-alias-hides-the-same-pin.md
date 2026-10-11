@@ -899,6 +899,80 @@ anything yet.
 
 Filed as `0009-cj`.
 
+## The root cause under four of the five missions
+
+Filing `0009-cj` prompted the question it should have prompted earlier: not "why
+is the V2 bundle empty" but **"is the V1 path that production actually uses
+live at all?"**
+
+It is not. Measured:
+
+| The verification stack                               | Production callers                                                         |
+| ---------------------------------------------------- | -------------------------------------------------------------------------- |
+| `CapabilityVerifier` (ingress trait) implementations | **none** — 6 impls, every one in a `#[cfg(test)]` block or a `tests/` file |
+| `GatewayAuthenticator::new`                          | **none** — called only inside `authenticator.rs`'s own test module         |
+| `verify_with_resolve` (`octo-wallet`)                | **none** — exported, and called only by its own tests                      |
+| `CapabilityToken::redeem` / `redeem_capability`      | **none** — and the code says so itself                                     |
+
+That last row is the one worth crediting. `octo-wallet`'s redemption module
+documents the gap in its own header rather than leaving it to be discovered:
+
+> **no production code in `crates/octo-network` calls `redeem_capability` or
+> `CapabilityToken::redeem` today** … TODO: wire `CapabilityToken::redeem` into
+> the envelope / network verifier when a `verify_capability(…)` hook lands in
+> `crates/octo-network/src/dot/pce/`.
+
+One implementation is even named `ProductionCapabilityVerifier`. It is in
+`octo-wallet/tests/dispatch_tv.rs`.
+
+```mermaid
+graph TD
+    A[Mint produces a capability] --> B[V1 macaroon and/or V2 envelope]
+    B -. no production consumer .-> C[Verification hook]
+    C --> D[verify_with_resolve]
+    C --> E[GatewayAuthenticator]
+    C --> F[CapabilityToken::redeem]
+    C -. absent .-> G[revocation check]
+    C -. absent .-> H[chain parent check]
+    C -. absent .-> I[algorithm dispatch]
+    C -. absent .-> J[ZK attestation binding]
+```
+
+### What this means for the mission set
+
+The five filed missions are **not five independent gaps**. Four of them are
+symptoms of this one:
+
+| Mission   | Read as a standalone gap            | What it is given this                        |
+| --------- | ----------------------------------- | -------------------------------------------- |
+| `0009-cf` | chain parent binding missing        | binding had no verifier to consult           |
+| `0009-cg` | revocation never checked            | there is no check _of any kind_ to add it to |
+| `0009-ci` | ZK attestation binds no chain state | nothing verifies an attestation              |
+| `0009-cj` | V2 wire form carries no proof       | nothing consumes the wire form               |
+
+`0009-ch` is the exception and stays a real, independent gap: the 24 adapters
+name their algorithm rather than looking it up, which is a correctness property
+of each adapter regardless of who calls them.
+
+### Why the order matters more than it looks
+
+Taken alone, each mission asks for enforcement machinery. Taken together they
+ask for it to be built before there is anything to enforce, which produces code
+that passes every gate and decides nothing — precisely the outcome this arc has
+been cataloguing.
+
+The honest order is: **land a production verification hook first.** Once
+something calls `verify_with_resolve` on a real token, `cg`, `ci` and `cj` stop
+being speculative hardening and start being the conditions under which the
+system is safe. Fixing them first is not forbidden — the chain binding landed
+this arc and is correct, stable Layer A substrate that the hook will need — but
+it is substrate before substrate, and none of it is a defence until the hook
+exists.
+
+This is also the reason `0009-cf`'s wiring criterion read as vacuous when I
+first implemented it. It was not a badly worded criterion. It was a true one,
+about a path that does not exist.
+
 ## What this arc handed on
 
 Five findings were scoped and filed as missions, because they are implementation
@@ -908,12 +982,19 @@ work with a measured subject rather than more analysis:
   binding now exists and is mutation-verified, but its enforcement path does not.
 - `0009-cg` — key revocation is never checked at verify time.
 - `0009-ch` — 24 adapters name their algorithm instead of looking it up, with the
-  CD-6 D1 amendment already made.
+  CD-6 D1 amendment already made. **Independent of the others.**
 - `0009-ci` — the ZK attestation is documented as binding capability chain state
   into the circuit public inputs, and binds nothing. Sequenced after `0009-cf`.
 - `0009-cj` — the V2 wire form that replaced the capability on the response path
   carries no macaroon, no signature and no caveats. Its `holder_record_bytes`
   decode is documented and fails on every bundle production emits.
+
+**Four of the five share one root cause**: there is no production capability
+verification path anywhere in the workspace, so none of them has a place to take
+effect. See §The root cause under four of the five missions above. The
+recommendation that follows from that is to land a verification hook before
+building enforcement against it — which is a statement about ordering, not about
+skipping the work.
 
 The remaining unresolved gates — AC#8b's FROST test and the four BLS/DKG gates —
 were deliberately **not** filed as missions. Their subject does not exist at all:

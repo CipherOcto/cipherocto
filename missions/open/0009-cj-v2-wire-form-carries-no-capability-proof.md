@@ -135,6 +135,13 @@ gap is cheap to fix now and expensive to fix after a consumer lands.
 
 ## Dependencies
 
+- **There is no production consumer to be broken or protected by this fix.**
+  Measured while filing: the ingress `CapabilityVerifier` trait has no production
+  implementation, `verify_with_resolve` has no production caller, and
+  `GatewayAuthenticator::new` is called only from its own test module. That is why
+  the empty bundle is latent rather than live — and why deciding _what a V2
+  capability is_ is a design question rather than a bug fix. See §The root cause
+  under four of the five missions in mission `0009-ce`.
 - Mission `0009-cf-capability-chain-parent-binding-is-not-enforced` — the chain
   binding now exists but has no verification path, and this mission's criteria
   are where that path would have to live.

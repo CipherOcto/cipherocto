@@ -78,6 +78,14 @@ as covered.
 
 ## Dependencies
 
+- **A production verification path must exist first.** Measured while filing
+  `0009-cj`: the revocation flag has no verifier to add it to. There is no
+  production implementation of the ingress `CapabilityVerifier` trait, no
+  production caller of `verify_with_resolve`, and no production caller of
+  `CapabilityToken::redeem`. This mission's premise — that revocation is modelled
+  but unchecked — is true and narrower than it first reads: nothing is checked,
+  including the signature. See §The root cause under four of the five missions in
+  mission `0009-ce`.
 - Mission `0009-ce-a-type-alias-hides-the-same-pin` (recorded the finding)
 - RFC-0009 AC#14
 - RFC-0958 §Verification

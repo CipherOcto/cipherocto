@@ -104,10 +104,14 @@ along with the false claim about it.
 
 ## Dependencies
 
+- **No production path verifies an attestation either.** Measured while filing
+  `0009-cj`: nothing calls `verify_capability_zk` outside tests and the
+  `quota-router-cli` development command, and the capability verification stack
+  has no production entry point at all. Binding the bundle into the circuit is
+  necessary and not sufficient — a proof nobody verifies constrains nothing.
+  See §The root cause under four of the five missions in mission `0009-ce`.
 - Mission `0009-cf-capability-chain-parent-binding-is-not-enforced` — the parent
-  binding itself is not computed or verified anywhere, so this mission's chain
-  public inputs would bind to an unverified value until that one lands.
-- Mission `0009-cf` must land first or together; binding an unbound value into a
-  proof would move the defect rather than fix it.
+  binding itself is now computed and checkable, so this mission's chain public
+  inputs would bind to a real value rather than an unverified one.
 - RFC-0958 §Data Structures (proof bundle shape)
 - RFC-0009 §Threat model A10 (the attenuation chain being claimed)

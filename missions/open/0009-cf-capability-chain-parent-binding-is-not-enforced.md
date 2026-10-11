@@ -187,6 +187,34 @@ mean anything**, and the AC below is ordered that way. This is a stronger claim
 than "the criterion was vacuous", which is what the earlier amendment recorded:
 the criterion was not vacuous, it was **premature**.
 
+### Two constraints on the writer that shape it more than expected
+
+Measured while scoping this, and both are the kind of thing that costs an
+implementer a day to rediscover.
+
+**1. The v1 wire carries no chain metadata at all.** `Macaroon` is
+`root_id + root_secret_hash + caveats + chain`. There is no `chain_depth` and no
+parent pointer anywhere in it. So the attenuate handler cannot recover the
+_parent's_ depth from the token it was handed, and RFC-0009's formula needs the
+child's depth to compute the binding. **The parent depth has to arrive in
+`AttenuateRequest`.** Deriving it from the caveat count would be wrong, not
+merely inelegant — caveat count tracks attenuation steps, while `chain_depth` is
+hierarchical position, and the two diverge the moment a capability is delegated
+sideways rather than down.
+
+**2. The two wallet handlers disagree about their own output wire form.**
+`MintHandler` returns a `CapabilityBundleV2Envelope`; `AttenuateHandler` returns
+a v1 macaroon wire. So a capability is a V2 bundle on the way out of mint and a
+v1 wire on the way out of attenuate. **Attenuation discards the very artifact
+that carries the chain metadata.** That is the mechanical explanation for why the
+hierarchy is inert: mint creates chain metadata, attenuate drops it, and the
+verifier never saw either.
+
+Any writer has to make those two agree. Deciding _which_ form attenuate should
+return is a protocol decision rather than an implementation detail — the answer
+determines whether the v1 wire is still a credential or becomes an internal
+substrate form only, which in turn decides what the gateway verifies.
+
 ### The stale claim this turned up
 
 `octo-cap-zk` carried a test comment asserting `compute_chain_parent` and
@@ -204,6 +232,7 @@ be vacuous and has been replaced with the criterion that is actually blocking.
 - [x] `compute_chain_parent(parent_cap_key, child_cap_key, child_depth)` exists and returns the BLAKE3-256 binding the field documents.
 - [x] `verify_chain_parent` recomputes that binding and rejects a mismatch. Mutation-verified against a predicate that always accepts.
 - [ ] **A non-root token can actually be minted.** Moved ahead of everything below, and promoted from optional to blocking. `AttenuateHandler` is the natural home — it is the operation that extends a chain and it already holds the wallet's identity key — but it would have to begin emitting a V2 bundle whose `chain_depth` and `chain_parent` reflect the attenuation, which today it does not do at all. **Until this is done there is nothing for a chain check to check**, and any verifier wired to bundles below would pass while measuring nothing.
+- [ ] The wallet's two handlers agree on one output wire form, so attenuating a minted capability does not silently discard the bundle carrying its chain metadata. Deciding _which_ form wins is a protocol decision: it determines whether the v1 wire remains a credential the gateway verifies or becomes an internal substrate form only.
 - [ ] **A V2 verification path exists.** This is the reader half. The capability verifier must gain a route by which a `CapabilityBundleV2` can be presented and decided on — or the V2 bundle must be retired as a wire form. A production verifier now exists and consumes the _other_ artifact, so this is no longer "no enforcement point anywhere"; it is "the enforcement point is pointed at the representation that has no chain state". Until one of those happens, no wiring criterion below is checkable.
 - [ ] That path consults `verify_chain_parent` before accepting a token with `chain_depth > 0`, and treats depth 0 as a root rather than running the binding.
 - [ ] A missing parent in the catalog is refused rather than treated as a root token. (`check_wrapped_chain`'s revocation walk is out of scope here; it needs `0009-cg`.)

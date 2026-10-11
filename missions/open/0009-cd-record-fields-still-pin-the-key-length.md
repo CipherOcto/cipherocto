@@ -1,6 +1,6 @@
 ---
 name: 0009-cd-record-fields-still-pin-the-key-length
-description: RFC-0009 AC#11 follow-on. 0009-cc widened key PARAMETERS to &[u8] but left the record fields that carry those keys as [u8; 32], so a dispatched site still cannot receive a second algorithm's key through the record path.
+description: RFC-0009 AC#11 follow-on. 0009-cc widened key PARAMETERS to a slice but left the record fields carrying those keys as [u8; 32], so a dispatched site still cannot receive a second algorithm's key through the record path. Confirmed in octo-reputation and, inverting the problem, in KeyRotation, whose two-algorithm verify cannot accept the second algorithm.
 metadata:
   node_type: mission
   type: implementation
@@ -55,6 +55,52 @@ This is the cross-boundary attenuation failure: the type-level widening in
 `auth::verify_governance_signature` is undone by the type of the value the
 stores read out of it.
 
+## The same failure exists in `octo-network`, and there it inverts
+
+`ocrypt::KeyRotation` is the clearest statement of this bug anywhere in the
+workspace, because its documented purpose is the thing its field types forbid.
+
+`KeyRotation` carries `old_public_key: [u8; 32]` and `new_public_key: [u8; 32]`,
+and `KeyRotation::verify` takes **two** algorithm ids, dispatching once per key.
+Its own doc comment says why two:
+
+> Two algorithms, not one: a rotation is exactly the case where the old and new
+> key need not belong to the same algorithm, and a single parameter would assert
+> that they do.
+
+So the API is built to accept a rotation from Ed25519 to anything else. The
+field types forbid it. Both keys are 32 bytes, so a stark-schnorr key can
+neither rotate in nor rotate out, and the second algorithm parameter has no
+value it can ever legitimately be given. The two-algorithm design is unreachable
+in exactly the cases it was written for.
+
+`to_signing_bytes` makes the same assumption structurally, reserving
+`32 + 32 + 8` for a concatenation that is defined by those two field widths.
+
+## Scope: candidates versus confirmed
+
+The five `octo-reputation` sites and the two `KeyRotation` fields are
+**confirmed** — each was read and each reaches a `verify_dispatch` call.
+
+The workspace holds **23** struct fields declared as `pub <name>: [u8; 32]` where
+the name is a public-key name. That figure is a **name match** and is an upper
+bound, not a finding. Most are not verification sites at all: `octo-ident`'s
+registry and resolver backend define keys rather than verify them, and the
+`orr` onion-routing types may belong to an entirely separate scheme that never
+reaches the `AlgorithmRegistry`.
+
+Of those 23, **16** sit in the nine crates the AC#11 gate lists as dispatched —
+7 in `octo-network`, 7 in `octo-reputation`, 1 in `octo-wallet`, 1 in
+`octo-wallet-node`. The other 7 are in `octo-core`, `octo-ident`,
+`octo-identity-resolver-node` and `octo-policy`, none of which the gate scans.
+
+Establishing which of the 16 actually reach a dispatch site requires
+call-graph resolution, not a text scan. That approach was prototyped and
+**rejected on measurement** for the guard that would need it: closure by name
+pulled 3265 of 5457 workspace function names into the graph and produced 15
+hits and zero true positives. Do not repeat it. The honest position is that 5
+sites are confirmed, 11 are unexamined, and a text scan cannot close the gap.
+
 ## The store pre-filters are a second instance
 
 Both stores open `verify_governance_suspension` with
@@ -98,9 +144,15 @@ the record. That is the gap this mission closes.
 - [ ] `GovernanceProof::governance_pubkey`, `SuspensionAuth::governance_pubkey`
       and `ResumeProof::governance_pubkey` carry a key whose length is not
       decided by the type
+- [ ] `KeyRotation::old_public_key` and `KeyRotation::new_public_key` carry a
+      key whose length is not decided by the type, so the two-algorithm
+      rotation its `verify` exists to accept becomes reachable
 - [ ] The persistence encoding of all three records is examined and the change
       to it is deliberate, not incidental — these records are stored, and the
       current `[u8; 32]` may be relied on by an existing schema or column width
+- [ ] The `#[repr(C)]` wire form of `KeyRotation` is treated as a wire change,
+      with its two fixed-width key slots and two 64-byte signature slots
+      considered together rather than independently
 - [ ] Both store pre-filters either delegate to the length-agnostic check inside
       `auth::verify_governance_signature` or are removed as redundant
 - [ ] The `store::stoolap` comment is corrected to describe the code beneath it
@@ -108,6 +160,9 @@ the record. That is the gap this mission closes.
       through the verification function — constructed, stored, read back and
       verified — so the store path is covered and not only the helper
 - [ ] Zero-key sentinel behaviour is unchanged for every existing 32-byte key
+- [ ] The 11 unexamined fixed-size public-key fields in dispatch-site crates are
+      each confirmed as reaching a dispatch site or ruled out, by reading them —
+      not by extending the text scan, which is known to be unsound here
 
 ## Open question
 
@@ -117,6 +172,15 @@ attractive: it keeps "a key of the wrong length cannot be built" as a type
 invariant instead of a runtime check, which matches the reasoning `0009-cb` and
 `0009-cc` both applied to parameters. It costs a schema-visible change to
 persisted records either way.
+
+`KeyRotation` may force the question the other way. It is `#[repr(C)]`, so its
+field widths are the wire format, and a length-validated newtype over `Vec<u8>`
+has no fixed width to publish. If the rotation must stay `repr(C)` then its key
+slots stay fixed-width, and the honest outcome is that a rotation record can
+only carry one algorithm's key length — which would mean dropping the
+two-algorithm `verify` rather than pretending to support it. That is a real
+design fork and should be decided deliberately, not by whichever change compiles
+first.
 
 ## Why this was not folded into `0009-cc`
 

@@ -102,6 +102,61 @@ new edge — not a codec — is the real work in the first category.
 sites, and the 24 typed-key `dot/` signatures §The 27 typed-key sites describes.
 Those are separate work from `0009-c7`.
 
+## A fourth category, found by the completeness guard — 2026-10-10
+
+The pending table counted the files it named. It said nothing about files it
+never named, and that gap was live: a `VerifyingKey::from_bytes` planted in
+`octo-network/src/mon/vdf.rs` left **all five** AC-11 vectors green, while the
+same plant in `dot/dc.rs` (which the table did name) turned the count vector
+red immediately.
+
+`ac11_pending_table_is_complete_for_every_crate_it_covers` now walks every
+crate the table covers and asserts that **every** file holding a constructor
+appears in `AC11_PENDING` or `AC11_ALLOWED`.
+
+**It went red on arrival, which is the point of adding it.** Six files the
+table never named:
+
+| File                    | Sites | Shape                           |
+| ----------------------- | ----- | ------------------------------- |
+| `dot/dc_envelopes.rs`   | 7     | typed `&VerifyingKey` parameter |
+| `dot/kick_envelopes.rs` | 5     | typed `&VerifyingKey` parameter |
+| `dot/binding.rs`        | 5     | typed `&VerifyingKey` parameter |
+| `dot/handover.rs`       | 5     | typed `&VerifyingKey` parameter |
+| `dot/decommission.rs`   | 2     | typed `&VerifyingKey` parameter |
+| `dot/sub_group.rs`      | 1     | typed `&VerifyingKey` parameter |
+
+That is **25 sites in a fourth category** — the typed-key sites
+§The 27 typed-key sites describes, which this file had counted by hand and
+which no automated check was watching. The hand count said 27; the measured
+count is 25, consistent with the two sites refactored since.
+
+So `octo-network`'s sites split four ways, not three:
+
+1. caller-supplied key — dispatched, mission `0009-c7`
+2. key on the wire struct — needs an RFC-0853 format change
+3. genuinely DID-derived — none
+4. **typed `&VerifyingKey` parameter** — a public-signature change, 25 sites,
+   the largest remaining block
+
+## A guard that went slack while being updated
+
+Adding the algorithm parameter in `0009-c7` broke the M-15 vector, which
+matched `.verify(&envelope.source_peer)` — a shape that no longer existed. The
+first repair widened it to also accept the algorithm-first form, and
+**mutation showed that version passing with a hardcoded key**: the function has
+two `.verify(` calls, and the matcher asked whether _any_ of them used the
+envelope's own key. Mutating the second left the first to satisfy it.
+
+The matcher now extracts every `.verify(` call in the body and requires each to
+name the envelope's own peer. Verified by mutation, including the second
+extraction bug where scanning to the first `)` truncated at the nested
+`ed25519_algorithm_id()` and hid the key that followed.
+
+**"At least one" is a guard that a single good call can carry indefinitely.**
+That is the same shape as the vacuous-pass work, one level up: not a missing
+file but a missing _site_.
+
 ## Why this is blocked
 
 `octo-cap-macaroon::pubkey_from_did` parses `did:octo:0x<hex>` into

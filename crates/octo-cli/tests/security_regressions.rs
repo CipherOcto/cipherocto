@@ -19,6 +19,7 @@
 //! Counting rules are stated inline next to every count, because every number
 //! here is a claim that has to fail loudly when reality moves.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -726,17 +727,62 @@ fn m15_every_adapter_canonicalize_verifies_the_envelope() {
             file.display()
         );
         // Verify must be against the envelope's own key, not a hardcoded one.
-        // Matched on whitespace-collapsed text because rustfmt wraps the call,
-        // and against either binding name because the adapters were fixed by
-        // two different code paths.
+        // Matched on whitespace-collapsed text because rustfmt wraps the call.
+        //
+        // Since RFC-0009 AC#11 mission `0009-c7` the call takes the algorithm
+        // as its FIRST argument, so the bare `.verify(&env.source_peer)` form no
+        // longer matches.
+        //
+        // Each `.verify(` call is checked individually rather than asking
+        // whether the body contains one good call. "At least one" is what an
+        // earlier version did, and it is too weak: this function has two call
+        // sites, so mutating the second to a hardcoded key still passed
+        // because the first still matched. Verified by mutation.
         let flat: String = body.split_whitespace().collect::<Vec<_>>().join(" ");
+        let verify_calls: Vec<String> = flat
+            .match_indices(".verify(")
+            .map(|(i, _)| {
+                let rest = &flat[i..];
+                // Scan to the matching close paren rather than the first one:
+                // the argument list contains nested calls (`ed25519_algorithm_id()`)
+                // whose own `)` would truncate the text and hide the key that
+                // follows it. Depth counting is the whole fix.
+                let bytes = rest.as_bytes();
+                let mut depth = 0i32;
+                let mut end = rest.len();
+                for (j, b) in bytes.iter().enumerate() {
+                    match b {
+                        b'(' => depth += 1,
+                        b')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                end = j + 1;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                rest[..end].to_string()
+            })
+            .collect();
         assert!(
-            flat.contains(".verify(&envelope.source_peer)")
-                || flat.contains(".verify(&env.source_peer)"),
-            "M-15: {} must verify against the envelope's own source_peer. A \
-             hardcoded key would make the check theatre.",
+            !verify_calls.is_empty(),
+            "M-15: {} canonicalizes without verifying. Parsing accepts a \
+             structurally valid frame with a forged signature or a mismatched \
+             envelope_id, so this is an unauthenticated injection point.",
             file.display()
         );
+        for call in &verify_calls {
+            let own_key =
+                call.contains("&env.source_peer") || call.contains("&envelope.source_peer");
+            assert!(
+                own_key,
+                "M-15: {} has a `{call}` that does not use the envelope's own \
+                 source_peer. A hardcoded key would make the check theatre.",
+                file.display()
+            );
+        }
         // The verification must guard the value the function RETURNS. Adapters
         // with two decode paths (quic, p2p, webrtc: binary + DOT/1 text
         // fallback) funnel both through one trailing verify, so the rule is
@@ -1839,6 +1885,54 @@ const AC11_PENDING: &[(&str, usize, &str)] = &[
          production one becomes an allowlist entry with the same reasoning as \
          the sm-engine one.",
     ),
+    (
+        "crates/octo-network/src/dot/decommission.rs",
+        2,
+        "mission 0009-c3, FOURTH category: the key arrives as an already-typed \
+         VerifyingKey parameter, so this is a public-signature change rather than a \
+         body edit. Listed here because the completeness check found it unrecorded, not \
+         because anyone had catalogued it.",
+    ),
+    (
+        "crates/octo-network/src/dot/sub_group.rs",
+        1,
+        "mission 0009-c3, FOURTH category: the key arrives as an already-typed \
+         VerifyingKey parameter, so this is a public-signature change rather than a \
+         body edit. Listed here because the completeness check found it unrecorded, not \
+         because anyone had catalogued it.",
+    ),
+    (
+        "crates/octo-network/src/dot/dc_envelopes.rs",
+        7,
+        "mission 0009-c3, FOURTH category: the key arrives as an already-typed \
+         VerifyingKey parameter, so this is a public-signature change rather than a \
+         body edit. Listed here because the completeness check found it unrecorded, not \
+         because anyone had catalogued it.",
+    ),
+    (
+        "crates/octo-network/src/dot/kick_envelopes.rs",
+        5,
+        "mission 0009-c3, FOURTH category: the key arrives as an already-typed \
+         VerifyingKey parameter, so this is a public-signature change rather than a \
+         body edit. Listed here because the completeness check found it unrecorded, not \
+         because anyone had catalogued it.",
+    ),
+    (
+        "crates/octo-network/src/dot/binding.rs",
+        5,
+        "mission 0009-c3, FOURTH category: the key arrives as an already-typed \
+         VerifyingKey parameter, so this is a public-signature change rather than a \
+         body edit. Listed here because the completeness check found it unrecorded, not \
+         because anyone had catalogued it.",
+    ),
+    (
+        "crates/octo-network/src/dot/handover.rs",
+        5,
+        "mission 0009-c3, FOURTH category: the key arrives as an already-typed \
+         VerifyingKey parameter, so this is a public-signature change rather than a \
+         body edit. Listed here because the completeness check found it unrecorded, not \
+         because anyone had catalogued it.",
+    ),
 ];
 
 /// Crates deliberately **outside** AC#11, with the reason each one is.
@@ -2175,6 +2269,87 @@ fn no_capability_token_api_names_ed25519_dalek() {
         body.contains("verify_dispatch(") && body.contains("self.holder_sig.algorithm_id()"),
         "AC-11: verify_holder_sig must dispatch on the signature's own \
          algorithm, not on a hardcoded one."
+    );
+}
+
+/// The pending table must be **complete for the crates it covers**.
+///
+/// Counting the files the table names proves those files still hold what it
+/// says. It says nothing about a file the table never named, and that is not
+/// hypothetical: a `VerifyingKey::from_bytes` planted in
+/// `octo-network/src/mon/vdf.rs` — a file no entry mentions — left all five
+/// AC-11 vectors green, while the same plant in `dot/dc.rs` (which *is*
+/// listed) turned the count vector red immediately.
+///
+/// So this walks each covered crate and asserts that **every** file holding a
+/// constructor appears in `AC11_PENDING` or `AC11_ALLOWED`. A new site in a
+/// new file now fails here instead of waiting for someone to extend a table.
+#[test]
+fn ac11_pending_table_is_complete_for_every_crate_it_covers() {
+    // Crate roots implied by the pending paths: everything up to `/src`.
+    let mut roots: BTreeSet<&str> = BTreeSet::new();
+    for (path, _, _) in AC11_PENDING {
+        if let Some(idx) = path.find("/src/") {
+            roots.insert(&path[..idx + 4]);
+        }
+    }
+    assert!(
+        !roots.is_empty(),
+        "AC-11: the pending table names no crate root, so there is nothing to \
+         check for completeness"
+    );
+
+    let mut unlisted: Vec<String> = Vec::new();
+    for root in roots {
+        let abs = workspace_root().join(root);
+        assert!(
+            abs.is_dir(),
+            "AC-11: pending crate root {root} does not exist. Every path in \
+             AC11_PENDING must sit under a real crate root for this check to \
+             scan anything."
+        );
+        let mut stack = vec![abs.clone()];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                    continue;
+                }
+                let rel = path
+                    .strip_prefix(workspace_root())
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let body = strip_comments(&std::fs::read_to_string(&path).unwrap());
+                let has_site = contains_path_call(&body, "VerifyingKey::from_bytes")
+                    || contains_path_call(&body, "Signature::from_bytes")
+                    || contains_path_call(&body, "Signature::from_slice");
+                if !has_site {
+                    continue;
+                }
+                let listed = AC11_PENDING.iter().any(|(p, _, _)| *p == rel)
+                    || AC11_ALLOWED.iter().any(|(p, _)| *p == rel);
+                if !listed {
+                    unlisted.push(rel);
+                }
+            }
+        }
+    }
+
+    assert!(
+        unlisted.is_empty(),
+        "AC-11: these files hold an inline Ed25519 constructor but appear in \
+         neither AC11_PENDING nor AC11_ALLOWED. They are outside the gate's \
+         view, which is how octo-network went unrecorded for so long: add a \
+         pending entry with its measured count, or an allowlist entry with \
+         the reason it is legitimate."
     );
 }
 

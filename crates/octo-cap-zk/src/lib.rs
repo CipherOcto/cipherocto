@@ -955,22 +955,30 @@ mod tests {
     ///
     /// **It is not coverage of hierarchical chain verification.** The
     /// `[0xCC; 32]` parent below is an arbitrary constant, not a value
-    /// any function computes or checks — `compute_chain_parent` and
-    /// `verify_chain_parent` do not exist. `chain_depth: 1` makes this a
+    /// any function computes or checks. `chain_depth: 1` makes this a
     /// child token with a parent nothing ever minted. A reader scanning
     /// this test for evidence that chain state is bound would find none,
     /// which is the accurate state of the code.
     ///
+    /// `compute_chain_parent` and `verify_chain_parent` **do exist** —
+    /// they landed in `octo-cap-macaroon` and are byte-pinned and
+    /// mutation-verified. An earlier revision of this note said they did
+    /// not exist, which was true when written and stopped being true.
+    /// What is still true, and is what this note exists to say, is that
+    /// **nothing in production calls them** and this test does not either:
+    /// the value here is a constant, not a binding.
+    ///
     /// The properties that are missing are specified in missions
     /// `0009-ci` (bind the bundle into the circuit) and `0009-cf`
-    /// (compute and verify the parent binding at all).
+    /// (call the parent binding from a verification path).
     #[test]
     fn proof_bundle_capability_v2_field_roundtrip() {
         use octo_cap_macaroon::{
             CapabilityBundleV2, CapabilityBundleV2Envelope, CapabilityTokenV2,
         };
         // Arbitrary parent constant: preserved verbatim by serde, bound
-        // by nothing. See the note above.
+        // by nothing. `compute_chain_parent` would produce a real
+        // binding here and is deliberately not called. See the note above.
         let token_v2 = CapabilityTokenV2 {
             chain_depth: 1,
             chain_parent: [0xCC; 32],

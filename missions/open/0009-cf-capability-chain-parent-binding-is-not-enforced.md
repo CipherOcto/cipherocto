@@ -1,6 +1,6 @@
 ---
 name: 0009-cf-capability-chain-parent-binding-is-not-enforced
-description: RFC-0009 threat model A10. CapabilityTokenV2::chain_parent is documented as a BLAKE3 binding computed by compute_chain_parent and checked by verify_chain_parent. Neither function exists, nothing reads the field to make a decision, and every production mint writes the zero value. The documented defence is absent rather than merely untested.
+description: RFC-0009 threat model A10. compute_chain_parent and verify_chain_parent now exist, byte-pinned and mutation-verified, but the documented defence is still absent rather than merely untested. chain_parent lives on CapabilityTokenV2 inside the V2 bundle; the one production capability verifier consumes the v1 macaroon wire, which carries no chain state, and nothing decides anything from a V2 bundle at all. Every production mint writes the zero value, and the attenuation path that would extend a hierarchy never touches a bundle. Two independent gaps — no reader and no writer — and the writer must land first or a chain check would pass while measuring nothing.
 metadata:
   node_type: mission
   type: implementation
@@ -100,14 +100,21 @@ RFC-0009 §Threat model A10 specifies the defence plainly:
 > `verify_chain_parent` checks `blake3(parent || child || depth) == chain_parent`;
 > forgery requires inverting BLAKE3.
 
-Measured across the workspace:
+Measured across the workspace **at the time this was filed**:
 
 | Claim                                | State                               |
 | ------------------------------------ | ----------------------------------- |
-| `compute_chain_parent`               | does not exist                      |
-| `verify_chain_parent`                | does not exist                      |
+| `compute_chain_parent`               | did not exist                       |
+| `verify_chain_parent`                | did not exist                       |
 | `CapabilityTokenV2::chain_parent`    | documented as carrying that binding |
 | Any code reading the field to decide | **none**                            |
+
+The first two rows are **stale by design and marked so**: both functions have since
+landed — see §What has landed below. A reader landing on this table first should
+take the last two rows as current and the first two as history. They were left
+rather than silently updated because the whole point of the table is the
+as-filed measurement, and a table that quietly rewrites itself stops being
+evidence.
 
 Every occurrence of the field is an assignment, a `Debug` print, or a test
 asserting the value round-trips.
@@ -129,6 +136,66 @@ because the feature is unused: the attack surface is empty for the same reason
 the defence is missing. What exists now is a trap for whoever adds chained
 issuance — the field looks bound, and would not be.
 
+## Amendment: the enforcement point exists, and it is aimed at the other artifact
+
+The arc that produced this mission concluded that four sibling missions shared one
+root cause — **there was no production capability verification path anywhere** —
+and recommended landing a verification hook before building enforcement against
+it. That hook has landed: `ProductionCapabilityVerifier` in `quota-router-core`
+composes `verify_with_resolve` and `CapabilityToken::ask_binding`, and it is
+mutation-verified and proven reachable through `GatewayAuthenticator`.
+
+**It does not call `verify_chain_parent`, and it cannot.** Not an oversight on
+its side. It is handed a string by `CapabilityVerifier::verify` and parses it as
+the **v1 macaroon wire**. That wire carries `macaroon`, `holder_sig` and
+discharges. It has no `chain_parent`, no `chain_depth`, and no notion of a
+delegation hierarchy at all.
+
+So the two representations never meet:
+
+|                  | where it lives                                      | who reads it                | who writes it                        |
+| ---------------- | --------------------------------------------------- | --------------------------- | ------------------------------------ |
+| v1 macaroon wire | the `Authorization: CipherOcto-Cap` header          | the one production verifier | `CapabilityToken::mint`, `attenuate` |
+| V2 bundle        | `CapabilityTokenV2` in `CapabilityBundleV2Envelope` | **nothing**                 | every production mint, zeros         |
+
+`bundle_v2`'s own module documentation already says this: _"V2 bundles are
+minted and transported; nothing decides anything from them."_ The chain metadata
+lives entirely on the side that nothing decides from.
+
+### Why "just wire it up" is not the work
+
+The missing call is the smaller half. There are **two** independent gaps, and
+closing the reader without the writer would leave something worse than nothing:
+
+1. **No reader.** No code presents or decides on a V2 bundle.
+2. **No writer, and the obvious writer does not even touch it.** Every production
+   mint writes `chain_depth: 0` and `chain_parent: [0u8; 32]`. The one operation
+   that _should_ extend a hierarchy is attenuation — and the wallet's
+   `AttenuateHandler` operates on the v1 macaroon wire and returns a v1 wire. It
+   never constructs, reads or updates a V2 bundle, so attenuating a capability
+   grows the macaroon's HMAC caveat chain while the bundle's `chain_depth` and
+   `chain_parent` stay exactly as minted.
+
+The zero written by every mint is _load-bearing for the current safety story_:
+there is no non-root token, so there is no parent to forge. A verifier wired to
+read bundles without a mint that can produce a non-root one would gain no
+capability to check anything — the same class of change as the AC#11 guard that
+"passes while measuring nothing".
+
+So the sequence matters: **a non-root mint must exist before a chain check can
+mean anything**, and the AC below is ordered that way. This is a stronger claim
+than "the criterion was vacuous", which is what the earlier amendment recorded:
+the criterion was not vacuous, it was **premature**.
+
+### The stale claim this turned up
+
+`octo-cap-zk` carried a test comment asserting `compute_chain_parent` and
+`verify_chain_parent` "do not exist". That was true when written and became false
+when the functions landed. Corrected in the same change, keeping the part that
+matters: the `[0xCC; 32]` parent in that test is still an arbitrary constant that
+nothing computes or checks, and nothing in production still calls either
+function.
+
 ## Acceptance Criteria
 
 Reordered after implementation. The first two are done; the third was found to
@@ -136,11 +203,12 @@ be vacuous and has been replaced with the criterion that is actually blocking.
 
 - [x] `compute_chain_parent(parent_cap_key, child_cap_key, child_depth)` exists and returns the BLAKE3-256 binding the field documents.
 - [x] `verify_chain_parent` recomputes that binding and rejects a mismatch. Mutation-verified against a predicate that always accepts.
-- [ ] **A V2 verification path exists.** This is the real blocker and it was missing from the original criteria. The capability verifier must gain a route by which a `CapabilityBundleV2` can be presented and decided on — or the V2 bundle must be retired as a wire form. Until one of those happens, no wiring criterion below is checkable.
+- [ ] **A non-root token can actually be minted.** Moved ahead of everything below, and promoted from optional to blocking. `AttenuateHandler` is the natural home — it is the operation that extends a chain and it already holds the wallet's identity key — but it would have to begin emitting a V2 bundle whose `chain_depth` and `chain_parent` reflect the attenuation, which today it does not do at all. **Until this is done there is nothing for a chain check to check**, and any verifier wired to bundles below would pass while measuring nothing.
+- [ ] **A V2 verification path exists.** This is the reader half. The capability verifier must gain a route by which a `CapabilityBundleV2` can be presented and decided on — or the V2 bundle must be retired as a wire form. A production verifier now exists and consumes the _other_ artifact, so this is no longer "no enforcement point anywhere"; it is "the enforcement point is pointed at the representation that has no chain state". Until one of those happens, no wiring criterion below is checkable.
 - [ ] That path consults `verify_chain_parent` before accepting a token with `chain_depth > 0`, and treats depth 0 as a root rather than running the binding.
 - [ ] A missing parent in the catalog is refused rather than treated as a root token. (`check_wrapped_chain`'s revocation walk is out of scope here; it needs `0009-cg`.)
-- [ ] A non-root token can actually be minted, so the check has a subject.
 - [x] `chain_parent_forgery_breaks_verification` — the gate A10 names — exists and is mutation-verified: forging a parent value turns it red.
+- [ ] A test proves the _writer_ half rather than the formula: attenuate a real capability and assert the emitted bundle's `chain_depth` increments and its `chain_parent` equals `compute_chain_parent` of the real values. A test that constructs the bundle by hand, as `octo-cap-zk` currently does, measures serde and nothing else.
 
 ## What must not happen
 

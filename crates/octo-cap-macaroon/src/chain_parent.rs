@@ -3,9 +3,8 @@
 //! This module owns one thing: the BLAKE3 binding that a `CapabilityTokenV2`
 //! carries in its `chain_parent` field. It computes that binding and checks it.
 //! It does not mint, attenuate, transport or verify anything else — the wire
-//! type it serves lives in [`crate::bundle_v2`], and the capability verification
-//! path that would *call* [`verify_chain_parent`] does not exist yet (see
-//! mission `0009-cf`).
+//! type it serves lives in [`crate::bundle_v2`], and nothing in production
+//! calls [`verify_chain_parent`] (see mission `0009-cf`).
 //!
 //! ## The formula
 //!
@@ -112,6 +111,13 @@ pub fn compute_chain_parent(
 /// the chain and consults a revocation set. Neither that walk nor any caller of
 /// this function exists in the workspace yet, so **this predicate is currently
 /// unreachable from production code**. It is substrate for mission `0009-cf`.
+///
+/// A production capability verifier now exists — `ProductionCapabilityVerifier`
+/// in `quota-router-core` — and it does **not** call this. Not an oversight on
+/// its side: it verifies the v1 macaroon wire, and that wire carries no
+/// `chain_parent`. The binding lives on `CapabilityTokenV2`, inside the V2
+/// bundle, and the two representations meet nowhere. See §`0009-cf` in the
+/// mission for why that is a structural gap rather than a missing call.
 #[must_use]
 pub fn verify_chain_parent(
     parent_cap_root: &[u8; 32],

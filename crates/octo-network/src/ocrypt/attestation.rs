@@ -156,23 +156,40 @@ impl KeyRotation {
     }
 
     /// Verify both signatures (old key signs, new key signs).
-    pub fn verify(&self) -> Result<(), crate::ocrypt::error::CryptoError> {
-        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+    ///
+    /// Two algorithms, not one: a rotation is exactly the case where the old
+    /// and new key need not belong to the same algorithm, and a single
+    /// parameter would assert that they do. Both are supplied by the caller,
+    /// which is the party that knows which algorithm each key belongs to.
+    ///
+    /// The keys are fields on the struct, so an alternative is to stamp the
+    /// algorithm on the wire. That is the worse option: the rotation arrives
+    /// from the peer whose keys are being verified, so a wire field would let
+    /// the verified party choose its own verifier.
+    ///
+    /// An unregistered algorithm on either side fails closed.
+    pub fn verify(
+        &self,
+        old_algorithm: &octo_ident::AlgorithmId,
+        new_algorithm: &octo_ident::AlgorithmId,
+    ) -> Result<(), crate::ocrypt::error::CryptoError> {
         let signing_bytes = self.to_signing_bytes();
 
-        let old_key = VerifyingKey::from_bytes(&self.old_public_key)
-            .map_err(|_| crate::ocrypt::error::CryptoError::InvalidSignature)?;
-        let old_sig = Signature::from_bytes(&self.signature_by_old);
-        old_key
-            .verify(&signing_bytes, &old_sig)
-            .map_err(|_| crate::ocrypt::error::CryptoError::InvalidSignature)?;
+        octo_algo_ed25519::verify_dispatch(
+            old_algorithm,
+            &self.old_public_key,
+            &signing_bytes,
+            &self.signature_by_old,
+        )
+        .map_err(|_| crate::ocrypt::error::CryptoError::InvalidSignature)?;
 
-        let new_key = VerifyingKey::from_bytes(&self.new_public_key)
-            .map_err(|_| crate::ocrypt::error::CryptoError::InvalidSignature)?;
-        let new_sig = Signature::from_bytes(&self.signature_by_new);
-        new_key
-            .verify(&signing_bytes, &new_sig)
-            .map_err(|_| crate::ocrypt::error::CryptoError::InvalidSignature)?;
+        octo_algo_ed25519::verify_dispatch(
+            new_algorithm,
+            &self.new_public_key,
+            &signing_bytes,
+            &self.signature_by_new,
+        )
+        .map_err(|_| crate::ocrypt::error::CryptoError::InvalidSignature)?;
 
         Ok(())
     }
@@ -223,17 +240,26 @@ impl RevocationNotice {
     }
 
     /// Verify the revocation signature by the successor key.
+    ///
+    /// The verifying key arrives from the caller as bytes, so the caller is the
+    /// only party that knows which algorithm it belongs to. An unregistered
+    /// algorithm fails closed.
+    ///
+    /// Note what is and is not on the wire: `compromised_key_id` and
+    /// `successor_key_id` are *identifiers*. The struct carries no key and no
+    /// algorithm, so nothing here needs a format change to carry one.
     pub fn verify_signature(
         &self,
+        algorithm: &octo_ident::AlgorithmId,
         successor_public_key: &[u8; 32],
     ) -> Result<(), crate::ocrypt::error::CryptoError> {
-        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-        let verifying_key = VerifyingKey::from_bytes(successor_public_key)
-            .map_err(|_| crate::ocrypt::error::CryptoError::InvalidSignature)?;
-        let sig = Signature::from_bytes(&self.signature);
-        verifying_key
-            .verify(&self.to_signing_bytes(), &sig)
-            .map_err(|_| crate::ocrypt::error::CryptoError::InvalidSignature)
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            successor_public_key,
+            &self.to_signing_bytes(),
+            &self.signature,
+        )
+        .map_err(|_| crate::ocrypt::error::CryptoError::InvalidSignature)
     }
 
     /// Get the recommended propagation target for this revocation.
@@ -352,7 +378,12 @@ mod tests {
         rot.signature_by_old = old_key.sign(&signing_bytes).to_bytes();
         rot.signature_by_new = new_key.sign(&signing_bytes).to_bytes();
 
-        assert!(rot.verify().is_ok());
+        assert!(rot
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &octo_algo_ed25519::ed25519_algorithm_id()
+            )
+            .is_ok());
     }
 
     #[test]
@@ -371,7 +402,12 @@ mod tests {
         rot.signature_by_old = wrong_key.sign(&signing_bytes).to_bytes(); // wrong key!
         rot.signature_by_new = new_key.sign(&signing_bytes).to_bytes();
 
-        assert!(rot.verify().is_err());
+        assert!(rot
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &octo_algo_ed25519::ed25519_algorithm_id()
+            )
+            .is_err());
     }
 
     #[test]
@@ -417,7 +453,10 @@ mod tests {
         let signing_bytes = rev.to_signing_bytes();
         rev.signature = successor_key.sign(&signing_bytes).to_bytes();
         assert!(rev
-            .verify_signature(&successor_key.verifying_key().to_bytes())
+            .verify_signature(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &successor_key.verifying_key().to_bytes(),
+            )
             .is_ok());
     }
 
@@ -431,7 +470,10 @@ mod tests {
         let signing_bytes = rev.to_signing_bytes();
         rev.signature = wrong_key.sign(&signing_bytes).to_bytes(); // wrong key!
         assert!(rev
-            .verify_signature(&successor_key.verifying_key().to_bytes())
+            .verify_signature(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &successor_key.verifying_key().to_bytes(),
+            )
             .is_err());
     }
 
@@ -466,5 +508,97 @@ mod tests {
     fn test_revocation_propagation_hint() {
         let rev = RevocationNotice::new([0x01u8; 32], 1000, [0x02u8; 32]);
         assert_eq!(rev.propagation_hint(), PropagationTarget::Dgp);
+    }
+
+    // ── Mission 0009-c9: dispatch vectors ──────────────────────────────────
+    //
+    // The fail-closed vector is the only one that can tell real dispatch from
+    // a hardcoded Ed25519. The happy path and the bad-signature check are both
+    // satisfied by a verifier that ignores the algorithm entirely — proved by
+    // mutation on every site in this arc.
+
+    fn signed_rotation() -> (KeyRotation, ed25519_dalek::SigningKey) {
+        use ed25519_dalek::{Signer, SigningKey};
+        let old_key = SigningKey::from_bytes(&[0x0Au8; 32]);
+        let new_key = SigningKey::from_bytes(&[0x0Bu8; 32]);
+        let mut rot = KeyRotation::new(
+            old_key.verifying_key().to_bytes(),
+            new_key.verifying_key().to_bytes(),
+            500,
+        );
+        let signing_bytes = rot.to_signing_bytes();
+        rot.signature_by_old = old_key.sign(&signing_bytes).to_bytes();
+        rot.signature_by_new = new_key.sign(&signing_bytes).to_bytes();
+        (rot, old_key)
+    }
+
+    #[test]
+    fn key_rotation_dispatches_both_algorithms() {
+        let (rot, _) = signed_rotation();
+        let ed = octo_algo_ed25519::ed25519_algorithm_id();
+        assert!(rot.verify(&ed, &ed).is_ok());
+    }
+
+    #[test]
+    fn key_rotation_refuses_an_unregistered_algorithm_on_either_side() {
+        let (rot, _) = signed_rotation();
+        let ed = octo_algo_ed25519::ed25519_algorithm_id();
+        let bogus = octo_ident::AlgorithmId::derive("not-a-registered-ocrypt-algorithm");
+        assert_ne!(bogus, ed);
+
+        assert!(
+            rot.verify(&bogus, &ed).is_err(),
+            "an unregistered algorithm on the OLD side must fail closed"
+        );
+        assert!(
+            rot.verify(&ed, &bogus).is_err(),
+            "an unregistered algorithm on the NEW side must fail closed"
+        );
+    }
+
+    #[test]
+    fn key_rotation_still_refuses_a_bad_signature() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let (mut rot, _) = signed_rotation();
+        let impostor = SigningKey::from_bytes(&[0x0Cu8; 32]);
+        rot.signature_by_new = impostor.sign(&rot.to_signing_bytes()).to_bytes();
+
+        let ed = octo_algo_ed25519::ed25519_algorithm_id();
+        assert!(
+            rot.verify(&ed, &ed).is_err(),
+            "dispatch must not degrade the check into a lookup"
+        );
+    }
+
+    #[test]
+    fn revocation_notice_dispatches_on_the_declared_algorithm() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let successor = SigningKey::from_bytes(&[0x0Du8; 32]);
+        let mut rev =
+            RevocationNotice::new([0x01u8; 32], 1000, successor.verifying_key().to_bytes());
+        rev.signature = successor.sign(&rev.to_signing_bytes()).to_bytes();
+
+        assert!(rev
+            .verify_signature(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &successor.verifying_key().to_bytes()
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn revocation_notice_refuses_an_unregistered_algorithm() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let successor = SigningKey::from_bytes(&[0x0Eu8; 32]);
+        let mut rev =
+            RevocationNotice::new([0x01u8; 32], 1000, successor.verifying_key().to_bytes());
+        rev.signature = successor.sign(&rev.to_signing_bytes()).to_bytes();
+
+        let bogus = octo_ident::AlgorithmId::derive("not-a-registered-revocation-algorithm");
+        assert!(
+            rev.verify_signature(&bogus, &successor.verifying_key().to_bytes())
+                .is_err(),
+            "an unregistered algorithm must fail closed"
+        );
     }
 }

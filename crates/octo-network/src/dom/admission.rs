@@ -7,7 +7,6 @@
 
 use crate::dom::error::DomError;
 use crate::dom::intent::OverlayIntent;
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use std::collections::BTreeMap;
 
 /// Sequence tracker per (sender_id, mission_id).
@@ -49,6 +48,7 @@ pub fn check_admission(
     sequence_tracker: &SequenceTracker,
     pending_count: u32,
     config: &AdmissionConfig,
+    sender_algorithm: &octo_ident::AlgorithmId,
 ) -> Result<(), DomError> {
     // 1. Check expiration (O(1), cheapest)
     if intent.expiration <= current_timestamp {
@@ -100,16 +100,24 @@ pub fn check_admission(
     }
 
     // 7. Ed25519 signature verification (expensive, ~50-100us, done last)
-    let vk =
-        VerifyingKey::from_bytes(&intent.sender_id).map_err(|_| DomError::InvalidSignature {
-            intent_id: intent.intent_id,
-        })?;
-    let sig = Signature::from_bytes(&intent.signature);
-    let msg = intent.to_signing_bytes();
-    vk.verify(&msg, &sig)
-        .map_err(|_| DomError::InvalidSignature {
-            intent_id: intent.intent_id,
-        })?;
+    //
+    // `sender_id` is a field on the wire, so the envelope carries no algorithm
+    // to read — and it should not: the intent arrives from the very party
+    // being verified, so an algorithm field would let the sender choose its own
+    // verifier. The caller resolves it from its own registry instead, and an
+    // unregistered algorithm fails closed.
+    //
+    // The sequence tracker above keys on `sender_id` as an identity only; the
+    // algorithm applies to this verification and not to that map.
+    octo_algo_ed25519::verify_dispatch(
+        sender_algorithm,
+        &intent.sender_id,
+        &intent.to_signing_bytes(),
+        &intent.signature,
+    )
+    .map_err(|_| DomError::InvalidSignature {
+        intent_id: intent.intent_id,
+    })?;
 
     Ok(())
 }
@@ -161,6 +169,7 @@ mod tests {
             &BTreeMap::new(),
             0,
             &default_config(),
+            &octo_algo_ed25519::ed25519_algorithm_id(),
         );
         assert!(result.is_ok());
     }
@@ -176,6 +185,7 @@ mod tests {
             &BTreeMap::new(),
             0,
             &default_config(),
+            &octo_algo_ed25519::ed25519_algorithm_id(),
         );
         assert!(matches!(result, Err(DomError::InvalidSignature { .. })));
     }
@@ -190,6 +200,7 @@ mod tests {
             &BTreeMap::new(),
             0,
             &default_config(),
+            &octo_algo_ed25519::ed25519_algorithm_id(),
         );
         assert!(matches!(result, Err(DomError::AdmissionRejected { .. })));
     }
@@ -206,6 +217,7 @@ mod tests {
             &BTreeMap::new(),
             0,
             &default_config(),
+            &octo_algo_ed25519::ed25519_algorithm_id(),
         );
         assert!(matches!(result, Err(DomError::ReplayDetected { .. })));
     }
@@ -215,7 +227,15 @@ mod tests {
         let (intent, _vk) = make_signed_intent(5, 100, 200);
         let mut seq: SequenceTracker = BTreeMap::new();
         seq.insert((intent.sender_id, intent.mission_id), 10u64);
-        let result = check_admission(&intent, 100, &BTreeMap::new(), &seq, 0, &default_config());
+        let result = check_admission(
+            &intent,
+            100,
+            &BTreeMap::new(),
+            &seq,
+            0,
+            &default_config(),
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+        );
         assert!(matches!(result, Err(DomError::SequenceInvalid { .. })));
     }
 
@@ -234,6 +254,7 @@ mod tests {
             &BTreeMap::new(),
             0,
             &default_config(),
+            &octo_algo_ed25519::ed25519_algorithm_id(),
         );
         assert!(matches!(
             result,
@@ -256,6 +277,7 @@ mod tests {
             &BTreeMap::new(),
             0,
             &default_config(),
+            &octo_algo_ed25519::ed25519_algorithm_id(),
         );
         assert!(matches!(result, Err(DomError::InvalidIntentType { .. })));
     }
@@ -270,7 +292,47 @@ mod tests {
             &BTreeMap::new(),
             0,
             &default_config(),
+            &octo_algo_ed25519::ed25519_algorithm_id(),
         );
         assert!(result.is_ok());
+    }
+
+    // ── Mission 0009-c9: dispatch vectors ──────────────────────────────────
+    //
+    // Without the fail-closed control these two would be satisfied by a
+    // verifier that ignores the algorithm argument entirely.
+
+    #[test]
+    fn admit_intent_dispatches_on_the_declared_algorithm() {
+        let (intent, _vk) = make_signed_intent(1, 100, 200);
+        let result = check_admission(
+            &intent,
+            100,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            0,
+            &default_config(),
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn admit_intent_refuses_an_unregistered_algorithm() {
+        let (intent, _vk) = make_signed_intent(1, 100, 200);
+        let bogus = octo_ident::AlgorithmId::derive("not-a-registered-dom-algorithm");
+        let result = check_admission(
+            &intent,
+            100,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            0,
+            &default_config(),
+            &bogus,
+        );
+        assert!(
+            matches!(result, Err(DomError::InvalidSignature { .. })),
+            "an unregistered algorithm must fail closed"
+        );
     }
 }

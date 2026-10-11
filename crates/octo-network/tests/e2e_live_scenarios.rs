@@ -576,13 +576,30 @@ async fn scenario7_mempool_admission_gossip_propagation() {
     let mut replay: ReplayCache = Default::default();
 
     // Both nodes admit the same intent.
-    assert!(check_admission(&intent, 500, &replay, &seq, 0, &cfg).is_ok());
+    assert!(check_admission(
+        &intent,
+        500,
+        &replay,
+        &seq,
+        0,
+        &cfg,
+        &octo_algo_ed25519::ed25519_algorithm_id()
+    )
+    .is_ok());
     // After first admission, replay and sequence are updated.
     replay.insert(intent.intent_id, 500);
     seq.insert((intent.sender_id, intent.mission_id), intent.sequence);
 
     // Replay: same intent again is rejected.
-    let result = check_admission(&intent, 500, &replay, &seq, 1, &cfg);
+    let result = check_admission(
+        &intent,
+        500,
+        &replay,
+        &seq,
+        1,
+        &cfg,
+        &octo_algo_ed25519::ed25519_algorithm_id(),
+    );
     assert!(matches!(result, Err(DomError::ReplayDetected { .. })));
 
     // Capacity overflow: pending_count >= max_pending_intents → rejected.
@@ -601,12 +618,28 @@ async fn scenario7_mempool_admission_gossip_propagation() {
         ..AdmissionConfig::default()
     };
     // pending_count=0, max=0 → 0 >= 0 → capacity exceeded.
-    let result = check_admission(&fresh_intent, 500, &replay, &seq, 0, &cfg_tight);
+    let result = check_admission(
+        &fresh_intent,
+        500,
+        &replay,
+        &seq,
+        0,
+        &cfg_tight,
+        &octo_algo_ed25519::ed25519_algorithm_id(),
+    );
     assert!(matches!(result, Err(DomError::CapacityExceeded { .. })));
 
     // Sequence: re-using sequence=1 from same sender is rejected.
     let replay2: ReplayCache = Default::default();
-    let result = check_admission(&intent, 500, &replay2, &seq, 0, &cfg);
+    let result = check_admission(
+        &intent,
+        500,
+        &replay2,
+        &seq,
+        0,
+        &cfg,
+        &octo_algo_ed25519::ed25519_algorithm_id(),
+    );
     assert!(matches!(result, Err(DomError::SequenceInvalid { .. })));
 
     // Ed25519: bad signature is rejected.
@@ -614,7 +647,15 @@ async fn scenario7_mempool_admission_gossip_propagation() {
     bad_sig.signature = [0u8; 64];
     let replay3: ReplayCache = Default::default();
     let seq2: SequenceTracker = Default::default();
-    let result = check_admission(&bad_sig, 500, &replay3, &seq2, 0, &cfg);
+    let result = check_admission(
+        &bad_sig,
+        500,
+        &replay3,
+        &seq2,
+        0,
+        &cfg,
+        &octo_algo_ed25519::ed25519_algorithm_id(),
+    );
     assert!(matches!(result, Err(DomError::InvalidSignature { .. })));
 
     // Cross-gateway delivery: intent flows through MockNetwork as bytes.

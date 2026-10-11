@@ -1804,12 +1804,29 @@ const AC11_DISPATCHED: &[&str] = &[
 ///   exactly as `octo-vault` was.
 /// - **Key is a field on the wire struct** — `KeyRotation`, `dom/admission`,
 ///   `dot/dc`. The key travels inside the message
-///   (`self.old_public_key`, `intent.sender_id`, `witness_id`). Carrying an
-///   algorithm here means a **wire format change**, which is a different
-///   blocker under a different RFC and is *not* the DID codec.
+///   (`self.old_public_key`, `intent.sender_id`, `witness_id`).
 /// - **Actually DID-derived** — none of these ten. The only
 ///   `pubkey_from_did` callers in the crate are `dc/admin_attest.rs` and
 ///   `octo-role`, neither of which appears in this table.
+///
+/// ### The second category's blocker was wrong too
+///
+/// The wire-field group was recorded as "carrying an algorithm here means a
+/// **wire format change** under RFC-0853 — a different blocker under a
+/// different RFC". That is the same inherited-blocker error one level down:
+/// it presumes the algorithm must travel with the key. `verify_dispatch` takes
+/// `public_key: &[u8]`, so nothing forces that, and the caller can supply the
+/// algorithm for every one of these sites. All three dispatched in `0009-c9`.
+///
+/// The wire field would also have been the *worse* choice, not the blocked
+/// one. In all three the message arrives from the party being verified, so an
+/// algorithm read off the wire is chosen by the party choosing its own
+/// verifier. Resolving it from the caller's registry is stricter.
+///
+/// And the premise itself did not survive being checked:
+/// `RevocationNotice` was listed as wire-field, but it carries
+/// `compromised_key_id` and `successor_key_id` — *identifiers*. Its verifying
+/// key arrived as a parameter, making it a caller-supplied site all along.
 ///
 /// The blanket reason also hid a second problem: `octo-network` does **not**
 /// depend on `octo-ident` at all. `octo-ident` appears in its manifest only
@@ -1819,8 +1836,18 @@ const AC11_DISPATCHED: &[&str] = &[
 const AC11_PENDING: &[(&str, usize, &str)] = &[
     (
         "crates/octo-network/src/ocrypt/attestation.rs",
-        6,
-        "mission 0009-c7: HALF DISPATCHED. GatewayAttestation::verify_signature took a caller-supplied key and now dispatches, so this file dropped from 8 sites to 6. The remaining 6 are KeyRotation::verify and RevocationNotice, whose keys are FIELDS ON THE WIRE STRUCT — carrying an algorithm there is a wire format change under RFC-0853, which is a different blocker under a different RFC and is NOT the DID codec.",
+        0,
+        "mission 0009-c9: DISPATCHED, and the blocker recorded against it was false. \
+         It said RevocationNotice's key is a field on the wire struct. It is not: \
+         compromised_key_id and successor_key_id are IDENTIFIERS, and the verifying \
+         key arrived as a parameter, so this was the GatewayAttestation shape that \
+         0009-c7 already dispatched. KeyRotation really does carry keys on the wire, \
+         but a wire algorithm field is the worse answer there, not the blocked one: \
+         the rotation comes from the peer whose keys are being verified, so a field \
+         would let the verified party pick its own verifier. Both algorithms come \
+         from the caller's registry instead, and KeyRotation takes two because a \
+         rotation is exactly where old and new need not share an algorithm. Count \
+         of zero rather than removed, so a future site here fails the gate.",
     ),
     (
         "crates/octo-network/src/gossip/reputation.rs",
@@ -1885,8 +1912,15 @@ const AC11_PENDING: &[(&str, usize, &str)] = &[
     ),
     (
         "crates/octo-network/src/dom/admission.rs",
-        2,
-        "mission 0009-c7: NOT codec-blocked. The key is a field on the message itself, so carrying an algorithm means a WIRE FORMAT change under RFC-0853. Different blocker, different RFC.",
+        0,
+        "mission 0009-c9: DISPATCHED. The recorded blocker said sender_id is a wire \
+         field so the algorithm would have to ride the wire too. verify_dispatch takes \
+         a bare byte slice, so nothing forces that: the caller supplies the algorithm, \
+         as it does at every other site in this arc. And a wire field would be the worse \
+         answer, not the blocked one — the intent comes from the very sender being \
+         verified, so a field would let it choose its own verifier. sender_id still \
+         keys the sequence tracker as an identity; the algorithm applies to the \
+         verification only. Count of zero rather than removed.",
     ),
     // Swept 2026-10-10: every remaining production site workspace-wide, in
     // crates no other list covered. The `octo-network` entries above are all

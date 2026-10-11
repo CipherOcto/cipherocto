@@ -63,7 +63,15 @@ fn test_full_lifecycle_admission_to_pool() {
     let config = AdmissionConfig::default();
 
     // Note: signature check will fail with zeroed keys, but all pre-signature checks should pass
-    let result = check_admission(&intent, 150, &replay_cache, &seq_tracker, 0, &config);
+    let result = check_admission(
+        &intent,
+        150,
+        &replay_cache,
+        &seq_tracker,
+        0,
+        &config,
+        &octo_algo_ed25519::ed25519_algorithm_id(),
+    );
     // We expect signature failure since we used zeroed keys
     assert!(result.is_err());
 }
@@ -86,7 +94,15 @@ fn test_admission_expiration_rejected() {
     let seq_tracker = SequenceTracker::new();
     let config = AdmissionConfig::default();
 
-    let result = check_admission(&intent, 100, &replay_cache, &seq_tracker, 0, &config);
+    let result = check_admission(
+        &intent,
+        100,
+        &replay_cache,
+        &seq_tracker,
+        0,
+        &config,
+        &octo_algo_ed25519::ed25519_algorithm_id(),
+    );
     assert!(result.is_err());
     assert!(format!("{}", result.unwrap_err()).contains("rejected"));
 }
@@ -111,7 +127,15 @@ fn test_admission_replay_rejected() {
     let seq_tracker = SequenceTracker::new();
     let config = AdmissionConfig::default();
 
-    let result = check_admission(&intent, 150, &replay_cache, &seq_tracker, 0, &config);
+    let result = check_admission(
+        &intent,
+        150,
+        &replay_cache,
+        &seq_tracker,
+        0,
+        &config,
+        &octo_algo_ed25519::ed25519_algorithm_id(),
+    );
     assert!(result.is_err());
     let err_msg = format!("{}", result.unwrap_err());
     assert!(err_msg.contains("Replay"));
@@ -135,7 +159,15 @@ fn test_admission_invalid_intent_type() {
     let seq_tracker = SequenceTracker::new();
     let config = AdmissionConfig::default();
 
-    let result = check_admission(&intent, 150, &replay_cache, &seq_tracker, 0, &config);
+    let result = check_admission(
+        &intent,
+        150,
+        &replay_cache,
+        &seq_tracker,
+        0,
+        &config,
+        &octo_algo_ed25519::ed25519_algorithm_id(),
+    );
     assert!(result.is_err());
     assert!(format!("{}", result.unwrap_err()).contains("intent type"));
 }
@@ -162,7 +194,15 @@ fn test_admission_capacity_exceeded() {
         max_per_sender_per_window: 100,
     };
 
-    let result = check_admission(&intent, 150, &replay_cache, &seq_tracker, 5, &config);
+    let result = check_admission(
+        &intent,
+        150,
+        &replay_cache,
+        &seq_tracker,
+        5,
+        &config,
+        &octo_algo_ed25519::ed25519_algorithm_id(),
+    );
     assert!(result.is_err());
     assert!(format!("{}", result.unwrap_err()).contains("Capacity"));
 }

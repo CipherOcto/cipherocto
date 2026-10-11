@@ -256,6 +256,38 @@ arc has already made:
   direction — it demands coverage that does not exist. It is 45 now, with the
   measurement recorded next to it.
 
+### A one-time sweep for the forwarder class, since the guard cannot
+
+Naming is acceptable for a sweep and wrong for a permanent guard — that
+distinction is the whole reason the guard is scoped rather than
+name-matched. Swept every `verif*`/`valid*`/`check*`/`auth*` function in the
+workspace taking a fixed-size key: **seven hits, one real**.
+
+| Site                                          | Verdict                                                        |
+| --------------------------------------------- | -------------------------------------------------------------- |
+| `octo-runtime` `verify_attach_handle_payload` | **real forwarder** — hands the key to `verify_bytes`. Widened. |
+| `octo-network` `verify_platform_admin_proof`  | not a verification site                                        |
+| `quota-router-core` `verify_hmac` x5          | HMAC keys                                                      |
+
+The two exclusions are the useful part, because both _look_ exactly like the
+target class:
+
+**`verify_platform_admin_proof` verifies nothing.** It checks freshness,
+compares the proof's `dc_pubkey` against an expected role-binding field, and
+refuses an empty adapter signature — the actual verification is delegated to
+the adapter. Its `expected_dc_pubkey` is a **role binding**, not a
+verification key, and it is compared against a wire field that is genuinely
+32 bytes. This is also why `dc/admin_attest.rs` showed up in `0009-c3` as a
+`pubkey_from_did` caller: it resolves identity, it does not verify.
+
+**`verify_hmac`'s `network_key` is an HMAC key.** BLAKE3 keyed hashing takes
+exactly 32 bytes and there is no algorithm to select — a symmetric MAC is not
+a signature and AC#11 does not reach it. Widening it would have been the
+mirror-image error of widening a macaroon root secret.
+
+So the forwarder class is now six sites, all fixed, and the sweep says there
+are no more rather than assuming it.
+
 ### What it does not catch
 
 **Forwarders.** A function that takes the key and hands it to another _verify_

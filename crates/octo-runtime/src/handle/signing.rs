@@ -99,7 +99,7 @@ pub fn sign_attach_handle_payload(
 /// Returns `AttachError::BadSignature` on a malformed prefix, signature
 /// mismatch, or malformed public key bytes.
 pub fn verify_attach_handle_payload(
-    holder_pubkey: &[u8; 32],
+    holder_pubkey: &[u8],
     signable_prefix: &[u8; 32],
     session_id: &SessionId,
     payload: &AttachPayload,

@@ -308,6 +308,36 @@ the record. That is the gap this mission closes.
       out — by reading, not by extending the text scan, which is known to be
       unsound here
 
+## The `HsmAdapter` fix is not independent of persistence
+
+It was tempting to treat the adapter as the unblocked root and widen it first.
+Measuring the chain says otherwise.
+
+The value does not stop at the trait. It runs:
+
+```text
+HsmAdapter::get_public_key -> [u8; 32]
+  -> IdentityKey::public_key                  -> [u8; 32]
+    -> IdentityRecord::pubkey_bytes           -> [u8; 32], serde_bytes_32
+      -> seed_slot_slug_by_pubkey(pubkey)     -> format!("identity-{}", hex(pubkey))
+        -> a directory name on disk
+```
+
+`seed_slot_slug_by_pubkey` hex-encodes the public key into a **filesystem slot
+name**. Changing the key's length changes the hex length changes the slot name.
+The function's own comment records the consequence:
+
+> Two spellings of one rule would orphan every slot on reopen.
+
+So widening the trait signature is not a contained refactor of `octo-wallet`. It
+is a migration of every persisted identity slot, and the blast radius does not
+stop at the crate — `octo-wallet-node`, `octo-capability-issuer-node` and
+`octo-cli` all construct identities through this path.
+
+This is why the design fork in §Open question has to be decided before any of
+the widening is attempted, and why "just widen the trait first" is the wrong
+order despite the trait being the root of the problem.
+
 ## Open question
 
 Whether the three record fields should become `Vec<u8>` or a fixed-size
@@ -325,6 +355,10 @@ only carry one algorithm's key length — which would mean dropping the
 two-algorithm `verify` rather than pretending to support it. That is a real
 design fork and should be decided deliberately, not by whichever change compiles
 first.
+
+The wallet chain adds a third constraint that is neither a schema nor a wire
+format but is harder to undo than either: the slot-name derivation above. Any
+decision here has to state what happens to already-persisted identity slots.
 
 ## Why this was not folded into `0009-cc`
 

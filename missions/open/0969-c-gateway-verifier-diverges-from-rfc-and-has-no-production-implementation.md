@@ -60,6 +60,45 @@ supplies the token-side answer the RFC specifies. The open question in
 §Why this is filed rather than attempted is whether the registry's
 `HolderRecord.ask_id` must agree with it, and it remains open.
 
+## What has landed, part 2: the v1.2 dispatch, additively
+
+Full conformance needs four public items removed and the seventeen tests that
+pin them deleted. **Deletion was declined**, so this is additive: the RFC's
+dispatch now exists as new API, and the pre-v1.2 path is untouched.
+
+| Added                                        | Where                    |
+| -------------------------------------------- | ------------------------ |
+| `RoutingDecision::BothSchemesUnsupported`    | `ingress::authenticator` |
+| `RoutingDecision::NoAuth`                    | `ingress::authenticator` |
+| `AuthError::BothSchemesUnsupported`          | `capability::dispatch`   |
+| `GatewayAuthenticator::routing_decision_v12` | `ingress::authenticator` |
+| `GatewayAuthenticator::authenticate_v12`     | `ingress::authenticator` |
+
+`authenticate_v12` is the amendment's substance: the routing decision is
+determined by the headers alone, and a both-schemes request is refused
+**before either verifier runs**, which is what makes cross-scheme linkage
+unreachable rather than merely unused. Verification itself is delegated to the
+injected verifiers exactly as before — only the dispatch was rewritten.
+
+Four tests, three mutations verified red:
+
+| Mutation                                  | Caught by                                                 |
+| ----------------------------------------- | --------------------------------------------------------- |
+| both-schemes refusal removed              | `authenticate_v12_refuses_dual_schemes_without_verifying` |
+| dispatch table collapsed to one arm       | 3 of 4                                                    |
+| **verification moved before the refusal** | `authenticate_v12_refuses_dual_schemes_without_verifying` |
+
+The third is the one that matters. A refusal that runs _after_ verification
+still returns the right error, still satisfies any assertion on the returned
+value, and is exactly the "passes while measuring nothing" shape this arc exists
+to catch. It is caught only because the test counts verifier invocations rather
+than checking the outcome.
+
+**All seventeen pre-v1.2 tests still pass, unchanged.** `authenticate` still
+returns `RoutingDecision::Dual`, `evaluate_linkage` still exists, and both
+semantics are live in the crate at once. That is the accepted cost of the
+additive route: the divergence is now _recorded and implementable_, not closed.
+
 ## The finding
 
 The gateway authenticator is the enforcement point the capability system is

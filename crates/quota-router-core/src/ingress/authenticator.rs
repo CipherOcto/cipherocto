@@ -22,7 +22,7 @@ use octo_cap_macaroon::clock::Clock;
 use octo_cap_macaroon::holder_registry::HolderRegistry;
 use octo_wallet::capability::dispatch::{
     parse_auth_headers, AuthError, AuthHeader, BearerError, BearerVerification, CapError,
-    CapabilityVerification, LinkageResult,
+    CapabilityVerification, DispatchSet, LinkageResult,
 };
 use octo_wallet::capability::macaroon::CapabilityCatalog;
 
@@ -56,7 +56,28 @@ pub enum RoutingDecision {
     /// Capability pipeline (RFC-0957 path).
     Capability,
     /// Dual-pipeline (bearer + capability, both verified + linked).
+    ///
+    /// **Superseded by RFC-0969 v1.2's dispatch table.** `authenticate_v12`
+    /// never produces it. It is retained because [`GatewayAuthenticator::authenticate`]
+    /// still implements the pre-v1.2 semantics and removing the variant would
+    /// break callers that have not migrated. Mission `0969-c` tracks the
+    /// retirement.
     Dual,
+    /// Both `Authorization` schemes were present — RFC-0969 §Dispatch Table
+    /// (v1.2), rejected as client misconfiguration.
+    ///
+    /// Per the 2026-08-08 clarification a client sending both is a bug, not a
+    /// routing decision. The legitimate "both" case is RFC-0959-A1 market
+    /// delivery, which is server-side delivery, not HTTP request ingress.
+    BothSchemesUnsupported,
+    /// Neither `Authorization` header was present — RFC-0969 §Dispatch Table
+    /// (v1.2).
+    ///
+    /// Reserved for completeness: `parse_auth_headers` returns
+    /// `Err(ParseError::NoAuthHeader)` on empty input, so this arm is only
+    /// reachable if a future revision relaxes that. Defined because the table
+    /// specifies it, not because the current parser can produce it.
+    NoAuth,
     /// Pure forwarder (RFC-0970 `PureForwarder`).
     PureForward,
 }
@@ -137,6 +158,88 @@ impl GatewayAuthenticator {
     /// Entry point. Verifies the request and either returns the
     /// authenticated form or an `AuthError`.
     ///
+    /// RFC-0969 §Dispatch Table (v1.2) — the routing decision as a pure
+    /// function of which `Authorization` schemes are present.
+    ///
+    /// This is the whole of the v1.2 dispatch: **the decision is determined by
+    /// the headers alone**. No side-channel lookup, no identity linkage, no
+    /// cross-scheme comparison. That is the amendment's whole point — the
+    /// pre-v1.2 machinery evaluated linkage between a bearer and a capability
+    /// that the table now refuses to receive together.
+    ///
+    /// | Headers present | Decision                |
+    /// | --------------- | ----------------------- |
+    /// | bearer only     | `Bearer`                |
+    /// | capability only | `Capability`            |
+    /// | both            | `BothSchemesUnsupported` |
+    /// | neither         | `NoAuth` — reserved; `parse_auth_headers` rejects empty input first |
+    ///
+    /// Additive: [`GatewayAuthenticator::authenticate`] still implements the
+    /// pre-v1.2 semantics and can still return `RoutingDecision::Dual`. This is
+    /// the function the RFC specifies; mission `0969-c` tracks migrating
+    /// callers off the old path.
+    pub fn routing_decision_v12(&self, dispatch: &DispatchSet) -> RoutingDecision {
+        match (dispatch.bearer.is_some(), dispatch.capability.is_some()) {
+            (true, false) => RoutingDecision::Bearer,
+            (false, true) => RoutingDecision::Capability,
+            (true, true) => RoutingDecision::BothSchemesUnsupported,
+            (false, false) => RoutingDecision::NoAuth,
+        }
+    }
+
+    /// Evaluate a request under RFC-0969 §Dispatch Table (v1.2), rejecting the
+    /// both-schemes-present case as client misconfiguration.
+    ///
+    /// Returns the same [`AuthenticatedRequest`] shape as the pre-v1.2
+    /// `authenticate`, with `routing_decision` set from the table. The
+    /// difference is that `Err(AuthError::BothSchemesUnsupported)` replaces the
+    /// linkage outcomes `IdentityMismatch` and `AskBindingMismatch` that v1.2
+    /// retired.
+    ///
+    /// Verification of each scheme is unchanged and still delegated to the
+    /// injected verifiers — this replaces the *dispatch*, which is what the
+    /// amendment rewrote.
+    pub fn authenticate_v12(
+        &self,
+        headers: &[(String, String)],
+    ) -> Result<AuthenticatedRequest, AuthError> {
+        let dispatch = parse_auth_headers(headers).map_err(AuthError::from)?;
+        let decision = self.routing_decision_v12(&dispatch);
+
+        // The one refusal the table adds. It happens before any verification,
+        // so a dual-scheme request never reaches a verifier — which is the
+        // property that makes cross-scheme linkage unreachable rather than
+        // merely unused.
+        if decision == RoutingDecision::BothSchemesUnsupported {
+            return Err(AuthError::BothSchemesUnsupported);
+        }
+
+        let bearer = self.verify_bearer(&dispatch)?;
+        let capability = self.verify_capability(&dispatch)?;
+
+        // Identity comes from whichever single scheme verified. Under v1.2
+        // exactly one of the two is populated, so there is no ambiguity to
+        // resolve and no linkage comparison to make.
+        let subject_did = bearer
+            .as_ref()
+            .map(|b| b.subject_did.clone())
+            .or_else(|| capability.as_ref().map(|c| c.holder_did.clone()))
+            .ok_or(AuthError::Indeterminate)?;
+        let ask_id = bearer
+            .as_ref()
+            .map(|b| b.ask_id)
+            .or_else(|| capability.as_ref().map(|c| c.ask_id))
+            .ok_or(AuthError::Indeterminate)?;
+
+        Ok(AuthenticatedRequest {
+            subject_did,
+            ask_id,
+            bearer,
+            capability,
+            routing_decision: decision,
+        })
+    }
+
     /// Identity linkage rule (RFC-0969 §Phase 1 + AC-A2):
     /// - both bearer + capability verified → assert `subject_did == holder_did`
     ///   AND `ask_id == ask_id`. Mismatch → `IdentityMismatch`.
@@ -434,7 +537,147 @@ mod tests {
         assert!(matches!(r, Err(AuthError::IdentityMismatch { .. })));
     }
 
+    /// An authenticator whose verifiers count their invocations, so "refused
+    /// before verification" is measurable rather than asserted.
+    fn counting_auth() -> (
+        GatewayAuthenticator,
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let counter = std::sync::Arc::new(AtomicUsize::new(0));
+
+        struct CountingBearer(std::sync::Arc<AtomicUsize>);
+        impl BearerVerifier for CountingBearer {
+            fn verify(&self, _t: &str) -> Result<BearerVerification, BearerError> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(BearerVerification {
+                    subject_did: "did:octo:zSubject".to_owned(),
+                    ask_id: [0x11; 32],
+                })
+            }
+        }
+        struct CountingCap(std::sync::Arc<AtomicUsize>);
+        impl CapabilityVerifier for CountingCap {
+            fn verify(&self, _t: &str) -> Result<CapabilityVerification, CapError> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(CapabilityVerification {
+                    holder_did: "did:octo:zSubject".to_owned(),
+                    ask_id: [0x11; 32],
+                })
+            }
+        }
+
+        let c = counter.clone();
+        let auth = GatewayAuthenticator::new(
+            Arc::new(FixedClock::new(1_700_000_000_000)),
+            Arc::new(NoopHolderRegistry),
+            Arc::new(CountingBearer(c.clone())),
+            Arc::new(CountingCap(c)),
+            Arc::new(StubCatalog),
+        );
+        (auth, counter)
+    }
+
     // --- 0969-a3 AC-B2.1.b: AskBindingMismatch distinguished from Mismatched ---
+
+    /// The 4-way table, one row at a time (RFC-0969 §Dispatch Table v1.2).
+    ///
+    /// Each row is built from real headers through `parse_auth_headers`, not
+    /// from a hand-assembled `DispatchSet`, so the decision is measured against
+    /// the same parse the authenticator performs.
+    #[test]
+    fn routing_decision_v12_covers_the_four_way_table() {
+        let bearer_only = vec![("Authorization".to_owned(), "Bearer tok-b".to_owned())];
+        let cap_only = vec![("X-Capability-Token".to_owned(), "tok-c".to_owned())];
+        let both = vec![
+            ("Authorization".to_owned(), "Bearer tok-b".to_owned()),
+            ("X-Capability-Token".to_owned(), "tok-c".to_owned()),
+        ];
+
+        let ctx = |d: DispatchSet| authenticator().routing_decision_v12(&d);
+
+        let b = parse_auth_headers(&bearer_only).expect("bearer-only parses");
+        assert_eq!(ctx(b), RoutingDecision::Bearer);
+
+        let c = parse_auth_headers(&cap_only).expect("capability-only parses");
+        assert_eq!(ctx(c), RoutingDecision::Capability);
+
+        let d = parse_auth_headers(&both).expect("dual parses");
+        assert_eq!(ctx(d), RoutingDecision::BothSchemesUnsupported);
+
+        // `NoAuth` is reserved: `parse_auth_headers` rejects empty input with
+        // `ParseError::NoAuthHeader` before a `DispatchSet` can exist with both
+        // slots empty. Asserted on the constructed set so the row stays pinned.
+        assert_eq!(
+            ctx(DispatchSet {
+                bearer: None,
+                capability: None,
+                identity_linkage: LinkageResult::Indeterminate,
+            }),
+            RoutingDecision::NoAuth,
+            "the neither row is reserved but specified"
+        );
+    }
+
+    /// The property the amendment exists to establish: a dual-scheme request is
+    /// refused, and refused **before** either verifier is consulted.
+    ///
+    /// The counters are the point. If either verifier ran, the request would
+    /// have been evaluated rather than rejected as misconfiguration, and
+    /// cross-scheme linkage would be reachable again.
+    #[test]
+    fn authenticate_v12_refuses_dual_schemes_without_verifying() {
+        let both = vec![
+            ("Authorization".to_owned(), "Bearer tok-b".to_owned()),
+            ("X-Capability-Token".to_owned(), "tok-c".to_owned()),
+        ];
+
+        let (auth, calls) = counting_auth();
+        let err = auth
+            .authenticate_v12(&both)
+            .expect_err("both schemes must be refused as client misconfiguration");
+        assert!(
+            matches!(err, AuthError::BothSchemesUnsupported),
+            "expected BothSchemesUnsupported, got {err:?}"
+        );
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "a refused dual-scheme request must not reach a verifier"
+        );
+    }
+
+    /// The control for the test above: a single-scheme request *is* verified.
+    /// Without this, refusing everything would also pass.
+    #[test]
+    fn authenticate_v12_verifies_a_single_scheme_request() {
+        let bearer_only = vec![("Authorization".to_owned(), "Bearer tok-b".to_owned())];
+
+        let (auth, calls) = counting_auth();
+        let out = auth
+            .authenticate_v12(&bearer_only)
+            .expect("a single-scheme request must authenticate");
+        assert_eq!(out.routing_decision, RoutingDecision::Bearer);
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the single-scheme path must actually verify"
+        );
+    }
+
+    /// Single-scheme capability routing, so both single rows are covered.
+    #[test]
+    fn authenticate_v12_routes_a_capability_only_request() {
+        let cap_only = vec![("X-Capability-Token".to_owned(), "tok-c".to_owned())];
+
+        let (auth, calls) = counting_auth();
+        let out = auth
+            .authenticate_v12(&cap_only)
+            .expect("a capability-only request must authenticate");
+        assert_eq!(out.routing_decision, RoutingDecision::Capability);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
 
     #[test]
     fn evaluate_linkage_ask_binding_mismatch_routes_to_auth_error() {

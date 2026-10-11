@@ -375,6 +375,15 @@ pub enum AuthError {
     UnsupportedScheme(String),
     #[error("indeterminate")]
     Indeterminate,
+    /// Both `Authorization` schemes were present (RFC-0969 §Dispatch Table,
+    /// v1.2). Rejected as client misconfiguration rather than routed.
+    ///
+    /// The v1.2 amendment removed `IdentityMismatch` and `AskBindingMismatch`
+    /// on the grounds that cross-scheme linkage is unreachable under
+    /// single-scheme dispatch. This variant is the replacement: a request
+    /// carrying both schemes is refused before any linkage would be evaluated.
+    #[error("both auth schemes present: client misconfiguration (RFC-0969 v1.2 dispatch)")]
+    BothSchemesUnsupported,
 }
 
 // Manual redacting Debug (RFC-0969 §Security): credential material (DIDs,
@@ -415,6 +424,7 @@ impl std::fmt::Debug for AuthError {
                 f.debug_tuple("UnsupportedScheme").field(&scheme).finish()
             }
             Self::Indeterminate => f.write_str("Indeterminate"),
+            Self::BothSchemesUnsupported => f.write_str("BothSchemesUnsupported"),
         }
     }
 }

@@ -18,9 +18,8 @@ metadata:
 Complete. Filed by asking what the key-shape guard could not see, not by
 finding another site.
 
-**Four real sites were fixed across three crates, the guard that missed the
-first two was hardened twice, and eleven cross-algorithm vectors now stand
-across six crates.** Each vector is mutation-verified against the
+**Five real sites were fixed across four crates, two guards were hardened or
+added, and twelve cross-algorithm vectors now stand across seven crates.** Each vector is mutation-verified against the
 implementation, and each turns red under exactly the mutation it exists to
 catch.
 
@@ -180,6 +179,74 @@ deciding to build the guard would need.
 `ed25519_dalek::SigningKey` is deliberately not in that set: signing genuinely
 is Ed25519-only, because `SignatureAlgorithm` has no `sign` method.
 
+## The list of crates that get looked at
+
+Every guard in this arc walks a **fixed list**. A list only speaks about the
+crates somebody put in it, so a crate holding verification code that appears in
+no list is not clean — it is _unexamined_, and from outside the two are
+indistinguishable. That is the same failure the rest of this arc keeps meeting,
+one level up.
+
+It was live. `octo-cap-macaroon` holds `verify_holder_sig`, which dispatches
+correctly on the algorithm recorded beside the signature, and which no gate had
+ever read. The crate turned out to be clean — its `HolderSignature` is arguably
+the best instance of this pattern in the workspace, storing `Vec<u8>` and
+validating the length against the _registered algorithm's_ `signature_len()`
+rather than a hardcoded 64 — but it was clean by review and by luck, and
+nothing would have said so.
+
+The guard walks every crate source and asserts that any crate containing the
+dispatch call appears in one of the dispatched, pending, out-of-scope,
+allowlisted, or algorithm lists. The two algorithm crates get their own list,
+because they _define_ the entry point rather than choosing an algorithm through
+it, and a dispatch question only exists where a caller chooses. A measured floor
+guards against the walk itself shrinking, which would make the completeness
+check pass vacuously.
+
+### Adding the crate immediately produced a second finding
+
+A coverage guard that only ever confirms what you already believed is a
+census, not a check. Adding `octo-cap-macaroon` turned up a site that had been
+invisible for a different reason.
+
+`verify_governance_signature` took its key as `&GovernancePubkey` and its
+signature as `&GovernanceSignatureBytes` — aliases for `[u8; 32]` and
+`[u8; 64]` — so a 33-byte key was a compile error at the call rather than a
+runtime verdict. That is the same defect as the three key-side widenings above,
+appearing for the fourth time, and it sits in the **substrate's shared
+governance verifier**, which every governance-signed event type in the workspace
+calls.
+
+It also reached the registry by hand: `shared_registry()`, then `get()`, then
+`verify` on the algorithm. That was not carelessness — the code needed to report
+a wrong-width key as `InvalidPubkeyLength` rather than folding it into "signature
+bad", and the dispatch entry point collapses every failure into one error.
+
+Both parameters are now slices, and the body routes through `verify_dispatch`.
+The distinction turns out to be free: the dispatch error carries the registered
+algorithm's length error intact, so the specific case is recovered by matching
+rather than by taking a second route to the registry. One way in, and the
+specific diagnosis survives.
+
+## The pattern across all five sites
+
+```mermaid
+graph TD
+    A[Algorithm named beside the key or signature] --> B{Where is the width pinned?}
+    B -->|Parameter, literal| C[Caught by the key-shape scan]
+    B -->|Parameter, type alias| D[Caught once the guard resolved aliases]
+    B -->|Record field, concrete type| E[Not seen until a crate was added to the list]
+    B -->|Trait method returning a fixed array| F[Not seen until a crate was added to the list]
+    C --> G[Fixed]
+    D --> G
+    E --> G
+    F --> G
+```
+
+Five sites, four spellings, one defect. Only the first two were caught by a
+scan keyed on the property. The other three needed either alias resolution or
+the crate to be on the list at all.
+
 ## The two hardening passes
 
 Both were driven by asking what the guard still could not see, and both are
@@ -258,6 +325,8 @@ That is the distinction the guard actually depends on.
 - [x] The envelope signature wire form is pinned by a test rather than asserted in prose.
 - [x] The forwarder class is triaged by reading, with the one fixed-width verification parameter attributed to the DID wire format.
 - [x] The remaining algorithm-specific verification types in dispatched crates are measured and attributed, not assumed.
+- [x] `verify_governance_signature` takes key and signature as slices and routes through `verify_dispatch`.
+- [x] No crate containing the dispatch call is absent from every AC-11 list.
 - [x] Workspace `cargo check --all-targets` clean; clippy clean under `--features full`.
 
 ## The three-class lesson

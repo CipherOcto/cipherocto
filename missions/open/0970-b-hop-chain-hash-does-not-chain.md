@@ -91,15 +91,41 @@ defined") for computing `H_0`, and the per-step comparison loop inside
   Written with its direction stated explicitly, rather than as `assert!(is_ok())`,
   which would read as coverage of G4 while measuring the opposite.
 
-## Scope, measured
+## Scope — measured, and one claim here was wrong
 
-The fix is contained to **one file**. All 29 `wrap_for_hop` references are
-inside `crates/octo-wallet/src/capability/hop_envelope.rs` — no other crate
-calls it. `InnerRequestRef` has zero occurrences anywhere in the tree, which
-confirms the RFC's own R16-N3 note that it "was referenced but never defined"
-rather than being a local omission.
+All 29 `wrap_for_hop` references are inside
+`crates/octo-wallet/src/capability/hop_envelope.rs` — no other crate calls it,
+so adding `prev_chain_hash` is mechanically a one-module change.
 
-So the blast radius of adding `prev_chain_hash` is one module and its own tests.
+**But "one-module change" was too optimistic, and the `H_0` half is not
+mechanical at all.** An earlier note in this mission called the fix "a
+one-module change with a formula already written down". Measuring `H_0` against
+the implementation's types says otherwise:
+
+| RFC-0970's `InnerRequestRef` hashes | Does the implementation have it? |
+| ----------------------------------- | -------------------------------- |
+| `auth_bearer`                       | **no**                           |
+| `x_capability_token`                | **no**                           |
+| `body`                              | **no**                           |
+| `metadata`                          | **no**                           |
+
+The implementation's `InnerRequest` is `{ ciphertext, aad }` — the
+**post-encryption** structure. Every field `InnerRequestRef` hashes is the
+long-lived credential material that E2E encryption exists to hide, so it has
+already been encrypted away by the time an `InnerRequest` exists.
+
+`H_0 = BLAKE3(canonical_ser(InnerRequestRef))` is therefore not computable from
+the current types, and this is not a "type was never defined" gap that writing
+one struct closes. **The data the formula needs was never retained.**
+
+That splits the work in two, and the split should be visible before anyone
+starts:
+
+- **`H_n` for n ≥ 1** — mechanical. `chain_hash = BLAKE3(prev_chain_hash ‖
+canonical_ser(hop_capability))` over data that does exist.
+- **`H_0`** — needs a decision about where the pre-encryption request lives, or
+  an RFC amendment narrowing what `H_0` commits to. This is the half that
+  cannot be written by transcription.
 
 ## Acceptance Criteria
 

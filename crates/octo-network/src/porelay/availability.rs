@@ -65,11 +65,7 @@ impl AvailabilityProof {
     }
 
     /// Verify the Ed25519 signature.
-    pub fn verify_signature(
-        &self,
-        algorithm: &octo_ident::AlgorithmId,
-        public_key: &[u8; 32],
-    ) -> bool {
+    pub fn verify_signature(&self, algorithm: &octo_ident::AlgorithmId, public_key: &[u8]) -> bool {
         octo_algo_ed25519::verify_dispatch(
             algorithm,
             public_key,

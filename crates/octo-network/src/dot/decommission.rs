@@ -93,7 +93,7 @@ impl UnbindAllDoneEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        dc_pubkey: &[u8; 32],
+        dc_pubkey: &[u8],
     ) -> Result<(), DotError> {
         let computed = self.compute_done_hash();
         if computed != self.done_hash {
@@ -181,7 +181,7 @@ impl UnbindAllAuditEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        initiator_pubkey: &[u8; 32],
+        initiator_pubkey: &[u8],
     ) -> Result<(), DotError> {
         let computed = self.compute_audit_hash();
         if computed != self.audit_hash {

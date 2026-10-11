@@ -63,6 +63,25 @@ pub use scheme::{
     StarkSchnorrSignError, StarkSchnorrSignature, CURVE_ORDER_HEX, MESSAGE_BYTES_PER_FELT,
 };
 
+/// The curve's scalar type, re-exported so a caller outside this crate can
+/// actually *sign*.
+///
+/// `sign` and `public_key` both take a `&Felt`, and `Felt` was not reachable
+/// from here — `scheme` imported it from `starknet_crypto` privately. The
+/// result was that this crate was verify-only for anyone outside it: a caller
+/// could route a verification through `verify_dispatch` but could not
+/// produce a keypair or a signature to test one with.
+///
+/// That gap is not cosmetic. It is why no cross-algorithm verification test
+/// existed anywhere in the workspace: the only vector naming a second
+/// algorithm used an Ed25519 key and asserted a *rejection*, which a
+/// hardcoded Ed25519 verifier also produces. Writing the round trip needed a
+/// keypair, and a keypair needed this name in scope.
+///
+/// Re-exported rather than re-wrapped so the type callers construct is the
+/// same one the curve arithmetic uses.
+pub use starknet_crypto::Felt;
+
 /// Name this algorithm is derived from.
 ///
 /// **Changing this string changes the wire form.** Every DID document stores

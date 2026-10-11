@@ -57,11 +57,7 @@ impl GatewayHeartbeat {
     /// The key arrives from the caller as bytes, so the caller is the only
     /// party that knows which algorithm they belong to — hence the parameter.
     /// An unregistered algorithm fails closed.
-    pub fn verify_signature(
-        &self,
-        algorithm: &octo_ident::AlgorithmId,
-        public_key: &[u8; 32],
-    ) -> bool {
+    pub fn verify_signature(&self, algorithm: &octo_ident::AlgorithmId, public_key: &[u8]) -> bool {
         octo_algo_ed25519::verify_dispatch(
             algorithm,
             public_key,

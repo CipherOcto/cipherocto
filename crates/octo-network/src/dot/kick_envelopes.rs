@@ -181,7 +181,7 @@ impl SelfKickedEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        local_pubkey: &[u8; 32],
+        local_pubkey: &[u8],
     ) -> Result<(), DotError> {
         let computed = self.compute_self_kicked_hash();
         if computed != self.self_kicked_hash {
@@ -262,7 +262,7 @@ impl KickDetectedEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        issuer_pubkey: &[u8; 32],
+        issuer_pubkey: &[u8],
     ) -> Result<(), DotError> {
         let computed = self.compute_kick_detected_hash();
         if computed != self.kick_detected_hash {
@@ -336,7 +336,7 @@ impl MemberRemovedEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        dc_pubkey: &[u8; 32],
+        dc_pubkey: &[u8],
     ) -> Result<(), DotError> {
         let computed = self.compute_member_removed_hash();
         if computed != self.member_removed_hash {
@@ -407,7 +407,7 @@ impl RejoinRequestEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        requester_pubkey: &[u8; 32],
+        requester_pubkey: &[u8],
     ) -> Result<(), DotError> {
         let computed = self.compute_request_hash();
         if computed != self.request_hash {
@@ -488,7 +488,7 @@ impl RejoinGrantEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        dc_pubkey: &[u8; 32],
+        dc_pubkey: &[u8],
     ) -> Result<(), DotError> {
         let computed = self.compute_grant_hash();
         if computed != self.grant_hash {

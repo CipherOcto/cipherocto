@@ -98,3 +98,67 @@ fn the_legacy_bare_constant_is_refused() {
         "an unprefixed proof must be refused, not stripped, got {outcome:?}"
     );
 }
+
+/// **The vector that mutation proved missing, and the one that finally
+/// exercises a second algorithm end to end.**
+///
+/// `a_revocation_proof_replayed_as_the_other_algorithm_is_rejected` above
+/// looks like cross-algorithm coverage and is not. It hands the verifier an
+/// Ed25519 key and an Ed25519 proof named as stark-schnorr, so both a
+/// dispatching verifier and a hardcoded Ed25519 one refuse it — the rejection
+/// is guaranteed by the input and says nothing about whether the algorithm
+/// argument was honoured. Proved by mutation: replacing the `algorithm_id`
+/// passed to `verify_dispatch` with a literal Ed25519 id leaves all three
+/// tests in that file green.
+///
+/// This one signs with stark-schnorr and expects `Ok`, which a hardcoded
+/// Ed25519 verifier cannot produce from a 33-byte key and a stark-schnorr
+/// signature. That is what makes it mutation-sensitive.
+#[test]
+fn a_stark_schnorr_revocation_proof_verifies_through_the_dispatched_path() {
+    use octo_algo_stark_schnorr::{public_key, sign, Felt};
+
+    octo_algo_ed25519::install().expect("install ed25519");
+    octo_algo_stark_schnorr::install().expect("install stark-schnorr");
+
+    let secret = Felt::from_hex_unchecked("0x2f1e3d4c5b6a79880716253443526170");
+    let nonce = Felt::from_hex_unchecked("0x13579bdf02468ace");
+    let key_id = VerificationMethodId::derive(KEY_ID);
+    let algorithm = stark_schnorr_algorithm_id();
+
+    // 33 bytes, not 32. This is the whole point: a `[u8; 32]` parameter
+    // cannot express this key, which is why mission `0009-cc` widened the
+    // verification sites to take a slice.
+    let public_key = public_key(&secret).expect("derives a public key");
+    let wire = public_key.to_wire();
+    assert_eq!(
+        wire.len(),
+        33,
+        "stark-schnorr public keys are 33 bytes. If this ever reads 32 the \
+         vector has stopped testing what it claims to."
+    );
+
+    // Build the exact message `IdentityKey::verify_lifecycle_proof` re-derives,
+    // so the vector exercises the production preimage rather than a fixture.
+    let message = octo_ident::SignedMessage::new(
+        octo_ident::SignablePrefix::new(algorithm, key_id),
+        b"revoke".to_vec(),
+    );
+    let signable = message
+        .signable(octo_ident::SignableForm::Raw)
+        .expect("raw signable form");
+
+    let signature = sign(&secret, &signable, &nonce).expect("sign");
+    let proof: [u8; 64] = signature.to_wire();
+
+    IdentityKey::verify_revocation_proof(&algorithm, &key_id, &wire, &proof)
+        .expect("a stark-schnorr proof must verify under stark-schnorr");
+
+    // And the same bytes under Ed25519 must not, so the acceptance above came
+    // from the algorithm rather than from the signature merely parsing.
+    assert!(
+        IdentityKey::verify_revocation_proof(&ed25519_algorithm_id(), &key_id, &wire, &proof,)
+            .is_err(),
+        "a stark-schnorr proof must not verify as Ed25519"
+    );
+}

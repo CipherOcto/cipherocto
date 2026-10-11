@@ -122,7 +122,7 @@ pub fn verify_attach_handle_payload(
 /// canonical helper.
 fn verify_bytes(
     algorithm_id: &octo_wallet::AlgorithmId,
-    pk: &[u8; 32],
+    pk: &[u8],
     msg: &[u8],
     sig: &Signature,
 ) -> Result<(), AttachError> {

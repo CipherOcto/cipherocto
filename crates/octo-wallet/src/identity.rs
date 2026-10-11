@@ -618,7 +618,7 @@ impl IdentityKey {
     pub fn verify_revocation_proof(
         algorithm_id: &octo_ident::AlgorithmId,
         key_id: &octo_ident::VerificationMethodId,
-        pubkey: &[u8; 32],
+        pubkey: &[u8],
         proof: &[u8; 64],
     ) -> Result<(), WalletError> {
         IdentityKey::verify_lifecycle_proof(algorithm_id, key_id, pubkey, b"revoke", proof, || {
@@ -634,7 +634,7 @@ impl IdentityKey {
     fn verify_lifecycle_proof(
         algorithm_id: &octo_ident::AlgorithmId,
         key_id: &octo_ident::VerificationMethodId,
-        public_key: &[u8; 32],
+        public_key: &[u8],
         payload: &[u8],
         proof: &[u8; 64],
         error: fn() -> WalletError,

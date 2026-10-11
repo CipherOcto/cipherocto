@@ -239,7 +239,7 @@ impl DeterministicEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        public_key: &[u8; 32],
+        public_key: &[u8],
     ) -> Result<(), DotError> {
         // 1. Verify envelope_id derivation
         let expected_id = self.derive_envelope_id();

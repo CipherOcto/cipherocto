@@ -87,7 +87,7 @@ impl GatewayAttestation {
     pub fn verify_signature(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        public_key: &[u8; 32],
+        public_key: &[u8],
     ) -> Result<(), crate::ocrypt::error::CryptoError> {
         octo_algo_ed25519::verify_dispatch(
             algorithm,
@@ -251,7 +251,7 @@ impl RevocationNotice {
     pub fn verify_signature(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        successor_public_key: &[u8; 32],
+        successor_public_key: &[u8],
     ) -> Result<(), crate::ocrypt::error::CryptoError> {
         octo_algo_ed25519::verify_dispatch(
             algorithm,

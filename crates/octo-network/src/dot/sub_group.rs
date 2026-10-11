@@ -314,7 +314,7 @@ impl CreateSubGroupEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        dc_pubkey: &[u8; 32],
+        dc_pubkey: &[u8],
     ) -> Result<(), DotError> {
         self.validate().map_err(|e| {
             DotError::Serialization(format!("CreateSubGroupEnvelope: invalid: {e}"))

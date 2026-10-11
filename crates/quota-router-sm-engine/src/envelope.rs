@@ -364,7 +364,7 @@ pub fn verify_wal_hash_binding(
 pub fn verify_envelope_signature(
     algorithm_id: &octo_ident::AlgorithmId,
     envelope: &ExecutionEnvelope,
-    holder_pub: &[u8; 32],
+    holder_pub: &[u8],
 ) -> Result<(), EnvelopeError> {
     let msg = unsigned_canonical_ser(envelope);
     octo_algo_ed25519::verify_dispatch(

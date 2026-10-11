@@ -247,10 +247,14 @@ impl GovernanceProof {
 pub fn governance_suspension_preimage(
     recorder_id: &RecorderId,
     reason_hash: &[u8; 32],
-    governance_pubkey: &[u8; 32],
+    governance_pubkey: &[u8],
     now_unix: u64,
 ) -> Vec<u8> {
-    let mut buf: Vec<u8> = Vec::with_capacity(35 + 8 + 32 + 32 + 8);
+    // Sized from the arguments rather than a literal 32 for the key: the
+    // capacity is only a hint, but hardcoding Ed25519's key length here is
+    // exactly the assumption the whole signature chain was widened to drop.
+    let mut buf: Vec<u8> =
+        Vec::with_capacity(35 + 8 + reason_hash.len() + governance_pubkey.len() + 8);
     buf.extend_from_slice(crate::constants::BLAKE3_REPUTATION_SUSPENSION_DOMAIN);
     buf.extend_from_slice(recorder_id.as_bytes());
     buf.extend_from_slice(reason_hash);
@@ -264,7 +268,7 @@ pub fn governance_suspension_preimage(
 pub fn governance_suspension_digest(
     recorder_id: &RecorderId,
     reason_hash: &[u8; 32],
-    governance_pubkey: &[u8; 32],
+    governance_pubkey: &[u8],
     now_unix: u64,
 ) -> [u8; 32] {
     let preimage =
@@ -295,13 +299,17 @@ pub fn governance_suspension_digest(
 #[allow(clippy::too_many_arguments)]
 pub fn verify_governance_signature(
     algorithm_id: &octo_ident::AlgorithmId,
-    governance_pubkey: &[u8; 32],
+    governance_pubkey: &[u8],
     recorder_id: &RecorderId,
     reason_hash: &[u8; 32],
     signature: &[u8],
     now_unix: u64,
 ) -> Result<(), ReputationError> {
-    if *governance_pubkey == [0u8; 32] {
+    // The zero-key sentinel, checked without assuming a length. Comparing
+    // against a literal 32-byte array would silently never fire for any
+    // algorithm whose keys are a different size — a check that looks
+    // present and is unreachable.
+    if governance_pubkey.iter().all(|b| *b == 0) {
         return Err(ReputationError::GovernanceSignatureInvalid);
     }
     // NO length pre-filter here. An earlier version coerced the signature

@@ -5,19 +5,32 @@ metadata:
   node_type: mission
   type: implementation
   created: 2026-10-10T00:00:00.000Z
-  v: "1.0"
+  v: "2.0"
   depends_on:
     - RFC-0009
     - 0009-b-algorithm-registry
     - 0009-cb-dot-verify-takes-key-bytes-not-verifying-key
 ---
 
-# Mission `0009-cc-key-length-still-binds-the-algorithm` — OPEN 2026-10-10
+# Mission `0009-cc-key-length-still-binds-the-algorithm` — COMPLETE 2026-10-10
 
 ## Status
 
-Open 2026-10-10. Found by testing the premise `0009-cb` rested on rather than
-the premise itself.
+Complete 2026-10-10. Found by testing the premise `0009-cb` rested on rather
+than the premise itself.
+
+### The scope figure in this file was wrong when it was written
+
+It first claimed "79 parameters across 5 crates", measured by grepping for
+parameter _names_ like `pubkey: &[u8; 32]`. That conflates every 32-byte array
+in the workspace — macaroon root secrets, capability ids, Blake3 keys, field
+elements, nonces — with public keys. Almost none of them are public keys, and
+all of them genuinely are 32 bytes.
+
+Measured properly, by finding parameters whose value actually reaches a
+`verify_dispatch` call, the figure is **38 functions across 7 crates**. The
+first number was a name match; this one is a role match, and the same lesson
+as counting constructor calls instead of verification sites.
 
 ## `0009-cb` fixed the type and left the length
 
@@ -39,9 +52,9 @@ which algorithm could possibly apply.
 
 `&[u8; 32]` is a **workspace-wide convention, not something `0009-cb`
 introduced**. `dot/envelope.rs` already used it before any of this work, and
-`0009-c7`, `0009-c9` and `0009-ca` followed it. Measured: **79** key parameters
-across `octo-network` (18), `octo-runtime` (3), `octo-reputation` (2),
-`octo-wallet` (1) and `octo-ident` (1).
+`0009-c7`, `0009-c9` and `0009-ca` followed it. Measured by role: **38** verification
+functions across `octo-network` (34), `octo-reputation`, `octo-runtime`,
+`octo-wallet` and `quota-router-sm-engine`.
 
 ## The test that appears to cover this is vacuous
 
@@ -104,12 +117,38 @@ That is strictly better than a compile-time length, because it reports _which_
 algorithm wanted _what_ length, and it keeps working when a third algorithm
 lands with a different size.
 
-## Scope
+## Scope — as landed
 
-79 parameters across 5 crates, plus their call sites. This is a cross-cutting
-convention change and should be done as one piece, not per crate — a repo with
-two key-length conventions is the parallel-abstraction failure the design
-principles treat as a hard no.
+38 functions. Call sites needed almost no change, because `&[u8; 32]`
+**coerces** to `&[u8]`, so widening a parameter does not churn its callers.
+That is what made this tractable as one piece.
+
+Three things came out of the work that were not in the scope above:
+
+1. **`octo-reputation`'s governance digest chain.** `verify_governance_signature`
+   already took `&[u8]` with the reasoning documented in full — including why
+   there is no length pre-filter. Its _key_ was still `&[u8; 32]`, so the
+   digest and preimage it feeds had to widen with it. The zero-key sentinel
+   was `*pubkey == [0u8; 32]`, a length-dependent check that would silently
+   never fire for a 33-byte key: a check that looks present and is
+   unreachable.
+
+2. **`octo-network`'s gossip verifier had the defect `octo-reputation` had
+   already removed.** `verify_envelope_signature` opened with
+   `if env.recorder_signature.len() != 64`. That is a hardcoded Ed25519
+   signature length one layer above the dispatch it appeared to support,
+   reporting `recorder_signature_wrong_length` — indistinguishable from a bad
+   signature. It was invisible for stark-schnorr only because those
+   signatures are also 64 bytes. Removed, with the reasoning recorded at the
+   site.
+
+3. **`octo-algo-stark-schnorr` could not be used to sign from outside.**
+   `sign` and `public_key` both take a `&Felt`, and `Felt` was imported
+   privately in `scheme`. The crate was verify-only to any external caller.
+
+   That last one is why the vector below was unwritable, and it is the reason
+   the whole arc produced no cross-algorithm coverage: not a missing test, but
+   a missing API. `Felt` is now re-exported.
 
 ## Why this was not folded into `0009-cb`
 
@@ -120,13 +159,27 @@ mission. Recording it rather than silently widening `0009-cb`'s scope is the
 honest split — `0009-cb`'s mission file should not claim to have fixed
 something it did not.
 
+## What the mutation showed
+
+`a_stark_schnorr_revocation_proof_verifies_through_the_dispatched_path` signs
+with stark-schnorr over the production preimage and expects `Ok`, then checks
+the same bytes are refused under Ed25519.
+
+Hardcoding the algorithm inside `verify_lifecycle_proof` turns **exactly that
+one test red**, and leaves the three pre-existing tests in the file green —
+including `a_revocation_proof_replayed_as_the_other_algorithm_is_rejected`,
+which is the vector that looked like it covered this and did not.
+
+That contrast is the result. Before, the file's cross-algorithm coverage was
+vacuous; now one test in it is not.
+
 ## Acceptance Criteria
 
-- No verification site takes a fixed-size key array.
-- `crates/octo-wallet/tests/lifecycle_replay.rs` gains a round-trip vector that
-  goes **red** under the hardcoded-algorithm mutation.
-- A cross-algorithm replay vector that is red under the same mutation.
-- `octo-algo-stark-schnorr` unchanged — it is already correct.
+- No verification site takes a fixed-size key array. Done.
+- A round-trip vector that goes red under the hardcoded-algorithm mutation.
+  Done.
+- `octo-algo-stark-schnorr` — unchanged apart from the `Felt` re-export, which
+  is an API addition, not a behaviour change.
 
 ## Validation
 
@@ -140,6 +193,12 @@ cargo test -p octo-cli --test security_regressions
 ## Backward compat
 
 None required. Nothing is deployed.
+
+## Validation
+
+1536 `octo-network` lib vectors, 251 `octo-reputation` lib vectors, 4
+`lifecycle_replay` vectors, 47 gate vectors. Clippy clean at `-D warnings`
+across all six touched crates.
 
 ## Cross-references
 

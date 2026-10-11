@@ -209,7 +209,7 @@ impl WitnessAssertion {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        witness_pubkey: &[u8; 32],
+        witness_pubkey: &[u8],
     ) -> Result<(), DotError> {
         let computed = self.compute_assertion_hash();
         if computed != self.assertion_hash {
@@ -401,7 +401,7 @@ impl BindEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        founder_pubkey: &[u8; 32],
+        founder_pubkey: &[u8],
     ) -> Result<(), DotError> {
         // Recompute hash and compare
         let computed = self.compute_bind_hash();
@@ -470,7 +470,7 @@ impl BindAck {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        witness_pubkey: &[u8; 32],
+        witness_pubkey: &[u8],
     ) -> Result<(), DotError> {
         let computed = self.compute_ack_hash();
         if computed != self.ack_hash {
@@ -542,7 +542,7 @@ impl UnbindEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        issuer_pubkey: &[u8; 32],
+        issuer_pubkey: &[u8],
     ) -> Result<(), DotError> {
         let computed = self.compute_unbind_hash();
         if computed != self.unbind_hash {
@@ -622,7 +622,7 @@ impl PlatformLossEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        local_pubkey: &[u8; 32],
+        local_pubkey: &[u8],
     ) -> Result<(), DotError> {
         let computed = self.compute_loss_hash();
         if computed != self.loss_hash {

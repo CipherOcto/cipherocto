@@ -343,7 +343,7 @@ impl SlashEvent {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        coordinator_pubkey: &[u8; 32],
+        coordinator_pubkey: &[u8],
     ) -> Result<(), DotError> {
         let payload = self.payload_bytes();
         octo_algo_ed25519::verify_dispatch(
@@ -560,7 +560,7 @@ impl HandoverRequestEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        coordinator_pubkey: &[u8; 32],
+        coordinator_pubkey: &[u8],
     ) -> Result<(), DotError> {
         let computed = self.compute_handover_hash();
         if computed != self.handover_hash {
@@ -675,7 +675,7 @@ impl HandoverAckEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        witness_pubkey: &[u8; 32],
+        witness_pubkey: &[u8],
     ) -> Result<(), DotError> {
         let computed = self.compute_ack_hash();
         if computed != self.ack_hash {
@@ -783,7 +783,7 @@ impl HandoverDoneEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        new_coordinator_pubkey: &[u8; 32],
+        new_coordinator_pubkey: &[u8],
     ) -> Result<(), DotError> {
         let computed = self.compute_done_hash();
         if computed != self.done_hash {
@@ -901,7 +901,7 @@ impl HandoverCancelEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        incumbent_pubkey: &[u8; 32],
+        incumbent_pubkey: &[u8],
     ) -> Result<(), DotError> {
         let computed = self.compute_payload_hash();
         if computed != self.payload_hash {

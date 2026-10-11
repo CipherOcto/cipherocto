@@ -134,7 +134,7 @@ pub trait PublicKeyLookup: Send + Sync {
 /// `RecorderDid` namespace which is fixed at 52 bytes — we cannot
 /// truncate the 32-byte BLAKE3 digest without losing namespace
 /// compatibility with existing DID-keyed gossip topics.
-pub fn did_from_pubkey(pubkey: &[u8; 32]) -> octo_reputation::types::RecorderDid {
+pub fn did_from_pubkey(pubkey: &[u8]) -> octo_reputation::types::RecorderDid {
     let digest = blake3::hash(pubkey);
     let mut bytes = [0u8; 52];
     bytes[..32].copy_from_slice(digest.as_bytes());
@@ -143,7 +143,7 @@ pub fn did_from_pubkey(pubkey: &[u8; 32]) -> octo_reputation::types::RecorderDid
 }
 
 /// Verify a `GossipEnvelope`'s `recorder_signature` against the
-/// recorder's registered ed25519 public key. Returns `Ok(())` only
+/// recorder's registered public key. Returns `Ok(())` only
 /// when:
 /// 1. The signature parses as a valid ed25519 `Signature`.
 /// 2. `ed25519_dalek::VerifyingKey::from_bytes(pubkey)` succeeds.
@@ -158,12 +158,19 @@ pub fn did_from_pubkey(pubkey: &[u8; 32]) -> octo_reputation::types::RecorderDid
 /// must succeed before the binding check is meaningful.
 pub fn verify_envelope_signature(
     env: &octo_reputation::gossip::GossipEnvelope,
-    pubkey: &[u8; 32],
+    pubkey: &[u8],
     algorithm: &octo_ident::AlgorithmId,
 ) -> Result<(), &'static str> {
-    if env.recorder_signature.len() != 64 {
-        return Err("recorder_signature_wrong_length");
-    }
+    // NO signature-length pre-filter. One lived here until this change and it
+    // was the same defect `octo-reputation` already removed and documented:
+    // a hardcoded 64-byte check refuses every algorithm whose signatures are
+    // not 64 bytes, and reports `recorder_signature_wrong_length`, which is
+    // indistinguishable from a genuinely bad signature. That is the
+    // silent-wrong-answer shape AC#11 exists to prevent, surviving one layer
+    // above the dispatch it looked like it was supporting.
+    //
+    // It happened to be invisible for stark-schnorr, whose signatures are also
+    // 64 bytes. That is coincidence, not a reason to keep it.
     let msg = env.event.canonical_bytes();
     // Dispatch, not a dalek round-trip (RFC-0009 AC#11). An unregistered
     // algorithm fails closed here rather than being verified as Ed25519.

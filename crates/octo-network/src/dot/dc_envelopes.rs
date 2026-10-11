@@ -98,7 +98,7 @@ impl CreateGroupEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        dc_pubkey: &[u8; 32],
+        dc_pubkey: &[u8],
     ) -> Result<(), DotError> {
         let computed = self.compute_cgroup_hash();
         if computed != self.cgroup_hash {
@@ -197,7 +197,7 @@ impl CreateGroupAckEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        witness_pubkey: &[u8; 32],
+        witness_pubkey: &[u8],
     ) -> Result<(), DotError> {
         let computed = self.compute_ack_hash();
         if computed != self.ack_hash {
@@ -264,7 +264,7 @@ impl CreateGroupDoneEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        dc_pubkey: &[u8; 32],
+        dc_pubkey: &[u8],
     ) -> Result<(), DotError> {
         let computed = self.compute_done_hash();
         if computed != self.done_hash {
@@ -326,7 +326,7 @@ impl CreateGroupFailEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        dc_pubkey: &[u8; 32],
+        dc_pubkey: &[u8],
     ) -> Result<(), DotError> {
         let computed = self.compute_fail_hash();
         if computed != self.fail_hash {
@@ -412,7 +412,7 @@ impl InviteEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        dc_pubkey: &[u8; 32],
+        dc_pubkey: &[u8],
     ) -> Result<(), DotError> {
         let computed_token = self.compute_invite_token();
         if computed_token != self.invite_token {
@@ -530,7 +530,7 @@ impl UnbindAllEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        dc_pubkey: &[u8; 32],
+        dc_pubkey: &[u8],
     ) -> Result<(), DotError> {
         let computed = self.compute_unbind_hash();
         if computed != self.unbind_hash {
@@ -604,7 +604,7 @@ impl UnbindAllAckEnvelope {
     pub fn verify(
         &self,
         algorithm: &octo_ident::AlgorithmId,
-        witness_pubkey: &[u8; 32],
+        witness_pubkey: &[u8],
     ) -> Result<(), DotError> {
         let computed = self.compute_ack_hash();
         if computed != self.ack_hash {

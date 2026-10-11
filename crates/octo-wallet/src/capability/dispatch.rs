@@ -156,6 +156,23 @@ impl std::fmt::Debug for BearerError {
 }
 
 /// `CapError` (RFC-0969 §Phase 1) — capability verification failure modes.
+///
+/// The first three variants are the RFC's. The rest were added with
+/// `ProductionCapabilityVerifier`, which runs a real verification pipeline
+/// whose failures have seven distinguishable causes that the RFC's three
+/// variants cannot express. Collapsing them would make a refusal
+/// undiagnosable, and inventing an "invalid token" bucket for all of them
+/// would report a registry outage as a bad credential.
+///
+/// **Every variant here is a refusal.** There is no variant that permits a
+/// request through with reduced checking, so a caller that maps an error to
+/// "continue" is discarding a decision the type already made.
+///
+/// The added variants carry no payload. The verification pipeline's own
+/// errors carry strings, and forwarding them into a log line is how token
+/// bytes and signature material end up in operator-visible text. The cause
+/// is named by the variant; the bytes stay in the pipeline that produced
+/// them.
 #[derive(thiserror::Error, Clone, PartialEq, Eq)]
 pub enum CapError {
     #[error("macaroon invalid")]
@@ -164,6 +181,55 @@ pub enum CapError {
     CaveatViolation { caveat_kind: String },
     #[error("capability expired: expired_at_unix={expired_at_unix}")]
     Expired { expired_at_unix: u64 },
+
+    /// The wire form did not parse. Nothing was verified.
+    #[error("capability wire malformed")]
+    Malformed,
+
+    /// No holder record is registered for this capability root. The token
+    /// parses and may be internally consistent, but nothing vouches for it.
+    #[error("capability holder unknown")]
+    HolderUnknown,
+
+    /// The holder record exists but is revoked or its window has closed.
+    ///
+    /// Deliberately one variant for both causes: the registry reports
+    /// "not active" without distinguishing them, and reporting an expiry
+    /// time the registry never returned would be inventing one. The existing
+    /// `Expired` variant stays for callers that do know the time.
+    #[error("capability holder not active (revoked or expired)")]
+    HolderNotActive,
+
+    /// The holder registry could not be consulted at all. This is an
+    /// infrastructure fault, not a verdict on the token — kept distinct so
+    /// it is never counted as a rejected credential.
+    #[error("capability holder registry unavailable")]
+    RegistryUnavailable,
+
+    /// The holder signature did not verify against the registered public key.
+    #[error("capability holder signature invalid")]
+    InvalidSignature,
+
+    /// The RFC-0973 attestation dispatch refused the token.
+    #[error("capability attestation refused")]
+    AttestationRefused,
+
+    /// The token carries no ask binding, so it names no ask.
+    ///
+    /// `CapabilityVerification.ask_id` is a bare `[u8; 32]` with no
+    /// representation for absence, and the value flows on into
+    /// `AuthenticatedRequest.ask_id` and settlement. A gateway cannot price
+    /// or settle against an ask the token never named, and substituting a
+    /// zero array would make "unbound" indistinguishable from a real ask and
+    /// let two unbound credentials compare equal. Refusing is the fail-closed
+    /// direction and is reversible; inventing a sentinel is not.
+    #[error("capability carries no ask binding")]
+    AskUnbound,
+
+    /// The token carries two or more *distinct* ask bindings, so it has no
+    /// single answer. Repeated identical bindings agree and are not this.
+    #[error("capability carries conflicting ask bindings")]
+    AskBindingAmbiguous,
 }
 
 impl std::fmt::Debug for CapError {
@@ -178,6 +244,14 @@ impl std::fmt::Debug for CapError {
                 .debug_struct("Expired")
                 .field("expired_at_unix", expired_at_unix)
                 .finish(),
+            Self::Malformed => f.write_str("Malformed"),
+            Self::HolderUnknown => f.write_str("HolderUnknown"),
+            Self::HolderNotActive => f.write_str("HolderNotActive"),
+            Self::RegistryUnavailable => f.write_str("RegistryUnavailable"),
+            Self::InvalidSignature => f.write_str("InvalidSignature"),
+            Self::AttestationRefused => f.write_str("AttestationRefused"),
+            Self::AskUnbound => f.write_str("AskUnbound"),
+            Self::AskBindingAmbiguous => f.write_str("AskBindingAmbiguous"),
         }
     }
 }

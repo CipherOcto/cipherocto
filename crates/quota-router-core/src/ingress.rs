@@ -16,6 +16,7 @@
 //! ingress below remains the canonical egress-side ingestion point.
 
 pub mod authenticator;
+pub mod capability_verifier;
 
 use serde::{Deserialize, Serialize};
 

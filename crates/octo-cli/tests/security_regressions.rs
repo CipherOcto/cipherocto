@@ -3398,12 +3398,25 @@ fn no_verification_site_reaches_the_algorithm_registry_by_hand() {
 /// Verifier traits that have **no production implementation** (mission `0969-c`).
 ///
 /// Each entry pins the *complete* set of `impl <Trait> for <Type>` type names
-/// found anywhere in the workspace. The gate turns red when a name appears that
-/// is not listed — which is the moment somebody adds a real verifier — and when
-/// a listed name disappears.
+/// found anywhere in the workspace's `src/` trees. The gate turns red when a
+/// name appears that is not listed — which is the moment somebody adds a real
+/// verifier — and when a listed name disappears.
 ///
-/// Every recorded type is a stub living in a `#[cfg(test)]` module. One of them
-/// is named `ProductionCapabilityVerifier` and lives in `octo-wallet/tests/`.
+/// Every recorded type is a stub living in a `#[cfg(test)]` module.
+///
+/// **`CapabilityVerifier` was retired from this list.** It shipped a real
+/// implementation, `quota_router_core::ingress::capability_verifier::
+/// ProductionCapabilityVerifier`, which composes `verify_with_resolve` and
+/// `CapabilityToken::ask_binding`. The gate went red on it by itself and named
+/// the action, which is what the list is for. `BearerVerifier` remains: its
+/// substrate is `BearerCapsule`, which is still a structural stub with no
+/// cryptography, so the RFC-0903 path genuinely has no production verifier yet.
+///
+/// Note that the walk covers `src/` only, so `ProductionCapabilityVerifier` in
+/// `octo-wallet/tests/dispatch_tv.rs` — a different, unrelated type of the
+/// same name that decodes a token with `unverified_decode_capability` and does
+/// no verification — is invisible here. Two types now share that name, which is
+/// why the retirement is recorded in words rather than inferred from a count.
 ///
 /// **Why an exact set rather than a count.** The honest obstacle is that a text
 /// scan cannot reliably tell a production `impl` from one inside a
@@ -3415,24 +3428,14 @@ fn no_verification_site_reaches_the_algorithm_registry_by_hand() {
 ///
 /// When a real implementation lands, delete the entry rather than adding the
 /// name to it. The point of the entry is that the trait has no production impl.
-const VERIFIERS_WITHOUT_PRODUCTION_IMPL: &[(&str, &[&str])] = &[
-    (
-        "BearerVerifier",
-        &[
-            "StubBearerVerifier",
-            "RejectBearerVerifier",
-            "CountingBearer",
-        ],
-    ),
-    (
-        "CapabilityVerifier",
-        &[
-            "StubCapabilityVerifier",
-            "RejectCapabilityVerifier",
-            "CountingCap",
-        ],
-    ),
-];
+const VERIFIERS_WITHOUT_PRODUCTION_IMPL: &[(&str, &[&str])] = &[(
+    "BearerVerifier",
+    &[
+        "StubBearerVerifier",
+        "RejectBearerVerifier",
+        "CountingBearer",
+    ],
+)];
 
 #[test]
 fn every_verifier_trait_has_a_production_implementation_or_is_accounted_for() {

@@ -353,7 +353,7 @@ What it needs first is a decision this mission should not make alone:
 - [x] `CapabilityVerification` can represent an ask-unbound capability, or the RFC states what a verifier reports for one and `evaluate_linkage` cannot compare it into a false link. **Done by refusal** — see §What landed part 4. The verifier never constructs a `CapabilityVerification` for an ask-unbound token, so no unbound `ask_id` exists to compare. The field itself is unchanged and still cannot represent absence; the route taken removes the need for it to.
 - [x] `CapabilityToken` exposes the RFC's ask-binding accessor, or RFC-0969 §Algorithms is amended to name the caveat-based accessor that replaces it. **Done** — `ask_binding()` reads `Caveat::AskBinding` from the macaroon, since `CapabilityToken` carries no `ask_id` field.
 - [x] Dispatch semantics are settled. **The RFC already answered this one** — v1.2's 4-way table is unambiguous and `BothSchemesUnsupported` / `NoAuth` are its names. The remaining question is only whether the implementation adopts it or the RFC is reopened, and adopting it is the default unless there is a recorded reason not to. **Adopted** — `authenticate_v12` + `routing_decision_v12`, additively; `authenticate` keeps pre-v1.2 semantics.
-- [ ] A production mint path attaches a `Caveat::AskBinding`, so a capability that is ask-bound can exist. **Still open, and now the single blocking item.** Owned by RFC-0959 §Phase 3, where the item is already an unchecked box — this is not new work, it is work that RFC already tracks and nobody has ticked.
+- [ ] A production mint path attaches a `Caveat::AskBinding`, so a capability that is ask-bound can exist. **Still open, but no longer a substrate gap — the shape now exists and only needs to be used.** A capability can carry an ask binding today: attenuating `Caveat::AskBinding` through the wallet's attenuation handler attaches it, and the result verifies and reads back through `ask_binding()`. What is missing is a caller that does so on the market path. Owned by RFC-0959 §Phase 3, where the item is already an unchecked box — this is not new work, it is work that RFC already tracks and nobody has ticked.
 - [ ] `CapabilityVerification.ask_id` can represent "unbound", matching the `Option` RFC-0970 already assumes `ask_binding()` returns. A bare `[u8; 32]` cannot, and that value flows into `AuthenticatedRequest.ask_id` and on into settlement. **Deliberately not done.** Refusing unbound is strictly safer than a representable absent, and is reversible; widening the field is neither. Revisit only if the market path needs unbound capabilities at the gateway, which RFC-0959 §Phase 3 would have to argue for.
 - [x] A production `impl CapabilityVerifier` exists that calls real verification and is reachable from `GatewayAuthenticator::new` outside tests. **Done** — `quota_router_core::ingress::capability_verifier::ProductionCapabilityVerifier`, injected as `Arc<dyn CapabilityVerifier>`, so `GatewayAuthenticator::new` needed no change.
 - [x] Its failure modes are fail-closed per cause, not collapsed into one variant — `VerifyError` has seven variants and `CapError` has three. **Done** — `CapError` gains `Malformed`, `HolderUnknown`, `HolderNotActive`, `RegistryUnavailable`, `InvalidSignature`, `AttestationRefused`, `AskUnbound`, `AskBindingAmbiguous`. One variant per cause; none carries a message across.
@@ -400,6 +400,24 @@ the fail-closed direction and is reversible.
 verifier.** That is correct verifier behaviour and a broken deployment state.
 The two are tracked apart: the verifier is right, and RFC-0959 §Phase 3 is the
 open item above.
+
+## What this unblocked: ask binding is now attachable
+
+The refusal above reads as a dead end until you notice what it rules out. It
+rules out attaching an ask at _mint_ time, because `MintRequest` has no ask
+field and adding one is a wire change.
+
+It does **not** rule out attaching one by _attenuation_. That route needed no
+protocol change and, as of the attenuation fix, it now works: attenuating
+`Caveat::AskBinding` through `WALLET_ATTENUATE_CAPABILITY` produces a token that
+passes `verify_holder_sig` and whose `ask_binding()` returns the ask. That was
+not possible before the fix, because the attenuate handler did not re-sign and
+every token it produced failed verification.
+
+So the remaining item is no longer "build a substrate". It is "call the thing
+that exists" — a market-side decision about _when_ a capability is bound to an
+ask, owned by RFC-0959 §Phase 3. That is a smaller and more honest mission than
+the one this file was carrying when the verifier shipped.
 
 ## The guard retired itself, which is the point of a guard
 

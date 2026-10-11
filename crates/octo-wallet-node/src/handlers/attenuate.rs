@@ -321,11 +321,10 @@ mod tests {
             Caveat::Model("gpt-4".to_owned())
         );
         // Note: `holder_sig_stale` is NOT preserved across the wire
-        // roundtrip (the wire parser hardcodes `false` on deserialize
-        // — a known follow-on for the wire substrate; mission
-        // 0957-phase2d-1). The attenuated token itself DOES carry
-        // `holder_sig_stale = true` (per `CapabilityToken::attenuate`),
-        // but the wire form loses it. Assert `holder_pub` instead.
+        // roundtrip (the wire parser hardcodes `false` on deserialize).
+        // This was first recorded as a `0957-phase2d-1` follow-on that
+        // was never filed; the gap is now filed as mission `0957-g`.
+        // Assert `holder_pub` instead.
         assert_eq!(attenuated.holder_pub, sample_identity().public_key_bytes());
     }
 

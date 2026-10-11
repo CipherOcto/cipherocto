@@ -1028,6 +1028,42 @@ the default, and the false-linkage path is unreachable today only because no
 production verifier exists to report an unbound ask — an ordering worth
 protecting rather than a property worth relying on.
 
+## The value the verifier would report is never minted
+
+The root cause went one level deeper than "no verification path", and finding it
+removed the last open design question rather than settling it.
+
+`CapabilityToken::ask_binding()` now exists — the accessor RFC-0969 names. It
+works. **No production code path ever constructs a `Caveat::AskBinding`.**
+
+| Mint path                            | Caveats attached                                                                                 |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `octo-wallet-node` mint — payment    | `&[Caveat::Payment(p)]`                                                                          |
+| `octo-wallet-node` mint — no payment | `&[]`                                                                                            |
+| `octo-cli` capability mint           | inside a `#[cfg(test)]` block, behind a `#[cfg(not(test))]` guard that refuses in release builds |
+| `mint_dual` (RFC-0969 §Algorithms)   | a stub that always returns `Err(RootSecretMissing)`                                              |
+
+Every capability the system can produce reports `Ok(None)`.
+
+That falsifies the premise RFC-0969 v1.2 used to justify its own amendment.
+`AskBindingMissing` was removed because "single-scheme verification always has
+ask_id populated". Against this codebase nothing populates it.
+
+And it converts the verifier from a design question into a sequencing one. A
+verifier cannot be written correctly against this substrate: reporting
+`Ok(None)` faithfully refuses every capability that exists, and reporting a
+sentinel makes the zero-`ask_id` linkage risk live the moment dual dispatch is
+reconciled — which is the very next step.
+
+**So the honest order is: mint the ask binding, then implement the verifier.**
+The other order forces a choice between refusing everything and inventing a
+sentinel, and both are worse than waiting.
+
+This is the arc's recurring shape one level up. The enforcement path is not
+merely missing — the thing it would enforce has never been produced. Five
+separate-looking findings were one absence, and the absence now has a measured
+floor under it.
+
 ## What this arc handed on
 
 Five findings were scoped and filed as missions, because they are implementation

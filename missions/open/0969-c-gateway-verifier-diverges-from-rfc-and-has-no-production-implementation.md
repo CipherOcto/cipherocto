@@ -171,11 +171,10 @@ on both `octo-cap-macaroon` and `octo-wallet`) and the layering is legal.
 
 What it needs first is a decision this mission should not make alone:
 
-- **Where does `ask_id` come from?** Half answered. The token side now exists
-  (`CapabilityToken::ask_binding()`). Whether the registry's
-  `HolderRecord.ask_id` must _agree_ with it, and what a verifier reports when
-  the capability is unbound, is still unspecified — nothing today extracts one
-  from the other or reconciles them.
+- **Where does `ask_id` come from?** **Answered: nowhere.** The token-side
+  accessor exists, but no production mint path attaches a `Caveat::AskBinding`,
+  so every producible capability is ask-unbound. That turns this from a design
+  choice into a sequencing constraint — see §Where `ask_id` comes from.
 - **What does a verifier report for an ask-unbound capability?** The interface
   cannot say "unbound". Refusing is fail-closed and breaks non-market tokens;
   a sentinel is silent and depends on the dual semantics being dead.
@@ -187,6 +186,7 @@ What it needs first is a decision this mission should not make alone:
 - [ ] `CapabilityVerification` can represent an ask-unbound capability, or the RFC states what a verifier reports for one and `evaluate_linkage` cannot compare it into a false link.
 - [x] `CapabilityToken` exposes the RFC's ask-binding accessor, or RFC-0969 §Algorithms is amended to name the caveat-based accessor that replaces it. **Done** — `ask_binding()` reads `Caveat::AskBinding` from the macaroon, since `CapabilityToken` carries no `ask_id` field.
 - [ ] Dispatch semantics are settled. **The RFC already answered this one** — v1.2's 4-way table is unambiguous and `BothSchemesUnsupported` / `NoAuth` are its names. The remaining question is only whether the implementation adopts it or the RFC is reopened, and adopting it is the default unless there is a recorded reason not to.
+- [ ] A production mint path attaches a `Caveat::AskBinding`, so a capability that is ask-bound can exist. **This is the prerequisite for the verifier criterion below**, and it does not exist today.
 - [ ] A production `impl CapabilityVerifier` exists that calls real verification and is reachable from `GatewayAuthenticator::new` outside tests.
 - [ ] Its failure modes are fail-closed per cause, not collapsed into one variant — `VerifyError` has seven variants and `CapError` has three.
 - [ ] `a_forged_capability_is_refused_by_the_gateway` — mutation-verified, and named for what it proves rather than for the pipeline that hosts it.
@@ -203,6 +203,50 @@ Recorded so they are not re-opened as open questions:
   production `CapabilityVerifier` exists to report an unbound ask at all. It
   becomes reachable the moment the trait gets an implementation that fills a
   sentinel. That ordering is the thing to protect.
+
+## Where `ask_id` comes from: answered, and the answer is "nowhere"
+
+The third question was left open pending this. It has an answer, and it is a
+negative one.
+
+`CapabilityToken::ask_binding()` now exists and works. **No production code path
+constructs a `Caveat::AskBinding`.** Measured across every construction site:
+
+| Mint path                                    | Caveats attached                                                                                                                                      |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `octo-wallet-node` mint handler — payment    | `&[Caveat::Payment(p)]`                                                                                                                               |
+| `octo-wallet-node` mint handler — no payment | `&[]`                                                                                                                                                 |
+| `octo-cli` capability mint                   | unreachable: inside a `#[cfg(test)]` block, behind a `#[cfg(not(test))]` guard that refuses in release builds with "root secret derivation not wired" |
+| `mint_dual` (RFC-0969 §Algorithms)           | a stub that always returns `Err(RootSecretMissing)`                                                                                                   |
+
+So **every capability the system can actually produce reports `Ok(None)` from
+`ask_binding()`.** The bound case exists only in test fixtures.
+
+This falsifies the premise RFC-0969 used to justify its own amendment. v1.2
+removed `AskBindingMissing` because, in its words, "single-scheme verification
+always has ask_id populated". Against this codebase nothing populates it. The
+amendment's justification does not hold here, which is a separate reason to
+revisit it beyond the implementation lag.
+
+### What this means for the verifier
+
+It converts a design question into a sequencing one. The blocker is **not**
+"where does the verifier read `ask_id` from" — it is that the value it must
+report **is never minted**.
+
+A verifier cannot be written correctly against this substrate:
+
+- Reporting `Ok(None)` faithfully means refusing every capability that exists,
+  which is not a verifier, it is an outage.
+- Reporting a sentinel means the zero-`ask_id` linkage risk becomes live the
+  moment dual-scheme dispatch is reconciled — which is the very next step.
+
+So the honest order is: **mint the ask binding, then implement the verifier.**
+Doing it the other way round forces a choice between refusing everything and
+inventing a sentinel, and both are worse than waiting.
+
+This is the same shape as the rest of the arc's findings — the enforcement path
+is not merely missing, the thing it would enforce has never been produced.
 
 ## What must not happen
 

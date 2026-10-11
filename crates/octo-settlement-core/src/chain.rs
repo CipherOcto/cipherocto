@@ -174,7 +174,7 @@ pub fn router_signature_digest(receipt: &Receipt) -> [u8; 32] {
     out
 }
 
-/// Resolves the ed25519 public key authorised to sign receipts for a router id.
+/// Resolves the public key authorised to sign receipts for a router id.
 ///
 /// The registry itself is domain-owned (Layer C); the substrate only needs the
 /// lookup, so the dependency points at this trait and the domain implements it
@@ -182,7 +182,18 @@ pub fn router_signature_digest(receipt: &Receipt) -> [u8; 32] {
 pub trait RouterKeyResolver {
     /// The authorised signing key for `router_id`, or `None` if that router is
     /// unknown or has no active key.
-    fn router_key(&self, router_id: &str) -> Option<[u8; 32]>;
+    ///
+    /// **A slice, not `[u8; 32]`.** This was a fixed 32-byte array while
+    /// `router_algorithm_id` sat beside it and was documented as the way to
+    /// name a router's algorithm. Those two could not both be true: a resolver
+    /// could override `router_algorithm_id` to an algorithm whose key is not 32
+    /// bytes — stark-schnorr's is 33 — and would then have no way to return the
+    /// key that algorithm needs. The dispatch argument was load-bearing in name
+    /// only.
+    ///
+    /// Borrowed rather than owned because this is called once per receipt in a
+    /// chain walk, and a resolver should not allocate to answer a lookup.
+    fn router_key(&self, router_id: &str) -> Option<&[u8]>;
 
     /// The algorithm `router_key` speaks.
     ///
@@ -243,7 +254,7 @@ pub fn verify_receipt_chain_authenticated(
         // one. The registered algorithm reports its own length error.
         octo_algo_ed25519::verify_dispatch(
             &keys.router_algorithm_id(&receipt.router_id),
-            &key,
+            key,
             &digest,
             &receipt.router_sig,
         )
@@ -325,12 +336,15 @@ mod tests {
     /// `RouterKeyResolver` implementation.
     struct OneRouter {
         router_id: String,
-        key: [u8; 32],
+        // Slice-shaped owner rather than a fixed array: the vector below
+        // stores a 33-byte stark-schnorr key in here, and a 32-byte field
+        // would make that test impossible to write rather than merely failing.
+        key: Vec<u8>,
     }
 
     impl RouterKeyResolver for OneRouter {
-        fn router_key(&self, router_id: &str) -> Option<[u8; 32]> {
-            (router_id == self.router_id).then_some(self.key)
+        fn router_key(&self, router_id: &str) -> Option<&[u8]> {
+            (router_id == self.router_id).then_some(self.key.as_slice())
         }
     }
 
@@ -362,7 +376,7 @@ mod tests {
     }
 
     impl RouterKeyResolver for LyingRouter {
-        fn router_key(&self, router_id: &str) -> Option<[u8; 32]> {
+        fn router_key(&self, router_id: &str) -> Option<&[u8]> {
             self.inner.router_key(router_id)
         }
 
@@ -382,7 +396,7 @@ mod tests {
         let keys = LyingRouter {
             inner: OneRouter {
                 router_id: "did:oct:router".into(),
-                key: sk.verifying_key().to_bytes(),
+                key: sk.verifying_key().to_bytes().to_vec(),
             },
             algorithm: octo_ident::AlgorithmId::derive("not-a-registered-algorithm"),
         };
@@ -402,7 +416,7 @@ mod tests {
         let sk = SigningKey::from_bytes(&[3u8; 32]);
         let keys = OneRouter {
             router_id: "did:oct:router".into(),
-            key: sk.verifying_key().to_bytes(),
+            key: sk.verifying_key().to_bytes().to_vec(),
         };
         assert_eq!(
             keys.router_algorithm_id("did:oct:router"),
@@ -415,12 +429,109 @@ mod tests {
         );
     }
 
+    /// A resolver whose router speaks stark-schnorr, end to end.
+    ///
+    /// Neither existing vector can show that a second algorithm actually
+    /// verifies. The refusal one is satisfied by refusing everything, and the
+    /// control one only ever registers Ed25519 — so an implementation that
+    /// supported Ed25519 and rejected every other algorithm would pass both.
+    ///
+    /// They do catch the opposite failure, and that is worth crediting rather
+    /// than overstating: hardcoding Ed25519 and ignoring `router_algorithm_id`
+    /// turns the refusal test red, because a genuine Ed25519 receipt under a
+    /// resolver claiming an unregistered algorithm then verifies when it
+    /// should not. Between them the pair catches "assumes Ed25519" and
+    /// "refuses too much". Neither catches "supports only Ed25519".
+    ///
+    /// A stark-schnorr key is 33 bytes and its signature covers a digest built
+    /// from those same 33 bytes, so neither the key nor the signed message can
+    /// be quietly reinterpreted as Ed25519.
+    ///
+    /// **This vector could not have existed before the key was widened.** While
+    /// `router_key` returned `[u8; 32]`, a resolver could override
+    /// `router_algorithm_id` — it was documented as the way to name a router's
+    /// algorithm — and still had no way to hand back the key that algorithm
+    /// needs. The override was unimplementable for its stated purpose.
+    #[test]
+    fn a_router_speaking_a_second_algorithm_verifies_end_to_end() {
+        use octo_algo_stark_schnorr::{public_key, sign, Felt};
+
+        octo_algo_ed25519::install().expect("install ed25519");
+        octo_algo_stark_schnorr::install().expect("install stark-schnorr");
+
+        let secret = Felt::from_hex_unchecked("0x77aa11bb22cc33dd44ee55ff66009911");
+        let wire = public_key(&secret).expect("derives a public key").to_wire();
+        assert_eq!(
+            wire.len(),
+            33,
+            "a stark-schnorr key is 33 bytes — that is what the widened \
+             `router_key` now makes it possible to return"
+        );
+
+        let router_id = "did:oct:router";
+        let keys = LyingRouter {
+            inner: OneRouter {
+                router_id: router_id.into(),
+                key: wire.to_vec(),
+            },
+            algorithm: octo_algo_stark_schnorr::stark_schnorr_algorithm_id(),
+        };
+
+        // Build the receipt the way the router would. Two ordering facts are
+        // load-bearing and both are easy to get backwards:
+        //
+        //  - `settlement_hash` is `receipt_id_for`, which hashes `router_sig`.
+        //    It is therefore computed AFTER the signature is in place.
+        //  - `router_signature_digest` does not cover `settlement_hash`, so the
+        //    digest is the same either side of that step.
+        //
+        // `signed_receipt` encodes the first fact already; the stark-schnorr
+        // equivalent is written out here rather than reused, because that
+        // helper signs with Ed25519.
+        let mut receipt = Receipt {
+            receipt_id: 0,
+            ask_id: [0x01; 32],
+            settlement_hash: [0; 32],
+            router_id: router_id.to_owned(),
+            router_sig: vec![0u8; 64],
+            timestamp_unix: 1000,
+            ..Default::default()
+        };
+        let signature = sign(
+            &secret,
+            &router_signature_digest(&receipt),
+            &Felt::from_hex_unchecked("0x13579bdf02468ace"),
+        )
+        .expect("sign")
+        .to_wire();
+        receipt.router_sig = signature.to_vec();
+        receipt.settlement_hash = receipt_id_for(&receipt);
+
+        assert!(
+            verify_receipt_chain_authenticated(&[receipt.clone()], &keys).is_ok(),
+            "a genuine stark-schnorr receipt must not be refused by the \
+             dispatched path"
+        );
+
+        // And the reported algorithm is load-bearing: the same receipt under
+        // the default Ed25519 resolver is a different claim, and must fail.
+        let ed = OneRouter {
+            router_id: router_id.into(),
+            key: wire.to_vec(),
+        };
+        assert!(
+            verify_receipt_chain_authenticated(&[receipt], &ed).is_err(),
+            "the same key and receipt must not verify when the resolver \
+             reports ed25519"
+        );
+    }
+
     #[test]
     fn authenticated_chain_accepts_a_genuine_signature() {
         let sk = SigningKey::from_bytes(&[3u8; 32]);
         let keys = OneRouter {
             router_id: "did:oct:router".into(),
-            key: sk.verifying_key().to_bytes(),
+            key: sk.verifying_key().to_bytes().to_vec(),
         };
         let chain: Vec<Receipt> = (0..3)
             .map(|i| signed_receipt(&sk, i, [0x01; 32], 1000 + i * 100, "did:oct:router"))
@@ -433,7 +544,7 @@ mod tests {
         let sk = SigningKey::from_bytes(&[3u8; 32]);
         let keys = OneRouter {
             router_id: "did:oct:router".into(),
-            key: sk.verifying_key().to_bytes(),
+            key: sk.verifying_key().to_bytes().to_vec(),
         };
         let good = signed_receipt(&sk, 0, [0x01; 32], 1000, "did:oct:router");
 
@@ -482,7 +593,7 @@ mod tests {
         let other = SigningKey::from_bytes(&[9u8; 32]);
         let other_keys = OneRouter {
             router_id: "did:oct:router".into(),
-            key: other.verifying_key().to_bytes(),
+            key: other.verifying_key().to_bytes().to_vec(),
         };
         assert!(matches!(
             verify_receipt_chain_authenticated(&[good], &other_keys),
@@ -496,7 +607,7 @@ mod tests {
         let sk = SigningKey::from_bytes(&[3u8; 32]);
         let keys = OneRouter {
             router_id: "did:oct:router".into(),
-            key: sk.verifying_key().to_bytes(),
+            key: sk.verifying_key().to_bytes().to_vec(),
         };
         let r0 = signed_receipt(&sk, 0, [0x01; 32], 1000, "did:oct:router");
         let r2 = signed_receipt(&sk, 2, [0x01; 32], 1200, "did:oct:router");
@@ -512,7 +623,8 @@ mod tests {
             router_id: "did:oct:router".into(),
             key: SigningKey::from_bytes(&[3u8; 32])
                 .verifying_key()
-                .to_bytes(),
+                .to_bytes()
+                .to_vec(),
         };
         assert!(verify_receipt_chain_authenticated(&[], &keys).is_ok());
     }

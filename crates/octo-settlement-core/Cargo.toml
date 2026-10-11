@@ -33,6 +33,18 @@ thiserror = "2.0"
 # chain. `verify_receipt_chain_authenticated` supplies the missing primitive.
 ed25519-dalek = "2.2"
 
+[dev-dependencies]
+# Second registered algorithm (Layer A, RFC-0009 AC#11). Dev-only, and the
+# reason is specific to this crate: `RouterKeyResolver` takes the key as a
+# slice and names the algorithm beside it, so this is the only site in the
+# crate where a resolver can actually express "this router speaks something
+# other than Ed25519". Every other vector reaches verification through a
+# 32-byte Ed25519 fixture and cannot tell dispatch from a hardcoded verifier —
+# a stark-schnorr key is 33 bytes, which makes the difference observable.
+# Dev-only because no production resolver speaks stark-schnorr; the vector
+# exists to keep the site honest.
+octo-algo-stark-schnorr = { path = "../octo-algo-stark-schnorr" }
+
 [lints.rust]
 unsafe_code = "forbid"
 

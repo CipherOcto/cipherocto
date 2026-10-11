@@ -935,8 +935,12 @@ mod tests {
         assert_ne!(got_a, got_b);
     }
 
+    /// **Named by RFC-0009 AC#12.** The criterion names this test as one of
+    /// its three; it existed as `unregistered_algorithm_id_is_rejected_after_population`,
+    /// so the RFC's stated gate did not resolve. Same defect as AC#11's gate:
+    /// the property was covered, but not under a name an auditor would use.
     #[test]
-    fn unregistered_algorithm_id_is_rejected_after_population() {
+    fn unregistered_algorithm_id_is_rejected() {
         let reg = AlgorithmRegistry::new();
         reg.register(dummy("a", AlgorithmId::derive("a"))).unwrap();
         reg.populate(Vec::new()).expect("populate");

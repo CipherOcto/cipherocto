@@ -2153,8 +2153,15 @@ const AC11_ALGORITHM_CRATES: &[(&str, &str)] = &[
     ),
 ];
 
+/// **Named by RFC-0009 AC#11.** The criterion names this exact test as its
+/// gate, and it was implemented under a different name. An auditor running
+/// the RFC's stated command would have found no such test and had no way to
+/// tell "not verified" from "verified under another name". The
+/// implementation was correct throughout; only the name it was reachable by
+/// was wrong, which is the same failure this arc keeps meeting in other
+/// shapes.
 #[test]
-fn ac11_no_verification_site_rebuilds_a_key_or_signature_inline() {
+fn no_verification_site_hardcodes_an_algorithm() {
     let root = workspace_root();
     let mut offenders: Vec<String> = Vec::new();
     let mut scanned_dirs = 0usize;

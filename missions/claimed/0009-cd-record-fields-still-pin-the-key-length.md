@@ -16,7 +16,9 @@ metadata:
 
 ## Status
 
-Open. Filed by testing what `0009-cc`'s vector actually proved.
+Claimed. Filed by testing what `0009-cc`'s vector actually proved. The two store
+pre-filters and the comment above them are done; the record-field widening is
+blocked on the design fork in §Open question.
 
 ## The finding
 
@@ -223,6 +225,41 @@ Worse, the `store::stoolap` copy sits directly beneath a comment reading
 check on the next line. The comment is wrong about the code immediately below
 it.
 
+**Both are removed.** Each store now goes straight to the shared helper, which
+performs the same zero-key rejection against the same error. For every existing
+32-byte key the behaviour is identical; for a key of any other length the
+length-pinned copies could not have fired at all.
+
+## The sentinel that survives, and why it is kept anyway
+
+Removing the store copies raises a fair question: the zero-key check inside
+`auth::verify_governance_signature` is now the only one on this path. It was
+measured rather than assumed.
+
+Neutering that sentinel — replacing `iter().all(|b| *b == 0)` with an emptiness
+test — leaves all **252** `octo-reputation` lib tests green. No test
+distinguishes the sentinel from its absence.
+
+The reason is structural, and it is not a coverage oversight waiting to be
+fixed. `forged_suspension_proofs_are_rejected` case 7 signs a real signature
+over the matching digest with an all-zero key and asserts rejection, which
+looks like coverage. It is not. An all-zero key cannot verify under either
+registered algorithm: Ed25519 rejects it as a point that does not decompress,
+and stark-schnorr's `from_wire` accepts the encoding but the scheme cannot
+verify against it. Both land on `GovernanceSignatureInvalid`, which is the same
+error the sentinel returns. The test passes for the dispatch reason.
+
+So no behavioural test can distinguish them: a signature the sentinel rejects is
+a signature that could not have verified anyway.
+
+**It is kept.** It is cheap, it is correct in the length-agnostic form, and it
+is the documented contract of the function. Removing it would leave zero-key
+rejection resting entirely on dispatch, with no test net if some future
+algorithm happens to accept an all-zero encoding. The measurement is recorded
+here so that nobody later mistakes the sentinel for covered behaviour, and so
+that nobody re-adds a fixed-size copy of it at the store layer on the strength
+of a test that does not exercise it.
+
 ## Evidence, and what it does not establish
 
 `a_governance_signature_verifies_under_stark_schnorr` in `auth::tests` signs a
@@ -257,9 +294,9 @@ the record. That is the gap this mission closes.
 - [ ] The `#[repr(C)]` wire form of `KeyRotation` is treated as a wire change,
       with its two fixed-width key slots and two 64-byte signature slots
       considered together rather than independently
-- [ ] Both store pre-filters either delegate to the length-agnostic check inside
+- [x] Both store pre-filters either delegate to the length-agnostic check inside
       `auth::verify_governance_signature` or are removed as redundant
-- [ ] The `store::stoolap` comment is corrected to describe the code beneath it
+- [x] The `store::stoolap` comment is corrected to describe the code beneath it
 - [ ] A second-algorithm vector that round-trips through a **record**, not just
       through the verification function — constructed, stored, read back and
       verified — so the store path is covered and not only the helper

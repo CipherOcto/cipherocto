@@ -328,15 +328,17 @@ impl ReputationStore for InMemoryReputationStore {
                 quorum: GOVERNANCE_QUORUM,
             });
         }
-        if auth.governance_pubkey == [0u8; 32] {
-            return Err(ReputationError::GovernanceSignatureInvalid);
-        }
-        // The ed25519 signature over the canonical suspension digest. This is
+        // The signature over the canonical suspension digest. This is
         // the check the module doc used to claim and did not perform: without
         // it a `GovernanceProof` with an arbitrary `recorder_id` suspends or
         // slashes any recorder, and forging one needs no key material at all.
         // Shared with the other store impls via `auth::verify_governance_signature`
         // so the three cannot drift apart.
+        //
+        // The all-zero key is rejected inside that helper, not here. A check
+        // written at this layer against a fixed-size literal cannot fire for a
+        // key of any other length, so it would look present and be unreachable
+        // — the same shape the helper's own comment warns about.
         crate::auth::verify_governance_signature(
             &auth.governance_algorithm_id,
             &auth.governance_pubkey,

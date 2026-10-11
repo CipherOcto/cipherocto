@@ -937,11 +937,11 @@ mod real {
                     quorum: crate::constants::GOVERNANCE_QUORUM,
                 });
             }
-            if auth.governance_pubkey == [0u8; 32] {
-                return Err(ReputationError::GovernanceSignatureInvalid);
-            }
-            // Same ed25519 check as the memory store, via the shared helper —
-            // see `auth::verify_governance_signature`.
+            // The same check the memory store makes, through the same shared helper —
+            // see `auth::verify_governance_signature`. The all-zero key is
+            // rejected inside that helper rather than here, because a check at
+            // this layer written against a fixed-size literal cannot fire for a
+            // key of any other length.
             crate::auth::verify_governance_signature(
                 &auth.governance_algorithm_id,
                 &auth.governance_pubkey,

@@ -973,6 +973,47 @@ This is also the reason `0009-cf`'s wiring criterion read as vacuous when I
 first implemented it. It was not a badly worded criterion. It was a true one,
 about a path that does not exist.
 
+### Attempting the fix, and what it turned up
+
+The recommendation above was to land a verification hook first, so the next thing
+was to scope it. It is smaller than expected and blocked in three ways, all in
+RFC-0969 — filed as `0969-c`.
+
+**The trait has no production implementation**, so `GatewayAuthenticator` is not
+merely unused, it is unconstructible outside tests. Every `impl CapabilityVerifier
+for` in the workspace sits in a `#[cfg(test)]` block or a `tests/` file.
+
+**The RFC's verifier algorithm references a method that does not exist.**
+RFC-0969 §Algorithms reads:
+
+```rust
+ask_id: cap_token.ask_binding(),
+```
+
+`CapabilityToken::ask_binding()` is not a thing. `CapabilityToken` has no
+`ask_id` field. Ask binding exists here as `Caveat::AskBinding` on the macaroon.
+An implementer following the RFC reaches for an accessor that is not there.
+
+**The dispatch semantics predate the RFC's own amendment.** RFC-0969's v1.1
+amendment removed cross-scheme linkage because "dispatch rejects dual-scheme
+requests", and retired TV5 as unreachable for that reason. The implementation
+still evaluates linkage and still emits `RoutingDecision::Dual`; `parse_auth_headers`
+has no dual rejection.
+
+That third point is not bookkeeping. `CapabilityVerification.ask_id` is a
+`[u8; 32]` with no way to say "unbound", while `HolderRecord::ask_id` is genuinely
+`Option`. Under the RFC's single-scheme semantics a sentinel can never be
+compared against anything; under the implementation's dual semantics it can, and
+`evaluate_linkage` compares raw bytes with no zero case. **The RFC/implementation
+divergence is the difference between that interface defect being reachable and
+being inert.**
+
+So the root cause is not one missing hook. It is a design that has not been
+reconciled, and the three ways above are each independently sufficient to stop
+the implementation. Building it anyway would mean inventing the ask-binding
+semantics, which is precisely the kind of guess this arc has been replacing with
+measurements.
+
 ## What this arc handed on
 
 Five findings were scoped and filed as missions, because they are implementation
@@ -995,6 +1036,12 @@ effect. See §The root cause under four of the five missions above. The
 recommendation that follows from that is to land a verification hook before
 building enforcement against it — which is a statement about ordering, not about
 skipping the work.
+
+Scoping that hook produced `0969-c`, which is where the root cause is actually
+written down: the verifier trait is unconstructible outside tests, the RFC's
+verifier algorithm names a method that does not exist, and the dispatch
+semantics diverge from the RFC's own v1.1 amendment. It is the concrete blocker,
+and `0009-cf` / `cg` / `ci` / `cj` all wait on it.
 
 The remaining unresolved gates — AC#8b's FROST test and the four BLS/DKG gates —
 were deliberately **not** filed as missions. Their subject does not exist at all:

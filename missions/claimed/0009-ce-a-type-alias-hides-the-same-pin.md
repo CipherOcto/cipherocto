@@ -188,14 +188,66 @@ Each class here was found the same way: not by a new site, but by asking what
 the existing guard was incapable of reporting. The fix in every case was to key
 the scan on the property rather than the spelling.
 
-## Open question
+## The forwarder gap, measured
 
-The forwarder gap is **not** closed and is stated rather than papered over in
-the doc comment on the key-shape scan. A function that takes a key and hands it
-to another verify function never mentions `verify_dispatch`, so it is skipped.
-Catching it means following the call graph, and a text-scan approximation of
-that was tried and measured unsound: 3265 of 5457 candidate names matched, 15
-hits, 0 true positives. Five real forwarders exist and were fixed by hand.
+The forwarder gap is **not** closed. A function that takes a key and hands it to
+another verify function never mentions `verify_dispatch`, so the key-shape scan
+skips it. Catching it means following the call graph, and a text-scan
+approximation was tried and measured unsound: 3265 of 5457 candidate names
+matched, 15 hits, 0 true positives. Five real forwarders exist and were fixed by
+hand.
 
-A handle taken in one function and passed to another — the same shape, one
-level up — is uncovered by the registry guard for the same reason.
+That left the gap asserted but unmeasured — stated as a theoretical hole in the
+one guard governing this property. It was worth measuring, because "we believe
+this class is empty" and "this class is empty" are different claims.
+
+The scan looks for fixed-size array parameters — literal or alias — across the
+dispatched crates, then keeps the ones whose parameter name reads like a key. The
+filter that selects candidates is name-based and therefore a **pointer, not a
+proof**, which is the same distrust this file has applied to every other
+name-based measure. What settles it is reading each verification-side candidate.
+
+| Site                                                          | Verdict                                                           |
+| ------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `verify_platform_admin_proof` (`octo-network`)                | fixed-width param, root cause is the DID wire format — see below  |
+| `verify_receipt_chain_authenticated` (`octo-settlement-core`) | clean — key arrives through a resolver trait, already dispatching |
+| `verify_revocation_proof` and siblings (`octo-wallet`)        | clean — `&[u8]` at every hop                                      |
+| `verify_authorization_signature` (`octo-protocol`)            | fixed-width by wire format — see below                            |
+
+**The result is zero live defects.** The one site with a genuinely fixed-width
+verification parameter traces to a wire format rather than to a dispatch
+decision, which is a different kind of problem with a different owner.
+
+### Why `verify_platform_admin_proof` is not a dispatch defect
+
+It takes `expected_dc_pubkey: &[u8; 32]`, which looks exactly like the two sites
+this mission fixed. Two things distinguish it.
+
+It performs **no cryptographic verification at all**. The body is a freshness
+check, an equality comparison against the proof's pubkey, and a non-empty
+signature check. The module contains no dispatch call and no key constructor;
+the doc comment records that adapter-signature verification is delegated to the
+substrate boundary. Nothing chooses an algorithm here, so no algorithm is
+being assumed.
+
+And the 32 bytes come from the **DID wire format**. Its only caller passes the
+result of `pubkey_from_did`, which accepts a canonical `did:octo:0x<64-hex>`
+string and rejects anything else — the hex length is fixed at 64 by the form
+itself. A 33-byte key has no canonical encoding in that format, so the width is
+a property of the identifier, not a decision by the verifier. That helper's own
+docs record that the Phase 1 form is replaced by the typed RFC-0010 codec, so
+the constraint has a named owner and an intended replacement.
+
+The honest conclusion is that a `[u8; 32]` in a `verify_*` signature is not by
+itself evidence of an AC#11 defect. This one is a real fixed width, and it is
+still the wrong thing to point a guard at.
+
+### What this changes about the gap
+
+Nothing structural — the guard is no less blind. But the gap now carries a
+measurement instead of an assertion, which matters for anyone deciding whether
+to close it. A call-graph analysis would have to be sound to be worth building,
+and the one approximation available in-tree was not.
+
+A handle taken in one function and passed to another — the same shape, one level
+up — is uncovered by the registry guard for the same reason, and is untriaged.

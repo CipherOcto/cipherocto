@@ -390,6 +390,23 @@ pub fn verify_hop_signature(envelope: &HopEnvelope) -> Result<(), HopError> {
 /// `blake3(envelope_{N-1}.chain_hash || envelope_N.hop_envelope_id)`. The
 /// last envelope's chain_hash is the chain commitment; intermediate
 /// `chain_hash` values are inherited through the unwrap/re-wrap cycle.
+/// Compare a chain's tip hash against a caller-supplied expectation.
+///
+/// **This does not walk the chain.** It reads `chain.last().chain_hash` and
+/// compares it to `expected_chain_hash`, so it can only ever speak about the
+/// **final** envelope.
+///
+/// Nor is `chain_hash` a chain hash. `wrap_for_hop` derives it as
+/// `BLAKE3(hop_secret)` — a per-envelope identifier — and takes no parent
+/// envelope, so no hop's hash is an input to any later hop's.
+///
+/// RFC-0970 §Design Goals G4 states: "Tampering with any hop's wrap invalidates
+/// the chain hash". That is **not enforced here**, and cannot be with this
+/// implementation. A caller that passes `expected` taken from `chain.last()`
+/// gets `x == x`.
+///
+/// Pinned by `tampering_with_a_middle_hop_is_not_detected`, which records the
+/// gap executably. Tracked in mission `0970-b`.
 pub fn verify_chain_hash(
     chain: &[HopEnvelope],
     expected_chain_hash: &[u8; 32],
@@ -632,6 +649,120 @@ mod tests {
         let chain = vec![e1, e2];
         let expected = chain.last().unwrap().chain_hash;
         assert!(verify_chain_hash(&chain, &expected).is_ok());
+    }
+
+    /// TV2 (RFC-0970): Three-Hop Chain.
+    ///
+    /// The deepest chain exercised elsewhere in this module is two hops, and
+    /// RFC-0970's G3 names a **3-hop** chain as its latency scenario. Two hops
+    /// cannot distinguish "the chain hash commits to depth" from "the chain hash
+    /// commits to the last envelope" — both hold at n=2. This is the vector
+    /// that separates them.
+    #[test]
+    fn tv2_three_hop_chain_verifies() {
+        let (x1, s1) = sample_keys(0x61);
+        let (x2, s2) = sample_keys(0x62);
+        let (x3, s3) = sample_keys(0x63);
+        let empty = || InnerRequest {
+            ciphertext: vec![],
+            aad: vec![],
+        };
+        let now = 1_700_000_000_000;
+
+        let e1 = wrap_for_hop(&empty(), &x1, &s1, now, "did:octo:h1", "did:octo:h2", 1).unwrap();
+        let e2 = wrap_for_hop(&empty(), &x2, &s2, now, "did:octo:h2", "did:octo:h3", 2).unwrap();
+        let e3 = wrap_for_hop(&empty(), &x3, &s3, now, "did:octo:h3", "did:octo:h4", 3).unwrap();
+
+        let chain = vec![e1, e2, e3];
+        assert!(
+            verify_chain_hash(&chain, &chain.last().unwrap().chain_hash).is_ok(),
+            "a genuine three-hop chain must verify against its own tip"
+        );
+    }
+
+    /// Distinct hops carry distinct `chain_hash` values, and both prefixes of
+    /// this chain verify against their own tips.
+    ///
+    /// **This is weaker than its first draft claimed, and deliberately so.**
+    /// An earlier version of this comment asserted that the tip hash "commits to
+    /// depth". Measurement shows it does not: `wrap_for_hop` derives
+    /// `chain_hash` as `BLAKE3(hop_secret)` and takes no parent envelope, so
+    /// there is no chain accumulation at all. This test passes because hop `h2`
+    /// and hop `h3` have different secrets and therefore different ids — not
+    /// because depth is committed.
+    ///
+    /// What G4 requires — tampering with **any** hop's wrap invalidating the
+    /// chain hash — is not established here, and cannot be. See
+    /// `tampering_with_a_middle_hop_is_not_detected`, which records why, and
+    /// mission `0970-b`.
+    #[test]
+    fn distinct_hops_carry_distinct_chain_hashes() {
+        let (x1, s1) = sample_keys(0x61);
+        let (x2, s2) = sample_keys(0x62);
+        let (x3, s3) = sample_keys(0x63);
+        let empty = || InnerRequest {
+            ciphertext: vec![],
+            aad: vec![],
+        };
+        let now = 1_700_000_000_000;
+
+        let e1 = wrap_for_hop(&empty(), &x1, &s1, now, "did:octo:h1", "did:octo:h2", 1).unwrap();
+        let e2 = wrap_for_hop(&empty(), &x2, &s2, now, "did:octo:h2", "did:octo:h3", 2).unwrap();
+        let e3 = wrap_for_hop(&empty(), &x3, &s3, now, "did:octo:h3", "did:octo:h4", 3).unwrap();
+
+        let two_hop_tip = e2.chain_hash;
+        let three_hop_tip = e3.chain_hash;
+        assert_ne!(
+            two_hop_tip, three_hop_tip,
+            "distinct hop secrets must yield distinct chain hashes"
+        );
+
+        // Both prefixes still verify against their own tips — the two are
+        // distinct valid chains, not one invalid one.
+        assert!(verify_chain_hash(&[e1.clone(), e2.clone()], &two_hop_tip).is_ok());
+        assert!(verify_chain_hash(&[e1, e2, e3], &three_hop_tip).is_ok());
+    }
+
+    /// Records the gap G4 describes, rather than asserting the property.
+    ///
+    /// RFC-0970 §Design Goals G4: "Tampering with any hop's wrap invalidates
+    /// the chain hash". `verify_chain_hash` compares `chain.last().chain_hash`
+    /// against a caller-supplied expectation, so it can only ever speak about
+    /// the **final** envelope. Rewriting a middle hop's ciphertext is not
+    /// detected, because that hop's `chain_hash` is `BLAKE3(hop_secret)` and is
+    /// not an input to any later envelope's hash.
+    ///
+    /// This test asserts the current behaviour on purpose. It is a
+    /// characterisation test: when `0970-b` makes the chain hash accumulate,
+    /// this turns red and the fix is to invert it. Writing it as `assert!(...is_ok())`
+    /// today would be the "passes while measuring nothing" shape this arc has
+    /// refused three times — the difference is that the comment says which way
+    /// it is expected to flip.
+    #[test]
+    fn tampering_with_a_middle_hop_is_not_detected() {
+        let (x1, s1) = sample_keys(0x61);
+        let (x2, s2) = sample_keys(0x62);
+        let (x3, s3) = sample_keys(0x63);
+        let empty = || InnerRequest {
+            ciphertext: vec![],
+            aad: vec![],
+        };
+        let now = 1_700_000_000_000;
+
+        let e1 = wrap_for_hop(&empty(), &x1, &s1, now, "did:octo:h1", "did:octo:h2", 1).unwrap();
+        let mut e2 =
+            wrap_for_hop(&empty(), &x2, &s2, now, "did:octo:h2", "did:octo:h3", 2).unwrap();
+        let e3 = wrap_for_hop(&empty(), &x3, &s3, now, "did:octo:h3", "did:octo:h4", 3).unwrap();
+
+        // Tamper with the middle hop's encrypted payload.
+        e2.inner.ciphertext.push(0xFF);
+        let chain = vec![e1, e2, e3];
+        let tip = chain.last().unwrap().chain_hash;
+
+        assert!(
+            verify_chain_hash(&chain, &tip).is_ok(),
+            "current behaviour: a middle hop's tampered payload is invisible to              verify_chain_hash. When 0970-b lands, this assertion is expected to              fail and must be inverted."
+        );
     }
 
     #[test]

@@ -63,7 +63,7 @@ pub enum LinkageResult {
 }
 
 /// `BearerVerification` (RFC-0969 §Phase 1) — decoded bearer token content
-/// returned by [`BearerVerifier::verify`].
+/// returned by `BearerVerifier::verify`.
 ///
 /// This doc previously named a `verify_bearer_token` function, which does not
 /// exist. The verification entry point is the trait method. The phantom name is
@@ -88,7 +88,7 @@ impl std::fmt::Debug for BearerVerification {
 }
 
 /// `CapabilityVerification` (RFC-0969 §Phase 1) — decoded capability token
-/// content returned by [`CapabilityVerifier::verify`]. Holds the
+/// content returned by `CapabilityVerifier::verify`. Holds the
 /// `holder_did` (RFC-0957-A1 `HolderRecord::holder_did`) and `ask_id` (the
 /// ask this capability was issued against).
 #[derive(Clone, PartialEq, Eq)]

@@ -113,8 +113,8 @@ Ordered, because the first item is bookkeeping and the rest are work that
 belonged to missions which were never opened.
 
 - [ ] The `0959-a1` acceptance line states what is covered rather than a blanket `[x]`. **Cheapest, and it is the actual defect.**
-- [ ] `0959-b2-deliver-algorithm` exists as a mission, owning `deliver_at_settlement` and TV1/TV2/TV3/TV5/TV6/TV10/TV12. Its absence is why `BearerCapsule` was never given cryptography: nothing owns it.
-- [ ] `0959-b3-settlement-chain` exists as a mission, owning `append_deal_settled` and TV8/TV11.
+- [x] `0959-b2-deliver-algorithm` exists as a mission, owning `deliver_at_settlement` and TV1/TV2/TV3/TV5/TV6/TV10/TV12. Filed 2026-10-12 — it had been deferred to by `0959-b` since 2026-08-06 with no file behind it.
+- [x] `0959-b3-settlement-chain` exists as a mission, owning `append_deal_settled` and TV8/TV11. Filed 2026-10-12, same origin.
 - [ ] `BearerCapsule` carries real cryptography — X25519 agreement, ChaCha20-Poly1305 `encrypted_capsule`, Ed25519 `seller_signature` — and something verifies that signature on the receiving side. **Owned by `0959-b2` when it exists; not by this mission.**
 - [ ] Each of the 12 vectors resolves to a test findable by the RFC's own name, or the roll-up records which are covered and which are not.
 

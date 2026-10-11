@@ -31,6 +31,18 @@ The sub-missions (0959-b, 0959-c) implement the ACs by RFC-0959-A1 §Test Vector
     The roll-up is not being withdrawn — the types and the atomicity substrate are
     real work — but a blanket `[x]` overstates it. See `0959-d` for what would
     close the gap.
+
+    **Partially remediated 2026-10-12.** The deferred work now has owners:
+    `0959-b2-deliver-algorithm` (owns `deliver_at_settlement`, `chain_tip_lock`,
+    `BearerCapsule` cryptography, TV1/TV2/TV3/TV5/TV6/TV10/TV12) and
+    `0959-b3-settlement-chain` (owns `append_deal_settled`,
+    `SettlementChainEvent::DealSettled`, TV8/TV11) were both filed that day.
+    `0959-b1` had already landed its types drift. `0959-b` itself needs nothing —
+    it recorded its own gaps accurately.
+
+    **What remains contested is this roll-up itself.** Twelve GREEN vectors
+    against a child mission that marks ten of them unchecked and deferred is the
+    defect, and it is a bookkeeping fix rather than an engineering one.
 - [x] All 5 RFC-0959-A1 §Adversary Analysis findings covered (A9: Delivery-vs-settlement race, A10: Atomicity rollback exploitation, A11: Gossip partition → envelope not received, plus 2 from RFC-0959 base spec preserved) → **GREEN roll-up complete** (2026-08-07 audit-closure): A9 + A10 → `missions/claimed/0959-b-market-delivery-impl.md` (`chain_tip_lock` CAS breaks TOCTOU race + atomicity rollback exploitation); A11 → `missions/archived/completed/0959-c-delivery-gossip-integration.md` (bounded retry loop defeats gossip partition); 2 RFC-0959 base spec findings preserved unchanged.
 - [ ] Phantom type `IdentityKey::from_public_bytes` properly DEFERRED to RFC-0009-B1 / RFC-0957-A2 (working stub per top-level mission 0957-a1) → **DEFERRED to RFC-0009-B1 / RFC-0957-A2 full signature promotion per `deferred-vs-unspecified`**. Working stub currently lives at `crates/octo-wallet/src/capability/identity_stub.rs` per top-level mission `missions/archived/completed/0957-a1-holder-registry.md`; this mission inherits 0957-a1's deferral (0957-a1 AC-3 also defers with same named owner chain). Stub call site at `deliver_at_settlement` per RFC-0959-A1 §Algorithms:phantom_call_site. **Deferral:** owner = @cipherocto, target = 2026-09-15 per `deferred-vs-unspecified` named-owner rule. Phantom type chain (RFC-0957-A1 §Phantom Types → RFC-0959-A1 §Algorithms:phantom_call_site → RFC-0969 §Algorithms:phantom_call_site → RFC-0009-B1); full promotion to typed `IdentityKey::from_public_bytes` lands when RFC-0009-B1 substrate (IdentityKey substrate RFC) reaches Accepted.
 - [x] Sub-missions 0959-b, 0959-c all merged and ACs flipped → **GREEN roll-up complete** (2026-08-07 audit-closure): `0959-b-market-delivery-impl.md` (Band A closed 2026-08-06 per commit `0ba67943` + `323a115f`); `0959-c-delivery-gossip-integration.md` (Band A closed 2026-08-06, audit-closure rolled up 2026-08-07 with 9/9 ACs GREEN via sub-mission roll-up `0959-c1-gossip-error-variants` + `0959-c2-cross-node-delivery`). Both sub-missions depend on `missions/claimed/0957-c-holder-registry-impl.md` (Band A closed 2026-08-06 per commit `998debbf` + `3edc425c`) + `missions/claimed/0957-e-mint-txn-parameter.md` (Band A closed 2026-08-06 per commit `e05f9639`; audit-closure rolled up 2026-08-07 with 13/15 ACs GREEN).

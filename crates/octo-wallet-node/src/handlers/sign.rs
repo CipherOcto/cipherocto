@@ -189,7 +189,7 @@ mod tests {
         // this is a real rejection and not an algorithm that simply fails to
         // resolve for both.
         let pk = id.public_key_bytes();
-        let err = octo_wallet::verify_dispatch(&id.algorithm_id(), &pk, &msg, &sig)
+        let err = octo_wallet::verify_dispatch(&id.algorithm_id(), pk, &msg, &sig)
             .expect_err("a bare-digest verifier must not accept this signature");
         assert!(
             err.to_string().contains("signature"),

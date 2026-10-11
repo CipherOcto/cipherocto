@@ -1665,7 +1665,14 @@ mod attach {
             crate::commands::identity::acquire_passphrase(cli, "agent attach", passphrase_stdin)?;
         let mut seed_buf = zeroize::Zeroizing::new(Vec::with_capacity(32));
         let holder = common::resolve_active_identity_key(passphrase.as_str(), seed_buf.as_mut())?;
-        let holder_pubkey: [u8; 32] = holder.public_key_bytes();
+        // The token schema fixes the holder key at 32 bytes, so this is a
+        // protocol surface rather than a verification site. Refused for any
+        // other length rather than truncated.
+        let holder_pubkey = holder.public_key_bytes_array().ok_or_else(|| {
+            OctoCliError::SigningFailed(
+                "the holder's key is not 32 bytes and cannot decode an attach token".to_owned(),
+            )
+        })?;
 
         let token = octo_runtime::decode_token(&token_bytes, &holder_pubkey)?;
 
@@ -2355,7 +2362,9 @@ mod tests {
         holder
             .activate(now_unix_secs)
             .expect("activate must succeed");
-        let holder_pubkey = holder.public_key_bytes();
+        let holder_pubkey = holder
+            .public_key_bytes_array()
+            .expect("the fixture identity is a 32-byte ed25519 key");
         let agent_id = Uuid::new_v4();
         let session_id = [0x42_u8; 32];
         let since_cursor: u64 = 0;
@@ -2457,7 +2466,9 @@ mod tests {
             .map(|d| d.as_secs())
             .unwrap_or(1_700_000_000);
         holder.activate(now_unix_secs).expect("activate");
-        let holder_pubkey = holder.public_key_bytes();
+        let holder_pubkey = holder
+            .public_key_bytes_array()
+            .expect("the fixture identity is a 32-byte ed25519 key");
 
         let token = mint_attach_handle(
             &holder,
@@ -2574,7 +2585,9 @@ mod tests {
         holder
             .activate(now_unix_secs)
             .expect("activate must succeed");
-        let holder_pubkey = holder.public_key_bytes();
+        let holder_pubkey = holder
+            .public_key_bytes_array()
+            .expect("the fixture identity is a 32-byte ed25519 key");
         let handle = mint_attach_handle(
             &holder,
             Uuid::new_v4(),
@@ -2879,7 +2892,9 @@ mod tests {
         holder
             .activate(now_unix_secs)
             .expect("activate must succeed");
-        let holder_pubkey = holder.public_key_bytes();
+        let holder_pubkey = holder
+            .public_key_bytes_array()
+            .expect("the fixture identity is a 32-byte ed25519 key");
         let agent_id = Uuid::new_v4();
         let session_id = [0x42_u8; 32];
 

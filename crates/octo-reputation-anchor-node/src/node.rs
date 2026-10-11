@@ -212,7 +212,14 @@ impl ReputationAnchorNode {
                     .to_string(),
             )
         })?;
-        let pk = identity.public_key_bytes();
+        // The router node id encodes a fixed 32-byte slot on the wire. Refused
+        // for any other length rather than truncated.
+        let pk = identity.public_key_bytes_array().ok_or_else(|| {
+            TransportError::EnvelopeConstruction(
+                "this identity's key is not 32 bytes and cannot be announced as a router node id"
+                    .to_owned(),
+            )
+        })?;
         let announce = RouterAnnounceBuilder::new(
             quota_router_core::node::provider::RouterNodeId(pk),
             quota_router_core::node::provider::NetworkId([0u8; 32]),
@@ -427,8 +434,14 @@ mod tests {
         let k1 = octo_wallet::identity::IdentityKey::generate().expect("k1");
         let k2 = octo_wallet::identity::IdentityKey::generate().expect("k2");
         assert_ne!(
-            CanonicalCodec::mint(&k1.public_key_bytes()),
-            CanonicalCodec::mint(&k2.public_key_bytes()),
+            CanonicalCodec::mint(
+                &k1.public_key_bytes_array()
+                    .expect("a generated ed25519 key is 32 bytes")
+            ),
+            CanonicalCodec::mint(
+                &k2.public_key_bytes_array()
+                    .expect("a generated ed25519 key is 32 bytes")
+            ),
             "distinct identities must mint distinct DIDs"
         );
     }

@@ -264,7 +264,10 @@ impl PlatformAdapter for BluetoothAdapter {
         // is. Binding the key to a known peer is the registry work in CD-6;
         // what this closes is the "any well-formed blob is accepted" gap.
         envelope
-            .verify(&envelope.source_peer)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &envelope.source_peer,
+            )
             .map_err(|e| transport_err(format!("envelope verify failed: {e}")))?;
         Ok(envelope)
     }

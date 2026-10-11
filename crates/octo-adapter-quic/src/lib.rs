@@ -903,7 +903,7 @@ impl PlatformAdapter for QuicAdapter {
         if let Ok(env) = DeterministicEnvelope::from_wire_bytes(&raw.payload) {
             // M-15: see the note on the fallback path below — parsing alone
             // accepts a structurally valid frame with a forged signature.
-            env.verify(&env.source_peer)
+            env.verify(&octo_algo_ed25519::ed25519_algorithm_id(), &env.source_peer)
                 .map_err(|e| quic_err(format!("envelope verify failed: {e}")))?;
             return Ok(env);
         }
@@ -930,7 +930,10 @@ impl PlatformAdapter for QuicAdapter {
         // NOT that the claimed peer is who it claims to be — binding the key to
         // a known peer is the registry work in CD-6.
         envelope
-            .verify(&envelope.source_peer)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &envelope.source_peer,
+            )
             .map_err(|e| quic_err(format!("envelope verify failed: {e}")))?;
         Ok(envelope)
     }

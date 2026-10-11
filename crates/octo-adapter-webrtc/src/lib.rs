@@ -192,7 +192,7 @@ impl PlatformAdapter for WebRTCAdapter {
             })
         };
         let env = decode()?;
-        env.verify(&env.source_peer)
+        env.verify(&octo_algo_ed25519::ed25519_algorithm_id(), &env.source_peer)
             .map_err(|e| transport_err(format!("envelope verify failed: {e}")))?;
         Ok(env)
     }

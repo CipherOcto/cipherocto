@@ -213,7 +213,11 @@ fn cross_role_data_flow_deal_settlement_full_pipeline() {
         role_tag: MarketRoleTag::TokenIssuer,
     };
     let event_hash = b3_hash(&[b"deal_settled:", ask_id.as_slice()]);
-    let seller_signature = asker.sign(&event_hash).expect("asker sign");
+    let seller_signature: [u8; 64] = asker
+        .sign(&event_hash)
+        .expect("asker sign")
+        .try_into()
+        .expect("the fixture identity signs with a 64-byte ed25519 signature");
     let deal_settled = DealSettled {
         event_hash,
         payload,
@@ -311,7 +315,11 @@ fn tv2_cross_role_data_flow_deal_settlement() {
     // DealSettled signed by Asker (R13-N8 fix).
     let bearer_capsule_hash = b3_hash(&[b"bearer_capsule:", cap_root_hash.as_slice()]);
     let event_hash = b3_hash(&[b"deal_settled:", ask_id.as_slice()]);
-    let seller_signature = asker.sign(&event_hash).expect("asker sign");
+    let seller_signature: [u8; 64] = asker
+        .sign(&event_hash)
+        .expect("asker sign")
+        .try_into()
+        .expect("the fixture identity signs with a 64-byte ed25519 signature");
     let _deal_settled = DealSettled {
         event_hash,
         payload: DealSettledPayload {

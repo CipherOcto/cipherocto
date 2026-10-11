@@ -209,7 +209,19 @@ impl WalletNode {
         // Mission 0871-phase5-router-dispatch-wiring: use the shared
         // `RouterAnnounceBuilder` (single source of truth).
         use quota_router_core::node::announce::{PricingPolicy, RouterAnnounceBuilder};
-        let pk = self.config.identity.public_key_bytes();
+        // The router node id encodes a fixed 32-byte slot on the wire. A
+        // key of another length has no node id, and truncating it would
+        // collide with a different key, so the announce is refused.
+        let pk = self
+            .config
+            .identity
+            .public_key_bytes_array()
+            .ok_or_else(|| {
+                TransportError::EnvelopeConstruction(
+                    "this identity's key is not 32 bytes and cannot be announced as a router node id"
+                        .to_owned(),
+                )
+            })?;
         let announce = RouterAnnounceBuilder::new(
             quota_router_core::node::provider::RouterNodeId(pk),
             quota_router_core::node::provider::NetworkId([0u8; 32]),
@@ -404,7 +416,9 @@ mod tests {
         use quota_router_core::node::announce::{
             PricingPolicy, RouterAnnouncePayload, SignedPayload,
         };
-        let expected_pk = identity.public_key_bytes();
+        let expected_pk = identity
+            .public_key_bytes_array()
+            .expect("the fixture identity is a 32-byte ed25519 key");
         let mut expected = RouterAnnouncePayload {
             node_id: quota_router_core::node::provider::RouterNodeId(expected_pk),
             network_id: quota_router_core::node::provider::NetworkId([0u8; 32]),

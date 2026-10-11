@@ -689,6 +689,19 @@ impl IdentityKey {
         &self.public_key
     }
 
+    /// The key as a 32-byte array, for protocol surfaces that fix the width.
+    ///
+    /// `None` for a key of any other length. Callers on those surfaces — the
+    /// router node id, the borsh request and response envelopes — encode a
+    /// fixed 32-byte slot on the wire, which is a protocol decision and not an
+    /// algorithm binding. Taking the first 32 bytes instead would let two
+    /// different keys produce the same node id, so this refuses rather than
+    /// truncates, and the call site decides what to do about it.
+    #[must_use]
+    pub fn public_key_bytes_array(&self) -> Option<[u8; 32]> {
+        self.public_key.as_slice().try_into().ok()
+    }
+
     /// Return this identity's DID. Layer B `[ADD]` per RFC-0011 §Subcommand
     /// Taxonomy (entry #2: `identity show <DID>`).
     ///

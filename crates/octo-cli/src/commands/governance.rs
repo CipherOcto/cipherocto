@@ -83,9 +83,18 @@ impl EnvelopeSigner for WalletSignerAdapter {
     /// fallback to the bare form would leave exactly the signature this
     /// mission removes.
     fn sign_envelope(&self, envelope_bytes: &[u8]) -> Result<[u8; 64], String> {
+        // The governance envelope schema fixes the signature at 64 bytes.
+        // Refused for any other length rather than truncated.
         self.identity
             .sign_prefixed(envelope_bytes)
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?
+            .try_into()
+            .map_err(|v: Vec<u8>| {
+                format!(
+                    "the algorithm produced {} signature bytes, expected 64",
+                    v.len()
+                )
+            })
     }
 
     fn did(&self) -> String {

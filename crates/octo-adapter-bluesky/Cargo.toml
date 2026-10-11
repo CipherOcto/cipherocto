@@ -25,6 +25,12 @@ tracing = "0.1"
 
 # DOT types from sibling crate
 octo-network = { path = "../octo-network" }
+# The envelope carries no algorithm, so a verifying adapter supplies it
+# (RFC-0009 AC#11). DOT envelopes are signed with ed25519-dalek, so Ed25519
+# is the algorithm these call sites verify under. This call site was
+# stranded when the signature changed; `cargo clippy --all-targets` is
+# what surfaced it, because the dispatch missions gated on `--lib` only.
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

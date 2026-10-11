@@ -66,9 +66,18 @@ impl<'a> ResolveDIDHandler<'a> {
         // Validate canonical DID shape; reject legacy bare form.
         let _parsed =
             octo_ident::CanonicalCodec::parse(&req.0, false).map_err(did_error_to_protocol)?;
+        // The response encodes a fixed 32-byte key slot on the wire. That is a
+        // protocol surface, not a verification site, so it is converted here
+        // and refused for any other length rather than truncated.
+        let public_key = self.identity.public_key_bytes_array().ok_or_else(|| {
+            ProtocolError::AuthorizationFailed(
+                "resolved identity key is not 32 bytes; the response schema is fixed-width"
+                    .to_owned(),
+            )
+        })?;
         let response = ResolveDIDResponse {
             canonical_did: req.0.clone(),
-            public_key: self.identity.public_key_bytes(),
+            public_key,
         };
         let payload = borsh::to_vec(&response)
             .map_err(|e| ProtocolError::AuthorizationFailed(e.to_string()))?;

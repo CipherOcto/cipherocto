@@ -821,7 +821,7 @@ pub fn rotate(passphrase_stdin: bool, cli: &Octo) -> Result<(), OctoCliError> {
     );
     let now = chrono::Utc::now().timestamp().max(0) as u64;
     let proof = if cli.mode.dry_run {
-        [0u8; 64]
+        vec![0u8; 64]
     } else {
         // §AC-7 signing-site migration: open the store, then
         // unlock with the passphrase to mint an `UnlockedWallet`
@@ -1176,7 +1176,7 @@ pub fn register(
         };
         let now = chrono::Utc::now().timestamp().max(0);
         let mut store = octo_wallet::WalletStore::open().map_err(map_wallet_open_error)?;
-        let key_pubkey = key.public_key_bytes();
+        let key_pubkey = key.public_key_bytes().to_vec();
         // The substrate mints the DID and returns it. The previous
         // revision discarded the return with `?` and emitted
         // `did: String::new()`, so a successful register reported an
@@ -1367,7 +1367,7 @@ pub fn list(cli: &Octo) -> Result<(), OctoCliError> {
         .iter()
         .map(|r| IdentityListRow {
             did: r.did.0.clone(),
-            pubkey_hex: hex::encode(r.pubkey_bytes),
+            pubkey_hex: hex::encode(&r.pubkey_bytes),
             lifecycle_state: format!("{:?}", r.lifecycle),
             registered_at: unix_to_rfc3339(r.registered_at_unix),
             active: active_did.as_deref() == Some(r.did.0.as_str()),

@@ -214,8 +214,15 @@ impl CapabilityIssuerNode {
             .config
             .identity
             .as_ref()
-            .map(|i| i.public_key_bytes())
-            .unwrap_or([0u8; 32]);
+            // The router node id encodes a fixed 32-byte slot on the wire.
+            // Refused for any other length rather than truncated.
+            .and_then(|i| i.public_key_bytes_array())
+            .ok_or_else(|| {
+                TransportError::EnvelopeConstruction(
+                    "this identity's key is not 32 bytes and cannot be announced as a router node id"
+                        .to_owned(),
+                )
+            })?;
         let announce = RouterAnnounceBuilder::new(
             quota_router_core::node::provider::RouterNodeId(pk),
             quota_router_core::node::provider::NetworkId([0u8; 32]),

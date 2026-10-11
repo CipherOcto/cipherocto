@@ -219,7 +219,9 @@ mod tests {
         let req = AttenuateRequest {
             existing_token_wire: minted_token_wire(),
             new_caveat_json: caveat_json,
-            holder_pub: sample_identity().public_key_bytes(),
+            holder_pub: sample_identity()
+                .public_key_bytes_array()
+                .expect("the test identity is a 32-byte ed25519 key"),
         };
         let bytes = req.to_borsh().unwrap();
         let back = AttenuateRequest::from_borsh(&bytes).unwrap();
@@ -251,7 +253,9 @@ mod tests {
         let req = AttenuateRequest {
             existing_token_wire: parent_wire.clone(),
             new_caveat_json: caveat_json,
-            holder_pub: sample_identity().public_key_bytes(),
+            holder_pub: sample_identity()
+                .public_key_bytes_array()
+                .expect("the test identity is a 32-byte ed25519 key"),
         };
         let out = handler.handle(&req).unwrap();
         let payload = out.response_payload.unwrap();
@@ -276,7 +280,9 @@ mod tests {
         let req = AttenuateRequest {
             existing_token_wire: minted_token_wire(),
             new_caveat_json: caveat_json,
-            holder_pub: sample_identity().public_key_bytes(),
+            holder_pub: sample_identity()
+                .public_key_bytes_array()
+                .expect("the test identity is a 32-byte ed25519 key"),
         };
         let out = handler.handle(&req).unwrap();
         let payload = out.response_payload.unwrap();
@@ -284,7 +290,9 @@ mod tests {
         let attenuated = deserialize_wire(
             new_wire,
             sample_did(),
-            &sample_identity().public_key_bytes(),
+            &sample_identity()
+                .public_key_bytes_array()
+                .expect("the test identity is a 32-byte ed25519 key"),
         )
         .expect("deserialize");
         assert_eq!(attenuated.macaroon.caveats.len(), 1);

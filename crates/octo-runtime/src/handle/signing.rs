@@ -79,6 +79,20 @@ pub fn sign_attach_handle_payload(
     let sig_bytes = holder.sign(&msg).map_err(|e| AttachError::BadSignature {
         reason: format!("IdentityKey::sign: {e}"),
     })?;
+    // `Signature` is a token wire type with a fixed 64-byte slot, so this is a
+    // protocol surface rather than a verification site. Refused for any other
+    // signature length: truncating would let two signatures under different
+    // lengths share a token.
+    let sig_bytes: [u8; 64] =
+        sig_bytes
+            .try_into()
+            .map_err(|v: Vec<u8>| AttachError::BadSignature {
+                reason: format!(
+                    "the holder's algorithm produces {} signature bytes and the token \
+                 schema is fixed at 64",
+                    v.len()
+                ),
+            })?;
     Ok(Signature(sig_bytes))
 }
 
@@ -361,7 +375,7 @@ mod tests {
         let sig =
             sign_attach_handle_payload(&holder, session_id, &payload, 1_000, 2_000).expect("sign");
         verify_attach_handle_payload(
-            &pk,
+            pk,
             &holder_prefix(&holder),
             &session_id,
             &payload,
@@ -385,7 +399,7 @@ mod tests {
             sign_attach_handle_payload(&holder, session_id, &payload, 1_000, 2_000).expect("sign");
         sig.0[0] ^= 0x01;
         let result = verify_attach_handle_payload(
-            &pk,
+            pk,
             &holder_prefix(&holder),
             &session_id,
             &payload,
@@ -437,7 +451,7 @@ mod tests {
         let sig =
             sign_attach_handle_payload(&holder, session_id, &payload, 1_000, 2_000).expect("sign");
         let result = verify_attach_handle_payload(
-            &pk,
+            pk,
             &holder_prefix(&holder),
             &session_id,
             &payload,
@@ -468,7 +482,7 @@ mod tests {
         .expect("mint");
         // Token is signed; verify using the static helper.
         verify_attach_handle_payload(
-            &pk,
+            pk,
             &token.signable_prefix,
             &token.session_id,
             &token.payload,
@@ -522,8 +536,13 @@ mod tests {
         // And it survives the wire form, which is the only reason carrying it
         // is worth anything.
         let encoded = crate::handle::encoding::encode_token(&token).expect("encode");
-        let decoded = crate::handle::encoding::decode_token(&encoded, &holder.public_key_bytes())
-            .expect("decode");
+        let decoded = crate::handle::encoding::decode_token(
+            &encoded,
+            &holder
+                .public_key_bytes_array()
+                .expect("the fixture holder is a 32-byte ed25519 key"),
+        )
+        .expect("decode");
         assert_eq!(
             decoded.signable_prefix, token.signable_prefix,
             "the prefix must survive encode/decode"
@@ -542,7 +561,13 @@ mod tests {
         let prefix =
             octo_wallet::SignablePrefix::from_bytes(&holder_prefix(&holder)).expect("prefix bytes");
         let msg = signable_bytes(&prefix, &canonical).expect("signable");
-        let sig = Signature(holder.sign(&msg).expect("sign"));
+        let sig = Signature(
+            holder
+                .sign(&msg)
+                .expect("sign")
+                .try_into()
+                .expect("the fixture holder signs with a 64-byte ed25519 signature"),
+        );
 
         // Proof the verifier is reading the algorithm from the prefix rather
         // than assuming Ed25519: hand it a token whose prefix names a
@@ -555,7 +580,7 @@ mod tests {
         .to_bytes();
 
         let result = verify_attach_handle_payload(
-            &holder.public_key_bytes(),
+            holder.public_key_bytes(),
             &foreign,
             &session_id,
             &payload,
@@ -572,7 +597,7 @@ mod tests {
         // this the assertion above could pass merely because the helper is
         // broken for every input.
         verify_attach_handle_payload(
-            &holder.public_key_bytes(),
+            holder.public_key_bytes(),
             &holder_prefix(&holder),
             &session_id,
             &payload,
@@ -595,7 +620,13 @@ mod tests {
         let real =
             octo_wallet::SignablePrefix::from_bytes(&holder_prefix(&holder)).expect("prefix bytes");
         let msg = signable_bytes(&real, &canonical).expect("signable");
-        let sig = Signature(holder.sign(&msg).expect("sign"));
+        let sig = Signature(
+            holder
+                .sign(&msg)
+                .expect("sign")
+                .try_into()
+                .expect("the fixture holder signs with a 64-byte ed25519 signature"),
+        );
 
         // Same key, same algorithm, different `key_id` in the prefix. This is
         // the substitution the prefix exists to refuse: an attacker who can
@@ -607,7 +638,7 @@ mod tests {
         .to_bytes();
 
         let result = verify_attach_handle_payload(
-            &holder.public_key_bytes(),
+            holder.public_key_bytes(),
             &swapped,
             &session_id,
             &payload,
@@ -670,7 +701,9 @@ mod tests {
         let mut key_set = KeySet::new();
         key_set.insert(
             holder.signable_prefix().expect("key").key_id(),
-            holder.public_key_bytes(),
+            holder
+                .public_key_bytes_array()
+                .expect("the fixture holder is a 32-byte ed25519 key"),
         );
         (holder, key_set, session_id, payload)
     }
@@ -737,7 +770,12 @@ mod tests {
         // pubkey goes to grace, the new one becomes active, and the id is
         // unchanged. The token was signed by the OLD key.
         let mut rotated = KeySet::new();
-        rotated.insert(key_id, holder.public_key_bytes());
+        rotated.insert(
+            key_id,
+            holder
+                .public_key_bytes_array()
+                .expect("the fixture holder is a 32-byte ed25519 key"),
+        );
         rotated.move_to_grace(key_id);
         rotated.insert(key_id, [0xee; 32]);
         assert_eq!(
@@ -771,7 +809,12 @@ mod tests {
         let (holder, _key_set, session_id, payload) = v2_fixture();
         let grace_key_id = holder.signable_prefix().expect("key").key_id();
         let mut rotated = KeySet::new();
-        rotated.insert(grace_key_id, holder.public_key_bytes());
+        rotated.insert(
+            grace_key_id,
+            holder
+                .public_key_bytes_array()
+                .expect("the fixture holder is a 32-byte ed25519 key"),
+        );
         rotated.move_to_grace(grace_key_id);
         rotated.insert(vmid("someone-elses-active-key"), [0xee; 32]);
 
@@ -788,7 +831,13 @@ mod tests {
             &canonical,
         )
         .expect("signable");
-        let sig = Signature(holder.sign(&msg).expect("sign"));
+        let sig = Signature(
+            holder
+                .sign(&msg)
+                .expect("sign")
+                .try_into()
+                .expect("the fixture holder signs with a 64-byte ed25519 signature"),
+        );
 
         match verify_attach_handle_payload_v2(
             &rotated,

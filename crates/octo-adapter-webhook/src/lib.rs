@@ -383,7 +383,10 @@ impl PlatformAdapter for WebhookAdapter {
         // NOT that the claimed peer is who it claims to be — binding the key to
         // a known peer is the registry work in CD-6.
         envelope
-            .verify(&envelope.source_peer)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &envelope.source_peer,
+            )
             .map_err(|e| transport_err(format!("envelope verify failed: {e}")))?;
         Ok(envelope)
     }

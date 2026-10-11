@@ -188,7 +188,7 @@ mod tests {
 
     fn good_proof(now: u64) -> GovernanceProof {
         GovernanceProof {
-            governance_pubkey: [1u8; 32],
+            governance_pubkey: vec![1u8; 32],
             recorder_id: RecorderId::from_u64(0),
             reason_hash: [0u8; 32],
             signature: vec![0u8; MIN_RETIREMENT_SIGNATURE_BYTES],

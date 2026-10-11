@@ -282,7 +282,7 @@ the record. That is the gap this mission closes.
       fixes the signature length at 64 has the same defect one step over
 - [ ] `IdentityKey::public_key` carries whatever the adapter returned, rather
       than a second independent 32-byte copy
-- [ ] `GovernanceProof::governance_pubkey`, `SuspensionAuth::governance_pubkey`
+- [x] `GovernanceProof::governance_pubkey`, `SuspensionAuth::governance_pubkey`
       and `ResumeProof::governance_pubkey` carry a key whose length is not
       decided by the type
 - [x] `KeyRotation::old_public_key` and `KeyRotation::new_public_key` carry a
@@ -292,22 +292,56 @@ the record. That is the gap this mission closes.
       with its two fixed-width key slots and two 64-byte signature slots
       considered together rather than independently — settled: there is no wire
       form, so the attribute was vestigial and is gone
-- [ ] The persistence encoding of all three records is examined and the change
-      to it is deliberate, not incidental — these records are stored, and the
-      current `[u8; 32]` may be relied on by an existing schema or column width
+- [x] The persistence encoding of all three records is examined and the change
+      to it is deliberate, not incidental — settled: they are not stored. Each
+      arrives as a by-value call argument, is validated, and is discarded. No
+      store writes one to a table, so there is no schema to migrate
 - [x] Both store pre-filters either delegate to the length-agnostic check inside
       `auth::verify_governance_signature` or are removed as redundant
 - [x] The `store::stoolap` comment is corrected to describe the code beneath it
-- [ ] A second-algorithm vector that round-trips through a **record**, not just
+- [x] A second-algorithm vector that round-trips through a **record**, not just
       through the verification function — constructed, stored, read back and
       verified — so the store path is covered and not only the helper
 - [ ] A second-algorithm vector that runs through an `HsmAdapter`, proving a
       non-Ed25519 adapter can be written and that `IdentityKey` dispatches on
       the algorithm it reports
-- [ ] Zero-key sentinel behaviour is unchanged for every existing 32-byte key
+- [x] Zero-key sentinel behaviour is unchanged for every existing 32-byte key
 - [x] The five previously untraced fields are read and each confirmed or ruled
       out — by reading, not by extending the text scan, which is known to be
       unsound here
+
+## The `octo-reputation` records are not persisted either
+
+The persistence worry recorded above turned out to be the same mistake as the
+`#[repr(C)]` one, in a second costume.
+
+`GovernanceProof` and `SuspensionAuth` are **by-value call arguments**.
+`slash_recorder(&self, proof: GovernanceProof)` and
+`verify_governance_suspension(&self, auth: &SuspensionAuth, …)` receive them,
+validate them and drop them. The stoolap backend reads no governance key out of
+any table — its only reference to `governance_pubkey` is the call into the
+shared helper. Nothing is written, so there is no schema, no column width and no
+migration. The `#[derive(Serialize, Deserialize)]` on these types has no
+persisted consumer.
+
+`ResumeProof` is weaker still: it is specified in RFC-0968 and defined here, but
+no store method takes it. Widening it costs nothing and keeps it consistent with
+its two siblings.
+
+**All three are now `Vec<u8>`.** Twelve construction sites moved with them.
+
+### The vector that made the widening necessary, and is now possible
+
+`a_suspension_auth_record_verifies_under_stark_schnorr` builds a `SuspensionAuth`
+carrying a 33-byte key and runs it through the memory store's
+`verify_governance_suspension`. This test **could not have been written** before
+the change — there was no way to put the key on the record — which is the
+clearest statement of what the widening bought that a type-level argument alone
+does not.
+
+Hardcoding the algorithm turns three vectors red: this one, the function-level
+vector in `auth::tests`, and `an_unregistered_algorithm_on_the_auth_record_is_refused`.
+The third was already there; the first two are the new coverage.
 
 ## The `HsmAdapter` fix is not independent of persistence
 

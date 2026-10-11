@@ -113,8 +113,13 @@ impl AssetTag {
 /// subsystem. The shape, freshness, and quorum checks are.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GovernanceProof {
-    /// Public key of the primary signer (32 bytes).
-    pub governance_pubkey: [u8; 32],
+    /// Public key of the primary signer.
+    ///
+    /// A `Vec<u8>`, not `[u8; 32]`. This record names the algorithm it is
+    /// verified under, so a fixed 32-byte key silently decides that algorithm
+    /// before dispatch is reached — a stark-schnorr key is 33 bytes and could
+    /// not be carried at all. Widened by mission 0009-cd.
+    pub governance_pubkey: Vec<u8>,
     /// Recorder being suspended or slashed.
     pub recorder_id: RecorderId,
     /// BLAKE3 over the action payload — binds signature to reason.
@@ -350,7 +355,12 @@ pub struct SuspensionAuth {
     /// not be the one that signed it — the silent wrong answer RFC-0009
     /// AC#11 exists to prevent.
     pub governance_algorithm_id: octo_ident::AlgorithmId,
-    pub governance_pubkey: [u8; 32],
+    /// Carries whatever key length the named algorithm uses.
+    ///
+    /// Widened by mission 0009-cd. Holding this at 32 bytes while carrying
+    /// `governance_algorithm_id` made the id decorative for any algorithm with
+    /// other-sized keys: the record could name one and never carry it.
+    pub governance_pubkey: Vec<u8>,
     pub recorder_id: RecorderId,
     pub reason_hash: [u8; 32],
     pub signature: Vec<u8>,
@@ -440,7 +450,9 @@ pub fn required_quorum() -> u32 {
 /// fields). Drift bound by `MAX_RESUME_DRIFT_SECS`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResumeProof {
-    pub governance_pubkey: [u8; 32],
+    /// Widened by mission 0009-cd to match the other governance records, for
+    /// the same reason: a 32-byte slot decides the algorithm in advance.
+    pub governance_pubkey: Vec<u8>,
     pub recorder_id: RecorderId,
     pub resume_at_unix: u64,
     pub signature: Vec<u8>,
@@ -855,7 +867,7 @@ mod tests {
     fn dummy_proof() -> GovernanceProof {
         let now: u64 = 1_700_000_000;
         GovernanceProof {
-            governance_pubkey: [7u8; 32],
+            governance_pubkey: vec![7u8; 32],
             recorder_id: RecorderId::from_u64(42),
             reason_hash: [0xAB; 32],
             signature: vec![0u8; 96],
@@ -938,7 +950,7 @@ mod tests {
         assert_ne!(p.slash_signature_digest(now).unwrap(), base_digest);
         // Mutate governance_pubkey.
         let mut p = base.clone();
-        p.governance_pubkey = [8u8; 32];
+        p.governance_pubkey = vec![8u8; 32];
         assert_ne!(p.slash_signature_digest(now).unwrap(), base_digest);
         // Mutate reason_hash.
         let mut p = base.clone();
@@ -1118,7 +1130,7 @@ mod tests {
         let digest = governance_suspension_digest(&recorder_id, &reason_hash, &pk, now);
         let signature = sk.sign(&digest).to_bytes().to_vec();
         let proof = GovernanceProof {
-            governance_pubkey: pk,
+            governance_pubkey: pk.to_vec(),
             recorder_id,
             reason_hash,
             signature,
@@ -1349,7 +1361,7 @@ mod tests {
         //    officer — the signature does not verify under the other key.
         let other_sk = SigningKey::from_bytes(&[9u8; 32]);
         let mut swapped = valid.clone();
-        swapped.governance_pubkey = other_sk.verifying_key().to_bytes();
+        swapped.governance_pubkey = other_sk.verifying_key().to_bytes().to_vec();
         assert!(verify(&swapped, now).is_err(), "pubkey swapped");
 
         // 7. A zero pubkey is rejected even with a real signature over the
@@ -1358,7 +1370,7 @@ mod tests {
         let digest =
             governance_suspension_digest(&valid.recorder_id, &valid.reason_hash, &zero_pk, now);
         let mut zeroed_pk = valid.clone();
-        zeroed_pk.governance_pubkey = zero_pk;
+        zeroed_pk.governance_pubkey = zero_pk.to_vec();
         zeroed_pk.signature = sk.sign(&digest).to_bytes().to_vec();
         assert!(verify(&zeroed_pk, now).is_err(), "zero pubkey accepted");
     }

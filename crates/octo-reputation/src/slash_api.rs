@@ -230,7 +230,7 @@ mod tests {
         now_unix: u64,
     ) -> GovernanceProof {
         GovernanceProof {
-            governance_pubkey: [1u8; 32],
+            governance_pubkey: vec![1u8; 32],
             recorder_id,
             reason_hash: [0u8; 32],
             signature: vec![0u8; 96],
@@ -435,7 +435,7 @@ mod tests {
             now_unix: u64,
         ) -> GovernanceProof {
             GovernanceProof {
-                governance_pubkey: [1u8; 32],
+                governance_pubkey: vec![1u8; 32],
                 recorder_id,
                 reason_hash: [0u8; 32],
                 signature: vec![0u8; 96], // stub for integration test

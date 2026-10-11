@@ -666,6 +666,78 @@ mod tests {
     use crate::{ReputationError, StakeComponent};
     use octo_determin::Dfp;
 
+    // ── Mission 0009-cd: a second algorithm on the RECORD, through the store ──
+    //
+    // The vectors in `auth::tests` call `verify_governance_signature` directly.
+    // This one carries the key on a `SuspensionAuth` and goes through the store
+    // instead, because the store is where the record's field type used to
+    // decide the algorithm: while `governance_pubkey` was `[u8; 32]` no
+    // stark-schnorr key could be put on the record at all, so this test is not
+    // writable against the old type.
+
+    #[tokio::test]
+    async fn a_suspension_auth_record_verifies_under_stark_schnorr() {
+        use octo_algo_stark_schnorr::{public_key, sign, Felt};
+
+        octo_algo_ed25519::install().expect("install ed25519");
+        octo_algo_stark_schnorr::install().expect("install stark-schnorr");
+
+        let store = InMemoryReputationStore::new();
+        let now = crate::migrations::now_unix();
+
+        let secret = Felt::from_hex_unchecked("0x2f1e3d4c5b6a79880716253443526170");
+        let nonce = Felt::from_hex_unchecked("0x13579bdf02468ace");
+        let pubkey = public_key(&secret)
+            .expect("derives a public key")
+            .to_wire()
+            .to_vec();
+        assert_eq!(pubkey.len(), 33, "the record must be able to carry this");
+
+        let snapshot = GovernanceSnapshot {
+            finalized_at_unix: now,
+            governance_set_hash: [7u8; 32],
+            members: vec![[1u8; 32], [2u8; 32], [3u8; 32]],
+        };
+        let recorder_id = RecorderId::from_u64(42);
+        let reason_hash = [0xABu8; 32];
+
+        // Signed over the digest that embeds those 33 bytes, so the record's key
+        // length is part of what is being verified rather than incidental.
+        let digest =
+            crate::auth::governance_suspension_digest(&recorder_id, &reason_hash, &pubkey, now);
+        let signature = sign(&secret, &digest, &nonce)
+            .expect("sign")
+            .to_wire()
+            .to_vec();
+
+        let auth = SuspensionAuth {
+            governance_algorithm_id: octo_algo_stark_schnorr::stark_schnorr_algorithm_id(),
+            governance_pubkey: pubkey,
+            recorder_id,
+            reason_hash,
+            signature,
+            snapshot: snapshot.clone(),
+            governance_set_hash: [7u8; 32],
+        };
+
+        store
+            .verify_governance_suspension(&auth, &snapshot, now)
+            .await
+            .expect("a stark-schnorr SuspensionAuth must verify through the store");
+
+        // The control: the same record, relabelled Ed25519, must not verify.
+        // Without it a store that refused everything would satisfy the above.
+        let mut mislabelled = auth.clone();
+        mislabelled.governance_algorithm_id = octo_algo_ed25519::ed25519_algorithm_id();
+        assert!(
+            store
+                .verify_governance_suspension(&mislabelled, &snapshot, now)
+                .await
+                .is_err(),
+            "a 33-byte governance key must not verify as ed25519"
+        );
+    }
+
     fn good_chain_ref() -> ChainRef {
         ChainRef {
             chain_id: 7,
@@ -758,7 +830,7 @@ mod tests {
             members: vec![[1u8; 32]; 3],
         };
         let proof = GovernanceProof {
-            governance_pubkey: [1u8; 32],
+            governance_pubkey: vec![1u8; 32],
             recorder_id: RecorderId::from_u64(0),
             reason_hash: [0u8; 32],
             signature: vec![],
@@ -784,7 +856,7 @@ mod tests {
             members: vec![[1u8; 32]; 3],
         };
         let proof = GovernanceProof {
-            governance_pubkey: [1u8; 32],
+            governance_pubkey: vec![1u8; 32],
             recorder_id: RecorderId::from_u64(0),
             reason_hash: [0u8; 32],
             signature: vec![],
@@ -815,7 +887,7 @@ mod tests {
             members: vec![[1u8; 32]; 3],
         };
         let proof = GovernanceProof {
-            governance_pubkey: [1u8; 32],
+            governance_pubkey: vec![1u8; 32],
             recorder_id: RecorderId::from_u64(0),
             reason_hash: [0u8; 32],
             signature: vec![],
@@ -925,7 +997,7 @@ mod tests {
             members: vec![[1u8; 32], [2u8; 32], [3u8; 32]],
         };
         let proof = GovernanceProof {
-            governance_pubkey: [1u8; 32],
+            governance_pubkey: vec![1u8; 32],
             recorder_id: RecorderId::from_u64(0),
             reason_hash: [0u8; 32],
             signature: vec![0u8; 96], // 3 × 32-byte stub sigs

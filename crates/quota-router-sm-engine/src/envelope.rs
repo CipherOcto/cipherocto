@@ -65,9 +65,20 @@ pub struct ExecutionEnvelope {
     pub mode: EnvelopeMode,
     /// Unix timestamp at sign time.
     pub timestamp: u64,
-    /// Ed25519 signature over `canonical_ser(envelope_unsigned)`.
-    #[serde(with = "ed25519_sig_serde")]
-    pub signature: ed25519_dalek::Signature,
+    /// Signature over `canonical_ser(envelope_unsigned)`.
+    ///
+    /// **Bytes, not `ed25519_dalek::Signature`.** This field was the concrete
+    /// Ed25519 type while `verify_envelope_signature` took an `algorithm_id`
+    /// beside it and dispatched on it. An envelope could therefore hold no
+    /// signature from any other algorithm, and the dispatch argument could
+    /// never reach a second value in practice. A verifier that is handed an
+    /// algorithm it has already been told which one produced is not
+    /// dispatching (RFC-0009 AC#11).
+    ///
+    /// Plain `Vec<u8>` keeps the same wire form: the removed helper emitted
+    /// `serialize_bytes` over these same 64 bytes. `envelope_signature_wire_form_is_unchanged`
+    /// pins that rather than asserting it.
+    pub signature: Vec<u8>,
 }
 
 /// ExecutionEnvelope session mode (RFC-0962 §4).
@@ -211,7 +222,7 @@ pub fn build_envelope(
     nonce: [u8; NONCE_SIZE],
     mode: EnvelopeMode,
     timestamp: u64,
-    signature: ed25519_dalek::Signature,
+    signature: Vec<u8>,
 ) -> Result<ExecutionEnvelope, EnvelopeError> {
     if sql_statements.len() > MAX_STATEMENTS {
         return Err(EnvelopeError::TooManyStatements(sql_statements.len()));
@@ -245,7 +256,7 @@ pub fn build_envelope(
 #[must_use]
 pub fn unsigned_canonical_ser(envelope: &ExecutionEnvelope) -> Vec<u8> {
     let clone = ExecutionEnvelope {
-        signature: ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+        signature: vec![0u8; 64],
         ..envelope.clone()
     };
     let mut buf = vec![clone.version];
@@ -269,7 +280,7 @@ pub fn unsigned_canonical_ser(envelope: &ExecutionEnvelope) -> Vec<u8> {
 /// Serialize the full envelope to bytes (for size check).
 pub fn serialize_envelope(envelope: &ExecutionEnvelope) -> Result<Vec<u8>, EnvelopeError> {
     let mut buf = unsigned_canonical_ser(envelope);
-    buf.extend_from_slice(&envelope.signature.to_bytes());
+    buf.extend_from_slice(&envelope.signature);
     Ok(buf)
 }
 
@@ -367,13 +378,8 @@ pub fn verify_envelope_signature(
     holder_pub: &[u8],
 ) -> Result<(), EnvelopeError> {
     let msg = unsigned_canonical_ser(envelope);
-    octo_algo_ed25519::verify_dispatch(
-        algorithm_id,
-        holder_pub,
-        &msg,
-        &envelope.signature.to_bytes(),
-    )
-    .map_err(|_| EnvelopeError::SignatureInvalid)
+    octo_algo_ed25519::verify_dispatch(algorithm_id, holder_pub, &msg, &envelope.signature)
+        .map_err(|_| EnvelopeError::SignatureInvalid)
 }
 
 /// Check a `MultiEnvelope` for nesting depth (RFC-0962 §7 R8-F5).
@@ -567,21 +573,6 @@ pub fn build_multi_envelope_with(
     Ok(multi)
 }
 
-// Ed25519 signature serde shim.
-mod ed25519_sig_serde {
-    use ed25519_dalek::Signature;
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S: Serializer>(sig: &Signature, ser: S) -> Result<S::Ok, S::Error> {
-        ser.serialize_bytes(&sig.to_bytes())
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<Signature, D::Error> {
-        let bytes: Vec<u8> = Deserialize::deserialize(de)?;
-        Signature::from_slice(&bytes).map_err(serde::de::Error::custom)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     /// The algorithm these fixtures sign under. Centralised so a second
@@ -600,7 +591,121 @@ mod tests {
     fn sign_envelope(envelope: &mut ExecutionEnvelope, key: &SigningKey) {
         let msg = unsigned_canonical_ser(envelope);
         let sig = key.sign(&msg);
-        envelope.signature = sig;
+        envelope.signature = sig.to_bytes().to_vec();
+    }
+
+    /// The wire form must not move.
+    ///
+    /// The removed serde shim emitted `serialize_bytes` over 64 bytes, and the
+    /// field is now a plain `Vec<u8>`. Those are equal for serde_json, which
+    /// renders both as the same numeric array, and for any byte-oriented format.
+    /// That is a claim about two implementations agreeing, so it is pinned here
+    /// rather than asserted in the doc comment.
+    #[test]
+    fn envelope_signature_wire_form_is_unchanged() {
+        let mut env = build_envelope(
+            [0x01; 32],
+            [0x02; 32],
+            octo_ident::test_helpers::sample_did(177).to_owned(),
+            vec!["SELECT 1".to_owned()],
+            vec![],
+            vec![],
+            [0x03; 32],
+            100,
+            [0x04; NONCE_SIZE],
+            EnvelopeMode::Deterministic,
+            1_000_000,
+            vec![0u8; 64],
+        )
+        .unwrap();
+        let bytes: Vec<u8> = (1u8..=64).collect();
+        env.signature = bytes.clone();
+
+        let json = serde_json::to_string(&env).expect("serialize");
+        let rendered = bytes
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        assert!(
+            json.contains(&rendered),
+            "the signature must render as the same numeric array the removed \\
+             serialize_bytes shim produced"
+        );
+
+        // And it round-trips, which is what persistence actually depends on.
+        let back: ExecutionEnvelope = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.signature, bytes);
+    }
+
+    /// The vector that tells dispatch apart from a hardcoded Ed25519 verifier.
+    ///
+    /// Every other vector here reaches `verify_envelope_signature` through
+    /// `ed25519_id()` with a 32-byte key and a 64-byte Ed25519 signature, and a
+    /// verifier that ignored its `algorithm_id` argument would pass all of them.
+    ///
+    /// A stark-schnorr key is 33 bytes, so it cannot be laundered through an
+    /// Ed25519 path. **This vector could not have existed before the field was
+    /// widened**: while `signature` was `ed25519_dalek::Signature`, an envelope
+    /// could hold no other algorithm output at all, and `algorithm_id` was
+    /// dispatching over a set of exactly one value.
+    #[test]
+    fn an_envelope_signed_by_a_non_ed25519_algorithm_verifies() {
+        use octo_algo_stark_schnorr::{public_key, sign, Felt};
+
+        octo_algo_ed25519::install().expect("install ed25519");
+        octo_algo_stark_schnorr::install().expect("install stark-schnorr");
+
+        let secret = Felt::from_hex_unchecked("0x0badc0de12345678");
+        let wire = public_key(&secret).expect("derives a public key").to_wire();
+        assert_eq!(wire.len(), 33, "a stark-schnorr key is 33 bytes");
+
+        let mut env = build_envelope(
+            [0x01; 32],
+            [0x02; 32],
+            octo_ident::test_helpers::sample_did(188).to_owned(),
+            vec!["SELECT 1".to_owned()],
+            vec![],
+            vec![],
+            [0x03; 32],
+            100,
+            [0x04; NONCE_SIZE],
+            EnvelopeMode::Deterministic,
+            1_000_000,
+            vec![0u8; 64],
+        )
+        .unwrap();
+        let signature = sign(
+            &secret,
+            &unsigned_canonical_ser(&env),
+            &Felt::from_hex_unchecked("0x00c0ffee12345678"),
+        )
+        .expect("sign")
+        .to_wire();
+        env.signature = signature.to_vec();
+
+        assert!(
+            verify_envelope_signature(
+                &octo_algo_stark_schnorr::stark_schnorr_algorithm_id(),
+                &env,
+                &wire,
+            )
+            .is_ok(),
+            "a genuine stark-schnorr envelope must not be refused by the \\
+             dispatched path"
+        );
+
+        // The same envelope must not verify under Ed25519, which pins that the
+        // caller-supplied id decides rather than decorating.
+        let mut ed_env = env.clone();
+        let sk = make_key();
+        let msg = unsigned_canonical_ser(&ed_env);
+        ed_env.signature = sk.sign(&msg).to_bytes().to_vec();
+        assert!(
+            verify_envelope_signature(&ed25519_id(), &ed_env, &sk.verifying_key().to_bytes())
+                .is_ok(),
+            "a genuine ed25519 envelope must still verify"
+        );
     }
 
     #[test]
@@ -618,7 +723,7 @@ mod tests {
             [0x04; NONCE_SIZE],
             EnvelopeMode::Deterministic,
             1_000_000,
-            ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            vec![0u8; 64],
         )
         .unwrap();
         sign_envelope(&mut env, &key);
@@ -643,7 +748,7 @@ mod tests {
             [0x04; NONCE_SIZE],
             EnvelopeMode::Deterministic,
             1_000_000,
-            ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            vec![0u8; 64],
         )
         .unwrap_err();
         assert_eq!(err, EnvelopeError::TooManyStatements(MAX_STATEMENTS + 1));
@@ -664,7 +769,7 @@ mod tests {
             [0x04; NONCE_SIZE],
             EnvelopeMode::Deterministic,
             1_000_000,
-            ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            vec![0u8; 64],
         )
         .unwrap();
         sign_envelope(&mut env, &key);
@@ -687,7 +792,7 @@ mod tests {
             [0x04; NONCE_SIZE],
             EnvelopeMode::Deterministic,
             1_000_000,
-            ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            vec![0u8; 64],
         )
         .unwrap();
         sign_envelope(&mut env, &key);
@@ -738,7 +843,7 @@ mod tests {
             nonce,
             EnvelopeMode::Deterministic,
             1_000_000,
-            ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            vec![0u8; 64],
         )
         .unwrap();
         let key = make_key();
@@ -773,7 +878,7 @@ mod tests {
             [0xab; NONCE_SIZE],
             EnvelopeMode::Deterministic,
             1_000_000,
-            ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            vec![0u8; 64],
         )
         .unwrap();
         let key = make_key();
@@ -810,7 +915,7 @@ mod tests {
             [0xcd; NONCE_SIZE],
             EnvelopeMode::Deterministic,
             1_000_000,
-            ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            vec![0u8; 64],
         )
         .unwrap();
         let key = make_key();
@@ -852,7 +957,7 @@ mod tests {
             [0x04; NONCE_SIZE],
             EnvelopeMode::Deterministic,
             1_000_000,
-            ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            vec![0u8; 64],
         )
         .unwrap()
     }
@@ -1009,7 +1114,7 @@ mod tests {
             [0x04; NONCE_SIZE],
             EnvelopeMode::Deterministic,
             1_000_000,
-            ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            vec![0u8; 64],
         )
         .unwrap();
         let multi = build_multi_envelope(
@@ -1056,7 +1161,7 @@ mod tests {
             nonce,
             EnvelopeMode::Deterministic,
             1_000_000,
-            ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            vec![0u8; 64],
         )
         .unwrap();
         let mut env_bob = env_alice.clone();
@@ -1086,7 +1191,7 @@ mod tests {
             [0x04; NONCE_SIZE],
             EnvelopeMode::Deterministic,
             1_000_000,
-            ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            vec![0u8; 64],
         )
         .unwrap();
         let bytes = serialize_envelope(&env).unwrap();
@@ -1109,7 +1214,7 @@ mod tests {
             [0x04; NONCE_SIZE],
             EnvelopeMode::Deterministic,
             1_000_000,
-            ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            vec![0u8; 64],
         )
         .unwrap();
         assert_eq!(tentative_envelope_id(&env), tentative_envelope_id(&env));
@@ -1129,7 +1234,7 @@ mod tests {
             [0x04; NONCE_SIZE],
             EnvelopeMode::Deterministic,
             1_000_000,
-            ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            vec![0u8; 64],
         )
         .unwrap();
         env.capability_holder = "did:octo:b".to_owned();
@@ -1146,7 +1251,7 @@ mod tests {
                 [0x04; NONCE_SIZE],
                 EnvelopeMode::Deterministic,
                 1_000_000,
-                ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+                vec![0u8; 64],
             )
             .unwrap(),
         );
@@ -1171,7 +1276,7 @@ mod tests {
                 [0x04; NONCE_SIZE],
                 EnvelopeMode::Deterministic,
                 1_000_000,
-                ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+                vec![0u8; 64],
             )
             .unwrap(),
             env_id,
@@ -1201,7 +1306,7 @@ mod tests {
                 [0x04; NONCE_SIZE],
                 EnvelopeMode::Deterministic,
                 1_000_000,
-                ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+                vec![0u8; 64],
             )
             .unwrap(),
             env_id,
@@ -1231,7 +1336,7 @@ mod tests {
                 [0x04; NONCE_SIZE],
                 EnvelopeMode::Deterministic,
                 1_000_000,
-                ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+                vec![0u8; 64],
             )
             .unwrap(),
             env_id,
@@ -1261,7 +1366,7 @@ mod tests {
                 [0x04; NONCE_SIZE],
                 EnvelopeMode::Deterministic,
                 1_000_000,
-                ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+                vec![0u8; 64],
             )
             .unwrap(),
             env_id,
@@ -1303,7 +1408,7 @@ mod tests {
             [nonce_byte; NONCE_SIZE],
             EnvelopeMode::Deterministic,
             1_000_000,
-            ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            vec![0u8; 64],
         )
         .unwrap()
     }
@@ -1397,7 +1502,7 @@ mod tests {
             [0x04; NONCE_SIZE],
             EnvelopeMode::Deterministic,
             1_000_000,
-            ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            vec![0u8; 64],
         )
         .unwrap();
         let multi = build_multi_envelope(
@@ -1424,7 +1529,7 @@ mod tests {
             [0x04; NONCE_SIZE],
             EnvelopeMode::Deterministic,
             1_000_000,
-            ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            vec![0u8; 64],
         )
         .unwrap();
         let multi = build_multi_envelope_with(

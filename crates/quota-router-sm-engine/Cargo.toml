@@ -68,6 +68,16 @@ octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
 tempfile.workspace = true
 # Mission 0010-b: test fixtures use sample_did() from octo-ident test_helpers
 octo-ident = { path = "../octo-ident" }
+# Second registered algorithm (Layer A, RFC-0009 AC#11). Dev-only, and the
+# reason is specific to this crate: `verify_envelope_signature` takes the
+# algorithm from the caller, so this is the only way to show the dispatch
+# reaches a value other than Ed25519. Every other vector here signs with
+# Ed25519 and uses a 32-byte key, and a verifier that ignored its
+# `algorithm_id` argument would pass all of them — a stark-schnorr key is 33
+# bytes, which makes the difference observable. Dev-only because no production
+# envelope is signed with stark-schnorr; the vector exists to keep the site
+# honest.
+octo-algo-stark-schnorr = { path = "../octo-algo-stark-schnorr" }
 
 
 [lints.rust]

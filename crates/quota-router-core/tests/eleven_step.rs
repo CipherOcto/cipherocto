@@ -1017,11 +1017,11 @@ fn wave_integration_w6_envelope() {
         [0xab; 32],
         quota_router_sm_engine::envelope::EnvelopeMode::Deterministic,
         1_700_000_000,
-        ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+        vec![0u8; 64],
     )
     .unwrap();
     let msg = quota_router_sm_engine::envelope::unsigned_canonical_ser(&env);
-    env.signature = key.sign(&msg);
+    env.signature = key.sign(&msg).to_bytes().to_vec();
     let pub_bytes = key.verifying_key().to_bytes();
     verify_envelope_signature(&octo_algo_ed25519::ed25519_algorithm_id(), &env, &pub_bytes)
         .unwrap();
@@ -1044,7 +1044,7 @@ fn wave_integration_w6_envelope() {
         [0xab; 32],
         quota_router_sm_engine::envelope::EnvelopeMode::Deterministic,
         1_700_000_000,
-        ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+        vec![0u8; 64],
     )
     .unwrap_err();
     assert_eq!(
@@ -1141,7 +1141,7 @@ fn wave_integration_master_consistency() {
         [0xab; 32],
         quota_router_sm_engine::envelope::EnvelopeMode::Deterministic,
         1_700_000_000,
-        ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+        vec![0u8; 64],
     )
     .unwrap();
     let config = ClusterShardConfig::for_cluster(100, 0);

@@ -2004,6 +2004,26 @@ const AC11_OUT_OF_SCOPE: &[(&str, &str)] = &[(
 /// indistinguishable from the defect it hides, which is the failure this
 /// vector exists to prevent.
 ///
+/// This list is now empty, and that is the state the vector enforces.
+///
+/// ### `crates/quota-router-sm-engine/src/envelope.rs` was here and is not any more
+///
+/// Its entry excused `unsigned_canonical_ser` cloning the envelope to blank the
+/// signature field, so the signed message excludes it — and the blanking was
+/// `ed25519_dalek::Signature::from_bytes(&[0u8; 64])`, an inline constructor of
+/// exactly the kind this vector scans for.
+///
+/// Widening `ExecutionEnvelope::signature` to `Vec<u8>` removed both problems at
+/// once: the field no longer names an algorithm, and the blanking became
+/// `vec![0u8; 64]`, which constructs no key material. The all-zero placeholder
+/// the old entry described is still there and still carries no cryptographic
+/// meaning — but it is now a byte vector rather than a reconstructed Ed25519
+/// type, so there is no algorithm left for the scan to be confused about.
+///
+/// The entry was **removed**, not re-justified. An entry that outlives its site
+/// exempts the file for no reason, which is a silent hole rather than a
+/// documented one.
+///
 /// ### `crates/octo-protocol/src/authorization.rs` was here and is not any more
 ///
 /// Its entry said the DID payload is a bare 32 bytes "so the dispatcher has
@@ -2023,15 +2043,7 @@ const AC11_OUT_OF_SCOPE: &[(&str, &str)] = &[(
 ///
 /// The other entry below is genuinely live: it blanks a signature field for a
 /// canonical-serialization round trip and never verifies it.
-const AC11_ALLOWED: &[(&str, &str)] = &[(
-    "crates/quota-router-sm-engine/src/envelope.rs",
-    "unsigned_canonical_ser clones the envelope to blank the signature \
-         field so the signed message excludes it. The all-zero value is a \
-         placeholder that is never serialized and never verified, so no \
-         algorithm is selected here. The honest fix is an Option or a \
-         separate unsigned struct, not a dispatch: dispatching would be \
-         dispatching on a value with no cryptographic meaning.",
-)];
+const AC11_ALLOWED: &[(&str, &str)] = &[];
 
 #[test]
 fn ac11_no_verification_site_rebuilds_a_key_or_signature_inline() {

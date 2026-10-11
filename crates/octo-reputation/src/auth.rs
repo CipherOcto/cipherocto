@@ -1198,6 +1198,74 @@ mod tests {
         );
     }
 
+    /// The vector that tells dispatch apart from a hardcoded Ed25519 verifier.
+    ///
+    /// Every other vector in this module is blind to the difference, including
+    /// the three the dispatch refactor was verified with: `default_governance_algorithm_id`
+    /// returns Ed25519, every governance key in the crate is 32 bytes, and a
+    /// verifier that ignored its `algorithm_id` argument and hardcoded Ed25519
+    /// would pass all of them. Mutation on this site confirmed it.
+    ///
+    /// A stark-schnorr key is 33 bytes and its signature covers a digest that
+    /// embeds those 33 bytes, so neither the key nor the digest can be quietly
+    /// reinterpreted as Ed25519. Acceptance therefore came from the algorithm.
+    ///
+    /// This is also the first vector in this crate to exercise the widened
+    /// `&[u8]` key parameter. It could not have existed under `&[u8; 32]`.
+    #[test]
+    fn a_governance_signature_verifies_under_stark_schnorr() {
+        use octo_algo_stark_schnorr::{public_key, sign, Felt};
+
+        octo_algo_ed25519::install().expect("install ed25519");
+        octo_algo_stark_schnorr::install().expect("install stark-schnorr");
+
+        let secret = Felt::from_hex_unchecked("0x2f1e3d4c5b6a79880716253443526170");
+        let nonce = Felt::from_hex_unchecked("0x13579bdf02468ace");
+        let wire = public_key(&secret).expect("derives a public key").to_wire();
+        assert_eq!(
+            wire.len(),
+            33,
+            "stark-schnorr keys are 33 bytes, Ed25519 32"
+        );
+
+        let now = 1_700_000_000u64;
+        let recorder_id = RecorderId::from_u64(42);
+        let reason_hash = [0xABu8; 32];
+
+        // The digest embeds the public key, so it is signed over the same 33
+        // bytes that are handed to the verifier. Signing a 32-byte projection
+        // would pass a digest check while proving nothing about the key path.
+        let digest = governance_suspension_digest(&recorder_id, &reason_hash, &wire, now);
+        let signature = sign(&secret, &digest, &nonce).expect("sign").to_wire();
+        assert_eq!(signature.len(), 64, "stark-schnorr signatures are 64 bytes");
+
+        verify_governance_signature(
+            &octo_algo_stark_schnorr::stark_schnorr_algorithm_id(),
+            &wire,
+            &recorder_id,
+            &reason_hash,
+            &signature,
+            now,
+        )
+        .expect("a stark-schnorr governance signature must verify through the dispatched path");
+
+        // The control. Without it, a verifier that refused everything would
+        // satisfy the assertion above — the same trap the unregistered-algorithm
+        // vector has, which is why the pair is kept together.
+        assert!(
+            verify_governance_signature(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &wire,
+                &recorder_id,
+                &reason_hash,
+                &signature,
+                now,
+            )
+            .is_err(),
+            "a 33-byte key must not verify as ed25519"
+        );
+    }
+
     /// The stores must read the algorithm off the record, never assume one.
     /// A grep rather than a behaviour test: both values are Ed25519 today, so
     /// no runtime assertion can tell them apart, but reverting to the

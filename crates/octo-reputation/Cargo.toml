@@ -65,6 +65,15 @@ octo-storage-core = { path = "../octo-storage-core", optional = true }
 [dev-dependencies]
 # Round-trip serde coverage on ReputationFilter + PeerReputation (Phase 10 R1.5)
 serde_json = "1"
+# Second registered algorithm (Layer A, RFC-0009 AC#11). Dev-only, and the
+# reason is specific to this crate: governance keys are 32 raw bytes with
+# nothing naming an algorithm, so `verify_governance_signature` takes the
+# AlgorithmId from the caller. Its other vectors cannot tell dispatch from a
+# hardcoded Ed25519 verifier — every governance key in this crate is 32 bytes,
+# so no assertion distinguishes the two. A stark-schnorr key is 33 bytes, which
+# makes the difference observable. Dev-only because no governance key in the
+# product is stark-schnorr; the vector exists to keep the site honest.
+octo-algo-stark-schnorr = { path = "../octo-algo-stark-schnorr" }
 
 [[bin]]
 name = "reputation-parity"

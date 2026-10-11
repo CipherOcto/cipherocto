@@ -82,21 +82,37 @@ pub const MAX_CHAIN_DEPTH: u8 = 8;
 
 /// V2 hierarchical attenuation chain token (RFC-0009 §Capability Keys).
 ///
-/// Carries `chain_depth` (the level in the chain; 0 = root, 1..=8 =
-/// descendant) + `chain_parent` (BLAKE3-256 binding of parent key +
-/// child key + child depth per RFC-0009 `verify_chain_parent`
-/// + `compute_chain_parent`).
+/// Carries `chain_depth` and `chain_parent`.
+///
+/// **Chaining is not implemented.** RFC-0009 specifies `chain_parent` as the
+/// BLAKE3-256 binding `parent_cap_key || child_cap_key || child_depth`, computed
+/// by `compute_chain_parent` and checked by `verify_chain_parent`. **Neither
+/// function exists in this workspace, and no code reads `chain_parent` to make
+/// a decision** — every occurrence is an assignment, a `Debug` print, or a test
+/// asserting the value round-trips.
+///
+/// Every production mint writes `chain_depth: 0` and `chain_parent:
+/// [0u8; 32]`, so every token issued so far is a root token and there is no
+/// parent binding in force to forge. The field is reserved for that work, not a
+/// claim that the work is done.
 #[derive(
     Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize, serde::Serialize, serde::Deserialize,
 )]
 pub struct CapabilityTokenV2 {
     /// Chain depth (0 = root; 1..=8 = descendant). Lives on the
     /// token, NOT on `CapabilityKey` (per RFC-0009 R11 H1).
+    ///
+    /// Only 0 is ever written — see the type's docs on chaining not being
+    /// implemented.
     pub chain_depth: u8,
 
-    /// BLAKE3-256 binding of `parent_cap_key || child_cap_key ||
-    /// child_depth.to_be_bytes()` (per RFC-0009 `compute_chain_parent`).
-    /// `[0u8; 32]` for root tokens (depth 0).
+    /// Reserved for RFC-0009's `compute_chain_parent` binding of
+    /// `parent_cap_key || child_cap_key || child_depth.to_be_bytes()`.
+    ///
+    /// **Nothing computes or verifies that binding today.** `[0u8; 32]` is
+    /// what every production mint writes, and no verification path reads this
+    /// field. Treating it as a real parent binding today would be reading a
+    /// value nothing maintains.
     pub chain_parent: [u8; 32],
 
     /// Audience DID (the holder redeeming the token).

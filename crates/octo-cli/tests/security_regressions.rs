@@ -1888,6 +1888,28 @@ const AC11_PENDING: &[(&str, usize, &str)] = &[
 ///
 /// Listed rather than omitted, so that adding a *genuine* holder
 /// signature to this crate later is a deliberate act someone has to notice.
+///
+/// ### `crates/octo-governance/src` is deliberately absent
+///
+/// It was carried for a long time as "blocked on
+/// `EnvelopeSigner::algorithm_id`, which has no carrier until the
+/// `governance_envelopes` table lands". That constraint is real and still is:
+/// both production call sites bind the signature to `_` and discard it.
+///
+/// But it was filed against the wrong criterion, and putting it in this table
+/// would have cemented the mistake — an entry here has to *have* a site to be
+/// excused, and `ac11_every_out_of_scope_crate_is_justified_and_disjoint`
+/// correctly refuses one that does not. The crate verifies nothing.
+///
+/// Measured over `crates/octo-governance/src`: no `verify_dispatch`, no
+/// `verify` call, no `VerifyingKey`, no inline key construction. AC#11 governs
+/// verification sites. A crate that only signs has nothing here to dispatch,
+/// which is why it appears in no table at all.
+///
+/// Recorded because "absent" and "not yet examined" look identical from the
+/// outside. An algorithm stamp on the signing trait is a real question and it
+/// belongs to RFC-0862's envelope design — but it is not an unmet AC#11
+/// obligation, and a future reader should not re-derive that from scratch.
 const AC11_OUT_OF_SCOPE: &[(&str, &str)] = &[(
     "crates/octo-adapter-nostr/src",
     "verifies a nostr event signature under NIP-01, which mandates ed25519. \

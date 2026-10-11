@@ -450,6 +450,35 @@ Closing this properly means implementing FROST — a threshold scheme with
 RFC 9591's deterministic nonce derivation — which is a piece of work far outside
 this arc's scope. The finding is recorded so the criterion is not read as met.
 
+### Triaged, and the class turns out to be smaller than it looked
+
+Rescanning across every source root rather than only `crates/` moved the count
+from 293 to 294, so the misses are not definitions hiding in `cairo/` or
+`zk-circuit/`. Reading a sample of them says most are legitimate: references to
+field names (`proof_bundle_borsh`), to concepts, or to explicitly-future columns.
+
+One sample is worth its own line, because it shows the workspace getting this
+**right** at full size. `octo-cap-poi`'s crate documentation states outright that
+there is no host-side mirror of the Poseidon fold, that `derive_trace_hash` and
+`derive_step_hash` "are named in `octo-cap-zk`'s documentation but were never
+implemented", and records it as a deferred disclosure under mission 0958-a
+AC#6. The same doc states that the crate ships UNREGISTERED and that the real
+prover path returns `ProverError::Internal("full path unimplemented")`.
+
+That is the standard the other two findings fell short of.
+
+It also exposed the third instance of the class. `octo-cap-zk` documented that
+"the verifier reconstructs the trace hash via `derive_trace_hash`" — describing a
+check against a function that does not exist, while the crate that _should_
+know best had already said so in writing. Corrected to match, and to say plainly
+that the MUST is a specification rather than an enforced invariant until the
+host-side mirror lands.
+
+So the honest summary of this class is: **the workspace documents absences well,
+with three exceptions, all three now corrected.** That is a much smaller and more
+accurate claim than "documentation claims things code does not do", and it is
+the one the evidence supports.
+
 ### The wider class, and one more instance of it
 
 The `chain_parent` finding suggested a general shape — **documentation asserting
@@ -664,6 +693,7 @@ That is the distinction the guard actually depends on.
 - [x] Gates that cannot be written without inventing the thing under test are recorded as such, not satisfied by a vacuous test.
 - [x] Where a documented defence has no implementation, that is recorded rather than papered over with a test of the surrounding data model.
 - [x] A test documented as holding a pin is mutation-verified to hold it.
+- [x] The doc-citing-missing-symbol class is measured and triaged; every confirmed instance is corrected.
 - [x] Workspace `cargo check --all-targets` clean; clippy clean under `--features full`.
 
 ## The three-class lesson

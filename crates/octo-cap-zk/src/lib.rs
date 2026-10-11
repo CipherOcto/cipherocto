@@ -143,14 +143,22 @@ impl std::fmt::Debug for PrivateWitness {
 /// Self-host inference trace (RFC-0958 §Data Structures; v1.2 M5 fix).
 ///
 /// Carries the PoI trace for self-host mode. The trace's canonicalized
-/// BLAKE3 hash (over `step_records` via `derive_trace_hash`) MUST equal
-/// `PublicInputs::output_hash` when present. The Cairo-side structural
-/// check (`inference_trace_present == 1` iff `has_output_hash == 1`) lives
-/// at `cairo/src/lib.cairo::main`.
+/// BLAKE3 hash (over `step_records`) MUST equal `PublicInputs::output_hash`
+/// when present. The Cairo-side structural check (`inference_trace_present
+/// == 1` iff `has_output_hash == 1`) lives at
+/// `cairo/src/lib.cairo::main`.
 ///
 /// `step_records` carries one entry per inference step (operator code +
-/// input/output hashes). The verifier reconstructs the trace hash via
-/// `derive_trace_hash` and compares to `public_inputs.output_hash`.
+/// input/output hashes).
+///
+/// **The host-side hash is not implemented.** This doc used to say the
+/// verifier "reconstructs the trace hash via `derive_trace_hash`" — no such
+/// function exists. `octo-cap-poi` states the same absence explicitly and
+/// records it as a deferred disclosure under mission 0958-a AC#6, deferred to
+/// 0958-b; this doc had drifted from that and described a check nothing
+/// performs. The fold is Poseidon over felt252 and happens in Cairo
+/// (`verify_inference_fold_flat`). Until the host-side mirror lands, the
+/// MUST above is a specification, not an enforced invariant.
 #[derive(Debug, Clone)]
 pub struct ExecutionTrace {
     /// Number of steps (bounded by RFC-0958 §Performance G1: 10K reference).

@@ -5,7 +5,7 @@
 //! The algorithms live in a registry keyed by a typed `Uuid` discriminator
 //! rather than a central enum, so a new algorithm lands in its own crate and
 //! registers at startup instead of requiring an edit to this one — per
-//! [[cipherocto-design-principles]] §Extension over enumeration.
+//! `docs/architecture/design-principles.md` §Extension over enumeration.
 //!
 //! ## Why the newtypes store `[u8; 16]` and not a `Uuid`
 //!

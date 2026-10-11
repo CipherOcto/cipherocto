@@ -12,7 +12,7 @@
 //! verification production performs is V1-macaroon-based and never reads a V2
 //! bundle. See the `CapabilityTokenV2` docs and mission `0009-cf`.
 //!
-//! ## Layer discipline (per [[cipherocto-design-principles]])
+//! ## Layer discipline (per `docs/architecture/design-principles.md`)
 //!
 //! `CapabilityBundleV2` is owned by `octo-cap-macaroon` (Layer 4
 //! extension per RFC-0965). It CANNOT depend on `quota-router-storage`
@@ -26,7 +26,7 @@
 //! - `discharge_macaroon: DischargeMacaroon` lives in the same crate
 //!   (Layer 4 self-reference; OK).
 //! - `CapabilityTokenV2` is a separate struct from V1 (per
-//!   [[cipherocto-design-principles]] §Extension over enumeration —
+//!   `docs/architecture/design-principles.md` §Extension over enumeration —
 //!   V2 carries new fields; central enum would force V1 edits).
 //!
 //! ## V1 → V2 schema diff
@@ -47,7 +47,7 @@
 //! ## Bundle versioning
 //!
 //! `bundle_version: u8 = 2`. V1 and V2 are separate structs (V2
-//! stays separate from V1 per [[cipherocto-design-principles]]
+//! stays separate from V1 per `docs/architecture/design-principles.md`
 //! §Extension over enumeration). The cross-version rejection contract:
 //!
 //! - V1 parser rejects V2 via unknown struct (V2 bytes fail to
@@ -176,7 +176,7 @@ impl fmt::Debug for CapabilityTokenV2 {
 /// `serde_json::from_slice`) at the boundary. The bytes indirection
 /// keeps `octo-cap-macaroon` free of `quota-router-storage` deps
 /// (Layer 4 → Layer B-substrate forbidden per
-/// [[cipherocto-design-principles]]) AND avoids the `Vec<Caveat>` →
+/// `docs/architecture/design-principles.md`) AND avoids the `Vec<Caveat>` →
 /// Borsh derive cascade (the `Caveat` enum has 24 variants with
 /// their own types).
 ///

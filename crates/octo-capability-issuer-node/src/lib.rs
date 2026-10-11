@@ -1,7 +1,7 @@
 //! Capability-issuer specialized-node adapter (RFC-0871 §Roles and
 //! Authorities, mission 0871d-capability-issuer-node).
 //!
-//! Layer C crate per [[cipherocto-design-principles]]: per-RFC stability,
+//! Layer C crate per `docs/architecture/design-principles.md`: per-RFC stability,
 //! additive only. Consumes Layer A (`octo-protocol`) + Layer B
 //! (`octo-wallet`, `octo-ident`) + Layer 4 (`octo-cap-macaroon`) and
 //! registers as a `NetworkReceiver` via the Layer D transport

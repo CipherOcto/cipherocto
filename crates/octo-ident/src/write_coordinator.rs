@@ -12,7 +12,7 @@
 //!
 //! ## Why in `octo-ident` (Layer B), not `quota-router-storage`
 //!
-//! Per [[cipherocto-design-principles]] §Layer discipline:
+//! Per `docs/architecture/design-principles.md` §Layer discipline:
 //! - `octo-ident` (Layer B) — substrate trait + error enum + `ChainId`
 //! - `quota-router-storage` (Layer B-adjacent) — `StoolapDidRegistry`
 //!   consumes the coordinator via `Arc<dyn DidWriteCoordinator>`
@@ -99,7 +99,7 @@ pub enum DidWriteCoordinatorError {
 /// resolved `Arc<dyn DidWriteCoordinator>`) cannot add new impls
 /// because they have no reason to import `octo_ident::sealed` for
 /// production use — the trait is gated to the substrate crate via
-/// the layer model (per [[cipherocto-design-principles]] §Layer
+/// the layer model (per `docs/architecture/design-principles.md` §Layer
 /// direction + §No parallel abstractions).
 pub mod sealed {
     /// Sealed marker for `DidWriteCoordinator` impls. Only the
@@ -150,10 +150,9 @@ pub trait DidWriteCoordinator: sealed::DidWriteCoordinatorSealed + Send + Sync {
     /// after the canonical-hash check passes.
     ///
     /// Implementations route the write through the writer-election
-    /// substrate (Option B per
-    /// [[drain-coordinator-approach-2026-08-10]]) and replicate via
-    /// `octo_sync::DatabaseSyncAdapter` so all instances see the
-    /// write before the function returns success.
+    /// substrate and replicate via `octo_sync::DatabaseSyncAdapter`
+    /// so all instances see the write before the function returns
+    /// success.
     async fn submit_register_validated(
         &self,
         canonical_did_hash: &[u8; 32],
@@ -212,7 +211,7 @@ pub trait DidWriteCoordinator: sealed::DidWriteCoordinatorSealed + Send + Sync {
 /// workspace member (it lands with the RFC-0862 amendment that
 /// ships the concrete `WriterElection`-backed coordinator impl). To
 /// preserve Layer B additive-only per
-/// [[cipherocto-design-principles]], the canonical-hash function
+/// `docs/architecture/design-principles.md`, the canonical-hash function
 /// stays in `octo-ident` until the consumer crate is committed.
 #[must_use]
 pub fn canonical_hash(doc: &DidDocument) -> [u8; 32] {

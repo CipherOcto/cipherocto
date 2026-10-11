@@ -1,6 +1,6 @@
 //! Wallet specialized-node adapter (RFC-0871 §Wallet Node Lifecycle).
 //!
-//! Layer C crate per [[cipherocto-design-principles]]: per-RFC stability,
+//! Layer C crate per `docs/architecture/design-principles.md`: per-RFC stability,
 //! additive only. Consumes Layer A (`octo-protocol`) + Layer B
 //! (`octo-wallet`, `octo-ident`) and registers as a `NetworkReceiver`
 //! via the Layer D transport (`octo-transport::NodeTransport`).
@@ -30,7 +30,7 @@
 //! Each handler verifies `Vec<Authorization>` per RFC-0871 §Adversary
 //! Analysis A6 (logical AND, no shortcut). HSM-routed signing goes
 //! through `Arc<dyn HsmAdapter>` (no direct `ed25519_dalek` access in
-//! this crate per [[cipherocto-design-principles]] layer boundary).
+//! this crate per `docs/architecture/design-principles.md` layer boundary).
 //!
 //! ## Replay + authorization
 //!

@@ -44,7 +44,7 @@ pub use error::WalletError;
 // Re-export the Layer A `ed25519-dalek` crate at the wallet boundary
 // so `octo-runtime` can verify signatures without taking a direct
 // dep on `ed25519-dalek` (per RFC-0011-c §F.5 Layer A frozen contract
-// + [[cipherocto-design-principles]] §Stable Abstractions Principle).
+// + `docs/architecture/design-principles.md` §Stable Abstractions Principle).
 // `octo-runtime::handle::signing::verify_attach_handle_payload` and
 // `octo-runtime::handle::encoding::decode_token` follow the same
 // `verify_successor_proof` / `verify_revocation_proof` static-helper

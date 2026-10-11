@@ -1,6 +1,6 @@
 //! `WalletNode` — the wallet's specialized-node adapter (RFC-0871 §Wallet Node Lifecycle).
 //!
-//! Layer C crate per [[cipherocto-design-principles]]: per-RFC stability,
+//! Layer C crate per `docs/architecture/design-principles.md`: per-RFC stability,
 //! additive only. Consumes Layer A (`octo-protocol`) + Layer B
 //! (`octo-wallet`, `octo-ident`) and registers as a `NetworkReceiver`
 //! via the Layer D transport (`octo-transport::NodeTransport`).

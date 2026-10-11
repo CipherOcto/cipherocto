@@ -17,7 +17,7 @@
 //! built from the mint path and left alone — never round-tripped through the
 //! envelope encode/decode, which is the new code path under test elsewhere.
 //!
-//! ## Per `no-line-refs-anywhere` convention
+//! ## Per `docs/05-process/engineering-rules.md` §No line references in documentation convention
 //!
 //! References use `§symbol-name` form.
 

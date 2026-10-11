@@ -7,7 +7,7 @@
 //! ## Why this crate exists (mission 0957-g1, S5.1 follow-on)
 //!
 //! `octo-cap-macaroon` is a Layer B extension crate (per-extension
-//! crates + registry per `cipherocto-design-principles.md`). The
+//! crates + registry per ``docs/architecture/design-principles.md`.md`). The
 //! [`VaultLookup`] trait landed there in S5 as a primitive-typed
 //! lookup contract (mission `0957-g-verify-time-invariant` LANDED
 //! 2026-08-17); the substrate's data enum ([`octo_vault::VaultState`])

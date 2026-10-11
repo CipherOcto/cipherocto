@@ -23,7 +23,7 @@
 //!
 //! Schema per RFC-0957-A1 §StoolapHolderRegistry Schema. Cipherocto-side
 //! migration lives at `crates/quota-router-storage/migrations/v005__create_holder_registry.sql`
-//! and `v006__create_outbox.sql` per [[stoolap-general-purpose-db]].
+//! and `v006__create_outbox.sql` per `docs/architecture/stoolap-integration.md`.
 //!
 //! Constraint semantics per RFC §Stoolap compatibility note: the parser
 //! doesn't support `UNIQUE ... WHERE`; we rely on `NULL` semantics — NULL

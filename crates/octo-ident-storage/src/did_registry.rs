@@ -39,7 +39,7 @@
 //! ## Cipherocto-side migration
 //!
 //! Schema lives at `crates/quota-router-storage/migrations/v008..v011__*.sql`
-//! per [[stoolap-general-purpose-db]] (cipherocto-side, NOT stoolap fork).
+//! per `docs/architecture/stoolap-integration.md` (cipherocto-side, NOT stoolap fork).
 //! The `StoolapDidRegistry` constructors call
 //! `quota_router_storage::migrations::apply_pending` to apply the schema.
 //!

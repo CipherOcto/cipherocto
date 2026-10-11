@@ -7,7 +7,7 @@
 //!
 //! ## Layer discipline
 //!
-//! Per [[cipherocto-design-principles]]: this module is **Layer B
+//! Per `docs/architecture/design-principles.md`: this module is **Layer B
 //! additive surface**; it depends downward into [`crate::token`],
 //! [`crate::signer`], and [`crate::catalog`]. Higher layers consume
 //! these free functions — they never reach into the underlying types

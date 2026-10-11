@@ -37,7 +37,7 @@
 //! strategy, so it must never enter an operator's acceptance set — an RFC-range
 //! id would let it be configured into production by accident.
 //!
-//! ## Per `no-line-refs-anywhere` convention
+//! ## Per `docs/05-process/engineering-rules.md` §No line references in documentation convention
 //!
 //! References use `§symbol-name` form.
 

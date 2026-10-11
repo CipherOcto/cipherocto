@@ -35,7 +35,7 @@
 //! UPDATE_PHASE1_TV=1 cargo test -p octo-wallet --lib phase1_tv_json -- --nocapture
 //! ```
 //!
-//! Per [[feedback-no-fabricated-commit-rule]] + RFC-0008 Class A
+//! Per `docs/05-process/engineering-rules.md` §No fabricated commit claims + RFC-0008 Class A
 //! determinism: the fixture is byte-exact reproducible from the
 //! declared inputs; any drift is a substrate change (RFC + test
 //! together).

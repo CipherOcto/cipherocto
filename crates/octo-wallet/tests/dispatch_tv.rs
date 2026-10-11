@@ -7,7 +7,7 @@
 //! deviation; cross-crate wiring is the future 0969-b consumer of
 //! `AuthenticatedRequest`.
 //!
-//! ## Per [[no-line-refs-anywhere]] convention
+//! ## Per `docs/05-process/engineering-rules.md` §No line references in documentation convention
 //!
 //! All references use `§symbol-name` form; no line refs.
 

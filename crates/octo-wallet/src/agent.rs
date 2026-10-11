@@ -254,7 +254,7 @@ impl AgentManifest {
 
 /// Agent lifecycle state — RFC-0002 §Agent Lifecycle.
 ///
-/// `#[non_exhaustive]` per [[cipherocto-design-principles]]
+/// `#[non_exhaustive]` per `docs/architecture/design-principles.md`
 /// §Extension over enumeration: future states (e.g., `Suspended`,
 /// `Draining`) land additively without breaking matchers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -772,7 +772,7 @@ impl CapabilityId {
 
 /// Per-extension trait for agent registry backends (RFC-0011-c §9.3.7
 /// companion amendment; per-extension-crates pattern per
-/// [[cipherocto-design-principles]] §User extensibility).
+/// `docs/architecture/design-principles.md` §User extensibility).
 ///
 /// Mirrors the `RevocationStore` trait shape (RFC-0011-c §F.7.5
 /// paired amendment) so future persistence adapters (Layer D
@@ -862,7 +862,7 @@ pub trait AgentRegistry: Send + Sync + std::fmt::Debug {
 /// this module or `crate::cli_fns::register_agent`. The free-fn
 /// surface remains the canonical entry point (CLI consumes it
 /// directly); the trait exists to provide a future swap-point for
-/// persistence adapters per [[cipherocto-design-principles]]
+/// persistence adapters per `docs/architecture/design-principles.md`
 /// §User extensibility. Zero behavioral change vs. the free-fn
 /// path (substrate-faithful by construction — `InMemoryAgentRegistry`
 /// IS the free-fn surface).

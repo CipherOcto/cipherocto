@@ -13,11 +13,11 @@
 //! canonical `octo_transport::NodeTransport` (per RFC-0862 gossip binding
 //! called out by mission `0959-c2` AC "RFC-0862 gossip binding"). Wallet
 //! cannot import `octo-transport` directly (avoids dep inversion per
-//! [[stoolap-general-purpose-db]]); the production wiring is a future
+//! `docs/architecture/stoolap-integration.md`); the production wiring is a future
 //! `CapabilityCatalog` impl that holds an `Arc<NodeTransport>` and
 //! implements `gossip_to_buyer` as `transport.broadcast(...)`. That wiring
 //! is tracked by follow-up `0959-c3-octo-transport-wiring` (per
-//! [[deferred-vs-unspecified]] named-owner rule).
+//! `docs/05-process/engineering-rules.md` §Deferred versus unspecified named-owner rule).
 //!
 //! This test exercises the retry loop + envelope serialization + buyer-side
 //! registry lookup end-to-end against an in-process harness that simulates

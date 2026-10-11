@@ -19,7 +19,7 @@ pub use crate::identity_store::MIN_PASSPHRASE_CHARS;
 
 /// Top-level error for `octo-wallet`.
 ///
-/// `#[non_exhaustive]` per [[cipherocto-design-principles]]
+/// `#[non_exhaustive]` per `docs/architecture/design-principles.md`
 /// §Extension over enumeration: future variants land additively
 /// without breaking downstream matchers (RFC-0015 §6.2.7 substrate
 /// additions row 1).

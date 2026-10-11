@@ -16,12 +16,12 @@
 //!
 //! ## Layer discipline
 //!
-//! Per [[cipherocto-design-principles]] §Extension over enumeration: each
+//! Per `docs/architecture/design-principles.md` §Extension over enumeration: each
 //! variant uses a typed discriminator (UUID-style 128-bit or compact enum
 //! for verification methods), NOT a central enum that downstream crates
 //! would have to extend.
 //!
-//! Per [[cipherocto-design-principles]] §No premature coupling: validation
+//! Per `docs/architecture/design-principles.md` §No premature coupling: validation
 //! (`ServiceEndpoint::new`, `VerificationMethod::new`) is pure (no IO,
 //! no async). Cycle detection on controller refs uses a `BTreeSet` for
 //! deterministic ordering (matches the macaroon cycle-detection pattern).
@@ -90,7 +90,7 @@ pub const MAX_CAPABILITY_DELEGATIONS: usize = 10;
 /// The endpoint URI MUST be absolute (per W3C DID Core 1.0 §Service
 /// Endpoint Properties). The `kind` tag is a typed discriminator that
 /// downstream resolvers dispatch on (no central enum; see
-/// [[cipherocto-design-principles]] §Extension over enumeration).
+/// `docs/architecture/design-principles.md` §Extension over enumeration).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(
     feature = "borsh",

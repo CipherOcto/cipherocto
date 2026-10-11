@@ -354,7 +354,7 @@ pub enum ZkMintError {
 ///
 /// **Migration 2026-07-22:** CASM compilation moved out of the stoolap
 /// fork into the cipherocto workspace (`crates/zk-circuit/`, per
-/// [[stoolap-general-purpose-db]]). The compiled hash is computed at
+/// `docs/architecture/stoolap-integration.md`). The compiled hash is computed at
 /// startup via `bundled_casm_hash()` and memoized in a `OnceLock`.
 ///
 /// Real upstream (production pipeline) emits a `bundled.rs` constant from
@@ -425,7 +425,7 @@ fn compute_bundled_casm_hash() -> Result<[u8; 32], zk_circuit::HashError> {
 /// Re-exported from `zk_circuit::BUNDLED_CAIRO_SOURCE` which loads the
 /// real `cairo/src/lib.cairo` (Cairo 2.x scarb package `capability_zk`)
 /// via `include_str!` at compile time. Mission 0958-a Phase B.2
-/// (2026-07-22 extraction per [[stoolap-general-purpose-db]]): real
+/// (2026-07-22 extraction per `docs/architecture/stoolap-integration.md`): real
 /// Cairo source replaces the previous inline JSON stub.
 pub use zk_circuit::BUNDLED_CAIRO_SOURCE;
 

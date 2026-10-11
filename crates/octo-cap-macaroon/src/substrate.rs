@@ -3,7 +3,7 @@
 //!
 //! ## Layer model
 //!
-//! Per `cipherocto-design-principles`, this module is **Layer B** substrate
+//! Per `docs/architecture/design-principles.md`, this module is **Layer B** substrate
 //! (RFC-driven, additive) — the crate is NOT in the Layer A frozen list.
 //! Traits and newtypes declared here are additive per RFC and may take
 //! semver-minor changes under RFC amendment; they are not semver-frozen.
@@ -292,7 +292,7 @@ impl VaultId {
 }
 
 /// Typed 32-byte wrapper for a `SettlementEvent` identity
-/// (RFC-0959 §2.1; canonical home per `cipherocto-design-principles` §Canonical home rule).
+/// (RFC-0959 §2.1; canonical home per `docs/architecture/design-principles.md` §Canonical home rule).
 #[derive(
     Clone,
     Copy,

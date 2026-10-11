@@ -10,7 +10,7 @@
 //!
 //! ## Layer discipline
 //!
-//! Per [[cipherocto-design-principles]]: this is **Layer B additive
+//! Per `docs/architecture/design-principles.md`: this is **Layer B additive
 //! surface** — the CLI (`octo-cli`, Layer C/D) depends downward into
 //! `octo-cap-macaroon` (Layer B); never the reverse. Adding new fields
 //! to these structs is fine; renaming or removing fields is breaking

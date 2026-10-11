@@ -7,7 +7,7 @@
 //! ## Layer discipline
 //!
 //! This crate is `octo-ident` (Layer B per
-//! [[cipherocto-design-principles]] §Layer A/B/C/D/E). The in-memory
+//! `docs/architecture/design-principles.md` §Layer A/B/C/D/E). The in-memory
 //! impl is a test convenience; the production impl lives in
 //! `quota-router-storage` (Layer B-adjacent).
 //!

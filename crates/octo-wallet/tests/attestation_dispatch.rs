@@ -6,7 +6,7 @@
 //! caller that does nothing special goes through the gates rather than
 //! bypassing them.
 //!
-//! ## Per `no-line-refs-anywhere` convention
+//! ## Per `docs/05-process/engineering-rules.md` §No line references in documentation convention
 //!
 //! References use `§symbol-name` form.
 

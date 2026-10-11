@@ -24,7 +24,7 @@
 //!
 //! ## Layer discipline
 //!
-//! Per [[cipherocto-design-principles]] §Layer discipline:
+//! Per `docs/architecture/design-principles.md` §Layer discipline:
 //! - `octo-ident` (Layer B) — `DidWriteCoordinator` trait + `ChainId`
 //! - `octo-identity-resolver-node` (Layer C) — coordinator mediator
 //! - `quota-router-storage` (Layer B-adjacent) — `StoolapDidRegistry`

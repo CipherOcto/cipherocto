@@ -13,7 +13,7 @@
 //! newtype. v1.4 adds:
 //!
 //! 1. RFC-allocated namespace constants (per
-//!    [[cipherocto-design-principles]] §Extension over enumeration).
+//!    `docs/architecture/design-principles.md` §Extension over enumeration).
 //! 2. `Namespace` newtype wrapper with 17-byte canonical serialization.
 //! 3. Validation at the type boundary: `ChainId::new` returns
 //!    `Result<Self, ChainNamespaceError>`; `ChainId::new_unchecked`
@@ -21,7 +21,7 @@
 //!
 //! # Layer discipline
 //!
-//! Per [[cipherocto-design-principles]]:
+//! Per `docs/architecture/design-principles.md`:
 //! - `octo-ident` (Layer B) — `ChainId` + `ChainNamespace` + error.
 //! - `quota-router-storage` (Layer B-adjacent) — `StoolapDidRegistry`
 //!   gains `chain_id` column in a follow-on migration.
@@ -199,7 +199,7 @@ impl Default for ChainId {
 }
 
 /// RFC-allocated namespace discriminant (per
-/// [[cipherocto-design-principles]] §Extension over enumeration).
+/// `docs/architecture/design-principles.md` §Extension over enumeration).
 ///
 /// 128-bit UUID discriminator pattern adapted to a 17-byte canonical
 /// form. The variant byte picks the namespace class (RFC vs user vs

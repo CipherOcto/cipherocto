@@ -50,7 +50,7 @@
 //!
 //! # Layer discipline
 //!
-//! Per [[cipherocto-design-principles]]:
+//! Per `docs/architecture/design-principles.md`:
 //! - `octo-protocol` (Layer A) — `IDENTITY_RESOLVE_CHAIN` payload kind UUID + `HopSignature`.
 //! - `octo-ident` (Layer B) — `DidRegistry` trait (UNCHANGED).
 //! - `octo-identity-resolver-node` (Layer C) — handler + chain types
@@ -718,7 +718,7 @@ mod tests {
         }
         fn calls(&self) -> usize {
             // Relaxed is sufficient for a monotonic test counter
-            // (canonical Rust idiom per [[cargo-fmt-workflow]] style).
+            // (canonical Rust idiom per `docs/05-process/engineering-rules.md` §Format before commit style).
             self.1.load(std::sync::atomic::Ordering::Relaxed)
         }
     }

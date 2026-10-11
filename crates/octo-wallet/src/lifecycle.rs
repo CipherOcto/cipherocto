@@ -13,8 +13,10 @@
 //! This module is Layer B (identity substrate). It does NOT depend on
 //! `octo-transport` (Layer D). Cross-node revocation event fan-out
 //! (the consumer of `IdentityKey::revoked_proof`) ships in a deferred
-//! follow-on mission — see [[grand-design-audit-refactor-2026-08-08]] RFC
-//! amendments + follow-on queue.
+//! follow-on. **No mission is filed for it**, which is the gap: per
+//! `docs/05-process/engineering-rules.md` §Deferred versus unspecified,
+//! a deferral that names no owner is indistinguishable from completed
+//! work once a parent mission rolls it up.
 //!
 //! ## Discriminant representation
 //!

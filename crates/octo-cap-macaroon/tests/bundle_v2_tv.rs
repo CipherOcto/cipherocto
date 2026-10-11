@@ -10,7 +10,7 @@
 //! ## Layer discipline
 //!
 //! Layer 4 extension crate (`octo-cap-macaroon` per
-//! [[cipherocto-design-principles]]). `holder_record_bytes` +
+//! `docs/architecture/design-principles.md`). `holder_record_bytes` +
 //! `discharge_macaroon_bytes` use raw `Vec<u8>` (bytes-indirection
 //! pattern per `bundle_v2.rs` doc §DischargeMacaroon bytes) — NO
 //! `HolderRecord` import, that lives in `quota-router-storage`

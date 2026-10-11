@@ -1,7 +1,7 @@
 //! `IdentityResolverNode` — the identity-resolver specialized-node adapter
 //! (RFC-0871 §Roles and Authorities).
 //!
-//! Layer C crate per [[cipherocto-design-principles]]: per-RFC stability,
+//! Layer C crate per `docs/architecture/design-principles.md`: per-RFC stability,
 //! additive only. Consumes Layer A (`octo-protocol`) + Layer B
 //! (`octo-ident`) and registers as a `NetworkReceiver` via the Layer D
 //! transport (`octo-transport::NodeTransport`).

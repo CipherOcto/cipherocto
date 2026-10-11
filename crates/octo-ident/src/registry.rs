@@ -1,7 +1,7 @@
 //! `DidRegistry` trait — DID document storage substrate (RFC-0010 + v1.5).
 //!
 //! Maps a canonical 32-byte DID hash (`RawDid::hash`, NOT the `WireDid`
-//! typed wrapper — see [[cipherocto-design-principles]] §Stable
+//! typed wrapper — see `docs/architecture/design-principles.md` §Stable
 //! Abstractions Principle) to a `DidDocument` (public_key + revoked flag
 //! + v1.5 rich surface).
 //!
@@ -10,7 +10,7 @@
 //! The trait gains two ADDITIVE methods (`register_in_chain` +
 //! `resolve_in_chain`) with default impls that forward to the
 //! single-chain `register` / `resolve`. This preserves Layer B
-//! back-compat per [[cipherocto-design-principles]] §Stable
+//! back-compat per `docs/architecture/design-principles.md` §Stable
 //! Abstractions Principle — existing impls (`InMemoryDidRegistry`)
 //! continue to compile unchanged. Production storage
 //! (`StoolapDidRegistry` in `quota-router-storage`) overrides
@@ -30,7 +30,7 @@
 //!
 //! ## Layer discipline
 //!
-//! Per [[cipherocto-design-principles]] §Layer A/B/C/D/E:
+//! Per `docs/architecture/design-principles.md` §Layer A/B/C/D/E:
 //! - `octo-ident` (Layer B) — trait + `InMemoryDidRegistry` test impl
 //! - `quota-router-storage` (Layer B-adjacent) — `StoolapDidRegistry`
 //! - `octo-identity-resolver-node` (Layer C) — consumer only; NO dep on

@@ -32,7 +32,7 @@ Implement the `ExecutionEnvelope` object protocol (renamed from `ConsensusSessio
 | RFC-0964 (Constraint Encoding)                                           | Accepted v1.1                | NO (companion)                              |
 | RFC-0957 (Capability Token)                                              | Accepted (2026-07-20)        | YES — capability holder signature           |
 | Mission `missions/claimed/0959-a-ask-pricing-stoolap.md`                 | Claimed (2026-07-20)         | YES — `Receipt` + `Reservation` types       |
-| Mission `missions/archived/completed/0964-a-constraint-encoding-mission` | Claimed (2026-07-23)         | NO (sibling)                                |
+| Mission `missions/archived/completed/0964-a-constraint-encoding` | Claimed (2026-07-23)         | NO (sibling)                                |
 
 ## Type Coverage
 

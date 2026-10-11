@@ -60,6 +60,48 @@ supplies the token-side answer the RFC specifies. The open question in
 §Why this is filed rather than attempted is whether the registry's
 `HolderRecord.ask_id` must agree with it, and it remains open.
 
+## One stub is the origin of three of this arc's findings
+
+The gate sweep's TV9 result turned out to be load-bearing rather than incidental.
+`mint_dual` is where a capability would receive its `Caveat::AskBinding` — the
+RFC's `mint_dual(buyer_did, buyer_holder_pub, ask_id, …)` takes the ask id for
+exactly that reason. So a single unimplemented function explains:
+
+| Gap                                                    | Why it follows                                                 |
+| ------------------------------------------------------ | -------------------------------------------------------------- |
+| RFC-0969 TV9 has no test                               | TV9 is dual-issuance atomicity, which is what `mint_dual` does |
+| No production mint attaches an ask binding             | `mint_dual` is the only path that would                        |
+| The gateway `CapabilityVerifier` has nothing to verify | it would verify an ask-bound capability                        |
+
+Three findings filed separately across this arc are one missing function.
+
+### And two of its three stated blockers were already resolved
+
+`mint_dual`'s own header listed three deferrals. Measured:
+
+| Deferral                                                                                  | State                                                                                                                                   |
+| ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| "RFC-0957-A1 4-arg mint deferred — current `CapabilityToken::mint` is 5-arg with catalog" | **stale.** `mint` now takes exactly `(root_secret, holder, holder_did, initial_caveats)` — no catalog                                   |
+| "BearerCapsule mint with X25519 + ChaCha20-Poly1305 deferred"                             | **still true**                                                                                                                          |
+| "Live `Transaction::insert_dual` deferred stub in 0957-c"                                 | **stale.** `insert_dual` is implemented over a real Stoolap transaction with drop-triggered rollback and a defence-in-depth commit path |
+
+So the stub is blocked on **one** precondition, not three. Nobody re-evaluated
+it because the note reads as current — the same failure as every other stale
+doc this arc found, and the one that costs the most, because a stale blocker
+list is an argument for leaving the work alone.
+
+### The remaining blocker, stated precisely
+
+`BearerCapsule` is a structural stub with the right 3-field wire shape and a
+`new()` constructor, but **no cryptography**: `encrypted_capsule` is arbitrary
+bytes and `seller_signature` is an unverified 64-byte array. Nothing in the
+workspace verifies that signature, and nothing constructs a `BearerCapsule`
+outside tests — so it is inert rather than forgeable today. The real type is
+owned by mission `0959-a1`.
+
+That is the single thread to pull. Unblocking it releases TV9, the ask-binding
+mint, and the verifier path behind it.
+
 ## RFC-0969 gate sweep: three findings, one now closed
 
 The doc sweep was closed, so this round swept the RFC's **own gates** — the

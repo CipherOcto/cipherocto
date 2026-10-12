@@ -455,13 +455,43 @@ The chain is short and specific:
 
 **No new architecture decision is needed.** RFC-0870 G5 puts persistence on the
 minting node and RFC-0957-A1 puts the handle on the catalog; the only thing
-missing is the accessor joining them. The work is ordinary implementation — add
-the method with a default returning `None` so the ten-plus existing impls keep
-compiling, then give `MintHandler` a catalog and insert.
+missing is the accessor joining them.
 
-Recorded as scoped rather than done, because "one missing method plus a wiring
-change across twelve call sites" is implementation work and should start from
-this measurement rather than from the guess that produced the earlier draft.
+### The accessor has landed. The wiring has not.
+
+`CapabilityCatalog::holder_registry()` now exists, defaulting to `None` so the
+ten-plus existing implementations keep compiling. Two tests cover it, and the
+mutation shows which one is load bearing: removing the override from the test
+catalog fails the dispatch test and leaves the default test green. The dispatch
+test mints a real capability, writes a `HolderRecord` through the returned
+reference and reads it back — so a defaulted method nothing overrides could not
+pass it.
+
+The doc comment on the method carries the one rule that matters to callers: `None`
+means **this mint cannot be registered**, not **registration is unnecessary**.
+Silently skipping the write is what produces the current state.
+
+**What remains is the wiring, and it is not symmetric with the accessor.**
+`MintHandler` still has no catalog — it holds an `IdentityKey` and an optional
+spend ledger — and threading one through is twelve call sites across two files.
+More importantly the _store_ has to come from somewhere: the only production
+`HolderRegistry` implementation is `StoolapHolderRegistry`, which needs a Stoolap
+handle, and `WalletNode` has none.
+
+The test registry used for the accessor proof stays **test-local on purpose**. A
+production in-memory `HolderRegistry` would be a new component needing its own
+decision, and RFC-0957-A1 §4 names `StoolapHolderRegistry` as the reference
+implementation rather than asking for one. Building a second store to make the
+wiring convenient would be §No parallel abstractions.
+
+So the honest remaining question is narrow: **does `octo-wallet-node` get a
+Stoolap handle, or does the caller outside the node persist?** Everything above
+that line is now measured rather than assumed.
+
+A closing note on the census guard: it went red the moment the accessor test
+called `HolderRecord::from_capability` from a new file, and recorded it only
+after both its layers agreed the call was below the test-module marker. That is
+the second time this guard has caught a change in this arc.
 
 ## What this unblocked: ask binding is now attachable
 

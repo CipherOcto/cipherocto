@@ -1241,6 +1241,49 @@ fn probe_unverified_linkage(b: &str, c: &str) -> LinkageResult {
          "m4_ffi_calls_are_serialized", "--", "--exact"],
         99,
     ),
+    (
+        # The anti-vacuity half of M-10. The sibling guard is satisfied by a
+        # script that refuses everything, so this one exists to catch exactly
+        # that: a well-formed pair must get past validation and fail later for
+        # an unrelated reason.
+        #
+        # The mutation tightens the integer shape from "any digits" to "one or
+        # two digits", which refuses `1000` — the value this guard passes. The
+        # three hostile cases the sibling asserts all still fail validation, so
+        # both guards stay consistent and only this one moves.
+        "G-ggg: the contacts script rejects valid pagination",
+        "scripts/persist-contacts-bulk.sh",
+        '    if ! [[ "${!numeric}" =~ ^[0-9]+$ ]]; then',
+        '    if ! [[ "${!numeric}" =~ ^[0-9]{1,2}$ ]]; then',
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "m10_persist_contacts_still_accepts_a_valid_pagination_pair", "--", "--exact"],
+    ),
+    (
+        # A recorded "no production impl" set that drifts is a false claim: the
+        # entry says the trait has no real verifier, and a real verifier nobody
+        # recorded is exactly the thing it is meant to make visible.
+        #
+        # Planted in `octo-adapter-irc`, which sits outside octo-cli's closure
+        # so the probe is never compiled. That is the same bargain the earlier
+        # file-scanning entries make: the guard reads the tree, so what matters
+        # is that the text is the shape the guard matches, not that it builds.
+        "G-hhh: an unrecorded bearer verifier appears",
+        "crates/octo-adapter-irc/src/lib.rs",
+        '            "key 20 should be the remaining entry"\n        );\n    }\n}\n',
+        '            "key 20 should be the remaining entry"\n        );\n    }\n}\n'
+        "\n/// Probe: a bearer verifier the recorded stub set does not name.\n"
+        "#[allow(dead_code)]\n"
+        "struct ProbeBearerVerifier;\n"
+        "\n"
+        "#[allow(dead_code)]\n"
+        "impl octo_ident::BearerVerifier for ProbeBearerVerifier {\n"
+        "    fn verify(&self, _token: &str) -> Result<(), String> {\n"
+        "        Err(\"probe\".to_string())\n"
+        "    }\n"
+        "}\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "every_verifier_trait_has_a_production_implementation_or_is_accounted_for", "--", "--exact"],
+    ),
 ]
 # Seven entries were written and withdrawn rather than parked in the table,
 # because an entry that can never go red is worse than no entry at all.

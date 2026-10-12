@@ -3944,3 +3944,79 @@ fn the_wallet_crate_does_not_depend_on_storage() {
         WALLET_STORAGE_IMPORT_SITES.len()
     );
 }
+
+/// Nodes whose `handle_envelope` dispatch arms must each be reachable from a
+/// test in the same file.
+const NODE_DISPATCH_FILES: &[&str] = &[
+    "crates/octo-wallet-node/src/node.rs",
+    "crates/octo-capability-issuer-node/src/node.rs",
+];
+
+/// Every payload kind a node dispatches must be driven through an envelope in
+/// that node's own tests.
+///
+/// A handler tested only by direct call proves the handler works. It says
+/// nothing about whether the node routes to it — a wrong or missing dispatch arm
+/// leaves every handler test green. That is not hypothetical: `octo-wallet-node`
+/// had **zero** envelope tests for four dispatched payload kinds, so the whole
+/// routing layer was untested.
+///
+/// The same shape let mission `0009-cj`'s defect survive: mint and verify each
+/// passed their own tests while nothing spanned the join between them.
+///
+/// Comparing the production region against the test region catches a new
+/// dispatch arm added without a test reaching it.
+#[test]
+fn every_dispatched_payload_kind_is_driven_through_an_envelope_in_tests() {
+    let mut gaps: Vec<String> = Vec::new();
+
+    for rel in NODE_DISPATCH_FILES {
+        let path = workspace_root().join(rel);
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            gaps.push(format!("{rel}: could not read"));
+            continue;
+        };
+
+        let (production, test_region) = match text.find("#[cfg(test)]") {
+            Some(at) => (&text[..at], &text[at..]),
+            None => {
+                gaps.push(format!("{rel}: no test module to check against"));
+                continue;
+            }
+        };
+
+        // Dispatch arms read `k if k == octo_protocol::payload_kind::NAME`.
+        let dispatched: Vec<&str> = production
+            .match_indices("payload_kind::")
+            .map(|(i, _)| &production[i + "payload_kind::".len()..])
+            .filter_map(|rest| {
+                rest.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .map(|end| &rest[..end])
+            })
+            // Constant naming, not type naming: `WALLET_SIGN_ED25519` is a
+            // payload kind, `PayloadKindId` is the type those constants have.
+            .filter(|name| {
+                !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+            })
+            .collect();
+
+        for kind in &dispatched {
+            let needle = format!("payload_kind::{kind}");
+            if !test_region.contains(&needle) {
+                gaps.push(format!(
+                    "{rel}: {needle} is dispatched but no test builds it"
+                ));
+            }
+        }
+    }
+
+    assert!(
+        gaps.is_empty(),
+        "payload kinds dispatched without an envelope-level test: {gaps:?}. A handler \
+         reached only by a direct call in tests proves the handler, not the routing. \
+         Add a test that builds a NodeEnvelope for the kind and calls handle_envelope."
+    );
+}

@@ -90,10 +90,19 @@ impl<'a> SignHandler<'a> {
             .identity
             .sign_prefixed(&req.0)
             .map_err(wallet_error_to_protocol)?;
-        let payload =
-            borsh::to_vec(&sig).map_err(|e| ProtocolError::AuthorizationFailed(e.to_string()))?;
+        // The payload is the raw Ed25519 signature, not a borsh-wrapped
+        // `Vec<u8>`. Borsh framing a length-prefixed vector puts a 4-byte
+        // length header in front of the signature, so the response is 68 bytes
+        // where a consumer reading `verify_prefixed(wire, sig)` — which takes
+        // `sig: &[u8]` — expects the bare 64. A fixed-width Ed25519 signature
+        // needs no length prefix to be unambiguous.
+        //
+        // This was not cosmetic: three tests in this module had been failing
+        // on "Not all bytes read" for exactly this reason, and every envelope
+        // consumer of `WALLET_SIGN_ED25519` would have read a 4-byte length
+        // header as the start of the signature.
         Ok(HandlerOutput::response(
-            payload,
+            sig,
             octo_protocol::payload_kind::WALLET_SIGN_ED25519,
         ))
     }

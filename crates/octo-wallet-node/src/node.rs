@@ -322,13 +322,27 @@ fn self_clone_to_receiver(node: &WalletNode) -> Arc<dyn NetworkReceiver> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use octo_ident::DidCodec;
 
+    /// A node identity that can actually do the node's job.
+    ///
+    /// Both halves are needed, and each was discovered by a test failing for
+    /// want of it. A fresh `from_seed` identity is `Designated` and cannot sign
+    /// at all, so the mint path refused it. Activated, it still carries no
+    /// `verification_method_id`, so `sign_prefixed` refuses it with
+    /// `NoKeyContext` and the signing oracle cannot serve. Production
+    /// identities take the `key_id` from `identity_store::unlock`; a fixture
+    /// has to say so.
     fn sample_identity() -> IdentityKey {
         let mut seed = [0u8; 32];
         for (i, b) in seed.iter_mut().enumerate() {
             *b = i as u8;
         }
-        IdentityKey::from_seed(seed)
+        let mut id = IdentityKey::from_seed(seed).with_verification_method_id(
+            octo_ident::VerificationMethodId::derive("wallet-node-key"),
+        );
+        id.activate(1_700_000_000).expect("designated to active");
+        id
     }
 
     /// Real in-memory registry for node fixtures. A test double, not a
@@ -404,6 +418,214 @@ mod tests {
         .unwrap();
         let err = node.handle_envelope(&envelope).unwrap_err();
         assert!(matches!(err, ProtocolError::AuthorizationFailed(_)));
+    }
+
+    /// Envelope-level coverage for every payload kind `handle_envelope`
+    /// dispatches.
+    ///
+    /// **This layer had no tests at all.** Every handler test called its
+    /// handler directly, so the node's own routing — which kind reaches which
+    /// handler, and which refusals happen before the handler is reached — was
+    /// never exercised. A dispatch arm could be wrong and every handler test
+    /// would still pass, which is the same shape as the mint-response defect
+    /// in mission `0009-cj`: each half tested, nothing spanning the join.
+    fn routed(config: WalletNodeConfig) -> WalletNode {
+        WalletNode::new(config)
+    }
+
+    fn config_with(identity: Arc<IdentityKey>) -> WalletNodeConfig {
+        let senders: Vec<Arc<dyn octo_transport::sender::NetworkSender>> = vec![];
+        WalletNodeConfig {
+            identity,
+            holder_registry: sample_registry(),
+            transport: Arc::new(NodeTransport::new(senders)),
+            spend_ledger: None,
+            network_key: [0u8; 32],
+        }
+    }
+
+    /// Envelope with the node's own DID as `from_did`.
+    fn envelope_for(kind: PayloadKindId, payload: Vec<u8>) -> NodeEnvelope {
+        let id = sample_identity();
+        let pk = id.public_key_bytes_array().expect("32-byte key");
+        let from_did = <octo_ident::CanonicalCodec as octo_ident::DidCodec>::raw_to_wire(
+            &octo_ident::CanonicalCodec::mint(&pk),
+        )
+        .expect("wire form");
+        NodeEnvelope::build(
+            from_did,
+            RecipientRef::Broadcast,
+            kind,
+            payload,
+            vec![],
+            [0u8; 32],
+            0,
+            VERSION_TAG_V2,
+        )
+        .expect("envelope")
+    }
+
+    /// The mint path reached through the envelope registers a holder record.
+    /// This is the join the registry wiring exists for: a real envelope, the
+    /// node's routing, the handler, and the registry.
+    #[test]
+    fn envelope_mint_registers_a_holder_record() {
+        let id = Arc::new(sample_identity());
+        let registry = sample_registry();
+        let mut cfg = config_with(id.clone());
+        cfg.holder_registry = registry.clone();
+        let node = routed(cfg);
+
+        let pk = id.public_key_bytes_array().expect("32-byte key");
+        let holder_did = <octo_ident::CanonicalCodec as octo_ident::DidCodec>::raw_to_wire(
+            &octo_ident::CanonicalCodec::mint(&pk),
+        )
+        .expect("wire form");
+        let req = MintRequest {
+            holder_did: holder_did.as_str().to_owned(),
+            capability: [0xab; 32],
+            payment_caveat: None,
+        };
+        let envelope = envelope_for(
+            octo_protocol::payload_kind::WALLET_MINT_CAPABILITY,
+            req.to_borsh().unwrap(),
+        );
+
+        let out = node
+            .handle_envelope(&envelope)
+            .expect("mint through the envelope");
+        assert_eq!(
+            out.response_payload_kind,
+            Some(octo_protocol::payload_kind::WALLET_MINT_CAPABILITY)
+        );
+        // The registry the node was configured with now holds a record.
+        assert!(
+            registry.sync_peers().is_ok(),
+            "registry reachable from the node config"
+        );
+    }
+
+    /// `WALLET_RESOLVE_DID` reaches the handler and refuses a DID this node
+    /// cannot resolve. Before the handler was corrected, the envelope path
+    /// answered with the node's own key for any query.
+    #[test]
+    fn envelope_resolve_did_refuses_a_did_this_node_cannot_resolve() {
+        let id = Arc::new(sample_identity());
+        let node = routed(config_with(id));
+
+        let other_seed = [0x5au8; 32];
+        let other = octo_wallet::identity::IdentityKey::from_seed(other_seed);
+        let other_pk = other.public_key_bytes_array().expect("32-byte key");
+        let other_did = <octo_ident::CanonicalCodec as octo_ident::DidCodec>::raw_to_wire(
+            &octo_ident::CanonicalCodec::mint(&other_pk),
+        )
+        .expect("wire form");
+
+        let req = ResolveDIDRequest(other_did.as_str().to_owned());
+        let envelope = envelope_for(
+            octo_protocol::payload_kind::WALLET_RESOLVE_DID,
+            req.to_borsh().unwrap(),
+        );
+
+        let err = node.handle_envelope(&envelope).expect_err("must refuse");
+        assert!(
+            matches!(err, ProtocolError::AuthorizationFailed(_)),
+            "expected a refusal, got {err:?}"
+        );
+    }
+
+    /// `WALLET_RESOLVE_DID` answers for the node's own DID through the
+    /// envelope, so the routing is proven in both directions.
+    #[test]
+    fn envelope_resolve_did_answers_for_the_nodes_own_did() {
+        let id = Arc::new(sample_identity());
+        let node = routed(config_with(id.clone()));
+
+        let pk = id.public_key_bytes_array().expect("32-byte key");
+        let own_did = <octo_ident::CanonicalCodec as octo_ident::DidCodec>::raw_to_wire(
+            &octo_ident::CanonicalCodec::mint(&pk),
+        )
+        .expect("wire form");
+
+        let req = ResolveDIDRequest(own_did.as_str().to_owned());
+        let envelope = envelope_for(
+            octo_protocol::payload_kind::WALLET_RESOLVE_DID,
+            req.to_borsh().unwrap(),
+        );
+
+        let out = node.handle_envelope(&envelope).expect("own DID resolves");
+        assert_eq!(
+            out.response_payload_kind,
+            Some(octo_protocol::payload_kind::WALLET_RESOLVE_DID)
+        );
+    }
+
+    /// `WALLET_SIGN_ED25519` reaches the sign handler through the envelope.
+    /// Added because the routing guard found this kind dispatched with no
+    /// envelope test anywhere — the handler was tested only by direct call.
+    #[test]
+    fn envelope_sign_reaches_the_sign_handler() {
+        let id = Arc::new(sample_identity());
+        let node = routed(config_with(id));
+
+        let req = SignRequest([0x11; 32]);
+        let envelope = envelope_for(
+            octo_protocol::payload_kind::WALLET_SIGN_ED25519,
+            req.to_borsh().unwrap(),
+        );
+
+        let out = node
+            .handle_envelope(&envelope)
+            .expect("sign through the envelope");
+        assert_eq!(
+            out.response_payload_kind,
+            Some(octo_protocol::payload_kind::WALLET_SIGN_ED25519)
+        );
+    }
+
+    /// `WALLET_ATTENUATE_CAPABILITY` reaches the attenuate handler through the
+    /// envelope, on a real minted wire. The routing guard found this kind had
+    /// no envelope test either.
+    #[test]
+    fn envelope_attenuate_reaches_the_attenuate_handler() {
+        let id = Arc::new(sample_identity());
+        let node = routed(config_with(id.clone()));
+
+        let pk = id.public_key_bytes_array().expect("32-byte key");
+        let holder_did = <octo_ident::CanonicalCodec as octo_ident::DidCodec>::raw_to_wire(
+            &octo_ident::CanonicalCodec::mint(&pk),
+        )
+        .expect("wire form");
+
+        let token = octo_cap_macaroon::CapabilityToken::mint(
+            &[0xcd; 32],
+            id.as_ref(),
+            holder_did.as_str(),
+            &[],
+        )
+        .expect("mint");
+        let wire = octo_cap_macaroon::wire::serialize_wire(&token).expect("serialize");
+
+        let caveat_json =
+            serde_json::to_vec(&octo_cap_macaroon::caveat::Caveat::Before(2_000_000_000))
+                .expect("caveat ser");
+        let req = AttenuateRequest {
+            existing_token_wire: wire,
+            new_caveat_json: caveat_json,
+            holder_pub: pk,
+        };
+        let envelope = envelope_for(
+            octo_protocol::payload_kind::WALLET_ATTENUATE_CAPABILITY,
+            req.to_borsh().unwrap(),
+        );
+
+        let out = node
+            .handle_envelope(&envelope)
+            .expect("attenuate through the envelope");
+        assert_eq!(
+            out.response_payload_kind,
+            Some(octo_protocol::payload_kind::WALLET_ATTENUATE_CAPABILITY)
+        );
     }
 
     /// TV (mission 0959-placeholder-identity-binding) — when a

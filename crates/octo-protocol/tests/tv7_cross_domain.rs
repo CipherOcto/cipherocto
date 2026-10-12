@@ -5,11 +5,18 @@
 //! dispatches `WALLET_RESOLVE_DID` envelope to the wallet node over
 //! NodeTransport. The envelope carries the asker's claimed DID as `payload`.
 //!
-//! Phase 1 shape: payload carries a DID wire string; the wallet dispatcher
-//! validates the DID via `octo_ident::CanonicalCodec::parse` and returns a
-//! `HandlerOutput` whose payload is the DID wire string echoed back (the
-//! concrete `DidResolutionResult { did, holder_pub, audience_did }` lands in
-//! mission `0871a-wallet-node` + RFC-0957-A1).
+//! Phase 1 shape: payload carries a DID wire string and is echoed back.
+//!
+//! **What this test does not do:** it does not reach the wallet node. This
+//! target has no dependency on `octo-wallet-node`, so `ResolveDIDHandler` is
+//! unreachable from here, and `test_dispatcher` echoes rather than routing.
+//! It covers envelope authorization, signing and dispatch — not DID resolution.
+//! Resolution is covered at the node boundary in `octo-wallet-node`.
+//!
+//! The doc above previously said this dispatches "to the wallet node over
+//! NodeTransport". It does not, and no transport is involved. Recorded rather
+//! than quietly reworded, because the overclaim is what let the resolve
+//! handler's substitution defect go unexamined.
 
 use ed25519_dalek::Signer;
 use ed25519_dalek::SigningKey;

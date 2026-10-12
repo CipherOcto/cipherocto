@@ -89,6 +89,30 @@ verifying key's; the bytes are assembled from the resolved key context rather
 than received. That is the same "algorithm travels out-of-band with the key
 wherever a resolver already exists" decision `0009-e` already took.
 
+> **ANNOTATED 2026-10-12 — three of the five vectors below were FAILING while this
+> mission sat claimed with every acceptance criterion ticked.**
+>
+> The acceptance criterion "Every vector above exists under its specified name
+> and is mutation-checked" was not true. `the_oracle_signature_verifies_under_the_prefix`,
+> `the_oracle_refuses_to_emit_a_bare_digest_signature` and
+> `a_signature_from_one_identitys_oracle_is_refused_by_another` had been red on
+> `Not all bytes read` and were carried forward in later sessions as "pre-existing
+> failures" — which is how a red suite reads as noise.
+>
+> **Cause.** `SignHandler` borsh-serialized the `Vec<u8>` returned by
+> `sign_prefixed`, which prepends a 4-byte length header. The response payload
+> was therefore 68 bytes where every consumer expects the bare 64-byte
+> signature — `verify_prefixed` takes `sig: &[u8]`. Any envelope consumer would
+> have read the length header as the first four bytes of a signature.
+>
+> **Fix.** The handler now emits the raw signature bytes. A fixed-width Ed25519
+> signature needs no length prefix to be unambiguous. All five vectors pass.
+>
+> This is the second mission in this arc found marked complete or landed with
+> its own test vectors absent, after `0957-phase2c`. "The mission is checked off"
+> and "the vectors are green" are different claims, and only one of them is
+> checkable by reading the mission.
+
 ## Test vectors
 
 | Vector                                                        | What it pins                                      |

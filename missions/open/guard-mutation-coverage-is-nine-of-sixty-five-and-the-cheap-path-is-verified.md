@@ -14,7 +14,9 @@ metadata:
 
 ## Status
 
-Open. No guard has been changed. No mutation campaign has been run.
+Partly resolved. The path-dependency guard's blind spot is **fixed** — see §A
+blind spot below. The mutation coverage gap is untouched: no mutation campaign
+has been run and no guard has been added to the harness.
 
 ## The finding
 
@@ -78,12 +80,12 @@ on this path must fail loudly when the binary is older than the test source,
 rather than quietly validating against a stale artifact. Getting that wrong
 produces exactly the false confidence this whole exercise exists to remove.
 
-## A blind spot in one of the guards
+## A blind spot in one of the guards — FIXED
 
 While probing, one mutation produced a surprise: `no_path_dependency_is_declared_and_never_referenced`
 stayed **green** when an unused section-form dependency was planted.
 
-That is the guard working as written, not a bug in the check. Its parse
+That was the guard working as written, not a bug in the check. Its parse
 deliberately skips a dependency spelled as its own table:
 
 ```toml
@@ -96,20 +98,37 @@ made an earlier pass report a crate that does not exist. The section header
 `dependencies.probe_unused_dep` also fails the guard's own table test, which
 looks for a name ending in `dependencies`.
 
-Measured size of the blind spot: the guard examines **305** inline-table path
-dependencies and skips **3**, all in `crates/quota-router-storage/Cargo.toml`.
-A grep of that table shows four section-form dependencies there in total. So
-the guard covers roughly 99 percent of the corpus, and the uncovered remainder
-is real dependencies rather than dead ones — all four are referenced by the
-crate's own sources. Closing the gap should therefore land green, and needs
-verifying rather than assuming.
+Measured size of the blind spot: the guard examined **305** inline-table path
+dependencies and skipped **3**, all in `crates/quota-router-storage/Cargo.toml`.
+A grep of that table shows four section-form dependencies there in total. The
+uncovered remainder was real dependencies rather than dead ones — all four are
+referenced by the crate's own sources — so closing the gap was expected to land
+green.
+
+**Resolution.** The dependency name is now taken from the table header for that
+form, which removes the hazard the skip existed to avoid instead of trading one
+error for another, and the section body is carried along so `optional` and
+`features` — which sit on their own lines in this form — are still skipped.
+
+It landed green, as predicted: all 65 guards pass, and the four real
+section-form dependencies are correctly not reported. The mutation that
+previously slipped through now fails and names `probe_unused_dep`, so the
+original mistake does not survive the fix. The inline form was planted
+separately and still fails.
+
+The rebuild this needed turned out to cost 1.24 seconds and no measurable disk,
+so the reason given below for deferring it — the disk budget — turned out not
+to bind. The deferral was wrong on its own reasoning, which is worth recording:
+the risk that a test-crate rebuild would exhaust the budget was estimated, not
+measured, and estimating a cost you can simply measure is how a small fix gets
+pushed off indefinitely.
 
 ## Acceptance Criteria
 
-- [ ] The section-form path dependency is parsed, with the dependency name taken
+- [x] The section-form path dependency is parsed, with the dependency name taken
       from the table header rather than from the `path` key, which is the whole
       hazard the current skip exists to avoid
-- [ ] That change is verified in both directions: a planted unused
+- [x] That change is verified in both directions: a planted unused
       section-form dependency goes red, and the four real ones stay green
 - [ ] A mutation is added for each guard that reads files at runtime, starting
       with the ones whose names promise the most
@@ -120,20 +139,22 @@ verifying rather than assuming.
       closes, and recorded the way the archived cite sweep recorded its own
       re-count requirement
 
-## Why this is filed rather than fixed
+## Why the rest is filed rather than fixed
 
-The blind-spot fix is small and safe on the evidence above, but it needs a
-recompile of the `octo-cli` test binary, and disk is the binding constraint at
-roughly 8.8G free. Spending that on a one-percent coverage improvement before
-the budget question is settled is the wrong trade, and the mission is worth
-more intact than the fix is urgent.
+The blind-spot fix is done and needs no defence. What remains is the coverage
+gap, and that is not urgent: fifty-six unbacked guards is a large number that
+reads as alarming and is not. These guards were written by adversarial review
+and several were mutation-checked by hand during that work. What is missing is
+the _re-runnable record_, which is what this harness would supply — and the
+cheap path above shows it can be supplied without the disk budget that the full
+harness assumes.
 
-The coverage gap is not urgent at all. Fifty-six unbacked guards is a large
-number that reads as alarming and is not: these guards were written by
-adversarial review and several were mutation-checked by hand during that work.
-What is missing is the _re-runnable record_, which is what this harness would
-supply — and the cheap path above shows it can be supplied without the disk
-budget that the full harness assumes.
+The first draft of this mission deferred the fix on the grounds that a recompile
+would risk the disk budget. That reasoning was estimated rather than measured,
+and the measurement came back at 1.24 seconds and no measurable disk. Recording
+it because the pattern is the general one: an unmeasured cost estimate is
+indistinguishable from a real constraint, and it is the kind that quietly
+defers small work forever.
 
 ## Method note
 

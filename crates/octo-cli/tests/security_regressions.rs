@@ -1063,6 +1063,13 @@ fn dense(s: &str) -> String {
 /// Same rule, same file, opposite outcomes, decided purely by which side of
 /// an unrelated test accessor the code sat on.
 ///
+/// Scope, measured: 28 of the 1089 production `src/` files in the workspace
+/// carry an item-level marker above production code — 2.6%. Small enough that
+/// no guard had gone red because of it, and large enough that the region a
+/// guard was silently not reading was a sixth of a typical affected file.
+/// `octo-policy-storage/src/policy_registry.rs` hides everything past line 12
+/// of 1674.
+///
 /// Both shapes are removed here:
 ///  - `#[cfg(test)] mod NAME { ... }`, brace-matched, which is the common case
 ///  - `#[cfg(test)]` on a single item, dropped through that item's body

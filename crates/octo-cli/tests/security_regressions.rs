@@ -3869,6 +3869,7 @@ fn no_verification_site_pins_its_key_to_a_fixed_size_array() {
 fn no_verification_site_reaches_the_algorithm_registry_by_hand() {
     let root = workspace_root();
     let mut offenders: Vec<String> = Vec::new();
+    let mut files_read = 0usize;
 
     let mut stack: Vec<std::path::PathBuf> = AC11_DISPATCHED.iter().map(|d| root.join(d)).collect();
     while let Some(dir) = stack.pop() {
@@ -3887,6 +3888,7 @@ fn no_verification_site_reaches_the_algorithm_registry_by_hand() {
             let Ok(src) = std::fs::read_to_string(&path) else {
                 continue;
             };
+            files_read += 1;
             let stripped = strip_comments(&src);
             let rel = path
                 .strip_prefix(&root)
@@ -3921,6 +3923,22 @@ fn no_verification_site_reaches_the_algorithm_registry_by_hand() {
          verify_dispatch, so no scan keyed on the dispatch entry point can see them: \
          {offenders:?}. Call verify_dispatch, or take the algorithm through it, so there \
          is one way in."
+    );
+    // Its sibling, `no_verification_site_pins_its_key_to_a_fixed_size_array`,
+    // walks this same `AC11_DISPATCHED` set and floors what it saw. This one
+    // asserted only that it found nothing wrong, which means a walk that stopped
+    // — a crate renamed, the recursion broken, an entry silently dropped from
+    // the constant — reads no files, finds no offenders, and reports green.
+    //
+    // 348 files are reachable today across 10 entries, all of which exist on
+    // disk. The floor sits below that with room for churn, as the sibling's
+    // does: files are removed by ordinary refactoring, and pinning the floor at
+    // the measurement would turn that into a red build.
+    assert!(
+        files_read >= 300,
+        "the registry-reach scan read only {files_read} file(s) across \
+         AC11_DISPATCHED, against a measured 348. A walk that stopped reaching the \
+         tree would otherwise find no offenders and report success."
     );
 }
 

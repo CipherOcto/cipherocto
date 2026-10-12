@@ -119,7 +119,7 @@ impl<'a> MintHandler<'a> {
     }
 
     /// Mint a capability token + emit the canonical macaroon wire form
-    /// (RFC-0957 §3.7; mission 0957-phase2a).
+    /// (RFC-0957 §Wire Format; mission 0957-phase2a).
     ///
     /// # Errors
     /// Returns `ProtocolError::InvalidDid` if `holder_did` is not a
@@ -142,7 +142,7 @@ impl<'a> MintHandler<'a> {
                 .map_err(wallet_error_to_protocol)?,
         };
 
-        // Real macaroon wire form (RFC-0957 §3.7): 3 base64url-no-pad
+        // Real macaroon wire form (RFC-0957 §Wire Format): 3 base64url-no-pad
         // segments separated by `.`. Replaces the Phase 1 MVP
         // `CIPHEROCTO_MINT_V1:<holder_did>` placeholder.
         // NOTE: NOT the response payload after mission

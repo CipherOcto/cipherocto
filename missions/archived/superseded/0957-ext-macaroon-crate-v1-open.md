@@ -49,7 +49,7 @@ Extract the macaroon v1 capability type into a dedicated `crates/octo-cap-macaro
 
 ### Adversary coverage
 
-- [ ] Attenuation invariant (RFC-0957 §3.5) preserved across crate boundary: tests in `crates/octo-cap-macaroon/tests/attenuation.rs` pass
+- [ ] Attenuation invariant (RFC-0957 §Attenuation Invariant) preserved across crate boundary: tests in `crates/octo-cap-macaroon/tests/attenuation.rs` pass
 - [ ] Wire format byte-exact across crate boundary: `cargo test -p octo-cap-macaroon --test wire_v1_roundtrip` + `cargo test -p octo-wallet --tests capability/wire` both pass
 - [ ] Debug redaction preserved: `CapabilityToken`, `Caveat`, `HolderRecord` all retain manual redacting `Debug` impls (per RFC-0957-A1 §Security)
 

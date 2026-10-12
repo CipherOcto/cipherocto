@@ -289,7 +289,6 @@ NaiveDate
 NegativeSqrt
 NetworkMetrics
 NetworkReceiver
-NoAuth
 NoCredentials
 NoMatchingCapability
 NoModels
@@ -453,7 +452,6 @@ ShardStatistics
 ShareCountMismatch
 ShareholderCountMismatch
 ShutdownReason
-SignatureError
 SignatureMalformed
 SigningOut
 SipHash

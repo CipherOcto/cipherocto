@@ -16,15 +16,15 @@ CipherOcto's mesh today has one specialized node type: the Quota Router (RFC-087
 
 CipherOcto's grand-design mission family (RFC-0955 through RFC-0971) defines seven specialized node roles:
 
-| Node | RFC | Today's state |
-|---|---|---|
-| Quota router | RFC-0870 | Reference impl in `crates/quota-router-core/src/node/mod.rs::QuotaRouterNode` |
-| Identity resolver | RFC-0009 + RFC-0010 | DID codec in `crates/octo-ident/`; no mesh node yet |
-| Reputation anchor | RFC-0968 | Substrate in `crates/octo-reputation/`; not network-wired |
-| Capability issuer | RFC-0957-A1 | `CapabilityCatalog` in `crates/octo-wallet/src/capability/macaroon.rs`; gossip via `NodeTransport::broadcast` |
-| Market node | RFC-0959-A1 | `MarketDeliveryEnvelope` substrate; settlement primitives in `octo-wallet/src/capability/settle.rs` |
-| Wallet | (NEW) | `HsmAdapter` exists; not network-participating |
-| Beyond RFC-0871 scope: governance, oracle, identity federation (each = future RFC per Layer C per-RFC model) | TBD | Out of RFC-0871 scope |
+| Node                                                                                                         | RFC                 | Today's state                                                                                                 |
+| ------------------------------------------------------------------------------------------------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Quota router                                                                                                 | RFC-0870            | Reference impl in `crates/quota-router-core/src/node/mod.rs::QuotaRouterNode`                                 |
+| Identity resolver                                                                                            | RFC-0009 + RFC-0010 | DID codec in `crates/octo-ident/`; no mesh node yet                                                           |
+| Reputation anchor                                                                                            | RFC-0968            | Substrate in `crates/octo-reputation/`; not network-wired                                                     |
+| Capability issuer                                                                                            | RFC-0957-A1         | `CapabilityCatalog` in `crates/octo-wallet/src/capability/macaroon.rs`; gossip via `NodeTransport::broadcast` |
+| Market node                                                                                                  | RFC-0959-A1         | `MarketDeliveryEnvelope` substrate; settlement primitives in `octo-wallet/src/capability/settle.rs`           |
+| Wallet                                                                                                       | (NEW)               | `HsmAdapter` exists; not network-participating                                                                |
+| Beyond RFC-0871 scope: governance, oracle, identity federation (each = future RFC per Layer C per-RFC model) | TBD                 | Out of RFC-0871 scope                                                                                         |
 
 Each existing node speaks a slightly different wire format. Quota router has `RouterAnnouncePayload`. Capability issuer has `MarketDeliveryEnvelope`. Reputation has anchor batch gossip. Adding a new node today = invent a new envelope = bridge code per pair.
 
@@ -59,6 +59,7 @@ For each: extract the load-bearing abstraction, identify what CipherOcto already
 **Pattern:** Each module defines a `Msg` type with a `Type()` returning a string (e.g., `"/cosmos.bank.v1beta1.MsgSend"`). The base app's msg router dispatches by `Type()`. IBC adds cross-chain packet semantics: `Packet { source_channel, destination_channel, data, timeout_height, timeout_timestamp }` with ack + timeout callbacks.
 
 **CipherOcto mapping:**
+
 - Module `Msg` → envelope `payload_kind` + payload body
 - Msg router → node-side handler that registers `NetworkReceiver` impls and dispatches per `payload_kind`
 - IBC packet → envelope + `nonce` + `expires_at_unix_ms` (replay defense + TTL); ack = response envelope
@@ -72,6 +73,7 @@ For each: extract the load-bearing abstraction, identify what CipherOcto already
 **Pattern:** Parachains exchange messages via Cross-Consensus Messaging (XCM). XCM instructions are a typed enum (`Xcm::ReserveAssetDeposited`, `Xcm::Transact`, etc.). The relay chain orders messages but doesn't interpret them.
 
 **CipherOcto mapping:**
+
 - Parachain = specialized node
 - XCM instruction = `payload_kind` + `payload` body
 - Relay chain = mesh gossip layer
@@ -91,10 +93,12 @@ For each: extract the load-bearing abstraction, identify what CipherOcto already
 ### 5. W3C DID Resolution + DIDComm v2
 
 **Pattern:**
+
 - **DID Resolution:** `did:method:identifier` → DID Document (verification methods, service endpoints, etc.). Methods are registered with W3C.
 - **DIDComm v2:** Messages addressed by `did:`, encrypted to recipient's public key, signed by sender. Message types are URI strings (`https://didcomm.org/example/1.0/send`).
 
 **CipherOcto mapping:**
+
 - DID Resolution: RFC-0010 canonical DID codec + `DidResolver` trait
 - DIDComm: envelope IS a signed+addressed message; `payload_kind` IS the message type URI
 
@@ -117,6 +121,7 @@ For each: extract the load-bearing abstraction, identify what CipherOcto already
 **Pattern:** Service definition in `.proto` file; method names + request/response types are typed at compile time. Streaming via `stream` keyword.
 
 **CipherOcto mapping:**
+
 - `.proto` service → `payload_kind` (UUID)
 - method request/response → envelope request + response envelope (separate UUIDs or same kind with direction flag)
 - Streaming → mesh gossip + NodeTransport::broadcast
@@ -129,29 +134,29 @@ For each: extract the load-bearing abstraction, identify what CipherOcto already
 
 ### Adopt (ground in CipherOcto's existing substrate)
 
-| Pattern | Source | CipherOcto substrate |
-|---|---|---|
-| Typed message envelope with discriminator | Cosmos SDK msg router, libp2p, gRPC | `NodeEnvelope` with `PayloadKindId([u8; 16])` |
-| DID-bound identity | W3C DID Core | `did:octo:z<base58btc>` per RFC-0010; `WireDid` type |
-| Capability as authorization | RFC-0957 (existing) | `Authorization::Capability(token)` |
-| Caveat discriminator byte | RFC-0965 (existing) | Reused for `PayloadKindId` (16 bytes) + `Authorization::Raw` discriminator (16 bytes) |
-| Attenuation invariant | RFC-0957 §3.5 (existing) | Capabilities presented as auth are subject to attenuation rules |
-| TTL millisecond resolution | RFC-0970 §TV11 (existing) | `expires_at_unix_ms: u64` |
-| Multi-mechanism authorization composition | E capabilities | `Vec<Authorization>` for composition (capability + signature for high-value transitions) |
-| Per-extension crate model | Polkadot parachains, Cosmos SDK modules | Layer E plugin space |
+| Pattern                                   | Source                                     | CipherOcto substrate                                                                     |
+| ----------------------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| Typed message envelope with discriminator | Cosmos SDK msg router, libp2p, gRPC        | `NodeEnvelope` with `PayloadKindId([u8; 16])`                                            |
+| DID-bound identity                        | W3C DID Core                               | `did:octo:z<base58btc>` per RFC-0010; `WireDid` type                                     |
+| Capability as authorization               | RFC-0957 (existing)                        | `Authorization::Capability(token)`                                                       |
+| Caveat discriminator byte                 | RFC-0965 (existing)                        | Reused for `PayloadKindId` (16 bytes) + `Authorization::Raw` discriminator (16 bytes)    |
+| Attenuation invariant                     | RFC-0957 §Attenuation Invariant (existing) | Capabilities presented as auth are subject to attenuation rules                          |
+| TTL millisecond resolution                | RFC-0970 §TV11 (existing)                  | `expires_at_unix_ms: u64`                                                                |
+| Multi-mechanism authorization composition | E capabilities                             | `Vec<Authorization>` for composition (capability + signature for high-value transitions) |
+| Per-extension crate model                 | Polkadot parachains, Cosmos SDK modules    | Layer E plugin space                                                                     |
 
 ### Reject (parallel/conflicting with existing substrate)
 
-| Pattern | Source | Why reject |
-|---|---|---|
-| Central `NodeType` enum | (naive) | Constrains future nodes; use DID self-declaration via `RouterAnnouncePayload` |
-| Central `PayloadKind` enum | (naive) | Constrains to 256 kinds; use 128-bit UUID + raw escape hatch (RFC-0965 pattern) |
-| Central `Authorization` enum without escape | (naive) | Same constraint; add `Authorization::Raw` escape hatch |
-| New transport crate | (would create parallel) | `octo-transport` already provides `NodeTransport` |
-| String-based protocol IDs | libp2p, DIDComm | UUIDs are more rigorous; W3C registration overhead not needed at MVP |
-| Typed XCM-style instruction enum | Polkadot XCM | Upgrade-hostile; UUIDs allow independent node deployment |
-| Method selector from signature hash | Ethereum 4-byte | Too small (256 kinds); UUIDs scale to infinity |
-| Wallet depends on storage | (current `PreSharedKeyVerifier` proposal) | Direct storage coupling is weak; wallet asks nodes, nodes answer |
+| Pattern                                     | Source                                    | Why reject                                                                      |
+| ------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------- |
+| Central `NodeType` enum                     | (naive)                                   | Constrains future nodes; use DID self-declaration via `RouterAnnouncePayload`   |
+| Central `PayloadKind` enum                  | (naive)                                   | Constrains to 256 kinds; use 128-bit UUID + raw escape hatch (RFC-0965 pattern) |
+| Central `Authorization` enum without escape | (naive)                                   | Same constraint; add `Authorization::Raw` escape hatch                          |
+| New transport crate                         | (would create parallel)                   | `octo-transport` already provides `NodeTransport`                               |
+| String-based protocol IDs                   | libp2p, DIDComm                           | UUIDs are more rigorous; W3C registration overhead not needed at MVP            |
+| Typed XCM-style instruction enum            | Polkadot XCM                              | Upgrade-hostile; UUIDs allow independent node deployment                        |
+| Method selector from signature hash         | Ethereum 4-byte                           | Too small (256 kinds); UUIDs scale to infinity                                  |
+| Wallet depends on storage                   | (current `PreSharedKeyVerifier` proposal) | Direct storage coupling is weak; wallet asks nodes, nodes answer                |
 
 ### Design principles
 

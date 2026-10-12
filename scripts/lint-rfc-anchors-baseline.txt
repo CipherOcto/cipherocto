@@ -365,7 +365,6 @@ implicit assumptions ia-6
 implicit assumptions); §4 cross-references: "rfc-0957 §capability" → "rfc-0957 §capabilitytoken state machine"; "rfc-0964 §0
 inbound path
 inference pipeline
-interface segregation
 invalidstatetransition (cli
 json schema validation
 key custody policy
@@ -385,7 +384,6 @@ layer b type renames
 layer b type renames (90+
 layer b type renames (legitimate
 layer direction note
-layer stability
 lifecycle requirements §classa
 lifecycle requirements §role-binding state machine
 lifecycle time bounds

@@ -271,7 +271,7 @@ To bump STWO upstream: increment the `stwo = "=2.1.0"` pin in
 - `deserialize_wire(s, did, pub)` — recovers `CapabilityToken`; discards 4th segment if present.
 - `deserialize_wire_v2(s, did, pub) -> WireV2` — recovers `WireV2 { token, proof_bundle: Option<Vec<u8>> }`.
 
-Base64url no-padding encoding per RFC-0957 §3.7.
+Base64url no-padding encoding per RFC-0957 §Wire Format.
 
 ## Performance targets
 

@@ -1,4 +1,4 @@
-//! Wire format for capability tokens (RFC-0957 §3.7 + RFC-0958 §4 wire).
+//! Wire format for capability tokens (RFC-0957 §Wire Format + RFC-0958 §4 wire).
 //!
 //! v1 wire format (3 segments, base64url no padding):
 //! ```text

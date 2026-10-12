@@ -102,7 +102,7 @@ confirmed those tests operate on `MarketDeliveryEnvelope`
 (RFC-0959-A1 dual-mode market delivery), NOT on wallet mint
 or capability issue response payloads. **No production consumer
 currently decodes the V1 wire form on `response_payload`** — the
-V1 wire form was the canonical macaroon wire (RFC-0957 §3.7)
+V1 wire form was the canonical macaroon wire (RFC-0957 §Wire Format)
 used internally (`serialize_wire`/`deserialize_wire` in
 `octo_cap_macaroon::wire`) but no inbound/outbound envelope
 consumer reads it from the response payload field. The cutover

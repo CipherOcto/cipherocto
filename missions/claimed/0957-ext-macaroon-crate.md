@@ -54,7 +54,7 @@ Extract the macaroon v1 capability type into a dedicated `crates/octo-cap-macaro
 
 ### Adversary coverage
 
-- [x] Attenuation invariant (RFC-0957 §3.5) preserved across crate boundary: `caveat.rs::tests` cover `set_subsumes` monotonicity + `macaroon.rs::tests::verify_full_enforces_attenuation_subsumption` + 10K prop test for random monotonic caveat sequences
+- [x] Attenuation invariant (RFC-0957 §Attenuation Invariant) preserved across crate boundary: `caveat.rs::tests` cover `set_subsumes` monotonicity + `macaroon.rs::tests::verify_full_enforces_attenuation_subsumption` + 10K prop test for random monotonic caveat sequences
 - [ ] Wire format byte-exact across crate boundary: deferred to Phase 2b (wire.rs migration)
 - [x] Debug redaction preserved: `CapabilityToken`, `Caveat`, `HolderRecord` retain manual redacting `Debug` impls (carried verbatim from octo-wallet source)
 

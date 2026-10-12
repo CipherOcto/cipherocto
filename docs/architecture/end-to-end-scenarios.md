@@ -933,7 +933,7 @@ PolicyReference = { policy_id: [u8; 32], policy_version_seq: u64, attenuation_wi
 PaymentCaveat = { caveat_name: String, budget: MicroOctoW, model: String, expires_at_unix_ms: u64 }
 ```
 
-Subsumption rule reference: `set_subsumes(parent, child)` at `crates/octo-cap-macaroon/src/caveat/mod.rs` enforces monotonic narrowing per RFC-0957 §3.5.
+Subsumption rule reference: `set_subsumes(parent, child)` at `crates/octo-cap-macaroon/src/caveat/mod.rs` enforces monotonic narrowing per RFC-0957 §Attenuation Invariant.
 Each variant's child ← parent rule is documented inline in the source — examples:
 `ValidRange` (child range ⊆ parent range), `AuditWindow` (child duration ≥ parent per R7-F8),
 `WrappedOnly` (`parent_capability` hash equality), `Factory` (full canonical-vector equality).

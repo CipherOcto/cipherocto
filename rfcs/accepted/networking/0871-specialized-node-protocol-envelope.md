@@ -410,7 +410,7 @@ pub enum ProtocolError {
 | `octo-ident` is Layer 1 (decades-stable)                              | All `from_did` fields validated via `octo_ident::CanonicalCodec` | If octo-ident changes shape, all envelopes break         | RFC-0010 locks the codec; Layer 1 freeze                  |
 | `octo-transport::NodeTransport` continues to provide fan-out + fan-in | Envelope routing                                                 | If transport semantics change, envelope reception breaks | octo-transport is Layer 1; RFC-0870 already depends on it |
 | Ed25519 remains the canonical signing curve                           | All signature auth                                               | Curve migration is breaking                              | RFC-0853 §F1 lists PQC migration as future work           |
-| RFC-0957 attenuation invariant holds                                  | `Authorization::Capability` verification                         | If invariant breaks, capabilities can be weakened        | RFC-0957 §3.5 is type-level enforced                      |
+| RFC-0957 attenuation invariant holds                                  | `Authorization::Capability` verification                         | If invariant breaks, capabilities can be weakened        | RFC-0957 §Attenuation Invariant is type-level enforced    |
 | Wallet has access to a clock for TTL checks                           | `expires_at_unix_ms` enforcement                                 | If clock skew, false accept/reject                       | RFC-0970 §Replay Protection handles skew tolerance        |
 | Mesh routing is best-effort                                           | `RecipientRef::Broadcast`                                        | If mesh partition, envelopes may not arrive              | Existing gossip retry (RFC-0862)                          |
 
@@ -428,7 +428,7 @@ pub enum ProtocolError {
 | -------------------------- | -------------------------------------------------------------------------------- |
 | Replay attack              | `envelope_id` uniqueness + `nonce` per-(sender, node_type) cache + TTL           |
 | Signature forgery          | Ed25519 verification per signature; RFC-0970 §Crypto substrate                   |
-| Capability weakening       | RFC-0957 §3.5 attenuation invariant type-level enforced                          |
+| Capability weakening       | RFC-0957 §Attenuation Invariant attenuation invariant type-level enforced        |
 | Cross-domain trust         | Each node type declares own trust root via `RouterAnnouncePayload`               |
 | TTL skew                   | Tolerance window per RFC-0970 §Replay Protection                                 |
 | DID spoofing               | `octo_ident::CanonicalCodec::parse()` validates canonical wire form              |
@@ -449,7 +449,7 @@ pub enum ProtocolError {
 - Threat actor: holder of compromised low-tier key attempting unauthorized capability issuance
 - What they gain: ability to mint capabilities without being the registered issuer
 - Adversary action: mint `CapabilityToken` without being the issuer
-- Defense: RFC-0957 §3.5 invariant + Ed25519 sig on token mint
+- Defense: RFC-0957 §Attenuation Invariant invariant + Ed25519 sig on token mint
 
 **A3 — Cross-domain trust escalation:**
 
@@ -544,7 +544,7 @@ Test vectors below use a fixed test identity for reproducibility. The seed byte 
 
 **Expected output:** Receiver validates ALL authorizations (logical AND):
 
-- `Authorization::Capability(token)`: RFC-0957 §3.5 attenuation invariant holds + every caveat satisfied (caveat check is local per RFC-0965 §Caveat type enumeration)
+- `Authorization::Capability(token)`: RFC-0957 §Attenuation Invariant attenuation invariant holds + every caveat satisfied (caveat check is local per RFC-0965 §Caveat type enumeration)
 - `Authorization::Signature`: ed25519 verification over the §Algorithms step-3 preimage passes
 - Both succeed → envelope accepted; payload dispatched to `payload_kind` handler
 - Either fails → envelope rejected with `ProtocolError::AuthorizationFailed`
@@ -647,7 +647,7 @@ The full byte-exact parity is verified by two complementary mechanisms:
 | Cross-chain anchoring (specialized node ↔ external chain)                                                                                                           | TBD        | post-v2.0                          | RFC-0968 reputation extension                                         |
 | DID method registration with W3C (RFC-0009 §IA-4)                                                                                                                   | @mmacedoeu | post-v1.0                          | RFC-0009 IA-4                                                         |
 | PQC identity substrate (RFC-0853 §F1)                                                                                                                               | TBD        | post-v2.0 (PQC migration timeline) | RFC-0853 §F1                                                          |
-| Capability delegation chains (wallet → issuer → downstream capability holder)                                                                                       | TBD        | post-v2.0                          | RFC-0957 §3.5 attenuation extension                                   |
+| Capability delegation chains (wallet → issuer → downstream capability holder)                                                                                       | TBD        | post-v2.0                          | RFC-0957 §Attenuation Invariant attenuation extension                 |
 | Paid query subscription model (pre-paid capacity, drain over time)                                                                                                  | TBD        | post-v2.0                          | Phase 5 mission (file at promotion)                                   |
 | Cross-domain DID resolution (resolver chains across specialized nodes)                                                                                              | TBD        | post-v2.0                          | RFC-0009 §Future Work                                                 |
 | Mesh routing QoS (per-payload-kind priority in `SendContext`)                                                                                                       | TBD        | post-v2.0                          | RFC-0870 transport extension                                          |

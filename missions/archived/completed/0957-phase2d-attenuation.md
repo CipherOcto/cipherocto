@@ -15,7 +15,7 @@ attenuation path:
    mission 0957-phase2a) → `CapabilityToken`.
 2. Append the requested typed caveat via
    `CapabilityToken::attenuate(new_caveat, catalog)` (per
-   RFC-0957 §3.5 — monotonic narrowing; existing caveats preserved).
+   RFC-0957 §Attenuation Invariant — monotonic narrowing; existing caveats preserved).
 3. Re-serialize via `serialize_wire(&attenuated_token)` (the v1 wire
    form).
 4. Emit the new wire form as the response payload.

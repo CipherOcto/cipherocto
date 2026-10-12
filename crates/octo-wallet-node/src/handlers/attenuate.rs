@@ -2,7 +2,7 @@
 //!
 //! Receives: `<existing_token_wire: String, new_caveat: Caveat>`.
 //! Returns: `<attenuated_token_wire: String>` — the v1 macaroon wire
-//! form per RFC-0957 §3.7.
+//! form per RFC-0957 §Wire Format.
 //!
 //! Phase 2 (mission 0957-phase2d): real macaroon attenuation via
 //! `CapabilityToken::attenuate(new_caveat, catalog)`. The placeholder
@@ -155,7 +155,7 @@ impl<'a> AttenuateHandler<'a> {
             .attenuate_with_signer(new_caveat, self.identity, &self.catalog)
             .map_err(wallet_error_to_protocol)?;
 
-        // Real wire form (RFC-0957 §3.7). Replaces the Phase 1 MVP
+        // Real wire form (RFC-0957 §Wire Format). Replaces the Phase 1 MVP
         // `CIPHEROCTO_MINT_V1_ATTENUATED:*` placeholder.
         let new_wire = serialize_wire(&attenuated).map_err(wire_error_to_protocol)?;
 

@@ -4054,6 +4054,20 @@ const EXACT_VECTOR_NAME_CLAIM: &str = "exists under its specified name";
 /// Calibration mattered: the first version of this scan reported 51 missions,
 /// which was wrong in both directions until the type-name and rename confusions
 /// were removed.
+///
+/// **Measured reach, so the list below is not mistaken for coverage.** Across
+/// the mission tree, 4 of 174 `claimed` missions make the claim. `archived`
+/// contributes 0 of 302, `open` 0 of 62, and `deferred` 0 of 8 — the four
+/// directories that make no claim are therefore not scanned, and adding them
+/// would check nothing today. This guard protects four missions. Its value is
+/// that those four cannot rot silently and that the next mission making an
+/// exact-name claim is checked the moment it is filed under `claimed`.
+///
+/// A different shape of check was measured and rejected. Finding enforcement-
+/// named functions with test references but no production reference yields 43
+/// hits, and most are false positives: trait dispatch, macros and re-exports
+/// all read as zero textual references. Forty-three findings with a known
+/// false-positive mechanism is a census, not a check.
 #[test]
 fn missions_claiming_named_vectors_have_those_names_in_the_tree() {
     let root = workspace_root();

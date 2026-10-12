@@ -139,6 +139,60 @@ failed twice. Whether it fits cannot be established from a workstation.
       default feature set, or the stub is explicitly documented as
       intentional and permanent
 
+## The wider census: every feature-gated test CI does not run
+
+`stoolap` is an instance, not the whole class. Every test function gated
+behind a whole-file `#![cfg(feature = ...)]`, with the feature's declared
+dependencies, and whether CI runs it:
+
+| Feature                    | Tests | Feature pulls in                       | CI runs it?                               |
+| -------------------------- | ----- | -------------------------------------- | ----------------------------------------- |
+| `stoolap`                  | 69    | `serde_json`, `octo-storage-core`      | **No**                                    |
+| `real-network`             | 73    | `grammers-client`, `grammers-tl-types` | No — needs live Telegram credentials      |
+| `live-matrix`              | 14    | _(none)_                               | No — needs a live Matrix homeserver       |
+| `real-tdlib`               | 12    | `tdlib-rs` + a TDLib download          | No — needs TDLib                          |
+| `live-whatsapp`            | 3     | `test-helpers`                         | No — needs a live session                 |
+| `octo-attach-key-rotation` | 7     | _(none)_                               | **No**                                    |
+| `crdt`                     | 2     | —                                      | No                                        |
+| `octo-audit-internal`      | 1     | _(none)_                               | **No**                                    |
+| `testing` (octo-vault)     | 1     | _(none)_                               | **No**                                    |
+| `query`                    | 1     | `tantivy`, `candle`, `tokenizers`      | No — documented as a RAM-budget exclusion |
+| `otlp`                     | 1     | `opentelemetry` stack                  | No                                        |
+| `hex-ids`                  | 3     | _(none)_                               | **Yes** — dedicated step exists           |
+
+Two things follow.
+
+**The live and external-dependency exclusions are correct.** `real-network`,
+`live-matrix`, `real-whatsapp` and `real-tdlib` need credentials or a hosted
+service. Nothing should change there.
+
+**Four features gate tests and pull in nothing at all.** `hex-ids`,
+`octo-attach-key-rotation`, `octo-audit-internal` and `testing` have empty
+dependency lists, so there is no build-budget reason to exclude them — which
+is precisely the reasoning `ci.yml` already applies when it adds the
+`hex-ids` step. Three of the four have no step.
+
+All three uncovered ones were run locally and pass:
+
+| Command                                                                | Result               |
+| ---------------------------------------------------------------------- | -------------------- |
+| `cargo test -p octo-runtime --features octo-attach-key-rotation --lib` | 102 passed, 0 failed |
+| `cargo test -p octo-audit-core --features octo-audit-internal --lib`   | 6 passed, 0 failed   |
+| `cargo test -p octo-vault --features testing --lib`                    | 72 passed, 0 failed  |
+
+So none of this is a defect. It is the same coverage gap as `stoolap`, three
+more instances of it, and every one of them is free to fix — an empty feature
+costs no extra dependencies to compile.
+
+## A near-miss worth recording
+
+The same census appeared to implicate `zk-verifier`, whose twelve library
+tests no `zk-capability-circuit.yml` step runs. It does not: `zk-verifier`
+lives under `crates/*`, so `ci.yml`'s `cargo test --workspace` covers it. The
+distinction that matters is **feature-gated versus workspace-excluded** —
+only the former escapes the default-features test run. Worth stating because
+the two look identical from the workflow file alone.
+
 ## Related
 
 The third acceptance criterion is the deeper one. A stub that silently answers

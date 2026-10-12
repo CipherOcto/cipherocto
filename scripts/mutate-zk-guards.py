@@ -24,6 +24,7 @@ Usage: python3 scripts/mutate-zk-guards.py [--only SUBSTRING]
 """
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -369,16 +370,89 @@ def release_lock():
     LOCKFILE.unlink(missing_ok=True)
 
 
+def octo_cli_closure(root: pathlib.Path) -> set[str]:
+    """Workspace crates cargo must build to run `cargo test -p octo-cli`.
+
+    Derived from the manifests on every run rather than recorded in the file, so
+    a crate that gains or loses a dependency edge reclassifies its mutations
+    automatically. A hand-maintained cost column would be the same kind of stale
+    claim this harness exists to disprove.
+    """
+    crates = {p.name for p in (root / "crates").iterdir() if p.is_dir()}
+
+    def deps_of(name: str) -> set[str]:
+        manifest = root / "crates" / name / "Cargo.toml"
+        if not manifest.exists():
+            return set()
+        text = manifest.read_text(encoding="utf-8", errors="replace")
+        found = set()
+        for other in crates:
+            if re.search(rf"^\s*{re.escape(other)}\s*=", text, re.M):
+                found.add(other)
+            elif f'path = "../{other}"' in text:
+                found.add(other)
+        return found
+
+    seen: set[str] = set()
+    stack = ["octo-cli"]
+    while stack:
+        name = stack.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        stack.extend(deps_of(name) - seen)
+    return seen
+
+
+def mutation_cost(rel: str, closure: set[str]) -> str:
+    """`free` when mutating the file cannot invalidate a fingerprint cargo needs.
+
+    A mutation costs a recompile only when it edits something cargo actually
+    compiles: a crate's Rust sources or its manifest. Anything else — a markdown
+    mission, a shell script under `scripts/` — is not a build input, so changing
+    it leaves every fingerprint intact.
+
+    Keying on the path rather than on the extension matters. The first version of
+    this treated anything outside `crates/` as a rebuild, which misfiled four
+    mutations that edit `scripts/swap_sessions.sh`: cargo never reads it, so they
+    are free, and `--cheap` would have skipped work it could have done.
+    """
+    path = pathlib.Path(rel)
+    if not (path.suffix == ".rs" or path.name == "Cargo.toml"):
+        return "free"
+    parts = path.parts
+    if len(parts) > 1 and parts[0] == "crates":
+        return "rebuild" if parts[1] in closure else "free"
+    return "free"
+
+
 def main():
     acquire_lock()
-    # `--only SUBSTRING` runs a subset. A red-team entry that mutates a crate in
-    # octo-cli's dependency closure forces a recompile, so running the whole
-    # table is expensive enough that people skip it. Being able to run one entry
-    # is what keeps a specific claim re-checkable between full sweeps.
+    # `--only SUBSTRING` runs a subset. `--cheap` runs every entry that needs no
+    # recompile. A red-team entry that mutates a crate in octo-cli's dependency
+    # closure forces a rebuild, so running the whole table is expensive enough
+    # that people skip it — and being able to run the affordable half, or one
+    # entry, is what keeps a specific claim re-checkable between full sweeps.
     selected = MUTATIONS
-    if len(sys.argv) > 2 and sys.argv[1] == "--only":
-        needle = sys.argv[2]
-        selected = [m for m in MUTATIONS if needle in m[0]]
+    cheap_only = False
+    args = sys.argv[1:]
+    if args and args[0] == "--list":
+        closure = octo_cli_closure(ROOT)
+        for label, rel, *_ in MUTATIONS:
+            print(f"  {mutation_cost(rel, closure):8s} {label}")
+        release_lock()
+        return 0
+    if args and args[0] == "--cheap":
+        closure = octo_cli_closure(ROOT)
+        cheap_only = True
+        selected = [m for m in MUTATIONS if mutation_cost(m[1], closure) == "free"]
+        if not selected:
+            print("no mutation is free of a recompile")
+            release_lock()
+            return 2
+    if len(args) > 1 and args[0] == "--only":
+        needle = args[1]
+        selected = [m for m in selected if needle in m[0]]
         if not selected:
             print(f"no mutation label contains {needle!r}")
             release_lock()

@@ -13,7 +13,7 @@
 //! - The signature verifier is **not** delegated to by every store
 //!   implementation. The suspension and slash paths do; the retirement path
 //!   does not, and cannot — `GovernanceProof` carries no algorithm field to
-//!   dispatch on. See `missions/deferred/0968-b-governance-proof-verification.md`.
+//!   dispatch on. See `missions/deferred/0968-c-governance-proof-verification.md`.
 //! - The **quorum** check is a count, not a quorum. `quorum_count` is
 //!   `members.len()`: it does not check the members are distinct and nothing
 //!   is verified about any of them. RFC-0968 presents the governance-set
@@ -164,7 +164,7 @@ pub struct GovernanceProof {
     /// [`verify_governance_signature`] takes the algorithm as an argument.
     ///
     /// The retirement path takes this type and does not verify it at all. See
-    /// `missions/deferred/0968-b-governance-proof-verification.md`. Wiring
+    /// `missions/deferred/0968-c-governance-proof-verification.md`. Wiring
     /// retirement to the verifier therefore needs an algorithm on this record
     /// or a switch to `SuspensionAuth`; neither is a local change.
     pub signature: Vec<u8>,

@@ -10,8 +10,13 @@
 //! 1. **Per-adapter sustained parity `parity_score >= 0.999`** across
 //!    24 CONSECUTIVE 1-hour rolling buckets with `bucket_total >= 10`
 //!    each. Sparse-traffic buckets break the chain.
-//! 2. Operator-supplied `GovernanceProof` (mission 0968-b retirement
-//!    declaration) confirms the elapsed window.
+//! 2. **NOT IMPLEMENTED.** An operator-supplied `GovernanceProof` was to
+//!    confirm the elapsed window. [`ParityDaemonState::retirement_eligible`]
+//!    takes no proof and decides on bucket counts alone, so today a caller
+//!    reaching it has supplied no authorisation at all. The
+//!    `declare_retirement_eligible` entry point that would carry such a proof
+//!    shape-checks it without verifying a signature — see
+//!    `missions/deferred/0968-c-governance-proof-verification.md`.
 //! 3. **PARITY_GATE_DEADLINE_UNIX = now + 90 days** auto-retires the
 //!    legacy stores regardless of parity score, provided
 //!    `INVALID_TRIPLES / total_triples < 1e-6`. Hard deadline enforced

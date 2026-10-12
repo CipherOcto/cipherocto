@@ -1,5 +1,5 @@
 ---
-name: 0968-b-governance-proof-verification
+name: 0968-c-governance-proof-verification
 description: Retirement authorisation runs through stub_verify_proof_shape, which performs no cryptographic verification. The set-hash check is self-consistency between two caller-supplied fields, the quorum check counts entries in a caller-supplied Vec without checking distinctness, and the signature check is a byte length on bytes that are never parsed. The same struct is fully verified on the suspension and slash paths through verify_governance_signature, so the retirement path is the outlier rather than an unimplemented subsystem. RFC-0968 also requires the governance set hash to be checked against GovernanceRegistry::lookup_at_snapshot, which does not exist in the tree.
 metadata:
   node_type: mission
@@ -10,7 +10,15 @@ metadata:
     - RFC-0968
 ---
 
-# Mission `0968-b-governance-proof-verification`
+# Mission `0968-c-governance-proof-verification`
+
+> **Numbered `0968-c`, not `0968-b`.** `0968-b` is
+> `0968-b-marketplace-integration` — archived, completed, and referenced from
+> RFC-0968 and a dozen other mission files. An earlier draft of this filing
+> took `0968-b` and collided with it. The collision was found by a comment in
+> `parity_daemon.rs` that cites "mission 0968-b retirement declaration", which
+> turns out to be a _different_ retirement: the legacy-store retirement gate
+> owned by `0968-b-marketplace-integration`, not recorder retirement.
 
 > **DEFERRED — the set-hash half needs a governance registry that does not exist.**
 >
@@ -166,6 +174,26 @@ Those three claims are corrected in the module and function docs as part of
 this filing. A fourth, on `GovernanceProof::signature`, claimed the
 verifier is one "every store implementation delegates to" — it is corrected
 in §Why it is not a one-line fix. What remains is the verification itself.
+
+## A fourth site: the legacy-store retirement gate
+
+`parity_daemon.rs` documents its gate as four items, the second being an
+operator-supplied `GovernanceProof` confirming the elapsed window. That gate
+belongs to `0968-b-marketplace-integration`, which is **archived as
+completed**.
+
+`ParityDaemonState::retirement_eligible(&self, required, threshold)` takes no
+proof and decides on bucket counts alone. Its own test,
+`twenty_four_passing_buckets_unlock_retirement`, asserts retirement unlocks
+after 24 passing buckets with no authorisation involved.
+
+So the completed mission's gate documents an authorisation requirement the
+shipped code does not carry. The two halves connect: `declare_retirement_eligible`
+is where such a proof would be checked, and it verifies nothing.
+
+The doc is corrected as part of this filing. This is noted rather than filed
+separately because it is the same missing verification, reached from a
+different direction, and splitting it would give the same finding two homes.
 
 ## What still has to be decided
 

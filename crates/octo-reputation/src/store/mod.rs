@@ -113,7 +113,7 @@ pub trait ReputationStore: Send + Sync {
     /// set-hash check beside it compares two caller-supplied fields rather
     /// than looking the set up. The signature is the load-bearing check on
     /// this path; the quorum signal is not one. See
-    /// `missions/deferred/0968-b-governance-proof-verification.md`.
+    /// `missions/deferred/0968-c-governance-proof-verification.md`.
     async fn verify_governance_suspension(
         &self,
         auth: &SuspensionAuth,
@@ -146,7 +146,7 @@ pub trait ReputationStore: Send + Sync {
     /// This is the one governance entry point that does not delegate to
     /// `auth::verify_governance_signature`, and it cannot as written:
     /// `GovernanceProof` carries no algorithm field to dispatch on. See
-    /// `missions/deferred/0968-b-governance-proof-verification.md`.
+    /// `missions/deferred/0968-c-governance-proof-verification.md`.
     async fn declare_retirement_eligible(
         &self,
         adapter: u8,

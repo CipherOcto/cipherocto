@@ -35,7 +35,7 @@
 //! A caller who can reach this function can therefore produce a `GovernanceProof`
 //! that passes it without holding a governance key: a fresh `finalized_at_unix`,
 //! a set hash matching itself, three members, and 96 bytes of anything. What
-//! is missing is tracked in `missions/deferred/0968-b-governance-proof-verification.md`.
+//! is missing is tracked in `missions/deferred/0968-c-governance-proof-verification.md`.
 //!
 //! Returns `RetirementEligibility { eligible, since_unix, evidence_hash, adapter }`
 //! on success. The `evidence_hash` is the canonical envelope:
@@ -103,7 +103,7 @@ fn known_adapter(a: u8) -> bool {
 /// set hash checked against the governance registry's active-set digest.
 ///
 /// Real signature verification is deferred. See the module docs and
-/// `missions/deferred/0968-b-governance-proof-verification.md`.
+/// `missions/deferred/0968-c-governance-proof-verification.md`.
 pub fn stub_verify_proof_shape(
     proof: &GovernanceProof,
     now_unix: u64,

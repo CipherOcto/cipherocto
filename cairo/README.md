@@ -10,15 +10,16 @@ orthogonal to SQL. The stoolap fork is untouched by this mission.
 ## Phase B.2 scope (LANDED 2026-08-04)
 
 This mission lands the **Cairo 2.x source rewrite + scarb build pipeline
-+ in-process Sierra→CASM pass** (mission 0958-a Phase B.2; commits
-`ae4dc4f8` Session 1 + `9c996fba` Sessions 2 + 3 redo):
 
-- `cairo/Scarb.toml` — scarb 2.20.0 project manifest
-- `cairo/src/lib.cairo` — Cairo 2.x source (structs, `assert!` macro, lib target)
-- `crates/zk-circuit/tests/casm_snapshot.rs` — Rust smoke test that invokes
+- in-process Sierra→CASM pass** (mission 0958-a Phase B.2; commits
+  `ae4dc4f8` Session 1 + `9c996fba` Sessions 2 + 3 redo):
+
+* `cairo/Scarb.toml` — scarb 2.20.0 project manifest
+* `cairo/src/lib.cairo` — Cairo 2.x source (structs, `assert!` macro, lib target)
+* `crates/zk-circuit/tests/casm_snapshot.rs` — Rust smoke test that invokes
   `scarb build`, parses the Sierra IR, drives the in-process
   `cairo-lang-sierra-to-casm` 2.20.0 pass, asserts CASM byte-determinism
-  + BLAKE3 hash shape
+  - BLAKE3 hash shape
 
 ## Why scarb and not `cairo-compile`
 
@@ -58,6 +59,7 @@ CASM bytecode → BLAKE3 hash → bundled_casm_hash()
 ## Determinism contract
 
 The Rust smoke test (`crates/zk-circuit/tests/casm_snapshot.rs`) verifies:
+
 1. `scarb build` succeeds.
 2. Sierra IR is valid JSON with `version:1`.
 3. The `funcs` array includes `capability_zk::main`.

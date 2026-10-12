@@ -55,12 +55,12 @@ All six design axes (D1-D6) have final decisions. Per-asset variation uses **typ
 
 ### 1.1 Three named sites still say "micro-OCTO" (audit §D)
 
-| Site | Code | Issue |
-|---|---|---|
-| `crates/quota-router-storage/src/ask.rs:41` | `pub const MICRO_PER_OCTOW: Dqa = Dqa { value: 1_000_000, scale: 0 }` | Constant name bakes "1 OCTO = 1_000_000 micro" framing; per-asset generalization impossible without renaming. |
-| `crates/octo-policy/src/policy_kinds.rs:263` + `crates/octo-policy/src/workflow_kind.rs:313,461,477` + `rfcs/accepted/process/0206-v30-value-transfer-surface.md:65-121` | `pub amount_dqa_micros: i64` | Field name encodes the scale; i64 carrier assumes scale = 0 universally. |
-| `crates/octo-network/src/porelay/economics.rs:131` | `RELAY_RATE_B_MICRO_OCTO_PER_GB: u64 = 100_000` | Per-OCTO-B-asset rate named for micro-OCTO. |
-| `crates/octo-network/src/drs/scoring.rs:8` | "All weights are micro-units (0-1_000_000). Total must equal 1_000_000." | Same framing in scoring weights. |
+| Site                                                                                                                                                                     | Code                                                                     | Issue                                                                                                         |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `crates/quota-router-storage/src/ask.rs:41`                                                                                                                              | `pub const MICRO_PER_OCTOW: Dqa = Dqa { value: 1_000_000, scale: 0 }`    | Constant name bakes "1 OCTO = 1_000_000 micro" framing; per-asset generalization impossible without renaming. |
+| `crates/octo-policy/src/policy_kinds.rs:263` + `crates/octo-policy/src/workflow_kind.rs:313,461,477` + `rfcs/accepted/process/0206-v30-value-transfer-surface.md:65-121` | `pub amount_dqa_micros: i64`                                             | Field name encodes the scale; i64 carrier assumes scale = 0 universally.                                      |
+| `crates/octo-network/src/porelay/economics.rs:131`                                                                                                                       | `RELAY_RATE_B_MICRO_OCTO_PER_GB: u64 = 100_000`                          | Per-OCTO-B-asset rate named for micro-OCTO.                                                                   |
+| `crates/octo-network/src/drs/scoring.rs:8`                                                                                                                               | "All weights are micro-units (0-1_000_000). Total must equal 1_000_000." | Same framing in scoring weights.                                                                              |
 
 **User concern surfaced 2026-08-26**: naming must be asset-generic. A corporate-chain mirror of BTC (asset_id derived from `BLAKE3("cipherocto/asset/v1/" || "PRIVATE-<chain_id_hex>-BTC-MIRROR")`) at 8 decimals has no relation to OCTO; "MICRO_PER_OCTOW" makes no sense as a unit for it.
 
@@ -78,12 +78,12 @@ The substrate type CAN carry per-asset scale (`Dqa { value: i64, scale: u8 }` pe
 
 `crates/octo-cap-macaroon/src/caveat/payment.rs` fields:
 
-| field | type | purpose |
-|---|---|---|
-| `caveat_name` | `String` | discriminator (`"paid-query/v1"`) |
-| `budget` | `Dqa` | spending ceiling |
-| `model` | `String` | LLM model allowlist (e.g. `"gpt-4o"`); empty = wildcard |
-| `expires_at_unix_ms` | `u64` | expiry |
+| field                | type     | purpose                                                 |
+| -------------------- | -------- | ------------------------------------------------------- |
+| `caveat_name`        | `String` | discriminator (`"paid-query/v1"`)                       |
+| `budget`             | `Dqa`    | spending ceiling                                        |
+| `model`              | `String` | LLM model allowlist (e.g. `"gpt-4o"`); empty = wildcard |
+| `expires_at_unix_ms` | `u64`    | expiry                                                  |
 
 No `asset_id`. The "Payment" caveat actually binds the budget to an LLM model, not an asset. Naming lies about semantics. A capability for "spend up to 100 units of USDC against gpt-4o" cannot be expressed — the budget is implicitly OCTO-W.
 
@@ -176,13 +176,13 @@ pub struct PaymentCaveat {
 
 ### D3. Naming cleanup
 
-| Old | New | Rationale |
-|---|---|---|
-| `MICRO_PER_OCTOW` (`crates/quota-router-storage/src/ask.rs:41`) | `UNITS_PER_OCTO_W` (or `SCALE_OF_OCTO_W` if scale-only) | "micro" deprecated; per-asset, not OCTO-specific. New name reads as "1 OCTO_W = UNITS_PER_OCTO_W base units" regardless of asset. |
-| `amount_dqa_micros: i64` (`crates/octo-policy/src/policy_kinds.rs:263` etc.) | `amount: Dqa` | Field name encodes scale; rename to type-only. |
-| `RELAY_RATE_B_MICRO_OCTO_PER_GB: u64 = 100_000` (`crates/octo-network/src/porelay/economics.rs:131`) | `RELAY_BANDWIDTH_RATE_PER_GB: Dqa` | Per-OCTO-B-asset rate named for micro-OCTO; new name is asset-generic with `Dqa` carrier (scale = 6 default). |
-| `MicroOctoW` (alias retired 2026-08-17) | `Dqa` | Already done; verify removal. |
-| `PaymentCaveat` caveat discriminator `"paid-query/v1"` (`crates/octo-cap-macaroon/src/caveat/payment.rs:40`) | `"payment/v1"` (deprecate `"paid-query/v1"` for one cycle) | Surface asset-generality; the caveat is about payment, not paid-query-specific. |
+| Old                                                                                                          | New                                                        | Rationale                                                                                                                         |
+| ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `MICRO_PER_OCTOW` (`crates/quota-router-storage/src/ask.rs:41`)                                              | `UNITS_PER_OCTO_W` (or `SCALE_OF_OCTO_W` if scale-only)    | "micro" deprecated; per-asset, not OCTO-specific. New name reads as "1 OCTO_W = UNITS_PER_OCTO_W base units" regardless of asset. |
+| `amount_dqa_micros: i64` (`crates/octo-policy/src/policy_kinds.rs:263` etc.)                                 | `amount: Dqa`                                              | Field name encodes scale; rename to type-only.                                                                                    |
+| `RELAY_RATE_B_MICRO_OCTO_PER_GB: u64 = 100_000` (`crates/octo-network/src/porelay/economics.rs:131`)         | `RELAY_BANDWIDTH_RATE_PER_GB: Dqa`                         | Per-OCTO-B-asset rate named for micro-OCTO; new name is asset-generic with `Dqa` carrier (scale = 6 default).                     |
+| `MicroOctoW` (alias retired 2026-08-17)                                                                      | `Dqa`                                                      | Already done; verify removal.                                                                                                     |
+| `PaymentCaveat` caveat discriminator `"paid-query/v1"` (`crates/octo-cap-macaroon/src/caveat/payment.rs:40`) | `"payment/v1"` (deprecate `"paid-query/v1"` for one cycle) | Surface asset-generality; the caveat is about payment, not paid-query-specific.                                                   |
 
 ### D4. BurnEventRef migration (RFC-0960 v3.6)
 
@@ -246,12 +246,12 @@ The drift is purely **site-level** (every production call constructs `Dqa::new(n
 
 ## 5. RFC Amendment Chain
 
-| RFC | Amendment | Status | Companion Mission |
-|---|---|---|---|
-| RFC-0105 v3.5 | Add §Per-Asset Scale Table (sovereign role tokens + private asset class); §AssetRegistry side-table definition. | Draft (this research) | `payment-caveat-asset-binding` (deferred — Mission lifecycle only after Accepted) |
-| RFC-0965 v2.1 | `PaymentCaveat.asset_id` field; scale-binding invariant in `attenuate` + `verify`; discriminator `"payment/v1"`; D6.a PermissionKind co-bound caveat rule. | Draft (this research) | Same |
-| RFC-0960 v3.6 | `BurnEventRef.amount: Dqa` (replace `amount_dqa_micros: i64`); `AssetKind` enum (additive, semver-minor). | Draft (this research) | `burn-event-dqa-migration` (deferred) |
-| RFC-0959 v2.8 | `SettlementEvent.cost: Dqa`; scale resolution via `cost_vault_id`; settlement engine rejects scale mismatch. | Draft (this research) | `settlement-cost-dqa-migration` (deferred) |
+| RFC           | Amendment                                                                                                                                                  | Status                | Companion Mission                                                                 |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------- |
+| RFC-0105 v3.5 | Add §Per-Asset Scale Table (sovereign role tokens + private asset class); §AssetRegistry side-table definition.                                            | Draft (this research) | `payment-caveat-asset-binding` (deferred — Mission lifecycle only after Accepted) |
+| RFC-0965 v2.1 | `PaymentCaveat.asset_id` field; scale-binding invariant in `attenuate` + `verify`; discriminator `"payment/v1"`; D6.a PermissionKind co-bound caveat rule. | Draft (this research) | Same                                                                              |
+| RFC-0960 v3.6 | `BurnEventRef.amount: Dqa` (replace `amount_dqa_micros: i64`); `AssetKind` enum (additive, semver-minor).                                                  | Draft (this research) | `burn-event-dqa-migration` (deferred)                                             |
+| RFC-0959 v2.8 | `SettlementEvent.cost: Dqa`; scale resolution via `cost_vault_id`; settlement engine rejects scale mismatch.                                               | Draft (this research) | `settlement-cost-dqa-migration` (deferred)                                        |
 
 **No missions filed in this research.** Missions are claimable work units per BLUEPRINT.md §Mission — they REQUIRE an Accepted RFC. Missions land after the RFC amendment chain promotes to Accepted.
 
@@ -261,55 +261,55 @@ The drift is purely **site-level** (every production call constructs `Dqa::new(n
 
 ### 6.1 RFCs that cite `MICRO_PER_OCTOW` or `MicroOctoW`
 
-| Site | Reference type |
-|---|---|
-| `crates/quota-router-storage/src/ask.rs:14` | comment cross-ref to RFC-0862 v2.0.3 |
-| `crates/quota-router-storage/src/ask.rs:41` | constant definition |
-| `rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md:912,919,929,2113` | substrate spec (uses `MicroOctoW` extensively) |
-| `rfcs/accepted/process/0206-v30-value-transfer-surface.md:65-121` | `amount_dqa_micros` field across 6 structs |
-| `rfcs/accepted/economics/0959-ask-settlement-chain.md` | `MicroOCTO_W` in `SettlementEvent.cost` |
-| `rfcs/accepted/economics/0965-capability-extension-format.md` | `MicroOctoW` alias cross-ref in v2.0-CanonicalAlias row |
+| Site                                                                               | Reference type                                          |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `crates/quota-router-storage/src/ask.rs:14`                                        | comment cross-ref to RFC-0862 v2.0.3                    |
+| `crates/quota-router-storage/src/ask.rs:41`                                        | constant definition                                     |
+| `rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md:912,919,929,2113` | substrate spec (uses `MicroOctoW` extensively)          |
+| `rfcs/accepted/process/0206-v30-value-transfer-surface.md:65-121`                  | `amount_dqa_micros` field across 6 structs              |
+| `rfcs/accepted/economics/0959-ask-settlement-chain.md`                             | `MicroOCTO_W` in `SettlementEvent.cost`                 |
+| `rfcs/accepted/economics/0965-capability-extension-format.md`                      | `MicroOctoW` alias cross-ref in v2.0-CanonicalAlias row |
 
 ### 6.2 RFCs that reference `PaymentCaveat`
 
-| Site | Reference type |
-|---|---|
-| `rfcs/accepted/economics/0965-capability-extension-format.md` | Primary RFC for `PaymentCaveat` definition. v2.1 amendment here. |
-| `rfcs/accepted/economics/0960-grand-design-vaults-capabilities-reservations.md` | Capacity / Vault state machine reference. |
-| `rfcs/accepted/process/0871e-f7.md` (if exists) | Paid-query mission wire form. |
+| Site                                                                            | Reference type                                                   |
+| ------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `rfcs/accepted/economics/0965-capability-extension-format.md`                   | Primary RFC for `PaymentCaveat` definition. v2.1 amendment here. |
+| `rfcs/accepted/economics/0960-grand-design-vaults-capabilities-reservations.md` | Capacity / Vault state machine reference.                        |
+| `rfcs/accepted/process/0871e-f7.md` (if exists)                                 | Paid-query mission wire form.                                    |
 
 ### 6.3 RFCs that reference `AssetId` / `asset_id_for`
 
-| Site | Reference type |
-|---|---|
-| `rfcs/accepted/economics/0105-v34-private-asset-namespace.md` | Primary RFC for sovereign/private boundary. v3.5 amendment here. |
-| `rfcs/accepted/economics/0960-v35-vault-path-taxonomy.md` | Vault composite key uses `asset_id`. v3.6 amendment here. |
-| `rfcs/accepted/numeric/0105-deterministic-quant-arithmetic.md` | Numeric parent for `asset_id_for`. |
-| `rfcs/accepted/economics/0959-a1-market-delivery.md` | Market delivery envelope carries `cost_vault_id`. |
-| `rfcs/accepted/process/0010-...` (chain ID RFC) | Chain-bound assets derive via `chain_id` segment in role-token string. |
+| Site                                                           | Reference type                                                         |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `rfcs/accepted/economics/0105-v34-private-asset-namespace.md`  | Primary RFC for sovereign/private boundary. v3.5 amendment here.       |
+| `rfcs/accepted/economics/0960-v35-vault-path-taxonomy.md`      | Vault composite key uses `asset_id`. v3.6 amendment here.              |
+| `rfcs/accepted/numeric/0105-deterministic-quant-arithmetic.md` | Numeric parent for `asset_id_for`.                                     |
+| `rfcs/accepted/economics/0959-a1-market-delivery.md`           | Market delivery envelope carries `cost_vault_id`.                      |
+| `rfcs/accepted/process/0010-...` (chain ID RFC)                | Chain-bound assets derive via `chain_id` segment in role-token string. |
 
 ---
 
 ## 7. Risks
 
-| Risk | Severity | Mitigation |
-|---|---|---|
-| AssetRegistry side-table split-brain across nodes | HIGH | RFC-0105 v3.5 §Per-Asset Scale Table ships as canonical anchor; corporate-chain registries sync via governance_snapshot. |
-| Asset_id mismatch at settlement | HIGH | RFC-0959 v2.8 §Settlement scale resolution rejects at settlement time (fail-closed); audit log records the mismatch. |
-| Backward compatibility for old PaymentCaveat (no asset_id) | MED | RFC-0965 v2.1 §Discriminator Deprecation Cycle: `"paid-query/v1"` accepted for one substrate release cycle; substrate reject path returns `ScaleUnknown` (verifier treats it as OCTO-W at scale 0 for legacy compatibility, with deprecation warning). |
-| Renaming `MICRO_PER_OCTOW` breaks downstream crates | MED | Companion mission exposes new constant; old constant kept as `pub const LEGACY_MICRO_PER_OCTOW: Dqa = ...` with `#[deprecated]` for one cycle. |
-| PermissionKind asset co-bound verification overhead | LOW | D6.a verifier check is O(1) — presence of `Caveat::Vault(asset_id)` in caveat list. |
+| Risk                                                       | Severity | Mitigation                                                                                                                                                                                                                                             |
+| ---------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| AssetRegistry side-table split-brain across nodes          | HIGH     | RFC-0105 v3.5 §Per-Asset Scale Table ships as canonical anchor; corporate-chain registries sync via governance_snapshot.                                                                                                                               |
+| Asset_id mismatch at settlement                            | HIGH     | RFC-0959 v2.8 §Settlement scale resolution rejects at settlement time (fail-closed); audit log records the mismatch.                                                                                                                                   |
+| Backward compatibility for old PaymentCaveat (no asset_id) | MED      | RFC-0965 v2.1 §Discriminator Deprecation Cycle: `"paid-query/v1"` accepted for one substrate release cycle; substrate reject path returns `ScaleUnknown` (verifier treats it as OCTO-W at scale 0 for legacy compatibility, with deprecation warning). |
+| Renaming `MICRO_PER_OCTOW` breaks downstream crates        | MED      | Companion mission exposes new constant; old constant kept as `pub const LEGACY_MICRO_PER_OCTOW: Dqa = ...` with `#[deprecated]` for one cycle.                                                                                                         |
+| PermissionKind asset co-bound verification overhead        | LOW      | D6.a verifier check is O(1) — presence of `Caveat::Vault(asset_id)` in caveat list.                                                                                                                                                                    |
 
 ---
 
 ## 8. Alternatives Considered
 
-| Alternative | Pros | Cons |
-|---|---|---|
-| Widen `AssetId(pub [u8;32])` → `AssetId { bytes, scale }` | Self-contained; no side-table | semver-major on frozen Layer A; touches every consumer |
-| Per-role-token hardcoded scale in `asset_id_for` | One place to change | Mixes substrate shape with policy metadata; rejected on separation-of-concerns grounds |
-| `Caveat::Budget { asset: AssetId, amount: Dqa }` (new variant instead of `PaymentCaveat`) | Cleaner separation | Breaks macaroon attenuation layering; `PaymentCaveat` is single-element composition by design |
-| Replace `Dqa` with `rust_decimal::Decimal` | Battle-tested library | Loses RFC-0105 Dfp determinism guarantees; rejected per RFC-0104 determinism principle |
+| Alternative                                                                               | Pros                          | Cons                                                                                          |
+| ----------------------------------------------------------------------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------- |
+| Widen `AssetId(pub [u8;32])` → `AssetId { bytes, scale }`                                 | Self-contained; no side-table | semver-major on frozen Layer A; touches every consumer                                        |
+| Per-role-token hardcoded scale in `asset_id_for`                                          | One place to change           | Mixes substrate shape with policy metadata; rejected on separation-of-concerns grounds        |
+| `Caveat::Budget { asset: AssetId, amount: Dqa }` (new variant instead of `PaymentCaveat`) | Cleaner separation            | Breaks macaroon attenuation layering; `PaymentCaveat` is single-element composition by design |
+| Replace `Dqa` with `rust_decimal::Decimal`                                                | Battle-tested library         | Loses RFC-0105 Dfp determinism guarantees; rejected per RFC-0104 determinism principle        |
 
 ---
 

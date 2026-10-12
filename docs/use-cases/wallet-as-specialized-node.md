@@ -34,14 +34,14 @@ This Use Case is part of a broader CipherOcto pivot: every crypto-bearing entity
 
 ## Success Metrics
 
-| Metric | Target | Measurement |
-| ------ | ------ | ----------- |
-| New specialized node types can be added without modifying the protocol envelope | ≥ 3 new node types shipped (Identity, Reputation, Wallet) without touching `octo-transport` | RFC-0871 §Compatibility |
-| Wallet signs capability tokens via HSM end-to-end | 100% of `IdentityKey::sign()` paths route through `HsmAdapter::sign()` | `cargo test --features allow-stub-verifier` + integration tests |
-| Wallet announces its services to the mesh on startup | All wallet payload kinds declared in `RouterAnnouncePayload` | Integration test: wallet boots, mesh peers can `lookup(payload_kind)` |
-| Hardware wallet over BLE participates in network signing | `LedgerSigner` + `octo-cable::BleAdapter` end-to-end test passes | Hardware test rig |
-| Wallet dependency on `quota-router-storage` | 0 (today: indirect via CLI subcommand) | `cargo tree` from `octo-wallet` |
-| Cryptographic substrate of any new node type doesn't require wallet core changes | Adding a new capability caveat type = own crate, registers via plugin | Workspace dependency graph |
+| Metric                                                                           | Target                                                                                      | Measurement                                                           |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| New specialized node types can be added without modifying the protocol envelope  | ≥ 3 new node types shipped (Identity, Reputation, Wallet) without touching `octo-transport` | RFC-0871 §Compatibility                                               |
+| Wallet signs capability tokens via HSM end-to-end                                | 100% of `IdentityKey::sign()` paths route through `HsmAdapter::sign()`                      | `cargo test --features allow-stub-verifier` + integration tests       |
+| Wallet announces its services to the mesh on startup                             | All wallet payload kinds declared in `RouterAnnouncePayload`                                | Integration test: wallet boots, mesh peers can `lookup(payload_kind)` |
+| Hardware wallet over BLE participates in network signing                         | `LedgerSigner` + `octo-cable::BleAdapter` end-to-end test passes                            | Hardware test rig                                                     |
+| Wallet dependency on `quota-router-storage`                                      | 0 (today: indirect via CLI subcommand)                                                      | `cargo tree` from `octo-wallet`                                       |
+| Cryptographic substrate of any new node type doesn't require wallet core changes | Adding a new capability caveat type = own crate, registers via plugin                       | Workspace dependency graph                                            |
 
 ## Constraints
 

@@ -1459,7 +1459,7 @@ DQA integration MUST include:
 
 ## Version History
 
-| Version | Date       | Change                                                                                |
-|---------|------------|---------------------------------------------------------------------------------------|
-| 2.3     | 2026-08-19 | Status block: v2.3 (2026-08-19) — DQA NumericScalar implementation per RFC-0113.        |
+| Version | Date       | Change                                                                                 |
+| ------- | ---------- | -------------------------------------------------------------------------------------- |
+| 2.3     | 2026-08-19 | Status block: v2.3 (2026-08-19) — DQA NumericScalar implementation per RFC-0113.       |
 | 1.0     | 2026-08-22 | Retroactive VH table addition (per long-horizon plan v1.3 Phase 1 + Option C per M37). |

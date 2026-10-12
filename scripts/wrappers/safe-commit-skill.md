@@ -14,7 +14,7 @@ Bash tool, use `safe-commit` INSTEAD.
 
 On 2026-09-08 (RFC-0011-c close-out), the shell heredoc for a commit
 message body contained the literal backticks `` `git push origin next` ``
-as *stylistic* code-style markdown. Bash performed POSIX §2.6.3
+as _stylistic_ code-style markdown. Bash performed POSIX §2.6.3
 command substitution BEFORE handing the string to git, executing
 the embedded commands as a side effect. 4 fix commits landed on
 `origin/next` inadvertently.
@@ -87,15 +87,15 @@ agree on.
 
 Verified 10/10 cases pass (Layer 3 harness):
 
-| # | Input | Want | Got |
-|---|-------|------|-----|
-| A | `fix: `echo HI`` | refuse | OK |
-| B | `fix: clean body` | accept | OK |
-| C | `fix: has $(date)` | refuse | OK |
-| D | `fix: a && b` | refuse | OK |
-| E | `fix: a \|\| b` | refuse | OK |
-| F | `fix: a \| b` | refuse | OK |
-| G | `fix: per RFC-0011-c §Roles` | accept | OK |
-| H | `> redirect attempt` | refuse | OK |
-| I | `fix: update docs` | accept | OK |
-| J | `fix: crates/octo-cli/src/commands` | accept | OK |
+| #   | Input                               | Want   | Got |
+| --- | ----------------------------------- | ------ | --- |
+| A   | `fix: `echo HI``                    | refuse | OK  |
+| B   | `fix: clean body`                   | accept | OK  |
+| C   | `fix: has $(date)`                  | refuse | OK  |
+| D   | `fix: a && b`                       | refuse | OK  |
+| E   | `fix: a \|\| b`                     | refuse | OK  |
+| F   | `fix: a \| b`                       | refuse | OK  |
+| G   | `fix: per RFC-0011-c §Roles`        | accept | OK  |
+| H   | `> redirect attempt`                | refuse | OK  |
+| I   | `fix: update docs`                  | accept | OK  |
+| J   | `fix: crates/octo-cli/src/commands` | accept | OK  |

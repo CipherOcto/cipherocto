@@ -39,7 +39,7 @@ operator role separation (RFC-0853 §F3 substrate).
 - [ ] **Snapshot+replay field (per R16 H1):** coordinator state
       recovery via persistent snapshot + WAL replay. Schema:
       `Snapshot { elected_at_hlc: HlcTimestamp, term: u64,
-      operator_set: OperatorSet, writer_identity: WriterIdentity }`
+    operator_set: OperatorSet, writer_identity: WriterIdentity }`
       written on `force_relinquish_writer` success + on
       `relinquish_writer` flush success. Replay priority:
       snapshot → WAL replay from snapshot tip_lsn → in-memory
@@ -58,9 +58,11 @@ operator role separation (RFC-0853 §F3 substrate).
 Reference impl: `crates/octo-wallet/` (HSM adapters),
 `octo-sync/` (WriterElection + NonceTracker + WAL), `octo-ident/`
 (DID substrate), `crates/quota-router-storage/` (StoolapSpendLedger
-+ StoolapDidRegistry).
+
+- StoolapDidRegistry).
 
 Sequence:
+
 1. DKG ceremony emits `OperatorSet` (per RFC-0853 §F3).
 2. `WriterContext` config carries `OperatorSet` + `ChainId` +
    `NonceTracker` handle.
@@ -84,23 +86,26 @@ Sequence:
 
 ## Version History
 
-| Version | Date       | Status | Changes |
-| ------- | ---------- | ------ | ------- |
-| v0.1    | 2026-08-10 | open   | Mission filed per R14 H1 — phantom pointer resolution. End-to-end governance + sealed trait + durable nonce storage + chain_id binding substrate. |
-| v0.2    | 2026-08-10 | open   | Per R16 H1/H2 — added snapshot+replay field AC + Byzantine row AC for §Future Work cross-refs in RFC-0862 v1.3.0. |
+| Version | Date       | Status | Changes                                                                                                                                                                                  |
+| ------- | ---------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-10 | open   | Mission filed per R14 H1 — phantom pointer resolution. End-to-end governance + sealed trait + durable nonce storage + chain_id binding substrate.                                        |
+| v0.2    | 2026-08-10 | open   | Per R16 H1/H2 — added snapshot+replay field AC + Byzantine row AC for §Future Work cross-refs in RFC-0862 v1.3.0.                                                                        |
 | v0.3    | 2026-08-11 | LANDED | Trait impl + 8 end-to-end TV (`governance_relinquish_tv`) + chain_id field on `RaftLikeWriterElection` (closes tautological chain_id check bug) + chain_id wired into all 16 call sites. |
 
 ## LANDED substrate (2026-08-11)
 
 **New files**
+
 - `octo-sync/tests/governance_relinquish_tv.rs` (NEW, 8 TV).
 
 **Modified files**
+
 - `octo-sync/src/substrate/raft_like.rs` — added `chain_id: ChainId` field + constructor arg; `force_relinquish_writer` now passes `&self.chain_id` (deployment-configured) to `verify_governance_attestation` instead of the tautological `&attestation.chain_id`. Closes a real chain_id-binding bypass that the original code shipped with.
 - `octo-sync/src/substrate/raft_like.rs` — 7 unit tests updated for new constructor signature.
 - `octo-sync/tests/cross_instance_tv.rs` — 5 call sites + chain_id declarations updated for new constructor.
 
 **Test vectors landed (8)**
+
 - TV-1 two_of_three_force_relinquish_clears_lease (happy path)
 - TV-2 wrong_chain_id_rejected (`ChainIdMismatch`)
 - TV-3 replayed_nonce_rejected (`NonceReplayed` after first consume)

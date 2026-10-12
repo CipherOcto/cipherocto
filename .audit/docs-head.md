@@ -106,7 +106,7 @@ predicates = "3.1"         # stdout/stderr assertions
 
 **Layer direction check:** all deps above are Layer A/B substrate crates pulled
 in by a Layer C/D orchestrator. No new Layer-A or Layer-B types introduced in
-`octo-cli`. Per ``docs/architecture/design-principles.md`` §Layer stability table, the
+`octo-cli`. Per `docs/architecture/design-principles.md` §Layer stability table, the
 CLI is per-RFC evolution (not years-stable) — substrate crates are the frozen
 boundary.
 

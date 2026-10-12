@@ -768,7 +768,7 @@ The cost is a doc-comment-driven extension pattern that domain crates must follo
 | v2.0.0-r45.5 | 2026-09-11 | CipherOcto Architecture Working Group | 8 findings fixed; cross-file sync to 0014-v2                                        |
 | v2.0.0-r48.5 | 2026-09-12 | CipherOcto Architecture Working Group | 3 trailing-period DEFERRED markers stripped (R48.5 fix)                             |
 | v2.0.0-r49   | 2026-09-12 | CipherOcto Architecture Working Group | DRY CLOSED at R48 + R49 across all 5 lenses                                         |
-| v2.0.0       | 2026-09-12 | CipherOcto Architecture Working Group | Accepted (paired atomic promotion with RFC-0014-v2)                                |
+| v2.0.0       | 2026-09-12 | CipherOcto Architecture Working Group | Accepted (paired atomic promotion with RFC-0014-v2)                                 |
 
 ## Related RFCs
 

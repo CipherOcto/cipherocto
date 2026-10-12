@@ -135,7 +135,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing per parent RFC-00
 | `[ADD] octo_audit::AuditError` enum                            | Sub-step 2 (substrate wiring) | Layer C (substrate-side RFC; OUT OF SCOPE)                                                                           |
 | `[ADD] octo_audit::ReceiptId` newtype                          | Sub-step 2 (substrate wiring) | Layer C (substrate-side RFC; OUT OF SCOPE)                                                                           |
 | `[ADD] octo_audit::audit_home()` discovery helper              | Sub-step 2 (substrate wiring) | Layer C (substrate-side RFC; OUT OF SCOPE; diagnostic / substrate-internal testing only)                             |
-| `Commands::Audit { List, Show }` clap variants                 | Sub-step 4 (clap wiring)      | Layer C/D; appends to parent `Commands` enum (no reverse deps per `docs/architecture/design-principles.md`)                    |
+| `Commands::Audit { List, Show }` clap variants                 | Sub-step 4 (clap wiring)      | Layer C/D; appends to parent `Commands` enum (no reverse deps per `docs/architecture/design-principles.md`)          |
 
 ### Implementation Guide
 

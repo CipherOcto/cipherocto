@@ -17,6 +17,7 @@ The substrate port trait `VaultProjectionInvalidationEmitter` (defined in `crate
 ## Scope
 
 Create `crates/octo-vault/src/cache_subscriber.rs` — a per-process subscriber that:
+
 1. Subscribes to wildcard `cache:projection:*` over a `Subscriber` port trait
 2. Deserializes incoming `VaultProjectionInvalidationEnvelope` bytes
 3. Calls `VaultBalanceCache::invalidate(&cache_key)` on a shared cache handle
@@ -25,18 +26,20 @@ Create `crates/octo-vault/src/cache_subscriber.rs` — a per-process subscriber 
 ### Sub-steps
 
 1. **`Subscriber` port trait** — `crates/octo-vault/src/cache_subscriber.rs` (NEW). Defines:
+
    ```rust
    pub trait VaultProjectionInvalidationSubscriber: Send + Sync {
        /// Blocking receive; returns `None` on channel close.
        fn recv(&self) -> Option<VaultProjectionInvalidationEnvelope>;
    }
    ```
+
    Production impl at `octo-vault-stoolap` Layer D (Stoolap NOTIFY/LISTEN adapter).
 
 2. **Subscriber task spawner** — `pub fn spawn_cache_subscriber(
-       cache: Arc<Mutex<VaultBalanceCache>>,
-       subscriber: Arc<dyn VaultProjectionInvalidationSubscriber>,
-   ) -> JoinHandle<()>`
+    cache: Arc<Mutex<VaultBalanceCache>>,
+    subscriber: Arc<dyn VaultProjectionInvalidationSubscriber>,
+) -> JoinHandle<()>`
    The task loop: `while let Some(env) = subscriber.recv() { cache.lock().unwrap_or_else(PoisonError::into_inner).invalidate_all(); }` (whole-cache invalidation per RFC-0960 §2.4; per-key invalidation reserved for Cycle 2).
 
 3. **Process-init wiring** — `crates/octo-vault/src/lib.rs` exports a `pub fn init_cache_subscriber(...)` factory. Layer C crates (octo-wallet-node / quota-router-sm-engine / octo-policy) call this in their `main` / server bootstrap. **Note:** server bootstrap is OUT OF SCOPE for this mission — only the substrate `init_cache_subscriber` lands. Wire-up at each Layer C binary is a follow-on (tracked at `producer-wrapper-consumer-wiring.md`).

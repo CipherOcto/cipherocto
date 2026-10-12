@@ -65,12 +65,12 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: Phase A/B/C Atta
 
 ### Type Coverage
 
-| RFC-0011-c type           | Sub-step             | Notes                                                                                                                                                        |
-| ------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| RFC-0011-c type           | Sub-step             | Notes                                                                                                                                                                  |
+| ------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pub trait AgentRegistry` | Sub-step 1 (trait)   | Layer A; object-safe (`&self` methods only); mirrors `RevocationStore` pattern per per-extension-crate + registry pattern per `docs/architecture/design-principles.md` |
-| `InMemoryAgentRegistry`   | Sub-step 2 (impl)    | Layer A; single canonical impl; zero behavior change vs free-fn path                                                                                         |
-| `pub fn transition_agent` | Sub-step 3 (free fn) | Layer A; promoted to public surface; `caller_did: &Did` + `agent_id: Uuid` + `target_state: AgentState` + `now_unix: u64`                                    |
-| 3 unit tests              | Sub-step 4 (TV)      | Layer A; `Arc<dyn AgentRegistry>` dispatch + Send/Sync + kind identity                                                                                       |
+| `InMemoryAgentRegistry`   | Sub-step 2 (impl)    | Layer A; single canonical impl; zero behavior change vs free-fn path                                                                                                   |
+| `pub fn transition_agent` | Sub-step 3 (free fn) | Layer A; promoted to public surface; `caller_did: &Did` + `agent_id: Uuid` + `target_state: AgentState` + `now_unix: u64`                                              |
+| 3 unit tests              | Sub-step 4 (TV)      | Layer A; `Arc<dyn AgentRegistry>` dispatch + Send/Sync + kind identity                                                                                                 |
 
 ## Implementation Guide
 

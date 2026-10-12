@@ -28,6 +28,7 @@ Extend `VaultProjectionInvalidationEnvelope` with producer identity + signature,
 1. **Identity substrate import** — `crates/octo-vault/src/event_log_producer.rs`. Add `use octo_cap_macaroon::OverlayIdentity;` (RFC-0853 §3 Sovereign Identity Model — OverlayIdentity struct, re-exported from `crates/octo-network/src/ocrypt/identity.rs`) and a 64-byte signature field (`producer_signature: [u8; 64]` per RFC-0853 §8 Signature Model).
 
 2. **Envelope struct extension** — `VaultProjectionInvalidationEnvelope` becomes 7 fields. The 64-byte witness field is renamed `producer_signature: [u8; 64]` (an ed25519 signature per RFC-0853 §8 Signature Model; the term "attenuation_witness" belongs to the macaroon substrate and is reserved vocabulary — see `docs/architecture/design-principles.md` §Attenuation invariants cross boundaries):
+
    ```rust
    pub struct VaultProjectionInvalidationEnvelope {
        pub chain_id: ChainId,
@@ -39,6 +40,7 @@ Extend `VaultProjectionInvalidationEnvelope` with producer identity + signature,
        pub producer_signature: [u8; 64],   // NEW: ed25519 signature over the prior 6 fields
    }
    ```
+
    Wire-form impact: serialized payload grows by ~110 bytes (DID + u64 + 64 sig). Pub/sub bandwidth increase negligible.
 
 3. **Producer-side signing** — `EventLogProducer::produce` default body populates `producer_did` from a new `producer_did: &OverlayIdentity` parameter. `producer_signature` is computed via `ed25519-dalek::Signer::sign` (per RFC-0853 §1 Cryptographic Primitives) over the canonical serialization of the prior 6 fields concatenated WITH the cross-protocol domain separator `b"cipherocto/cache-bus/invalidation/v2\0"` (mandatory — prevents replay across structurally similar protocols that happen to share field layout, e.g., the macaroon-issuance bus or any other `chain_id || vault_id || ...` concatenation). Without the separator, an envelope captured off the macaroon-issuance channel could replay against the cache bus. **Sequence number source:** new `&AtomicU64` parameter `producer_sequence: &AtomicU64`, fetched pre-sign and incremented post-sign via `fetch_add(1, Relaxed)`.

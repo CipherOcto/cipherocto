@@ -25,12 +25,12 @@ RFC-0011-n lands the **closure artifacts** slice of RFC-0011-h §Implementation 
 
 Plus closure artifacts:
 
-| Artifact                                                           | Substrate / Mission YAML                                                                                                |
-| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| `0011-h-s-a-writer-election-struct` (G18)                          | new `WriterElection` struct wrapping `elect_coordinator` free function at `octo-coordinator-types/src/election.rs`      |
-| `0011-h-s-a-network-sender` (G20)                                  | new `NetworkSender` trait + `SendContext` per RFC-0863 General-Purpose Network Integration; per-extension crate pattern |
-| Drift-closure mission for `0011-h-drift-0851p-a-seed-health-check` | Pending follow-on mission YAML per `docs/05-process/engineering-rules.md` §Deferred versus unspecified (drift identified during 6-phase rollout)                  |
-| 2 follow-on companion missions                                     | Created at CLAIMED-time per `docs/05-process/engineering-rules.md` §No phantom mission pointers                                                               |
+| Artifact                                                           | Substrate / Mission YAML                                                                                                                         |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0011-h-s-a-writer-election-struct` (G18)                          | new `WriterElection` struct wrapping `elect_coordinator` free function at `octo-coordinator-types/src/election.rs`                               |
+| `0011-h-s-a-network-sender` (G20)                                  | new `NetworkSender` trait + `SendContext` per RFC-0863 General-Purpose Network Integration; per-extension crate pattern                          |
+| Drift-closure mission for `0011-h-drift-0851p-a-seed-health-check` | Pending follow-on mission YAML per `docs/05-process/engineering-rules.md` §Deferred versus unspecified (drift identified during 6-phase rollout) |
+| 2 follow-on companion missions                                     | Created at CLAIMED-time per `docs/05-process/engineering-rules.md` §No phantom mission pointers                                                  |
 
 **Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per `docs/architecture/design-principles.md`). CLI dispatch lands Layer C; substrate additions in this RFC = **3 NEW Phase 6 companion missions (Layer B)**: G26 BootstrapOrchestrator (does NOT reuse Phase 2 G1 — R1 substrate-faithfulness finding corrected the false attribution), G18 WriterElection struct wrapper around existing `elect_coordinator` free function, G20 NetworkSender trait + SendContext (per-extension crate pattern).
 
@@ -207,8 +207,8 @@ Per `docs/05-process/engineering-rules.md` §No phantom mission pointers pairing
 | `0011-h-s-a-bootstrap-orchestrator-v2` (G26 NEW Phase 6) | `BootstrapOrchestrator` struct + `start_bootstrap(BootstrapConfig)` + `status() -> BootstrapState` at `crates/octo-network/src/mon/bootstrap.rs`                 | B     |
 | `0011-h-s-a-writer-election-struct` (G18 NEW Phase 6)    | `WriterElection` struct wrapping existing free function `elect_coordinator` at `octo-coordinator-types/src/election.rs`                                          | B     |
 | `0011-h-s-a-network-sender` (G20 NEW Phase 6)            | new `NetworkSender` trait + `SendContext` per RFC-0863 General-Purpose Network Integration at new `crates/octo-network/src/sender/`; per-extension crate pattern | B     |
-| `0011-h-drift-0851p-a-seed-health-check` (drift-closure) | Pending follow-on mission YAML per `docs/05-process/engineering-rules.md` §Deferred versus unspecified (drift identified during 6-phase rollout)                                                           | B     |
-| 2 follow-on companion missions                           | Created at CLAIMED-time per `docs/05-process/engineering-rules.md` §No phantom mission pointers                                                                                                        | B     |
+| `0011-h-drift-0851p-a-seed-health-check` (drift-closure) | Pending follow-on mission YAML per `docs/05-process/engineering-rules.md` §Deferred versus unspecified (drift identified during 6-phase rollout)                 | B     |
+| 2 follow-on companion missions                           | Created at CLAIMED-time per `docs/05-process/engineering-rules.md` §No phantom mission pointers                                                                  | B     |
 
 Phase 6 RFC carries 5-6 substrate additions total (3 NEW Phase 6 companions + 1 drift-closure + 2 follow-on); 0 substrate additions in this RFC itself (all substrate additions land via companion missions per substrate-first ordering). The Phase 2 G1 companion (`BootstrapConfig::from_toml` parser + `save_toml` writer) is consumed by Phase 2 only — it does NOT carry `BootstrapOrchestrator` (R1 substrate-faithfulness finding corrected the false attribution).
 

@@ -24,6 +24,7 @@ Prepend `BODY_HASH_DOMAIN` to the `buf` accumulator in BOTH functions, before an
 ### Sub-steps
 
 1. **BurnEventRef `compute_body_hash`** — `crates/octo-policy/src/burn_event.rs`. Insert `buf.extend_from_slice(BODY_HASH_DOMAIN);` as the FIRST line of the body (before `chain_id` extension). The `Vec::with_capacity` must increase by `BODY_HASH_DOMAIN.len()` (19 bytes for the burn domain).
+
    ```rust
    pub fn compute_body_hash(burn: &BurnEventRef) -> [u8; 32] {
        let mut buf: Vec<u8> = Vec::with_capacity(BODY_HASH_DOMAIN.len() + 32 * 6 + 1 + 8 + 8 + 8 + 32 + 8 + 32);
@@ -34,6 +35,7 @@ Prepend `BODY_HASH_DOMAIN` to the `buf` accumulator in BOTH functions, before an
    ```
 
 2. **SettlementEvent `compute_settlement_body_hash`** — same pattern: prepend `BODY_HASH_DOMAIN` (25 bytes for settlement domain). `Vec::with_capacity` adjustment.
+
    ```rust
    pub fn compute_settlement_body_hash(settlement: &SettlementEvent) -> [u8; 32] {
        let mut buf: Vec<u8> = Vec::with_capacity(BODY_HASH_DOMAIN.len() + 32 * 6 + 1 + 16 + 8 + 8 + 32 + 32);

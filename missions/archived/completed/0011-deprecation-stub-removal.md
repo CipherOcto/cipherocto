@@ -87,7 +87,7 @@ See RFC-0011 §Compatibility for the post-cut operator impact. Accepted risk: v1
 | RFC-0011 type                                                          | Sub-step                  | Notes                                                                                                                       |
 | ---------------------------------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | 3 stub commands actually removed (`init`, `join`, `status`)            | Sub-step 2 (code removal) | Layer C; pure deletion from clap derive struct in `crates/octo-cli/src/lib.rs`; `role` and `agent` were already first-class |
-| `StaleStub` exit 65 path (variant retained; `replaced_by` field added) | Sub-step 1 (substrate)    | Layer C; soft sentinel per `docs/architecture/design-principles.md` §Extension over enumeration                                       |
+| `StaleStub` exit 65 path (variant retained; `replaced_by` field added) | Sub-step 1 (substrate)    | Layer C; soft sentinel per `docs/architecture/design-principles.md` §Extension over enumeration                             |
 
 ### Implementation Guide
 

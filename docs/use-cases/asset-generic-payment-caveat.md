@@ -34,13 +34,13 @@ The drift was not deliberate. The substrate type `Dqa { value: i64, scale: u8 }`
 
 ## Success Metrics
 
-| Metric | Target | Measurement |
-| ------ | ------ | ----------- |
-| PaymentCaveat asset_id binding coverage | 100% of new payment caveats carry asset_id | substrate grep: `PaymentCaveat { .. }` literal count + audit log of new caveats |
-| AssetRegistry side-table coverage | All 9 sovereign role tokens + all corporate-chain private assets registered | RFC-0105 v3.5 §Per-Asset Scale Table = substrate table; cross-check via cross-crate test vector |
-| Naming cleanup completion | Zero remaining `MICRO_PER_OCTOW`, `amount_dqa_micros`, `RELAY_RATE_B_MICRO_OCTO_PER_GB` references in production code | substrate grep at the end of the migration cycle |
-| Settlement cost migration | 100% of settlement events carry `cost: Dqa` with scale bound to the cost_vault_id's asset | `crates/quota-router-storage/migrations/*.sql` + cross-crate test vector |
-| Backward compatibility break | Zero active substrate breaks for capability holders during the deprecation cycle (1 substrate release) | substrate integration tests + capability lifecycle audit |
+| Metric                                  | Target                                                                                                                | Measurement                                                                                     |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| PaymentCaveat asset_id binding coverage | 100% of new payment caveats carry asset_id                                                                            | substrate grep: `PaymentCaveat { .. }` literal count + audit log of new caveats                 |
+| AssetRegistry side-table coverage       | All 9 sovereign role tokens + all corporate-chain private assets registered                                           | RFC-0105 v3.5 §Per-Asset Scale Table = substrate table; cross-check via cross-crate test vector |
+| Naming cleanup completion               | Zero remaining `MICRO_PER_OCTOW`, `amount_dqa_micros`, `RELAY_RATE_B_MICRO_OCTO_PER_GB` references in production code | substrate grep at the end of the migration cycle                                                |
+| Settlement cost migration               | 100% of settlement events carry `cost: Dqa` with scale bound to the cost_vault_id's asset                             | `crates/quota-router-storage/migrations/*.sql` + cross-crate test vector                        |
+| Backward compatibility break            | Zero active substrate breaks for capability holders during the deprecation cycle (1 substrate release)                | substrate integration tests + capability lifecycle audit                                        |
 
 ## Constraints
 

@@ -44,6 +44,29 @@ ANCHOR = re.compile(
     r"§([A-Z][A-Za-z0-9][^`|,\n—–]*?)(?=`|\||,|—|–|\n|$|\s+[a-z]|\s*\.)"
 )
 
+# `§6`, `§3.5.7` — a purely numeric anchor is a section number, and CLAUDE.md
+# explicitly permits numbered references "if resolvable". ANCHOR cannot express
+# it, by design: its first character class is `[A-Z]`, because a lone capital is
+# far more often an adversarial-review finding id (`§A7`) than a section. A
+# digit is ambiguous in the same way — `§593` is as likely to be a line number
+# in prose as a section — so numeric anchors are matched on their own and gated
+# separately in `is_section_anchor` rather than being trusted by ANCHOR.
+#
+# The negative lookahead forces the longest match: for `§6.1 Public` the shorter
+# `6` is rejected because a dot follows, so `6.1` wins.
+NUMBERED_ANCHOR = re.compile(r"§(\d+(?:\.\d+)*)(?![\w.])")
+
+# A citation of a four-digit RFC id, the shape this project uses. External
+# specifications are cited the same way in prose (`RFC 8032 §5.1.6`), so the id
+# alone does not prove ownership — it is checked against the corpus below.
+PROJECT_RFC_CITATION = re.compile(r"RFC-(\d{4})\b")
+
+# The leading number of a heading, so `## 6.1 Public surface additions` is
+# addressable as `§6.1`. Deliberately matches the number only, never the title,
+# so adding numeric support cannot make a *title* reference resolve that it did
+# not before.
+SECTION_NUMBER = re.compile(r"^(\d+(?:\.\d+)*)(?![\d.])")
+
 # A heading is `## Something` / `### Something`. Strip markdown emphasis and a
 # trailing parenthetical qualifier, so `## Additive Changes (per R28 M3)` is
 # addressable as `§Additive Changes`.
@@ -95,8 +118,14 @@ def is_section_anchor(name: str) -> bool:
     A section anchor is multi-word. Single tokens in this corpus are almost
     always adversarial-review finding ids (`§A1`, `§F4`, `§C1`) or a stray
     `§)` from prose, neither of which has a heading.
+
+    A purely numeric token is the exception: `§6.1` is a section number, and
+    CLAUDE.md sanctions numbered references precisely when they resolve. The
+    ambiguity that motivates the multi-word rule — a digit might be a line
+    number in prose — is why numeric anchors are matched by their own regex and
+    verified against a heading rather than waved through.
     """
-    return len(name.split()) >= 2
+    return len(name.split()) >= 2 or bool(NUMBERED_ANCHOR.match("§" + name))
 
 
 def heading_names(path: Path) -> set[str]:
@@ -107,6 +136,9 @@ def heading_names(path: Path) -> set[str]:
             raw = normalize(match.group(1))
             for form in candidates(raw):
                 names.add(form)
+            number = SECTION_NUMBER.match(raw)
+            if number:
+                names.add(number.group(1))
     return names
 
 
@@ -125,6 +157,22 @@ def resolves(name: str, known: set[str]) -> bool:
     if longest and any(k.startswith(longest + " ") for k in known):
         return True
     return False
+
+
+def project_rfc_numbers() -> set[str]:
+    """The four-digit ids of the RFCs this repository owns.
+
+    Used to tell `RFC-0957 §3.5.7` (this project, checkable) from
+    `RFC 8032 §5.1.6` (an external specification, not ours to resolve). Derived
+    from the corpus rather than hardcoded, so a new RFC is covered by landing
+    the file and a renamed or deleted one stops being claimed.
+    """
+    found: set[str] = set()
+    for path in RFC_ROOT.rglob("*.md"):
+        match = re.match(r"(\d{4})-", path.name)
+        if match:
+            found.add(match.group(1))
+    return found
 
 
 def main() -> int:
@@ -159,6 +207,7 @@ def main() -> int:
                 known |= heading_names(path)
 
     unresolved: list[tuple[Path, int, str]] = []
+    project_numbers = project_rfc_numbers()
     for path in rfc_files:
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             for raw in ANCHOR.findall(line):
@@ -167,6 +216,22 @@ def main() -> int:
                     continue
                 if not resolves(name, known):
                     unresolved.append((path, lineno, name))
+            # Numbered anchors are collected separately so a numeric reference is
+            # checked on its own terms instead of being lost in ANCHOR's
+            # leading-letter assumption. Deduped against the pass above so a
+            # reference both regexes can see is reported once, not twice.
+            #
+            # A numeric anchor carries no RFC number of its own, so it cannot say
+            # whether it points into this project or into an external spec. That
+            # is not hypothetical: `RFC 8032 §5.1.6` cites the IETF Ed25519
+            # document, whose headings are not indexed here. Requiring the line
+            # to cite a project RFC is what keeps an external reference from
+            # being reported as a dangling project section.
+            cited = PROJECT_RFC_CITATION.findall(line)
+            if any(num in project_numbers for num in cited):
+                for raw in NUMBERED_ANCHOR.findall(line):
+                    if raw not in known and not resolves(raw, known):
+                        unresolved.append((path, lineno, raw))
 
     by_name: dict[str, list[str]] = {}
     for path, lineno, name in unresolved:

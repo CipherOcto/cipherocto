@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
-"""Mutation harness for the 2026-10-04 red-team remediation.
+"""Mutation harness for the 2026-10-04 red-team remediation, and for the
+file-scanning guards added since.
 
-A guard that has never failed is not a guard. Each entry is the exact revert
-of a fix, so a green run here means the guard detects the real thing rather
-than a substring that happens to be present.
+A guard that has never failed is not a guard. Each entry is either the exact
+revert of a fix or a planted violation of the rule a guard enforces, so a green
+run here means the guard detects the real thing rather than a substring that
+happens to be present.
+
+Two kinds of entry live here, and they differ in what they can prove. The
+red-team entries mutate code, so the test must recompile; their value is that a
+guard catches a change it was written for. The file-scanning entries mutate a
+file the guard *reads* at run time, so no compilation is involved and they
+establish that the check inspects the tree rather than trusting its own logic.
 
 Three outcomes are distinguished, because collapsing them hides real defects:
 
@@ -12,7 +20,7 @@ Three outcomes are distinguished, because collapsing them hides real defects:
                 the guard never ran - this is NOT a red guard
   VACUOUS       the guard stayed green, i.e. it does not detect its defect
 
-Usage: python3 scripts/mutate-zk-guards.py
+Usage: python3 scripts/mutate-zk-guards.py [--only SUBSTRING]
 """
 import os
 import pathlib
@@ -218,6 +226,46 @@ MUTATIONS = [
         ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
          "h7_private_write_primitives_have_exactly_one_definition", "--", "--exact"],
     ),
+    # ── File-scanning guards: the mutation is in a file the guard READS, not in
+    # code the guard COMPILES, so the check cannot be satisfied by a rebuild.
+    #
+    # Both target crates/octo-adapter-irc deliberately. It sits outside
+    # octo-cli's 38-crate dependency closure, so mutating it cannot invalidate a
+    # fingerprint in the graph `cargo test -p octo-cli` has to build. Mutating a
+    # crate octo-cli does depend on would turn a cheap check into a rebuild, and
+    # under a tight disk budget that is how a verification step silently stops
+    # being runnable.
+    (
+        # A test with an empty body passes trivially and asserts nothing. The
+        # guard exists because a whole suite once did that unnoticed.
+        "G-A: a test with an empty body appears in the tree",
+        "crates/octo-adapter-irc/src/lib.rs",
+        '            "key 20 should be the remaining entry"\n        );\n    }\n}\n',
+        '            "key 20 should be the remaining entry"\n        );\n    }\n}\n'
+        "\n#[cfg(test)]\nmod probe_vacuity {\n    #[test]\n    fn probe_empty_body() {}\n}\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "no_test_has_an_empty_body", "--", "--exact"],
+    ),
+    (
+        # A path dependency spelled as its own table rather than inline. This
+        # form was the guard's blind spot until the parse was taught to take
+        # the name from the table header; without a mutation for it, that fix
+        # would rest on nothing but the session that made it.
+        #
+        # The table is named after the package it points at, not after an
+        # invented crate. An earlier version of this entry used a made-up name,
+        # and cargo refused it with "no matching package named" — which the
+        # harness scored as a red guard even though the guard never ran. A
+        # dependency key must match the target package unless renamed with
+        # `package =`, so the mutation has to name a crate that exists.
+        "G-B: an unused section-form path dependency reappears",
+        "crates/octo-adapter-irc/Cargo.toml",
+        'octo-algo-ed25519 = { path = "../octo-algo-ed25519" }\n',
+        'octo-algo-ed25519 = { path = "../octo-algo-ed25519" }\n'
+        '\n[dependencies.cipherocto-encoding]\npath = "../cipherocto-encoding"\n',
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "no_path_dependency_is_declared_and_never_referenced", "--", "--exact"],
+    ),
 ]
 
 # NOT MUTATED, deliberately: `OpenOptionsExt::mode(0o600)` at creation inside
@@ -274,8 +322,20 @@ def release_lock():
 
 def main():
     acquire_lock()
+    # `--only SUBSTRING` runs a subset. A red-team entry that mutates a crate in
+    # octo-cli's dependency closure forces a recompile, so running the whole
+    # table is expensive enough that people skip it. Being able to run one entry
+    # is what keeps a specific claim re-checkable between full sweeps.
+    selected = MUTATIONS
+    if len(sys.argv) > 2 and sys.argv[1] == "--only":
+        needle = sys.argv[2]
+        selected = [m for m in MUTATIONS if needle in m[0]]
+        if not selected:
+            print(f"no mutation label contains {needle!r}")
+            release_lock()
+            return 2
     vacuous, bad_mutation, bad_anchor = [], [], []
-    for label, rel, old, new, cmd in MUTATIONS:
+    for label, rel, old, new, cmd in selected:
         path = ROOT / rel
         original = path.read_text()
         if old not in original:
@@ -303,16 +363,37 @@ def main():
             else:
                 first = next(
                     (ln for ln in output.splitlines() if "test result:" in ln),
-                    "(no test-result line)",
+                    None,
                 )
-                print(f"[RED ok] {label} -> {first.strip()}", flush=True)
+                # A genuine red always prints a test-result line, because that
+                # line is the test harness reporting. Its absence means cargo
+                # failed for some other reason and the guard never ran — a
+                # manifest that no longer resolves, a missing file, a lockfile
+                # clash. Scoring that as RED ok is the harness reporting a pass
+                # it never earned, and it happened here for real: a mutation
+                # using an invented dependency name was refused by cargo with
+                # "no matching package named" and came back green-looking.
+                if first is None:
+                    bad_mutation.append(label)
+                    detail = next(
+                        (ln for ln in output.splitlines() if ln.startswith("error")),
+                        "(no error line either)",
+                    )
+                    print(
+                        f"[BAD-MUTATION] {label}: cargo failed before the guard ran "
+                        f"-> {detail.strip()[:120]}",
+                        flush=True,
+                    )
+                else:
+                    print(f"[RED ok] {label} -> {first.strip()}", flush=True)
         finally:
             shutil.copyfile(backup.name, path)
             pathlib.Path(backup.name).unlink(missing_ok=True)
 
-    red = len(MUTATIONS) - len(vacuous) - len(bad_mutation) - len(bad_anchor)
+    red = len(selected) - len(vacuous) - len(bad_mutation) - len(bad_anchor)
     print("\n--- summary ---")
-    print(f"mutations: {len(MUTATIONS)}  red: {red}  vacuous: {len(vacuous)}  "
+    shown = len(selected) if len(selected) == len(MUTATIONS) else f"{len(selected)}/{len(MUTATIONS)}"
+    print(f"mutations: {shown}  red: {red}  vacuous: {len(vacuous)}  "
           f"bad-mutation: {len(bad_mutation)}  bad-anchor: {len(bad_anchor)}")
     for v in vacuous:
         print(f"  VACUOUS: {v}")

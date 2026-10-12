@@ -325,8 +325,11 @@ mod tests {
         }
     }
 
-    /// Default empty governance proof — zero signers (test-only; in
-    /// production `meets_quorum()` requires `GOVERNANCE_QUORUM = 3`).
+    /// Default empty governance proof — zero signers (test-only).
+    /// `meets_quorum()` requires `GOVERNANCE_QUORUM = 3` distinct signers,
+    /// but nothing calls it yet: the pre-flight gate is deferred (mission
+    /// 0968a2). An empty proof here is a test fixture, not a shape the
+    /// runtime would accept.
     fn dummy_proof() -> AnchorGovernanceProof {
         AnchorGovernanceProof { signers: vec![] }
     }

@@ -96,8 +96,9 @@ fn empty_snapshot() -> AnchorGovernanceSnapshot {
     }
 }
 
-/// Default empty governance proof — zero signers (test-only; in
-/// production `meets_quorum()` requires `GOVERNANCE_QUORUM = 3`).
+/// Default empty governance proof — zero signers (test-only).
+/// `meets_quorum()` requires `GOVERNANCE_QUORUM = 3` distinct signers, but
+/// nothing calls it yet: the pre-flight gate is deferred (mission 0968a2).
 fn empty_proof() -> AnchorGovernanceProof {
     AnchorGovernanceProof { signers: vec![] }
 }

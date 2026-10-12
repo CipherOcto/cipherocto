@@ -1055,8 +1055,15 @@ mod tests {
     }
 
     /// Empty `signers` vec (the `anchor_job.rs::plan_batches` placeholder)
-    /// MUST fail `meets_quorum()` — the invariant the runtime relies on
-    /// when it refuses to submit a pre-binding batch.
+    /// MUST fail `meets_quorum()`.
+    ///
+    /// The placeholder `plan_batches` actually writes is exactly this, so
+    /// this test documents the shape the deferred pre-flight gate will have
+    /// to catch. **It does not document behaviour the runtime has today.**
+    /// `meets_quorum()` has no production caller: the hook into
+    /// `anchor_job.rs` is deferred and tracked in mission 0968a2. The test
+    /// pins a property of the helper so that when the gate is wired it starts
+    /// from a correct baseline — not a claim that batches are being refused.
     #[test]
     fn anchor_governance_proof_placeholder_empty_fails_quorum() {
         let proof = AnchorGovernanceProof { signers: vec![] };

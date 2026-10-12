@@ -31,10 +31,18 @@
 --
 -- Constraints:
 --   All 3 columns are nullable — pre-submission rows may have NULL
---   governance fields. The runtime populates them before the anchor
---   reaches `MIN_FINALITY_BLOCKS` depth; the verification gate
---   (`governance_proof.meets_quorum()`) rejects rows with missing or
---   non-3-of-3 proofs.
+--   governance fields. The runtime is meant to populate them before the
+--   anchor reaches `MIN_FINALITY_BLOCKS` depth.
+--
+--   There is NO verification gate on these columns today.
+--   `AnchorGovernanceProof::meets_quorum()` (auth.rs) counts distinct
+--   signers correctly, but nothing calls it: the pre-flight hook into
+--   `anchor_job.rs` is deferred, tracked in mission 0968a2. `plan_batches`
+--   still writes `signers: vec![]` with a zeroed snapshot and set hash, so a
+--   row can currently be persisted with no governance material at all and
+--   nothing will reject it. Do not read the nullability above as licence to
+--   persist an unfinalised row — that is the state the deferred gate is
+--   meant to catch.
 
 ALTER TABLE reputation_anchors ADD COLUMN governance_snapshot BLOB;
 ALTER TABLE reputation_anchors ADD COLUMN governance_proof BLOB;

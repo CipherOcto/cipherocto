@@ -49,6 +49,24 @@ The 9 are the red-team remediation set: two `c1_`, one `h6_`, two `h7_`, three
 recently for dead dependency edges, empty test bodies, and placeholder decoders
 — is protected only by whatever someone remembers doing.
 
+## Which harness entries are actually proven
+
+Eleven of the harness's twenty-three entries have now been executed and
+observed red. Four are the file-scanning entries added to close this gap; the
+other seven are pre-existing entries — the session-swap group and world-writable
+checks, plus the export-bundle and local-writer entries — run for the first time
+in this session and all confirmed still fire. That is worth recording because
+the alternative is an inherited harness nobody has run since it was written.
+
+The remaining twelve mutate crates inside octo-cli's dependency closure and so
+force a recompile. They were not run, because disk was the binding constraint,
+and a person picking this up should treat them as unproven rather than as
+passing. They are not in doubt — only unexecuted.
+
+The classification is mechanical: a mutation is cheap exactly when its target
+file is outside the closure, which is why the four added here were chosen that
+way rather than for any other reason.
+
 ## What is not wrong
 
 The harness itself is healthy. All 19 of its mutations still have a live

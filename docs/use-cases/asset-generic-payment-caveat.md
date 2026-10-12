@@ -46,7 +46,7 @@ The drift was not deliberate. The substrate type `Dqa { value: i64, scale: u8 }`
 
 - **Must not**: widen the frozen `AssetId(pub [u8;32])` substrate struct (semver-major on Layer A per RFC-0105 §Layer A frozen-substrate principle). The fix MUST use a Layer B additive side-table.
 - **Must not**: introduce a third-party decimal library that breaks RFC-0104 Dfp determinism.
-- **Must not**: add a central enum for asset kinds (use the typed-discriminator + Raw escape hatch pattern per `cipherocto-design-principles.md` §Extension over enumeration).
+- **Must not**: add a central enum for asset kinds (use the typed-discriminator + Raw escape hatch pattern per ``docs/architecture/design-principles.md`.md` §Extension over enumeration).
 - **Limited to**: substrate changes that fit within the existing `Dqa { value: i64, scale: u8 }` 16-byte BE wire form (no wire-form change).
 - **Limited to**: one substrate release cycle for backward compatibility on the deprecated `"paid-query/v1"` discriminator.
 

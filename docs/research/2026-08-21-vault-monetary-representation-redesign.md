@@ -18,7 +18,7 @@ Quota-router currently carries **three parallel spend/balance ledgers**, **two p
 
 This research locks the design decisions for the redesign of quota-router monetary representation around **a single value-transfer abstraction** (the vault substrate) carrying **two paths** (corporate private + cipherocto mesh open) on the same substrate, with **minting + burning** as first-class substrate operations in a NEW **`ValueTransfer` trait** (separate from VaultStore to preserve RFC-0206 §VaultStore KV-shape discipline), and a **persistent LiteLLM-compatible workflow** that runs in parallel with capability-gated access — neither stubbed.
 
-All six design axes (D1-D6) have final decisions. None require central enums: policy-configurable variation uses the **typed-discriminator 128-bit UUID + Raw escape hatch** pattern from `cipherocto-design-principles.md` §Extension over enumeration. Per-policy-kind crates register at startup per `cipherocto-design-principles.md` §User extensibility.
+All six design axes (D1-D6) have final decisions. None require central enums: policy-configurable variation uses the **typed-discriminator 128-bit UUID + Raw escape hatch** pattern from ``docs/architecture/design-principles.md`.md` §Extension over enumeration. Per-policy-kind crates register at startup per ``docs/architecture/design-principles.md`.md` §User extensibility.
 
 **R1 structural resolutions:**
 
@@ -113,7 +113,7 @@ A single value-transfer abstraction — the vault substrate (split into `VaultSt
 - Multi-token wallet UI / human-facing UX.
 - Federation across multiple cipherocto meshes (RFC-0960 §20.x deferred).
 
-**Deferred (per `deferred-vs-unspecified` rule, not unspec):**
+**Deferred (per `docs/05-process/engineering-rules.md` §Deferred versus unspecified rule, not unspec):**
 
 - Federation RFC (separate research).
 - Bridge-specific primitives if RFC-0960 §7 MultiSettlement is later proven insufficient.
@@ -126,7 +126,7 @@ A single value-transfer abstraction — the vault substrate (split into `VaultSt
 | #      | Axis                        | Decision                                                                               | Why                                                                                                                                                                                             |
 | ------ | --------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **D1** | Substrate partition         | (a) chain_id namespace only                                                            | Vault PK `(chain_id, owner_did, asset_id)` (RFC-0960 §2.6) already supports this; corporate = corp-assigned chain_id, mesh = mainnet chain_id                                                   |
-| **D2** | Mint authority              | **All options policy-configurable, NO central enum**                                   | Typed-discriminator 128-bit UUID + Raw escape hatch per `cipherocto-design-principles.md` §Extension over enumeration. Registration gated by `ExecutionClass` (Class A or B-with-ZK-proof only) |
+| **D2** | Mint authority              | **All options policy-configurable, NO central enum**                                   | Typed-discriminator 128-bit UUID + Raw escape hatch per ``docs/architecture/design-principles.md`.md` §Extension over enumeration. Registration gated by `ExecutionClass` (Class A or B-with-ZK-proof only) |
 | **D3** | Closed-user-set enforcement | (f) capability-gated **PLUS** LiteLLM-compatible workflow running in parallel          | Drop-in LiteLLM replacement intent preserved; both workflows real, neither stubbed. CompositeWorkflow = WorkflowKind impl supporting dual registration                                          |
 | **D4** | Cross-chain interop         | **All options policy-configurable** (no-bridge + atomic swap + wrapped representation) | Substrate-as-is future-proof per RFC-0960 §7 + RFC-0965 §3.7 + RFC-0010 §32-byte addendum; per-chain policy decides                                                                             |
 | **D5** | Burn semantics              | (e) time-locked burn with reversible window — **LINEARIZED**                           | `BurnPending` (no transfer_event) → after `unlock_at_unix` → `BurnFinalized` (emits transfer_event, balance decrements); cancellable via `BurnCapabilityProof` within window                    |
@@ -138,7 +138,7 @@ A single value-transfer abstraction — the vault substrate (split into `VaultSt
 
 ### 4.1 Why no enum
 
-`cipherocto-design-principles.md` §Extension over enumeration mandates: **typed-discriminator + Raw escape hatch** for types with infinite extension surface. Mint authority kinds are exactly such a surface — today we have (a) single-key, (b) multi-sig, (c) capability-issued; tomorrow a corp may need (d) governance-vote, (e) hardware-HSM, (f) Shamir-share, etc. A central enum forces a core edit per new kind — upgrade-hostile.
+``docs/architecture/design-principles.md`.md` §Extension over enumeration mandates: **typed-discriminator + Raw escape hatch** for types with infinite extension surface. Mint authority kinds are exactly such a surface — today we have (a) single-key, (b) multi-sig, (c) capability-issued; tomorrow a corp may need (d) governance-vote, (e) hardware-HSM, (f) Shamir-share, etc. A central enum forces a core edit per new kind — upgrade-hostile.
 
 ### 4.2 Pattern — typed-discriminator UUID + Raw body + ExecutionClass gate
 
@@ -537,7 +537,7 @@ For chains where `WorkflowKind::LiteLLM` is configured, the vault's `owner_did` 
 ```rust
 // Local to octo-workflow-composite (Layer E), NOT substrate enum — per R2 finding
 // "FallthroughCondition is a local body-schema enum, not a substrate-level enum."
-// Per `cipherocto-design-principles.md` §Extension over enumeration: enums are upgrade-
+// Per ``docs/architecture/design-principles.md`.md` §Extension over enumeration: enums are upgrade-
 // hostile. CompositeWorkflow is one WorkflowKind impl among many; the enum exists only
 // because the workflow body is itself a small fixed vocabulary. Adding a new composite
 // variant is a new CompositeWorkflow body instance, not a new enum variant.
@@ -1060,7 +1060,7 @@ Total: **7 in-place RFC amendments + 1 RFC-0967-A1 = 8 RFC artifacts** (not new 
 
 Per `rfc-0871-mission-dag-order` pattern + BLUEPRINT.md §Multi-Mission Decomposition. Mission count: **21 NEW missions + 7 RFC amendments + 30 per-policy-kind crates = 58 deliverables**, but missions (not crates) tracked here = 21. **[R15 fix F-R15-FD-7 §10/§16 count drift]:** §10 mission-tier count = 21 NEW + 7 RFC amendments = 28 mission-tier deliverables. §16 cross-reference table enumerates 31 vault-XXX pointers (7 Phase 0 + 6 Phase 1 + 7 Phase 2 + 7 Phase 3 + 4 Phase 4 = 31). Lens difference: §10 = mission-tier count (21 + 7 = 28); §16 = vault-XXX pointer count including 3 Phase 0 RFC amendments that span multiple vault-XXX pointers (e.g. RFC-0967-A1 amendment contributes 4 vault-XXX pointers across AuthorityPolicy + MembershipPolicy + InteropPolicy + BurnPolicy traits, vs single RFC amendment in §10 count). Both counts are correct under their respective lenses; the 3-entry drift = sub-pointer expansion in Phase 0 RFC amendments where one amendment covers multiple policy kinds.
 
-**[R12 fix F-R12-PHANTOM-MISSION-SLUGS-PARTIAL-FIX — phantom mission slug note]:** The `vault-monetary-rfc-XXXX` + `vault-policy-registry` + `vault-chain-metadata` + `vault-value-transfer-surface` + `vault-burn-state-machine` + `vault-litellm-persistence` + `vault-policy-defaults` slugs below are **RFC-level mission pointers, not filed mission YAMLs on disk**. The actual mission YAMLs on disk use the 0206-XXX convention per `no-phantom-mission-pointers` memory card. Per `feedback_initiation_user_only`, RFC authority chain is preserved (each vault-XXX points to its authorizing RFC-XXXX §X section). When the missions are filed, each `vault-XXX` slug below maps to a 0206-XXX mission YAML per the substrate redesign plan (`/home/mmacedoeu/.claude/plans/sparkling-mapping-kahan.md`). The DAG order below is illustrative of RFC-level authority + sequential dependency; precise mission YAML IDs are deferred to filing time.**
+**[R12 fix F-R12-PHANTOM-MISSION-SLUGS-PARTIAL-FIX — phantom mission slug note]:** The `vault-monetary-rfc-XXXX` + `vault-policy-registry` + `vault-chain-metadata` + `vault-value-transfer-surface` + `vault-burn-state-machine` + `vault-litellm-persistence` + `vault-policy-defaults` slugs below are **RFC-level mission pointers, not filed mission YAMLs on disk**. The actual mission YAMLs on disk use the 0206-XXX convention per `docs/05-process/engineering-rules.md` §No phantom mission pointers memory card. Per `docs/05-process/engineering-rules.md` §Git workflow, RFC authority chain is preserved (each vault-XXX points to its authorizing RFC-XXXX §X section). When the missions are filed, each `vault-XXX` slug below maps to a 0206-XXX mission YAML per the substrate redesign plan (`/home/mmacedoeu/.claude/plans/sparkling-mapping-kahan.md`). The DAG order below is illustrative of RFC-level authority + sequential dependency; precise mission YAML IDs are deferred to filing time.**
 
 ### Phase 0 — RFC Amendments (sequential, blocking)
 
@@ -1452,7 +1452,7 @@ Missions (Phase 1-4 — execution layer — HOW)
 Protocol Evolution
 ```
 
-**Recommended next step:** review v2.0 of research doc with maintainers. **No Use Case / RFC / Mission file creation without explicit user authorization** per `feedback_initiation_user_only`.
+**Recommended next step:** review v2.0 of research doc with maintainers. **No Use Case / RFC / Mission file creation without explicit user authorization** per `docs/05-process/engineering-rules.md` §Git workflow.
 
 **Pre-flight before Use Case filing (per BLUEPRINT.md Research Review Gate):**
 
@@ -1675,7 +1675,7 @@ The 31 `vault-XXX` mission pointers in the table below are RFC amendment / RFC-t
 
 **Loop closure eligibility:** BLUEPRINT.md §Adversarial Review Process DRY criterion met. (i) R30 lens 2 + R31 = 2 consecutive rounds with 0 NEW findings (≤3 NEW threshold met). (ii) <10 operative issues remaining corpus-wide (threshold met). (iii) Convergence signal = DRY. (iv) v3.28 row appended at §17 marking formal loop closure. Research thread `vault-monetary-representation redesign` formally CLOSED.
 
-**User-blocked work (await authorization per `feedback_initiation_user_only`):**
+**User-blocked work (await authorization per `docs/05-process/engineering-rules.md` §Git workflow):**
 
 - RFC-0968-A2 filing (gated per BLUEPRINT.md §RFC Process; v3.15 row + v3.16 row + v3.17 row + v3.18 row + v3.22 row establish groundwork)
 - BLUEPRINT.md amendment for RFC-0008 promotion pathway (RFC-0008 currently ACCEPTED but Path B gate requires explicit BLUEPRINT.md amendment)
@@ -1693,7 +1693,7 @@ The 31 `vault-XXX` mission pointers in the table below are RFC amendment / RFC-t
 
 **Convergence trajectory (NEW findings axis):** R1=85 → R2=37 → R3=76 → R4=16 → R5=15 → R6=17 → R7=12 → R8=12 → R9=11 → R10=9 → R10.5=0 (scope correction) → R11=11 → R12=28 (fresh lens bounce) → R13=22 → R14=23 → R15-R29=0 (FIX-sweep rounds) → R30=0 (lens 2) → R31=0 (STATE audit) → R32=0 (close-out). Convergence signal at R30-R32 = DRY (3 consecutive rounds with 0 NEW; exceeds BLUEPRINT.md §Adversarial Review Process 2-consecutive-round threshold).
 
-**Carry-over recommendations:** (i) RFC-0968-A2 filing requires user authorization per `feedback_initiation_user_only`; (ii) cross-RFC propagation automation script + §section_name hygiene linter recommended as P3 structural guards for future RFC-version review rounds; (iii) corpus STATE audit methodology recommended as standard for all future RFC-version review rounds (replaces R29-style hypothesis-driven decomposition). Research thread `vault-monetary-representation redesign` formally CLOSED per BLUEPRINT.md §Adversarial Review Process. NO `crates/octo-*/src/*` touched (R10.5 scope respected). NO `Cargo.toml` / `Cargo.lock` touched (R10.5 scope respected). NO `docs/audits/` touched (R10.5 scope respected). NO push (user-only per `feedback_initiation_user_only`). NO RFC text edits (R32 = close-out, not apply, per R10.5 scope).
+**Carry-over recommendations:** (i) RFC-0968-A2 filing requires user authorization per `docs/05-process/engineering-rules.md` §Git workflow; (ii) cross-RFC propagation automation script + §section_name hygiene linter recommended as P3 structural guards for future RFC-version review rounds; (iii) corpus STATE audit methodology recommended as standard for all future RFC-version review rounds (replaces R29-style hypothesis-driven decomposition). Research thread `vault-monetary-representation redesign` formally CLOSED per BLUEPRINT.md §Adversarial Review Process. NO `crates/octo-*/src/*` touched (R10.5 scope respected). NO `Cargo.toml` / `Cargo.lock` touched (R10.5 scope respected). NO `docs/audits/` touched (R10.5 scope respected). NO push (user-only per `docs/05-process/engineering-rules.md` §Git workflow). NO RFC text edits (R32 = close-out, not apply, per R10.5 scope).
 
 ## Convergence Final Close-Out Summary (R37, 2026-08-22)
 
@@ -1709,7 +1709,7 @@ The 31 `vault-XXX` mission pointers in the table below are RFC amendment / RFC-t
 
 **Loop closure eligibility:** BLUEPRINT.md §Adversarial Review Process DRY criterion met (R35 + R36 + R37 = 3 consecutive rounds 0 NEW; 0 operative cite issues remaining).
 
-**User-blocked work (await authorization per `feedback_initiation_user_only`):**
+**User-blocked work (await authorization per `docs/05-process/engineering-rules.md` §Git workflow):**
 
 - RFC-0968-A2 filing (BLUEPRINT.md §RFC Process gated; v3.15 + v3.16 + v3.17 + v3.18 + v3.22 rows establish groundwork)
 - BLUEPRINT.md amendment for RFC-0008 promotion pathway (RFC-0008 currently ACCEPTED but Path B gate requires explicit BLUEPRINT.md amendment)
@@ -1723,7 +1723,7 @@ The 31 `vault-XXX` mission pointers in the table below are RFC amendment / RFC-t
 - Pre-commit § cite validation hook: validate cited `RFC-XXXX §section` exists in on-disk RFC file
 - CI gate combo: § cite validation + clippy `-D warnings` per CLAUDE.md §Rust Development Commands
 
-**R37 final loop CLOSE confirmation:** R35 + R36 + R37 = 3 consecutive rounds 0 NEW operative cites (exceeds 2-round threshold per BLUEPRINT.md §Adversarial Review Process DRY criterion). 0 operative cite issues remaining corpus-wide. Loop CLOSED. Research thread `vault-monetary-representation redesign` formally CLOSED (supersedes R32 PREMATURE close-out — R33 fresh-lens on 10 newly-created RFCs found 11 NEW showing R30/R31 corpus-at-large focus missed new RFCs). NO `crates/octo-*/src/*` touched (R10.5 scope respected). NO `Cargo.toml` / `Cargo.lock` touched (R10.5 scope respected). NO `docs/audits/` touched (R10.5 scope respected). NO push (user-only per `feedback_initiation_user_only`). NO RFC text edits (R37 = final close-out confirmation, not apply, per R10.5 scope). Research doc text edits ONLY (v3.33 row + this §18 final convergence summary block update).
+**R37 final loop CLOSE confirmation:** R35 + R36 + R37 = 3 consecutive rounds 0 NEW operative cites (exceeds 2-round threshold per BLUEPRINT.md §Adversarial Review Process DRY criterion). 0 operative cite issues remaining corpus-wide. Loop CLOSED. Research thread `vault-monetary-representation redesign` formally CLOSED (supersedes R32 PREMATURE close-out — R33 fresh-lens on 10 newly-created RFCs found 11 NEW showing R30/R31 corpus-at-large focus missed new RFCs). NO `crates/octo-*/src/*` touched (R10.5 scope respected). NO `Cargo.toml` / `Cargo.lock` touched (R10.5 scope respected). NO `docs/audits/` touched (R10.5 scope respected). NO push (user-only per `docs/05-process/engineering-rules.md` §Git workflow). NO RFC text edits (R37 = final close-out confirmation, not apply, per R10.5 scope). Research doc text edits ONLY (v3.33 row + this §18 final convergence summary block update).
 
 ## Convergence Final Close-Out Summary (M37, 2026-08-22)
 
@@ -1747,7 +1747,7 @@ The 31 `vault-XXX` mission pointers in the table below are RFC amendment / RFC-t
 
 **Loop closure eligibility:** BLUEPRINT.md §Adversarial Review Process DRY criterion met. (i) R35 + R36 + R37 + M33 + M34 + M35 + M36 + M37 = 8+ rounds post-R32 close-out, all 0 NEW (M33 = 3 NEW; M34 = 0 NEW; M35 = 0 NEW; M36 = 0 NEW; M37 = 0 NEW beyond M35/M36 dispatch items). (ii) <10 operative issues remaining corpus-wide (threshold met; 0 NEW after M37 apply). (iii) Convergence signal = DRY.
 
-**User-blocked work (await authorization per `feedback_initiation_user_only`; M37 carries forward R37 list + adds 2 new items):**
+**User-blocked work (await authorization per `docs/05-process/engineering-rules.md` §Git workflow; M37 carries forward R37 list + adds 2 new items):**
 
 - RFC-0968-A2 filing (BLUEPRINT.md §RFC Process gated; v3.15 + v3.16 + v3.17 + v3.18 + v3.22 rows establish groundwork)
 - BLUEPRINT.md amendment for RFC-0008 promotion pathway (RFC-0008 ACCEPTED but Path B gate requires explicit BLUEPRINT.md amendment)
@@ -1767,7 +1767,7 @@ The 31 `vault-XXX` mission pointers in the table below are RFC amendment / RFC-t
 - NO_VH ACCEPTED linter: flag Accepted RFCs lacking `## §Version History` section per BLUEPRINT.md §RFC Process (would have caught 21 NO_VH_ACCEPTED pre-landing)
 - CI gate combo: § cite validation + Status/VH sync linter + clippy `-D warnings` per CLAUDE.md §Rust Development Commands
 
-**M37 final loop CLOSE confirmation:** M33 (3) + M34 (7) + M35 (12 + CRITICAL RFC-0206) + M36 (1) + M37 (7) = 30 corpus fixes applied across 2 research lenses (missions-lens M33/M34/M37; corpus-RFC-lens M35/M36) + 21 governance-gap RFCs identified + Option B adopted for 0206-011c/011d. **0 operative issues remaining**. Loop CLOSED. Research thread `vault-monetary-representation redesign` formally CLOSED. NO `crates/octo-*/src/*` touched (R10.5 scope respected). NO `Cargo.toml` / `Cargo.lock` touched (R10.5 scope respected). NO `docs/audits/` touched (R10.5 scope respected). NO push (user-only per `feedback_initiation_user_only`). 7 RFC text edits applied (Status header syncs only — body text preserved per R10.5). Research doc text edits ONLY (v3.38 row + this §19 final convergence summary block update; §18 final convergence summary block left intact as historical record of R37 close-out).
+**M37 final loop CLOSE confirmation:** M33 (3) + M34 (7) + M35 (12 + CRITICAL RFC-0206) + M36 (1) + M37 (7) = 30 corpus fixes applied across 2 research lenses (missions-lens M33/M34/M37; corpus-RFC-lens M35/M36) + 21 governance-gap RFCs identified + Option B adopted for 0206-011c/011d. **0 operative issues remaining**. Loop CLOSED. Research thread `vault-monetary-representation redesign` formally CLOSED. NO `crates/octo-*/src/*` touched (R10.5 scope respected). NO `Cargo.toml` / `Cargo.lock` touched (R10.5 scope respected). NO `docs/audits/` touched (R10.5 scope respected). NO push (user-only per `docs/05-process/engineering-rules.md` §Git workflow). 7 RFC text edits applied (Status header syncs only — body text preserved per R10.5). Research doc text edits ONLY (v3.38 row + this §19 final convergence summary block update; §18 final convergence summary block left intact as historical record of R37 close-out).
 
 ## 20. Phase 0 User Decision Matrix (2026-08-22)
 
@@ -1792,7 +1792,7 @@ The 31 `vault-XXX` mission pointers in the table below are RFC amendment / RFC-t
 
 **Phase unlock status:**
 
-- **Phase 1 (Cleanup + Audit Trail)**: UNLOCKED — 0206-011b git mv + 21 NO_VH_ACCEPTED retroactive VH addition (Option C) both user-authorized; user-only gate per `feedback_initiation_user_only` cleared.
+- **Phase 1 (Cleanup + Audit Trail)**: UNLOCKED — 0206-011b git mv + 21 NO_VH_ACCEPTED retroactive VH addition (Option C) both user-authorized; user-only gate per `docs/05-process/engineering-rules.md` §Git workflow cleared.
 - **Phase 2 (P3 Structural Guards)**: UNLOCKED — 6 linters/hooks/scripts per plan §Phase 2 scope.
 - **Phase 3 (Substrate Redesign Cascade)**: UNLOCKED — substrate redesign plan v1.5 (`/home/mmacedoeu/.claude/plans/sparkling-mapping-kahan.md`) user-authorized; 9-mission cascade unblocked.
 - **Phase 4 (RFC Promotion Cascade)**: UNLOCKED — 9 RFC promotions Tier 1 → Tier 2 → Tier 3; 2-Cycle Atomic Promotion per BLUEPRINT.md rule 5; Path B gate prerequisites (decisions 2 + 3) cleared.
@@ -1803,9 +1803,9 @@ The 31 `vault-XXX` mission pointers in the table below are RFC amendment / RFC-t
 
 **Cross-coherence with R7-R37 + M33-M37 + P38-P40**: this §20 captures the user-only authorization gate that R37/M37/P40 carried forward as out-of-scope items. All 6 R37/M37 user-gated items + 2 M37 retroactive filing opt-ins + RFC promotion priority decision + substrate redesign plan authorization = 10 items = 10 decisions captured. 0 item unresolved.
 
-**Scope discipline**: R10.5 scope respected — NO `crates/octo-*/src/*` touched (decision matrix = research doc + RFC text + plan + mission YAML edits only). NO `Cargo.toml` / `Cargo.lock` touched. NO `docs/audits/` touched. NO push (user-only per `feedback_initiation_user_only`). Research doc text edit ONLY (this §20 section + v3.42 VH row). Plan text edit ONLY (Phase 0 §User Decision Matrix subsection + YAML bump v1.2 → v1.3 + v1.3 VH row).
+**Scope discipline**: R10.5 scope respected — NO `crates/octo-*/src/*` touched (decision matrix = research doc + RFC text + plan + mission YAML edits only). NO `Cargo.toml` / `Cargo.lock` touched. NO `docs/audits/` touched. NO push (user-only per `docs/05-process/engineering-rules.md` §Git workflow). Research doc text edit ONLY (this §20 section + v3.42 VH row). Plan text edit ONLY (Phase 0 §User Decision Matrix subsection + YAML bump v1.2 → v1.3 + v1.3 VH row).
 
-**Next steps**: await user authorization for Phase 1 dispatch (per `feedback_initiation_user_only`). NO push. NO remote writes. Phase 1 = `git mv missions/retired/0206-011b-rfc-0206-v22-amendment-stoolap-reexport.md → missions/retired/` + 21 NO_VH_ACCEPTED retroactive VH addition (5 rename + 16 backfill).
+**Next steps**: await user authorization for Phase 1 dispatch (per `docs/05-process/engineering-rules.md` §Git workflow). NO push. NO remote writes. Phase 1 = `git mv missions/retired/0206-011b-rfc-0206-v22-amendment-stoolap-reexport.md → missions/retired/` + 21 NO_VH_ACCEPTED retroactive VH addition (5 rename + 16 backfill).
 
 ## 21. Phase 3.1-3.8 Substrate Redesign Cascade Close-Out (2026-08-22)
 
@@ -1869,7 +1869,7 @@ Per R10.5 scope correction (long-horizon plan v1.5 Risk #13):
 - **0** `docs/audits/` files created (gitignored scratchpad convention)
 - **7** mission YAML files edited (frontmatter + body) per BLUEPRINT.md §Mission Lifecycle
 - **1** research doc text edited (this §21 section)
-- **0** push performed (commits local-only per `feedback_initiation_user_only`)
+- **0** push performed (commits local-only per `docs/05-process/engineering-rules.md` §Git workflow)
 
 ### Phase 3 memory cards
 
@@ -1884,4 +1884,4 @@ Per memory workflow, 8 new memory cards to file (or update existing) post-Phase 
 7. `mission-0206-010-phase37-closeout-status.md` — TODO (supersede `mission-0206-010-per-adapter-fixtures-status.md`)
 8. `phase38-tv-sweep-status.md` — TODO (Phase 3.8 audit summary card)
 
-**Next steps**: continue with Phase 4 (RFC Promotion Cascade) per long-horizon plan v1.5 §Phase 4 scope (9 RFC promotions Tier 1 → Tier 2 → Tier 3 + 2-Cycle Atomic Promotion per BLUEPRINT.md rule 5). NO push performed (user-only per `feedback_initiation_user_only`).
+**Next steps**: continue with Phase 4 (RFC Promotion Cascade) per long-horizon plan v1.5 §Phase 4 scope (9 RFC promotions Tier 1 → Tier 2 → Tier 3 + 2-Cycle Atomic Promotion per BLUEPRINT.md rule 5). NO push performed (user-only per `docs/05-process/engineering-rules.md` §Git workflow).

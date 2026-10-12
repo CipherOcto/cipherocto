@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architectural Principles (Apply from Project Start)
 
-Generic SE principles that guide any new RFC, mission, or crate. Full reference: `~/.claude/projects/.../memory/cipherocto-design-principles.md`.
+Generic SE principles that guide any new RFC, mission, or crate. Full reference: `~/.claude/projects/.../memory/`docs/architecture/design-principles.md`.md`.
 
 ### Rust crate-level stability (match crate stability to design depth)
 
@@ -207,7 +207,7 @@ CipherOcto uses **Trunk-Based + Feature Streams**:
 | `research/*` | Experimental         | CI required                      |
 | `hotfix/*`   | Emergency fixes      | PR to main                       |
 
-**Golden Rule:** Nobody pushes directly to `main`. Push + remote writes (`gh pr/issue/release`) require explicit user instruction per [[git-workflow]] + [[feedback_initiation_user_only]].
+**Golden Rule:** Nobody pushes directly to `main`. Push + remote writes (`gh pr/issue/release`) require explicit user instruction per `docs/05-process/engineering-rules.md` §Git workflow + `docs/05-process/engineering-rules.md` §Git workflow.
 
 ## RFC Reference Conventions (Reaffirmed)
 

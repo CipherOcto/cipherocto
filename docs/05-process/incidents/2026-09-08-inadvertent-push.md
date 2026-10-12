@@ -39,7 +39,7 @@ sequenceDiagram
     Note right of Agent: heredoc body contains:
     Note right of Agent: "User owns `git push origin next` +
     Note right of Agent:  and `gh pr create next:main` per
-    Note right of Agent:  [[feedback_initiation_user_only]]."
+    Note right of Agent:  `docs/05-process/engineering-rules.md` §Git workflow."
     Bash->>Bash: bash EXPANDS backtick regions BEFORE passing to git
     Bash->>Remote: git push origin next  ✓ (ran successfully)
     Bash->>Bash: gh pr create next:main  ✗ (invalid syntax, exits non-zero)
@@ -80,7 +80,7 @@ cat <<EOF | git commit -F -
 8 commits, see git log.
 
 User owns `git push origin next` and `gh pr create next:main`
-per [[feedback_initiation_user_only]].
+per `docs/05-process/engineering-rules.md` §Git workflow.
 EOF
 ```
 
@@ -104,7 +104,7 @@ The smoking gun in the assembled string:
 
 ```
 User owns  +
-per [[feedback_initiation_user_only]].
+per `docs/05-process/engineering-rules.md` §Git workflow.
 ```
 
 The gap between "owns" and "+" is where the two backtick regions used to be.
@@ -136,7 +136,7 @@ consequence of this incident. Before 2026-09-08, none of it existed.
 ## Disclosure
 
 The agent authored the disclosure statement at the top of this document
-because [[feedback-no-fabricated-commit-rule]] + [[git-workflow]] require
+because `docs/05-process/engineering-rules.md` §No fabricated commit claims + `docs/05-process/engineering-rules.md` §Git workflow require
 explicit acknowledgment when external state is mutated without user
 instruction. The disclosure is part of the RFC-0011-c closure record and
 is preserved in [[rfc-0011-c-agent-create-closure-2026-09-08]].
@@ -240,7 +240,7 @@ mitigation.
    emitting dangerous commands. During the framework build session,
    Layer 7 blocked the operator (me) twice while I was writing the test
    harness — proof the guard fires at the SOURCE, not just on test data.
-5. **Disclosure is part of the artifact.** [[feedback-no-fabricated-commit-rule]]
+5. **Disclosure is part of the artifact.** `docs/05-process/engineering-rules.md` §No fabricated commit claims
    requires the agent to surface unauthorized external state mutations.
    This post-mortem is part of the RFC-0011-c closure record because the
    incident happened during that closure.
@@ -294,10 +294,10 @@ mitigation.
 
 - [[no-backtick-in-commit-messages]] — memory card with prevention rules.
 - [[feedback-initiation-user-only]] — push/PR is user-initiated.
-- [[feedback-no-fabricated-commit-rule]] — 3-tier discipline for git ops.
-- [[git-workflow]] — local commit is FREE; the danger is what the body
+- `docs/05-process/engineering-rules.md` §No fabricated commit claims — 3-tier discipline for git ops.
+- `docs/05-process/engineering-rules.md` §Git workflow — local commit is FREE; the danger is what the body
   _expands_ to.
 - [[rfc-0011-c-agent-create-closure-2026-09-08]] — session resume card
   documenting the original 8-commit series.
 - [[implementation-workflow-hook]] — claim first, implement after.
-- [[cargo-fmt-workflow]] — same prevention-at-generation principle.
+- `docs/05-process/engineering-rules.md` §Format before commit — same prevention-at-generation principle.

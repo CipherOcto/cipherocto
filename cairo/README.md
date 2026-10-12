@@ -4,7 +4,7 @@ Per master plan §4 row B.2, the Cairo capability circuit lives in the
 **cipherocto workspace**, not the stoolap fork. The 2026-07-22 v0.3 amendment
 extracted CASM + STWO production from the stoolap fork (`feat/blockchain-sql`
 branch) into cipherocto workspace crates (`zk-circuit`, `zk-verifier`,
-`zk-vendor`) per [[stoolap-general-purpose-db]] — proof-systems concern,
+`zk-vendor`) per `docs/architecture/stoolap-integration.md` — proof-systems concern,
 orthogonal to SQL. The stoolap fork is untouched by this mission.
 
 ## Phase B.2 scope (LANDED 2026-08-04)

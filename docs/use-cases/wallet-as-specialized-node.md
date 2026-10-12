@@ -57,7 +57,7 @@ This Use Case is part of a broader CipherOcto pivot: every crypto-bearing entity
 - Designing a global node registry / discovery service (nodes discover each other via mesh gossip)
 - Specifying the wire format for any specific payload (those live in their respective RFCs)
 - Replacing RFC-0903 virtual API key issuance flow (still relevant; bearer-only path)
-- Implementing paid-query infrastructure in this use case (covered in companion use case `docs/use-cases/paid-query-market.md` — to be filed at RFC-0871 §Implementation Phase 5 promotion; not yet a phantom pointer per `[[no-phantom-mission-pointers]]` because the substrate is documented in RFC-0871 §Implementation Phase 5)
+- Implementing paid-query infrastructure in this use case (covered in companion use case `docs/use-cases/paid-query-market.md` — to be filed at RFC-0871 §Implementation Phase 5 promotion; not yet a phantom pointer per ``docs/05-process/engineering-rules.md` §No phantom mission pointers` because the substrate is documented in RFC-0871 §Implementation Phase 5)
 
 ## Impact
 

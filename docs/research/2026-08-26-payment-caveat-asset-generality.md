@@ -35,7 +35,7 @@ This research proposes three coordinated changes to fix the drift without re-arc
 
 Decisions are **asset-generic, not OCTO-specific**. A bridged mirror of Bitcoin (e.g., a corporate-chain `AssetId` for a 1:1 BTC mirror at 8 decimals) flows through the same substrate as OCTO-W — only the `asset_id` carries the decimal scale and unit denomination.
 
-All six design axes (D1-D6) have final decisions. Per-asset variation uses **typed-discriminator + Raw escape hatch** pattern from `cipherocto-design-principles.md` §Extension over enumeration — no central enums added.
+All six design axes (D1-D6) have final decisions. Per-asset variation uses **typed-discriminator + Raw escape hatch** pattern from ``docs/architecture/design-principles.md`.md` §Extension over enumeration — no central enums added.
 
 **R1 resolutions (initial):**
 
@@ -131,7 +131,7 @@ Two assets in the same class collapse. `NativeTokenTransfer` on OCTO-W vs `Nativ
 - Multi-token wallet UI / human-facing UX.
 - Federation across multiple cipherocto meshes.
 
-**Not addressing (deferred per `deferred-vs-unspecified` rule):**
+**Not addressing (deferred per `docs/05-process/engineering-rules.md` §Deferred versus unspecified rule):**
 
 - Per-policy-kind asset-class refinement beyond `NativeTokenTransfer | Erc20TokenTransfer` split (e.g., NFT, staking derivatives).
 - Per-region regulatory scale caps (separate RFC).

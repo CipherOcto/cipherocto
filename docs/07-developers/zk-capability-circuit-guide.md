@@ -3,7 +3,7 @@
 > **RFC:** RFC-0958 v1.3 (ZK Capability Subclass) — Accepted
 > **Mission:** `0958-a-zk-capability-circuit.md` (Claimed 2026-07-22, v0.3 crypto extraction)
 > **Crypto home:** cipherocto workspace crates `zk-circuit/`, `zk-verifier/`,
-> `zk-vendor/` (per [[stoolap-general-purpose-db]] red line; stoolap fork untouched)
+> `zk-vendor/` (per `docs/architecture/stoolap-integration.md` red line; stoolap fork untouched)
 
 This guide covers the operational surface for the ZK capability circuit:
 how to build, run tests, add test vectors, bump the CASM/MSRV/STWO substrate,

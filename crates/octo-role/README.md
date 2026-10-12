@@ -6,7 +6,7 @@ This crate provides the canonical role substrate for the `octo role {list, show,
 CLI subcommands (RFC-0011-d Phase 1). It is a Layer C specialized node (specialized
 identity-adjacent role substrate): substrate-typed 128-bit UUID discriminators per RFC-0855 namespace,
 no central enums for extension-bearing types per
-[[cipherocto-design-principles]].
+`docs/architecture/design-principles.md`.
 
 ## Public surface
 

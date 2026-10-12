@@ -37,12 +37,12 @@ chore(missions): archive 0011-c after DRY closure
 
 Per multi-round DRY review pattern: R7 + R8 both zero-finding rounds.
 
-User owns push per [[feedback_initiation_user_only]].
+User owns push per `docs/05-process/engineering-rules.md` §Git workflow.
 EOF
 git commit -F /tmp/commit-msg.txt
 
 # ALSO RIGHT — use the Layer 3 wrapper which validates -m args:
-safe-commit -m "User owns push per [[feedback_initiation_user_only]]"
+safe-commit -m "User owns push per `docs/05-process/engineering-rules.md` §Git workflow"
 safe-commit -F /tmp/commit-msg.txt
 ```
 

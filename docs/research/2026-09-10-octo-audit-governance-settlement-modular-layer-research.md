@@ -404,7 +404,7 @@ rfcs/accepted/process/0011-g-governance-subcommands.md:
   - Same layer-model note
 ```
 
-(Per [[no-line-refs-anywhere]]: enumerate sections via grep at write-time, not by line numbers in this research doc.)
+(Per `docs/05-process/engineering-rules.md` §No line references in documentation: enumerate sections via grep at write-time, not by line numbers in this research doc.)
 
 ### Phase 5 — Trust-boundary audit subcommand split
 

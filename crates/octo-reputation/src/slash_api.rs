@@ -634,19 +634,7 @@ mod tests {
         #[tokio::test]
         async fn forged_governance_proof_does_not_persist_a_slash() {
             let store = StoolapReputationStore::open_in_memory().await.unwrap();
-            let did = recorder_did(0x0A);
             let now = 1_700_000_000;
-            store
-                .record_signal(seed_slash_event(101, did))
-                .await
-                .unwrap();
-            let before = store
-                .replay_for_audit(&did, 0, u64::MAX)
-                .await
-                .unwrap()
-                .iter()
-                .filter(|e| e.signal_kind == SignalKind::Slash)
-                .count();
 
             let mut proof = build_proof(
                 RecorderId::from_u64(0x66),

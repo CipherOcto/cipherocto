@@ -153,6 +153,20 @@ impl TokenSource {
 /// based on the inputs — the same request on any router produces the same event_id.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpendEvent {
+    /// Deterministic event identifier: `hex::encode(SHA-256(...))`, so
+    /// **exactly 64 lowercase hex characters**.
+    ///
+    /// This is not enforced by the type. `hex_to_blob_32` parses this field
+    /// with `hex::decode(..).expect(..)` at the storage boundary, so any
+    /// value that is not 64 hex characters panics there.
+    ///
+    /// The invariant holds today because `compute_event_id` is the only
+    /// producer and no endpoint deserializes a `SpendEvent` from a request.
+    /// Note that the type *is* `Deserialize`. Anything that starts
+    /// accepting one — a replay ingest, a batch settlement upload, a
+    /// reconciliation feed — inherits an unvalidated caller-supplied string
+    /// that reaches an `expect`. Validate at that boundary before the
+    /// storage layer gets the chance to panic.
     pub event_id: String,
     pub request_id: String,
     pub key_id: uuid::Uuid,

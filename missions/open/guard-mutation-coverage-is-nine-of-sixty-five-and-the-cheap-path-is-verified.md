@@ -15,7 +15,7 @@ metadata:
 ## Status
 
 Largely resolved. The path-dependency guard's blind spot is **fixed** — see §A
-blind spot below — and mutation coverage has moved from 9 of 65 guards to **45 of 65**, a figure the harness now derives from its own
+blind spot below — and mutation coverage has moved from 9 of 65 guards to **49 of 65**, a figure the harness now derives from its own
 table rather than one maintained by hand — see §Coverage counted twice, and the
 count that was wrong. Adding one of them exposed a false pass in the harness
 itself, now fixed — see §A false pass found below.
@@ -308,7 +308,7 @@ now produced by reading the harness table and collecting the distinct
 
 ```
 $ python3 scripts/mutate-zk-guards.py --list | tail -1
-  59 entries -> 45 distinct guards in security_regressions.rs  (+7 entries targeting other crates' suites)
+  63 entries -> 49 distinct guards in security_regressions.rs  (+7 entries targeting other crates' suites)
 ```
 
 That line is printed by the harness itself, derived by reading its own table. It
@@ -316,7 +316,7 @@ did not exist when the count was first wrong, and putting it there is the fix:
 the number can no longer drift from the thing it counts, because it is recomputed
 every time anyone asks.
 
-**59 entries cover 45 guards, and the two numbers must not be conflated.** Seven
+**63 entries cover 49 guards, and the two numbers must not be conflated.** Seven
 entries do not target `security_regressions.rs` at all — three run
 `zk-vendor`'s `library_path` suite, two run `zk-verifier`, two run
 `cipherocto-fs-perms`. They are real mutations against real guards, but those
@@ -571,8 +571,11 @@ recorded rather than assumed absent elsewhere.
       twice, for a pending file gaining an uncounted site and for a path recorded
       under both a dispatched root and the pending table, and
       `c4_every_reputation_store_verifies_the_governance_signature`, twice, one
-      per store),
-      taking coverage from 9 of 65 to **45 of 65**
+      per store — and `l11_transport_addr_len_uses_checked_arithmetic`,
+      `l12_macaroon_id_derivation_is_pinned`,
+      `m17_keystore_import_does_not_read_file_supplied_kdf_params` and
+      `c5_the_integrity_only_verifier_no_longer_claims_authenticity`),
+      taking coverage from 9 of 65 to **49 of 65**
 - [x] Any harness using the prebuilt-binary path refuses to run when the binary
       is older than the guard source — **satisfied a different way**: the
       committed harness runs through cargo, which rebuilds by construction, so
@@ -607,7 +610,7 @@ green as it applies to a guard's.
 ## Why the rest is filed rather than fixed
 
 The blind-spot fix is done and needs no defence. What remains is the coverage
-gap, and that is not urgent: twenty unbacked guards is a large number that
+gap, and that is not urgent: sixteen unbacked guards is a large number that
 reads as alarming and is not. These guards were written by adversarial review
 and several were mutation-checked by hand during that work. What is missing is
 the _re-runnable record_, which is what this harness would supply — and the

@@ -1079,6 +1079,60 @@ fn probe_unverified_linkage(b: &str, c: &str) -> LinkageResult {
         ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
          "c4_every_reputation_store_verifies_the_governance_signature", "--", "--exact"],
     ),
+    (
+        # `cursor + addr_len` can wrap, turning a declared 4 GiB address into a
+        # small number that passes the length check, and the slice below then
+        # reads out of bounds. Checked arithmetic fails closed on overflow;
+        # wrapping arithmetic turns a malformed frame into a read past the end.
+        "G-pp: transport address length goes back to wrapping arithmetic",
+        "crates/octo-runtime/src/handle/encoding.rs",
+        "    let addr_end = cursor.checked_add(addr_len).ok_or_else(|| {",
+        "    let addr_end = cursor + addr_len;\n    let addr_end = (addr_end >= cursor).then_some(addr_end).ok_or_else(|| {",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "l11_transport_addr_len_uses_checked_arithmetic", "--", "--exact"],
+    ),
+    (
+        # The macaroon id is derived from the root secret and a nonce, and a
+        # change to either the function or the truncation silently re-keys every
+        # identifier already issued. A guard that reads the source is the only
+        # thing standing between that and a fleet-wide identifier churn.
+        "G-qq: the macaroon identifier derivation changes",
+        "crates/octo-cap-macaroon/src/lib.rs",
+        "    let mac = hmac_blake3(root_secret, nonce);\n    let mut id = [0u8; 16];\n    id.copy_from_slice(&mac[..16]);",
+        "    let mac = hmac_blake3(root_secret, nonce);\n    let mut id = [0u8; 16];\n    id.copy_from_slice(&mac[..8]);",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "l12_macaroon_id_derivation_is_pinned", "--", "--exact"],
+    ),
+    (
+        # A keystore file that carries its own KDF parameters is asking to be
+        # re-encrypted with the attacker's cost. The import pins the memory cost
+        # and refuses a file that disagrees, so the derived key never depends on
+        # bytes the file chose.
+        # Written first as `if false && kdf.memory_cost != ARGON2_M_COST`,
+        # which left the guard green: the needle is the comparison text, and
+        # prefixing it with a constant leaves the comparison standing. The same
+        # trap as the quic replay branch, and the same rule — a guard that reads
+        # text can only be defeated by changing the text it reads.
+        "G-rr: keystore import stops pinning the KDF cost",
+        "crates/octo-wallet/src/keystore.rs",
+        "        if kdf.memory_cost != ARGON2_M_COST",
+        "        if false",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "m17_keystore_import_does_not_read_file_supplied_kdf_params", "--", "--exact"],
+    ),
+    (
+        # RFC-0014 delegates signature verification to the domain, so the
+        # frozen verifier's behaviour stays as specified. Its documentation is
+        # what misleads: without the sentence, a caller reads an integrity
+        # check as proof a router signed the receipt, which is what made this
+        # look like a substrate bug rather than a missing domain check.
+        "G-ss: the integrity-only verifier stops saying it is integrity-only",
+        "crates/octo-settlement-core/src/chain.rs",
+        "not an authenticity check",
+        "an authenticity check that the caller should rely on",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "c5_the_integrity_only_verifier_no_longer_claims_authenticity", "--", "--exact"],
+    ),
 ]
 # G-kk (dropping HandlerOutput's bundle prefix) was written and removed: it
 # targeted the same guard as G-hh, so it added no guard coverage, and adding a

@@ -516,6 +516,48 @@ MUTATIONS = [
         ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
          "m16_bluetooth_stub_does_not_issue_a_delivery_receipt", "--", "--exact"],
     ),
+    (
+        # `#[serde(default)]` on a bool is `false`, and a missing config key is
+        # the ordinary case rather than an exceptional one — so the fail-open
+        # default reached unauthenticated mutating RPCs, outbound send included,
+        # for anyone who did not write the key. Reverting to the bare attribute
+        # is the whole defect in one token.
+        "G-Q: bearer_required falls back to serde's bool default",
+        "crates/octo-whatsapp/src/config.rs",
+        '    #[serde(default = "default_true")]\n    pub bearer_required: bool,\n',
+        "    #[serde(default)]\n    pub bearer_required: bool,\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "m8_bearer_required_defaults_to_true", "--", "--exact"],
+    ),
+    (
+        # `create_dir_all` applies the process umask to newly created
+        # directories and never tightens an existing one, so the call has to be
+        # paired with an explicit restriction. The guard checks a four-line
+        # window after every such call; dropping the pairing line is what an
+        # "obvious cleanup" of the parent helper would do, and the directory
+        # would end up group- or world-readable around a log of full message
+        # bodies.
+        "G-R: the events parent directory is created without being restricted",
+        "crates/octo-whatsapp/src/events_persister.rs",
+        "            tokio::fs::create_dir_all(parent).await?;\n"
+        "            restrict_dir_to_owner(parent).await?;\n",
+        "            tokio::fs::create_dir_all(parent).await?;\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "m9_events_log_files_are_opened_owner_only", "--", "--exact"],
+    ),
+    (
+        # The CDP trace holds request headers and WebSocket frames — the live
+        # session. Its default parent is `XDG_RUNTIME_DIR`, which is 0700 by
+        # convention precisely because `/tmp` is not. Falling back to `/tmp`
+        # keeps the filename and the 0600 mode and still discloses, because the
+        # directory is the part that was never restricted.
+        "G-S: the CDP trace defaults back into /tmp",
+        "crates/whatsapp_chrome_driver/src/main.rs",
+        "        None => Some(default_private_dir().join(\"whatsapp_chrome_driver.jsonl\")),\n",
+        "        None => Some(std::path::PathBuf::from(\"/tmp/whatsapp_chrome_driver.jsonl\")),\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "m13_cdp_trace_is_private_and_defaults_outside_tmp", "--", "--exact"],
+    ),
 ]
 
 # NOT MUTATED, deliberately: `OpenOptionsExt::mode(0o600)` at creation inside

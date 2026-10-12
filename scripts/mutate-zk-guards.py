@@ -430,6 +430,92 @@ MUTATIONS = [
         ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
          "m15_every_adapter_canonicalize_verifies_the_envelope", "--", "--exact"],
     ),
+    (
+        # The mutation that was VACUOUS against an earlier version of this
+        # guard, recorded in the guard's own comment. Every needle —
+        # `last_ping_nonce`, `nonce <= last`, `is_some_and`, the drop message —
+        # survives `if false` in front of the whole thing, so the replay branch
+        # could be dead code with all four assertions still passing. The guard
+        # was hardened to pin the condition afterwards; this entry is what makes
+        # that hardening falsifiable instead of merely asserted.
+        "G-L: the quic replay branch is conditioned on a constant",
+        "crates/octo-adapter-quic/src/lib.rs",
+        "                                                                    if last_ping_nonce.is_some_and(\n",
+        "                                                                    if false {\n"
+        "                                                                    let _ = last_ping_nonce.is_some_and(\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "l10_quic_drops_a_replayed_ping_nonce", "--", "--exact"],
+    ),
+    (
+        # The pairing URI is the secret the phone is about to prove possession
+        # of, and terminal output is routinely captured. The guard requires the
+        # print to sit behind `if show_secret` AND the withheld branch to state
+        # why. Deleting the branch is how an "always useful" default gets
+        # reintroduced — printing the URI because the operator debugging a QR
+        # renderer could not see it.
+        "G-M: the pairing URI is printed without --show-secret",
+        "crates/octo-whatsapp-onboard/src/main.rs",
+        "                if show_secret {\n",
+        "                if true {\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "l8_pairing_uri_is_withheld_unless_show_secret_is_set", "--", "--exact"],
+    ),
+    (
+        # `exists()` → `remove_file()` → `bind()` was the original defect: it
+        # both races and cannot tell a socket from a regular file, so an
+        # unrelated file at the socket path was silently deleted. `lstat` plus
+        # an `is_socket` refusal is what replaced it; this plants the old
+        # shape, which is also the shape a future refactor would most easily
+        # write from memory.
+        "G-N: unix socket bind goes back to an exists() check",
+        "crates/octo-whatsapp/src/ipc/server.rs",
+        "        match std::fs::symlink_metadata(path) {\n",
+        "        if path.exists() {\n"
+        "            std::fs::remove_file(path)?;\n"
+        "        }\n"
+        "        match std::fs::symlink_metadata(path) {\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "l6_unix_socket_bind_refuses_to_delete_a_non_socket", "--", "--exact"],
+    ),
+    (
+        # A same-UID process creates `active` itself in the gap between
+        # remove and symlink, and the operator's next session resolves to it.
+        # `staging` plus `rename` is the atomic replacement; reverting to the
+        # remove-then-create pair keeps every other needle in the function and
+        # is exactly the form the guard's second assertion exists to reject.
+        "G-O: the active symlink is removed before it is recreated",
+        "crates/octo-whatsapp-onboard-core/src/multi_account.rs",
+        "            let _ = fs::remove_file(&staging);\n",
+        "            let _ = fs::remove_file(&staging);\n"
+        "            let _ = fs::remove_file(&active);\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "l7_active_symlink_swap_is_atomic", "--", "--exact"],
+    ),
+    (
+        # The bluetooth adapter has no radio link. Returning a receipt after
+        # queueing told callers a message was delivered, and those receipts feed
+        # settlement and audit — so this is a stub that reports a fact it did not
+        # observe, not merely a stub that returns the wrong type. Swapping the
+        # error for an `Ok` keeps the queueing behaviour and only changes the
+        # claim made to the caller.
+        "G-P: the bluetooth stub issues a delivery receipt",
+        "crates/octo-adapter-bluetooth/src/lib.rs",
+        "        Err(transport_err(\n"
+        "            \"bluetooth adapter is a stub: the envelope was queued, not transmitted. \\\n"
+        "             No delivery receipt is issued because no delivery occurred.\",\n"
+        "        ))\n",
+        "        let _ = transport_err(\n"
+        "            \"bluetooth adapter is a stub: the envelope was queued, not transmitted. \\\n"
+        "             No delivery receipt is issued because no delivery occurred.\",\n"
+        "        );\n"
+        "        Ok(DeliveryReceipt {\n"
+        "            message_id: envelope.envelope_id.to_string(),\n"
+        "            transport: \"bluetooth-stub\".to_string(),\n"
+        "            accepted_at_unix: 0,\n"
+        "        })\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "m16_bluetooth_stub_does_not_issue_a_delivery_receipt", "--", "--exact"],
+    ),
 ]
 
 # NOT MUTATED, deliberately: `OpenOptionsExt::mode(0o600)` at creation inside

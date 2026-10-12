@@ -15,7 +15,7 @@ metadata:
 ## Status
 
 Largely resolved. The path-dependency guard's blind spot is **fixed** — see §A
-blind spot below — and mutation coverage has moved from 9 of 65 guards to **19 of 65**, a figure the harness now derives from its own
+blind spot below — and mutation coverage has moved from 9 of 65 guards to **24 of 65**, a figure the harness now derives from its own
 table rather than one maintained by hand — see §Coverage counted twice, and the
 count that was wrong. Adding one of them exposed a false pass in the harness
 itself, now fixed — see §A false pass found below.
@@ -305,7 +305,7 @@ now produced by reading the harness table and collecting the distinct
 
 ```
 $ python3 scripts/mutate-zk-guards.py --list | tail -1
-  30 entries -> 19 distinct guards in security_regressions.rs  (+7 entries targeting other crates' suites)
+  35 entries -> 24 distinct guards in security_regressions.rs  (+7 entries targeting other crates' suites)
 ```
 
 That line is printed by the harness itself, derived by reading its own table. It
@@ -313,7 +313,7 @@ did not exist when the count was first wrong, and putting it there is the fix:
 the number can no longer drift from the thing it counts, because it is recomputed
 every time anyone asks.
 
-**30 entries cover 19 guards, and the two numbers must not be conflated.** Seven
+**35 entries cover 24 guards, and the two numbers must not be conflated.** Seven
 entries do not target `security_regressions.rs` at all — three run
 `zk-vendor`'s `library_path` suite, two run `zk-verifier`, two run
 `cipherocto-fs-perms`. They are real mutations against real guards, but those
@@ -326,6 +326,60 @@ is exactly why neither was visible.
 
 Nothing about the harness changed to produce this — the same figure is derivable
 from the committed file at any time, and it was not before.
+
+## A guard whose race assertion could never fire — FIXED
+
+`l7_active_symlink_swap_is_atomic` is named for a TOCTOU race: `remove_file`
+on `active`, then `symlink` back to it, lets a same-UID process create the path
+itself in the gap. Its second assertion exists to reject exactly that shape.
+
+That assertion was unreachable. The guard built its haystack with
+
+```rust
+body.split_whitespace().collect::<Vec<_>>().join(" ")
+```
+
+which **keeps one space between tokens**, and then searched it for
+
+```
+let_=fs::remove_file(&active)
+```
+
+which contains none. For any Rust source the needle is absent, so
+`!flat.contains(needle)` is true of every possible input and the assertion
+cannot fail. The guard would have passed with the race fully reinstated.
+
+Found by the mutation `G-O`, which came back **VACUOUS** — the guard stayed
+green under a mutation that reintroduces the defect it exists for. That is the
+harness earning its keep: the entry reported a non-pass rather than being read
+as a harness bug.
+
+**Two things were wrong at once,** which is why neither showed up separately.
+Fixing the normalisation alone made the assertion fire — on unmutated source.
+`use_account` legitimately calls `remove_file(&active)`, in the
+`#[cfg(not(unix))]` branch: the Windows copy path overwrites the file directly
+and has no symlink to race on, and the source says so in a comment. So the
+assertion was also over-broad — a check nobody can satisfy is a check nobody
+reads, and it would have been removed on first encounter.
+
+The resolution scopes the negative assertion to the unix branch by splitting on
+the `#[cfg(not(unix))]` attribute, and **fails loudly if that split is absent**
+rather than falling back to the whole function. A fallback that silently checks
+everything is precisely how the assertion became unreachable; reintroducing one
+as the "safe" default would restore the original defect.
+
+Verified in both directions: the mutation is red, and the unmutated suite is
+green at 65.
+
+**The generalisable part.** `dense()` exists in this file precisely to strip
+whitespace for needle matching, and most guards use it. The defect was a guard
+hand-rolling a different normalisation and then writing needles for the other
+one. A sweep for `split_whitespace().collect::<Vec<_>>().join(" ")` found two
+live occurrences — this one and `m15_every_adapter_canonicalize_verifies_the_envelope`,
+whose needles (`&env.source_peer`, `Ok(`, `.verify(`) are all single tokens
+that survive either normalisation, and whose relevant assertions are proven by
+`G-J` and `G-K` regardless. So the class is one instance deep here, and it is
+recorded rather than assumed absent elsewhere.
 
 ## Acceptance Criteria
 
@@ -345,8 +399,13 @@ from the committed file at any time, and it was not before.
       `ac11_every_crate_that_verifies_a_signature_is_scanned_or_explained`,
       `every_adapter_naming_a_concrete_algorithm_declares_the_assumption`,
       `m15_every_adapter_canonicalize_verifies_the_envelope` — twice, once for the
-      hardcoded key and once for the dropped algorithm argument),
-      taking coverage from 9 of 65 to **19 of 65**
+      hardcoded key and once for the dropped algorithm argument — plus the L-series
+      and M-16 findings: `l10_quic_drops_a_replayed_ping_nonce`,
+      `l8_pairing_uri_is_withheld_unless_show_secret_is_set`,
+      `l6_unix_socket_bind_refuses_to_delete_a_non_socket`,
+      `l7_active_symlink_swap_is_atomic` and
+      `m16_bluetooth_stub_does_not_issue_a_delivery_receipt`),
+      taking coverage from 9 of 65 to **24 of 65**
 - [x] Any harness using the prebuilt-binary path refuses to run when the binary
       is older than the guard source — **satisfied a different way**: the
       committed harness runs through cargo, which rebuilds by construction, so
@@ -381,7 +440,7 @@ green as it applies to a guard's.
 ## Why the rest is filed rather than fixed
 
 The blind-spot fix is done and needs no defence. What remains is the coverage
-gap, and that is not urgent: forty-six unbacked guards is a large number that
+gap, and that is not urgent: forty-one unbacked guards is a large number that
 reads as alarming and is not. These guards were written by adversarial review
 and several were mutation-checked by hand during that work. What is missing is
 the _re-runnable record_, which is what this harness would supply — and the

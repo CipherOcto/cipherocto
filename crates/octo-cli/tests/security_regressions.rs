@@ -1628,14 +1628,35 @@ fn l7_active_symlink_swap_is_atomic() {
         "crates/octo-whatsapp-onboard-core/src/multi_account.rs",
     ));
     let body = fn_body(&src, "fn use_account");
-    let flat: String = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    // The negative half is scoped to the unix branch. `remove_file(&active)`
+    // appears there on purpose: the `#[cfg(not(unix))]` copy path overwrites
+    // `active` directly and has no symlink to race against, which the source
+    // says so itself. Asserting on the whole body rejects correct code, and a
+    // check nobody can satisfy is a check nobody reads — the scope has to
+    // match the claim.
+    //
+    // Both halves of this were wrong at once. The guard normalised with
+    // `split_whitespace().collect::<Vec<_>>().join(" ")`, which keeps one space
+    // between tokens, then searched for a needle containing none:
+    // `!flat.contains("let_=fs::remove_file(&active)")` held of every possible
+    // input, so a remove-then-recreate passed. Found by the mutation that
+    // reintroduces exactly that race, and confirmed by simulating the
+    // normalisation rather than by reading it.
+    let flat = dense(body);
     assert!(
         flat.contains("staging") && flat.contains("rename("),
         "L-7: use_account must build the link at a staging path and rename it \\
          into place, so `active` is never absent or attacker-controlled."
     );
+    let unix_branch = flat.split_once("#[cfg(not(unix))]").unwrap_or_else(|| {
+        panic!(
+            "L-7: use_account no longer splits a unix symlink swap from a \
+             non-unix copy path. Re-scope this assertion — a fallback \
+             that quietly checks the whole function is how it went unreachable."
+        )
+    });
     assert!(
-        !flat.contains("let_=fs::remove_file(&active)"),
+        !unix_branch.0.contains("let_=fs::remove_file(&active)"),
         "L-7: use_account still removes `active` before creating the link, \\
          which is the race this finding is about."
     );

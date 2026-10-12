@@ -718,8 +718,9 @@ pub trait CapabilityCatalog {
     /// says the `&dyn CapabilityCatalog` owns the Stoolap handle a
     /// `Transaction` comes from. So a mint caller needs exactly this method
     /// to have somewhere to write, and with it absent the caller has
-    /// nowhere: `holder_records_are_never_constructed_in_production` pins
-    /// that consequence.
+    /// `CapabilityCatalog::holder_registry()` was absent, mint had nowhere to
+    /// write and no production site built a `HolderRecord` at all; the
+    /// `HolderRecord` construction census pins that consequence.
     ///
     /// ## Why it defaults to `None` rather than being required
     ///

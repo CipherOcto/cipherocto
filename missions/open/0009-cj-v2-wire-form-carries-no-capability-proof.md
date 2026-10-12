@@ -79,17 +79,25 @@ safe to store or relay: anyone who reads one can mint arbitrary caveats against
 that capability root, because they hold the key the macaroons are HMAC'd with.
 Every other field in the bundle is derived or structural; this one is the input.
 
-A test pins the behaviour as correct —
-`handle_holder_record_bytes_carries_capability_root` asserts the bytes equal the
-supplied secret — so this is tested in, exactly like the decode failure.
+A test pinned the behaviour as correct —
+`handle_holder_record_bytes_carries_capability_root` asserted the bytes equal the
+supplied secret — so this was tested in, exactly like the decode failure. **Both
+producer tests have since been rewritten.** The issuer-node one, now
+`holder_record_bytes_carries_a_real_record_and_not_the_root_secret`, asserts the
+opposite; the wallet-node one still pins a non-record.
 
-**Why the issuer has no caveat to attach.** The same handler documents its
+**Why the issuer had no caveat to attach.** The same handler documented its
 intended flow as `CapabilityToken::mint(&capability, &issuer_key, &holder_did, &[])`
-with "the full substrate lands in a later mission", and the code matches the
-aspiration, not the flow: it never calls `mint`, never signs, never registers.
-It builds a `CapabilityTokenV2` struct literal and returns it. So the issuer
-node does not issue — the caller supplies the root secret and the handler wraps
-it and hands the secret back.
+with "the full substrate lands in a later mission", and the code matched the
+aspiration, not the flow: it never called `mint`, never signed, never registered.
+It built a `CapabilityTokenV2` struct literal and returned it. So the issuer
+node did not issue — the caller supplied the root secret and the handler wrapped
+it and handed the secret back. **This has since been fixed**: `IssueHandler`
+holds the node's `&IdentityKey` and `&dyn HolderRegistry`, calls `mint` for real,
+registers the `HolderRecord`, and puts the record's canonical bytes in the
+bundle. The holder's pre-signed commitment envelope is still passed as `&[]`,
+which is why the ask-binding blocker below is narrower than it was but not
+closed.
 
 That is the root of the remaining ask-binding blocker, and it is worth stating
 plainly because the two findings look unrelated and are the same thing: **no
@@ -220,8 +228,8 @@ two meanings, one of them honest.
 ## Acceptance Criteria
 
 - [ ] The V2 wire form carries whatever a verifier needs to check a capability, or it is withdrawn as a wire form and the response payload reverts to the V1 macaroon it replaced.
-- [ ] `holder_record_bytes` either holds canonical-JSON `HolderRecord` bytes that `HolderRecord::canonical_de` accepts, or it is replaced by a typed field and its documentation stops naming a type it does not enforce.
-- [ ] Both producers agree, byte for byte, on what the field contains.
+- [~] `holder_record_bytes` either holds canonical-JSON `HolderRecord` bytes that `HolderRecord::canonical_de` accepts, or it is replaced by a typed field and its documentation stops naming a type it does not enforce. **Half done.** The issuer node's `IssueHandler` now writes the serialized `HolderRecord`, which its own `HolderRecord::canonical_de` accepts; the leak of the capability root secret through this field is closed and pinned by a test that would fail if the secret came back. `octo-wallet-node`'s `MintHandler` still writes a 32-byte `capability_id` (the BLAKE3 output), with `handle_v2_envelope_holder_record_bytes_is_capability_id` pinning it — still not a `HolderRecord`, still not decodable as one.
+- [ ] Both producers agree, byte for byte, on what the field contains. **Now actively violated, in a way worth naming.** Before the issuer-node fix both producers were wrong in the same _shape_ — 32 bytes, not a record — so the agreement was accidental and both were equally broken. One was corrected and one was not, so the field now has two production meanings where it previously had two copies of one broken meaning. The third checkbox is not "still to do": it is the direct consequence of fixing one producer alone, and fixing it means deciding whether `octo-wallet-node`'s mint handler should also write a `HolderRecord` — and if so, whether it registers it, which is a second node-side registrant rather than a wire-format question.
 - [ ] A minted V2 envelope round-trips into something a verifier accepts — not merely into a decoded struct.
 - [ ] `expires_at_unix_secs` reflects the capability's real expiry rather than `u64::MAX`, or the field is removed and the caveat path is restored.
 

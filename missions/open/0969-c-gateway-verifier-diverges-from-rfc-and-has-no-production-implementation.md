@@ -16,9 +16,9 @@ metadata:
 
 ## Status
 
-Open, with one of the three blockers delivered. The accessor the RFC names now
-exists; the semantics question it exposed is answered, and what remains is the
-trait implementation and the dispatch catch-up.
+Open, with the verifier, the dispatch semantics and the mint-side persistence all
+delivered. What remains is a caller that attaches `Caveat::AskBinding` — a
+market-side decision, not a substrate gap. See §The first blocker is closed.
 
 Filed while attempting to land a production verification hook — the root cause
 behind `0009-cf`, `0009-cg`, `0009-ci` and `0009-cj`.
@@ -353,7 +353,7 @@ What it needs first is a decision this mission should not make alone:
 - [x] `CapabilityVerification` can represent an ask-unbound capability, or the RFC states what a verifier reports for one and `evaluate_linkage` cannot compare it into a false link. **Done by refusal** — see §What landed part 4. The verifier never constructs a `CapabilityVerification` for an ask-unbound token, so no unbound `ask_id` exists to compare. The field itself is unchanged and still cannot represent absence; the route taken removes the need for it to.
 - [x] `CapabilityToken` exposes the RFC's ask-binding accessor, or RFC-0969 §Algorithms is amended to name the caveat-based accessor that replaces it. **Done** — `ask_binding()` reads `Caveat::AskBinding` from the macaroon, since `CapabilityToken` carries no `ask_id` field.
 - [x] Dispatch semantics are settled. **The RFC already answered this one** — v1.2's 4-way table is unambiguous and `BothSchemesUnsupported` / `NoAuth` are its names. The remaining question is only whether the implementation adopts it or the RFC is reopened, and adopting it is the default unless there is a recorded reason not to. **Adopted** — `authenticate_v12` + `routing_decision_v12`, additively; `authenticate` keeps pre-v1.2 semantics.
-- [ ] A production caller persists the `HolderRecord` that mint deliberately does not. **Now known to be the first blocker, ahead of the ask binding below.** RFC-0957-A1 assigns persistence to the caller and nothing does it, so the registry is permanently empty and every real capability is refused with `HolderUnknown` before the ask is ever read. The RFC-specified accessor that would let a caller reach a registry, `CapabilityCatalog::holder_registry()`, is defined in zero files — see §What closing the first blocker actually requires. Pinned by `holder_records_are_never_constructed_in_production`.
+- [x] A production caller persists the `HolderRecord` that mint deliberately does not. **Done** — the capability issuer node's `IssueHandler` holds the node's `&dyn HolderRegistry`, builds the `HolderRecord` from the minted token, writes it to the registry and puts those same canonical bytes in the V2 bundle. RFC-0871 §G9 puts persistence on the node-side handler rather than the wallet, so `MintHandler` was left alone and the node was the right place. See §The first blocker is closed. The previous claim on this line — that `CapabilityCatalog::holder_registry()` is defined in zero files and nothing registers a holder — was true when written and is now stale.
 - [ ] A production mint path attaches a `Caveat::AskBinding`, so a capability that is ask-bound can exist. **Open, and no longer a substrate gap — the shape now exists and only needs to be used.** A capability can carry an ask binding today: attenuating `Caveat::AskBinding` through the wallet's attenuation handler attaches it, and the result verifies and reads back through `ask_binding()`. What is missing is a caller that does so on the market path, and it is gated behind the blocker above: attaching an ask to a token nobody can verify is not progress. Owned by RFC-0959 §Phase 3, where the item is already an unchecked box.
 - [ ] `CapabilityVerification.ask_id` can represent "unbound", matching the `Option` RFC-0970 already assumes `ask_binding()` returns. A bare `[u8; 32]` cannot, and that value flows into `AuthenticatedRequest.ask_id` and on into settlement. **Deliberately not done.** Refusing unbound is strictly safer than a representable absent, and is reversible; widening the field is neither. Revisit only if the market path needs unbound capabilities at the gateway, which RFC-0959 §Phase 3 would have to argue for.
 - [x] A production `impl CapabilityVerifier` exists that calls real verification and is reachable from `GatewayAuthenticator::new` outside tests. **Done** — `quota_router_core::ingress::capability_verifier::ProductionCapabilityVerifier`, injected as `Arc<dyn CapabilityVerifier>`, so `GatewayAuthenticator::new` needed no change.
@@ -402,21 +402,20 @@ written, and correcting it matters more than the fix.**
 
 This section used to say the refusal came from the missing
 `Caveat::AskBinding`. That is true in the sense that no mint attaches one —
-but it is the **second** refusal, and in production nobody reaches it.
+but it was the **second** refusal, and in production nobody reached it.
 `verify_with_resolve` resolves `holder_pub` and `holder_did` from a
-`HolderRegistry`, and **no production code constructs a `HolderRecord`**, so
-that registry is permanently empty. A real capability is refused with
-`CapError::HolderUnknown` at the registry lookup, before the ask is read.
+`HolderRegistry`, and **no production code constructed a `HolderRecord`**, so
+that registry was permanently empty. A real capability was refused with
+`CapError::HolderUnknown` at the registry lookup, before the ask was read.
 
-The chain is: nothing registers a holder → the registry is empty → every
+The chain was: nothing registers a holder → the registry is empty → every
 capability is `HolderUnknown` → and only once that were fixed would the
-missing `AskBinding` begin to matter. There are two blockers, and the one
+missing `AskBinding` begin to matter. There were two blockers, and the one
 recorded here was the second.
 
-The first is now pinned by `holder_records_are_never_constructed_in_production`,
-so closing it turns that guard red.
+The first is now closed, and the guard that pinned it went red proving it.
 
-## What closing the first blocker actually requires
+## What closing the first blocker actually required
 
 Not an architecture question. **One missing trait method.**
 
@@ -428,36 +427,36 @@ narrower, and more fixable, than that draft claimed.
 
 RFC-0957-A1 §5 specifies a four-method `CapabilityCatalog` extension:
 
-| Method                  | State                              |
-| ----------------------- | ---------------------------------- |
-| `root_secret_for_ask`   | present                            |
-| `settlement_chain_tip`  | present                            |
-| `gossip_to_buyer`       | present, as `gossip_to_buyer_sync` |
-| **`holder_registry()`** | **absent — defined in zero files** |
+| Method                  | State                                      |
+| ----------------------- | ------------------------------------------ |
+| `root_secret_for_ask`   | present                                    |
+| `settlement_chain_tip`  | present                                    |
+| `gossip_to_buyer`       | present, as `gossip_to_buyer_sync`         |
+| **`holder_registry()`** | **present — the one on the critical path** |
 
-Three of four landed. **The one that does not exist is the one on the critical
-path**: `holder_registry()` is the accessor that would let a mint caller reach a
-registry at all.
+Three of four had landed when this was written. The one that did not exist was
+the one on the critical path: `holder_registry()` is the accessor that lets a
+mint caller reach a registry at all.
 
-The chain is short and specific:
+The chain was short and specific:
 
 1. RFC-0957-A1 §6 makes mint **persistence-free by design** — four arguments, no
    catalog, and _"persistence is handled by the caller."_ Mint returning without
    a record is **correct**.
 2. The caller inserts via a `Transaction` taken from the `&dyn CapabilityCatalog`,
    which RFC-0957-A1 §Data Structures says owns the Stoolap handle.
-3. **`holder_registry()` does not exist**, so no caller can reach a registry to
-   insert into. `InMemoryCatalog` implements only `lookup` and
+3. **`holder_registry()` did not exist**, so no caller could reach a registry to
+   insert into. `InMemoryCatalog` implemented only `lookup` and
    `is_raw_name_registered`.
-4. So no `HolderRecord` is ever written, the registry is permanently empty, and
-   `ProductionCapabilityVerifier` refuses every real capability with
+4. So no `HolderRecord` was ever written, the registry was permanently empty, and
+   `ProductionCapabilityVerifier` refused every real capability with
    `HolderUnknown`.
 
 **No new architecture decision is needed.** RFC-0870 G5 puts persistence on the
 minting node and RFC-0957-A1 puts the handle on the catalog; the only thing
 missing is the accessor joining them.
 
-### The accessor has landed. The wiring has not.
+### The accessor landed first. The wiring landed with it, in a different crate.
 
 `CapabilityCatalog::holder_registry()` now exists, defaulting to `None` so the
 ten-plus existing implementations keep compiling. Two tests cover it, and the
@@ -471,10 +470,10 @@ The doc comment on the method carries the one rule that matters to callers: `Non
 means **this mint cannot be registered**, not **registration is unnecessary**.
 Silently skipping the write is what produces the current state.
 
-**What remains is the wiring, and it is not symmetric with the accessor.**
-`MintHandler` still has no catalog — it holds an `IdentityKey` and an optional
-spend ledger — and threading one through is twelve call sites across two files.
-More importantly the _store_ has to come from somewhere: the only production
+**At this point what remained was the wiring**, and it is not symmetric with the
+accessor. `MintHandler` still has no catalog — it holds an `IdentityKey` and an
+optional spend ledger — and threading one through is twelve call sites across two
+files. More importantly the _store_ has to come from somewhere: the only production
 `HolderRegistry` implementation is `StoolapHolderRegistry`, which needs a Stoolap
 handle, and `WalletNode` has none.
 
@@ -526,13 +525,55 @@ Two things follow that are already actionable:
   was declared as a regular one. Moved to `[dev-dependencies]`; nothing in the
   crate's non-test source referenced it.
 
-So the remaining work is: a **node-side** mint handler that persists. Not a
+So the remaining work was: a **node-side** mint handler that persists. Not a
 wallet change, and not a topology choice.
 
-A closing note on the census guard: it went red the moment the accessor test
-called `HolderRecord::from_capability` from a new file, and recorded it only
-after both its layers agreed the call was below the test-module marker. That is
-the second time this guard has caught a change in this arc.
+## The first blocker is closed
+
+The node-side handler already existed — `CapabilityIssuerNode` has held an
+`Arc<dyn HolderRegistry>` and documented `CAPABILITY_ISSUE` as its registrant.
+What was missing was the handler using it. `IssueHandler` now takes
+`&IdentityKey` and `&dyn HolderRegistry`, and `handle()` mints a real
+`CapabilityToken`, builds the `HolderRecord` from it, writes it to the registry,
+and puts **the same canonical bytes** into the V2 bundle's `holder_record_bytes`.
+
+Two details that were previously wrong and are now right:
+
+- **`holder_record_bytes` carried the capability root secret in the clear.** It is
+  now the serialized `HolderRecord`, so the field decodes with the
+  `HolderRecord::canonical_de` its own documentation names, and an issued bundle
+  is safe to store or relay. This was open mission `0009-cj`.
+- **The node minted with no identity.** It now fails closed, because a bundle
+  nobody can verify is not a credential. That refusal needed its own test, and
+  the obvious assertion — `AuthorizationFailed` — was not enough: the
+  unsupported-kind arm returns the same variant, so the test passed even with the
+  whole `CAPABILITY_ISSUE` dispatch arm deleted. It now pins the cause in the
+  message.
+
+### The census guard had to be rewritten, not relaxed
+
+`holder_records_are_never_constructed_in_production` asserted that **no**
+production code builds a `HolderRecord`. That was true and then stopped being
+true, and it went red the moment this landed — which is the guard measuring
+something rather than a change working around it.
+
+The fix was not to widen the exception list. The property worth guarding is
+**exactly one** production construction site, and a guard that only forbids
+growth will happily keep passing after the site is deleted. So it is now
+`exactly_one_production_site_builds_a_holder_record` and the production set is
+compared for **equality**: a second site is an unowned record nobody registers,
+and a missing one puts the registry back to empty and every real capability back
+to `HolderUnknown`.
+
+All three failure modes were checked by planting them, not assumed: a second
+production site, a call from an unlisted file, and an emptied expected set. The
+third is the one the old guard could not have caught.
+
+A closing note on the census guard, before it was rewritten: it went red the
+moment the accessor test called `HolderRecord::from_capability` from a new file,
+and recorded it only after both its layers agreed the call was below the
+test-module marker. That was the second time this guard caught a change in this
+arc, and closing the blocker made it a third.
 
 ## What this unblocked: ask binding is now attachable
 

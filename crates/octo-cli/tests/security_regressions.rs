@@ -3719,43 +3719,6 @@ fn no_source_or_doc_file_cites_a_private_working_note() {
     );
 }
 
-/// The exact set of files that mention `HolderRecord::from_capability`.
-///
-/// Five today. **Every one of them is test-only**: the production region
-/// of each file — everything before its `#[cfg(test)]` / `mod tests`
-/// marker — contains zero calls.
-///
-/// Two layers, because neither alone is honest:
-///
-/// - The file set is pinned, so a brand-new call site in a new file is
-///   caught outright.
-/// - Each file's production region is counted separately, so a call added
-///   *above* the test marker in an existing file is caught too. That is the
-///   case that matters most, because `holder_record.rs` is exactly where a
-///   production constructor would be written.
-///
-/// A single text scan cannot do better than the first layer on its own —
-/// that is the same limitation recorded on
-/// [`VERIFIERS_WITHOUT_PRODUCTION_IMPL`] — and it is why this is two checks
-/// rather than one.
-///
-/// `macaroon.rs` is the newest entry and the guard caught it the day it
-/// was written — the accessor test builds a `HolderRecord` to prove the new
-/// `CapabilityCatalog::holder_registry()` reaches one. Recording it is the
-/// guard doing its job rather than being worked around, and it is the second
-/// time this census has caught a change in this arc.
-///
-/// Files under a `tests/` directory are skipped entirely. They are test code
-/// by location, and they carry no `mod tests` marker for the second layer to
-/// find, so without this they read as production.
-const HOLDER_RECORD_CONSTRUCTION_FILES: &[&str] = &[
-    "crates/octo-cap-macaroon/src/holder_record.rs",
-    "crates/octo-cap-macaroon/src/macaroon.rs",
-    "crates/octo-ident-storage/src/holder_registry.rs",
-    "crates/octo-wallet/src/capability/verify.rs",
-    "crates/quota-router-core/src/ingress/capability_verifier.rs",
-];
-
 /// Byte offset where a file's test-only region begins, if it has one.
 fn test_region_start(text: &str) -> Option<usize> {
     text.find("#[cfg(test)]")
@@ -3764,13 +3727,48 @@ fn test_region_start(text: &str) -> Option<usize> {
         .min()
 }
 
-/// No production code constructs a `HolderRecord`.
+/// The **only** file permitted to build a `HolderRecord` outside a test module.
 ///
-/// Turns red when a file outside
-/// [`HOLDER_RECORD_CONSTRUCTION_FILES`] calls it, and when any known file
-/// gains a call in its production region.
+/// RFC-0871 §G9 puts mint-time holder persistence in the node-side handler,
+/// not the wallet, and the capability issuer node is the registrant. It builds
+/// the record, writes it to the registry it holds, and puts the same canonical
+/// bytes in the V2 bundle — one construction, one consumer.
+///
+/// The list is matched exactly in both directions, so deleting the registrant
+/// turns this guard red as surely as adding a second one does.
+const HOLDER_RECORD_PRODUCTION_FILES: &[&str] =
+    &["crates/octo-capability-issuer-node/src/handlers/issue.rs"];
+
+/// Every file allowed to call `HolderRecord::from_capability` at all, including
+/// from test modules. A new entry is a prompt to record *what registers a
+/// holder* — an empty registry means every real capability is refused with
+/// `CapError::HolderUnknown`.
+///
+/// `macaroon.rs` is the newest test-region entry and the guard caught it the day
+/// it was written — the accessor test builds a `HolderRecord` to prove the new
+/// `CapabilityCatalog::holder_registry()` reaches one. Recording it is the guard
+/// doing its job rather than being worked around.
+const HOLDER_RECORD_CONSTRUCTION_FILES: &[&str] = &[
+    "crates/octo-cap-macaroon/src/holder_record.rs",
+    "crates/octo-cap-macaroon/src/macaroon.rs",
+    "crates/octo-ident-storage/src/holder_registry.rs",
+    "crates/octo-wallet/src/capability/verify.rs",
+    "crates/octo-capability-issuer-node/src/handlers/issue.rs",
+    "crates/quota-router-core/src/ingress/capability_verifier.rs",
+];
+
+/// Exactly one production site builds a `HolderRecord`, and it is the
+/// node-side registrant.
+///
+/// Two layers. Layer one — a file outside
+/// [`HOLDER_RECORD_CONSTRUCTION_FILES`] calls it. Layer two — the set of files
+/// whose *production region* calls it does not equal
+/// [`HOLDER_RECORD_PRODUCTION_FILES`]: a new production site is an unowned
+/// record, and a missing one means the registry is empty again, so
+/// `ProductionCapabilityVerifier` refuses every real capability with
+/// `CapError::HolderUnknown` before the ask is ever read.
 #[test]
-fn holder_records_are_never_constructed_in_production() {
+fn exactly_one_production_site_builds_a_holder_record() {
     let mut new_files: Vec<String> = Vec::new();
     let mut production_calls: Vec<String> = Vec::new();
 
@@ -3820,11 +3818,15 @@ fn holder_records_are_never_constructed_in_production() {
          empty registry means every real capability is refused with \
          CapError::HolderUnknown."
     );
-    assert!(
-        production_calls.is_empty(),
-        "these files call HolderRecord::from_capability ABOVE their test module, \
-         which makes it production code: {production_calls:?}. Nothing registers a \
-         HolderRecord in production, so the registry is permanently empty and \
+
+    production_calls.sort();
+    let mut expected: Vec<&str> = HOLDER_RECORD_PRODUCTION_FILES.to_vec();
+    expected.sort_unstable();
+    assert_eq!(
+        production_calls, expected,
+        "the set of files building a HolderRecord outside a test module must be \
+         exactly HOLDER_RECORD_PRODUCTION_FILES. Growing means an unowned record \
+         nobody registers; shrinking means the registry is empty again and \
          ProductionCapabilityVerifier refuses every real capability with \
          CapError::HolderUnknown before the ask is ever read."
     );

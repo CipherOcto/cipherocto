@@ -170,7 +170,18 @@ impl CapabilityIssuerNode {
         match envelope.payload_kind {
             k if k == octo_protocol::payload_kind::CAPABILITY_ISSUE => {
                 let req = IssueRequest::from_borsh(&envelope.payload)?;
-                IssueHandler::new().handle(&req)
+                // Fail closed without an identity. Minting signs with it, so
+                // a node configured without one has nothing honest to return
+                // — an MVP placeholder bundle would be a credential nobody can
+                // verify, which is what this whole chain has been fixing.
+                let identity = self.config.identity.as_ref().ok_or_else(|| {
+                    ProtocolError::AuthorizationFailed(
+                        "capability issuer has no identity key; CAPABILITY_ISSUE \
+                         is unavailable"
+                            .to_owned(),
+                    )
+                })?;
+                IssueHandler::new(identity, &*self.config.holder_registry).handle(&req)
             }
             k if k == octo_protocol::payload_kind::CAPABILITY_REVOKE => {
                 let req = RevokeRequest::from_borsh(&envelope.payload)?;
@@ -322,11 +333,20 @@ mod tests {
         Arc::new(StoolapHolderRegistry::open_in_memory().unwrap())
     }
 
+    fn test_identity() -> Arc<octo_wallet::identity::IdentityKey> {
+        let mut k = octo_wallet::identity::IdentityKey::generate().unwrap();
+        k.activate(1_700_000_000).unwrap();
+        Arc::new(k)
+    }
+
+    /// The shape a real deployment has: an identity that can sign the
+    /// capability it issues. A node without one refuses `CAPABILITY_ISSUE`
+    /// (covered by `handle_envelope_refuses_capability_issue_without_an_identity`).
     fn test_config() -> CapabilityIssuerNodeConfig {
         CapabilityIssuerNodeConfig {
             transport: test_transport(),
             holder_registry: test_registry(),
-            identity: None,
+            identity: Some(test_identity()),
             network_key: [0u8; 32],
         }
     }
@@ -405,6 +425,48 @@ mod tests {
         assert_eq!(
             out.response_payload_kind,
             Some(octo_protocol::payload_kind::CAPABILITY_ISSUE)
+        );
+    }
+
+    #[test]
+    fn handle_envelope_refuses_capability_issue_without_an_identity() {
+        // Minting signs with the issuer key (RFC-0871 §G8). A node configured
+        // without one cannot produce a credential anybody can verify, so it
+        // refuses rather than emitting an unsigned placeholder bundle.
+        let mut config = test_config();
+        config.identity = None;
+        let node = CapabilityIssuerNode::new(config);
+        let placeholder_pk = [0u8; 32];
+        let placeholder_did = CanonicalCodec::mint(&placeholder_pk);
+        let placeholder_wire =
+            <octo_ident::CanonicalCodec as octo_ident::DidCodec>::raw_to_wire(&placeholder_did)
+                .unwrap();
+        let req = IssueRequest {
+            holder_did: sample_did(),
+            capability: [0xab; 32],
+        };
+        let envelope = NodeEnvelope::build(
+            placeholder_wire,
+            RecipientRef::Broadcast,
+            octo_protocol::payload_kind::CAPABILITY_ISSUE,
+            req.to_borsh().unwrap(),
+            vec![],
+            [0u8; 32],
+            0,
+            VERSION_TAG_V2,
+        )
+        .unwrap();
+        let err = node.handle_envelope(&envelope).unwrap_err();
+        // The unsupported-kind arm also returns `AuthorizationFailed`, so the
+        // variant alone would pass even if `CAPABILITY_ISSUE` were not routed
+        // at all. Pin the cause in the message so this test cannot pass for
+        // the wrong reason.
+        let ProtocolError::AuthorizationFailed(message) = &err else {
+            panic!("expected an authorization refusal, got {err:?}");
+        };
+        assert!(
+            message.contains("no identity key"),
+            "refusal must name the missing identity, got: {message}"
         );
     }
 

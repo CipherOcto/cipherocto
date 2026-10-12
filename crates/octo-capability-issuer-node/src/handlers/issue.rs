@@ -65,52 +65,120 @@ impl IssueRequest {
 
 /// `CAPABILITY_ISSUE` handler implementation.
 ///
-/// Phase 3 MVP: validates the canonical DID shape and derives a
-/// deterministic `token_id` from the capability root. The handler is
-/// unit-typed (no constructor state); the full substrate handler will
-/// take an `Arc<dyn HsmAdapter>` for holder signing + a
-/// `HolderRegistry` reference for registration.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct IssueHandler;
+/// Mints the capability and registers its `HolderRecord`.
+///
+/// This is the **node-side persistence** that RFC-0871 §G9 requires:
+/// *"The wallet is a pure crypto primitive; business rules live in the
+/// node-side handler."* The wallet mints nothing persistent and this node
+/// writes it, which is why the handler holds a registry rather than
+/// receiving a token to store.
+#[derive(Clone, Copy)]
+pub struct IssueHandler<'a> {
+    /// Issuer identity, used as the holder signer (HSM-routed
+    /// `IdentityKey` per RFC-0871 §G8).
+    identity: &'a octo_wallet::identity::IdentityKey,
+    /// Registry the minted holder record is written to.
+    registry: &'a dyn octo_cap_macaroon::holder_registry::HolderRegistry,
+}
 
-impl IssueHandler {
+/// Manual `Debug`: the identity is redacted and the registry is not
+/// `Debug`-able, so neither is worth printing.
+impl std::fmt::Debug for IssueHandler<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IssueHandler")
+            .field("identity", &"<redacted>")
+            .field("registry", &"<holder registry>")
+            .finish()
+    }
+}
+
+impl<'a> IssueHandler<'a> {
     /// Construct a new `IssueHandler`.
     #[must_use]
-    pub const fn new() -> Self {
-        Self
+    pub const fn new(
+        identity: &'a octo_wallet::identity::IdentityKey,
+        registry: &'a dyn octo_cap_macaroon::holder_registry::HolderRegistry,
+    ) -> Self {
+        Self { identity, registry }
     }
 
-    /// Validate `holder_did` shape; mint a V2 envelope root bundle and
-    /// emit it as the primary `response_payload`.
+    /// Mint the capability, register its `HolderRecord`, and return the V2
+    /// envelope.
     ///
-    /// Post-cutover (mission `0957-f-v2-bundle-cutover`): the envelope
-    /// IS the wire form. `channel_id` on the envelope is the
-    /// deterministic 16-byte `token_id` (RFC-0957 §3.2).
+    /// RFC-0957-A1 §6 makes `mint` persistence-free, so the write belongs
+    /// here — the caller. Without it the registry stays empty and every
+    /// capability is refused downstream with `HolderUnknown`.
+    ///
+    /// `holder_record_bytes` now carries **real canonical `HolderRecord`
+    /// bytes**, which is what RFC-0009 §Forward compatibility specifies and
+    /// what the field's own documentation promises. It previously carried
+    /// `req.capability` — the capability **root secret** — in the clear, so
+    /// the issued bundle was not safe to store or relay.
     ///
     /// # Errors
     /// Returns `ProtocolError::InvalidDid` if `holder_did` is not a
-    /// canonical DID shape.
+    /// canonical DID shape, and `ProtocolError::AuthorizationFailed` if
+    /// minting, wire serialization, record construction or the registry
+    /// write fails.
     pub fn handle(&self, req: &IssueRequest) -> Result<HandlerOutput, ProtocolError> {
+        use octo_cap_macaroon::caveat::Caveat;
+        use octo_cap_macaroon::holder_record::{
+            CapabilityClass, CapabilityTokenLike, HolderRecord,
+        };
+        use octo_cap_macaroon::signer::CapabilitySigner;
+        use octo_cap_macaroon::token::CapabilityToken;
+        use octo_cap_macaroon::wire::{compute_cap_root_hash_from_wire, serialize_wire};
+
         // Validate canonical DID shape; reject legacy bare form.
         // (RFC-0010 F4 + mission 0010-d wallet-audience-validation.)
         octo_ident::CanonicalCodec::parse(&req.holder_did, false).map_err(did_error_to_protocol)?;
 
-        // Phase 3 MVP: derive deterministic 16-byte token_id from the
-        // 32-byte capability root via the macaroon-id primitive. Encoded
-        // as `channel_id` on the V2 envelope (the full macaroon substrate
-        // lands in mission 0957 Phase 2).
+        // 1. Mint. No initial caveats: an ask binding is a market-side
+        //    decision (RFC-0959 §Phase 3), and guessing one here would
+        //    assert an ask the issuer was never told about.
+        let token = CapabilityToken::mint(
+            &req.capability,
+            self.identity,
+            &req.holder_did,
+            &[Caveat::Before(u64::MAX / 1000)],
+        )
+        .map_err(|e| ProtocolError::AuthorizationFailed(format!("mint: {e}")))?;
+
+        let wire = serialize_wire(&token)
+            .map_err(|e| ProtocolError::AuthorizationFailed(format!("wire ser: {e}")))?;
+        let cap_root_hash = compute_cap_root_hash_from_wire(&wire)
+            .map_err(|e| ProtocolError::AuthorizationFailed(format!("cap_root_hash: {e}")))?;
+
+        // 2. Register. `ttl_millis_unix = 0` is the TV14 contract for
+        //    "active, no TTL expiry", matching the MVP's unbounded
+        //    `expires_at_unix_secs`.
+        let record = HolderRecord::from_capability(
+            &CapabilityTokenLike {
+                cap_root_hash,
+                class: CapabilityClass::V1,
+            },
+            &<octo_wallet::identity::IdentityKey as CapabilitySigner>::public_key_bytes(
+                self.identity,
+            )
+            .try_into()
+            .map_err(|_| {
+                ProtocolError::AuthorizationFailed("issuer key is not 32 bytes".to_owned())
+            })?,
+            &req.holder_did,
+            None,
+            0,
+        );
+        self.registry
+            .insert(record.clone())
+            .map_err(|e| ProtocolError::AuthorizationFailed(format!("registry insert: {e}")))?;
+
+        // 3. Envelope. `channel_id` is the MacaroonId scope tag (RFC-0957
+        //    §3.2), unchanged from the MVP.
         let mut nonce = [0u8; 16];
         nonce.copy_from_slice(&req.capability[..16]);
         let token_id: MacaroonId = macaroon_id(&req.capability, &nonce);
-
-        // V2 root bundle envelope (mission 0957-f-v2-bundle-cutover).
-        // Issuer mints a root bundle: chain_depth = 0, chain_parent =
-        // [0u8; 32]. `channel_id` is the MacaroonId (16-byte scope tag).
-        // `holder_record_bytes` carries the 32-byte capability_root as
-        // MVP placeholder (follow-on mission replaces with real
-        // HolderRecord bytes). MVP issuer lacks identity key —
-        // `issuer_did` is a canonical placeholder string.
-        let issuer_did = "did:octo:zIssuerMVPPlaceholder".to_owned();
+        let issuer_did =
+            <octo_wallet::identity::IdentityKey as CapabilitySigner>::did(self.identity);
         let token_v2 = CapabilityTokenV2 {
             chain_depth: 0,
             chain_parent: [0u8; 32],
@@ -119,7 +187,10 @@ impl IssueHandler {
             expires_at_unix_secs: u64::MAX,
             issuer_did,
         };
-        let holder_record_bytes = req.capability.to_vec();
+        // The real record, serialized — not the root secret.
+        let holder_record_bytes = record
+            .canonical_ser()
+            .map_err(|e| ProtocolError::AuthorizationFailed(format!("holder record ser: {e}")))?;
         let discharge_macaroon_bytes: Vec<u8> = Vec::new();
         let v2_bundle =
             CapabilityBundleV2::new(token_v2, holder_record_bytes, discharge_macaroon_bytes)
@@ -135,16 +206,27 @@ impl IssueHandler {
             v2_envelope_bytes,
             octo_protocol::payload_kind::CAPABILITY_ISSUE,
         )
-        .with_note(format!(
-            "issued (MVP stub + V2 envelope) for {}",
-            req.holder_did
-        )))
+        .with_note(format!("issued and registered for {}", req.holder_did)))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Real in-memory registry, matching the fixture the lookup handler's
+    /// tests already use. An in-memory `HolderRegistry` here is a test
+    /// double, not a production store: RFC-0957-A1 §4 names
+    /// `StoolapHolderRegistry` backed by a real handle as the reference.
+    fn sample_registry() -> std::sync::Arc<dyn octo_cap_macaroon::holder_registry::HolderRegistry> {
+        std::sync::Arc::new(octo_ident_storage::StoolapHolderRegistry::open_in_memory().unwrap())
+    }
+
+    fn sample_identity() -> std::sync::Arc<octo_wallet::identity::IdentityKey> {
+        let mut k = octo_wallet::identity::IdentityKey::generate().unwrap();
+        k.activate(1_700_000_000).unwrap();
+        std::sync::Arc::new(k)
+    }
     use octo_cap_macaroon::{
         CapabilityBundleV2Envelope, CIPHEROCTO_V2_BUNDLE_PREFIX, MAX_CHAIN_DEPTH,
     };
@@ -187,7 +269,9 @@ mod tests {
 
     #[test]
     fn handle_rejects_invalid_did() {
-        let handler = IssueHandler::new();
+        let sample_id = sample_identity();
+        let sample_reg = sample_registry();
+        let handler = IssueHandler::new(&sample_id, &*sample_reg);
         let req = IssueRequest {
             holder_did: "did:octo:bad".into(),
             capability: [0xab; 32],
@@ -200,7 +284,9 @@ mod tests {
     fn handle_rejects_legacy_bare_did() {
         // Mission 0871d AC: DID validation MUST reject legacy bare
         // `did:octo:<base32>` form per RFC-0010 F4 + 0010-d mission.
-        let handler = IssueHandler::new();
+        let sample_id = sample_identity();
+        let sample_reg = sample_registry();
+        let handler = IssueHandler::new(&sample_id, &*sample_reg);
         let bare = format!("did:octo:{}", "a".repeat(52));
         let req = IssueRequest {
             holder_did: bare,
@@ -216,7 +302,9 @@ mod tests {
     /// derived from the capability root.
     #[test]
     fn handle_emits_v2_envelope_with_channel_id_as_token_id() {
-        let handler = IssueHandler::new();
+        let sample_id = sample_identity();
+        let sample_reg = sample_registry();
+        let handler = IssueHandler::new(&sample_id, &*sample_reg);
         let capability = [0xcdu8; 32];
         let req = IssueRequest {
             holder_did: sample_did(),
@@ -242,7 +330,9 @@ mod tests {
     /// (no accidental collision).
     #[test]
     fn handle_channel_id_varies_with_capability() {
-        let handler = IssueHandler::new();
+        let sample_id = sample_identity();
+        let sample_reg = sample_registry();
+        let handler = IssueHandler::new(&sample_id, &*sample_reg);
         let out_a = handler
             .handle(&IssueRequest {
                 holder_did: sample_did(),
@@ -267,7 +357,9 @@ mod tests {
     /// `chain_parent = [0u8; 32]`, `audience_did` = holder.
     #[test]
     fn handle_emits_v2_root_bundle_envelope() {
-        let out = IssueHandler::new()
+        let sample_id = sample_identity();
+        let sample_reg = sample_registry();
+        let out = IssueHandler::new(&sample_id, &*sample_reg)
             .handle(&IssueRequest {
                 holder_did: sample_did(),
                 capability: [0xab; 32],
@@ -284,19 +376,79 @@ mod tests {
         assert_eq!(env.bundle.token_v2.audience_did, sample_did());
     }
 
-    /// TV — `holder_record_bytes` carries the 32-byte capability root
-    /// as MVP placeholder (the substrate HolderRecord bytes land in a
-    /// follow-on mission).
+    /// The bundle carries a real `HolderRecord`, and not the capability root
+    /// secret.
+    ///
+    /// This test used to assert the **opposite**: that
+    /// `holder_record_bytes` equalled `req.capability` — the 32-byte macaroon
+    /// root secret — and it passed, pinning the behaviour as correct. The
+    /// field is documented as *"Serialized bytes of the `HolderRecord`.
+    /// Deserialize via `HolderRecord::canonical_de` at the boundary"*, so the
+    /// old assertion contradicted the contract it sat next to.
+    ///
+    /// Two properties, and both matter:
+    ///
+    /// - the bytes **decode** as a `HolderRecord` (the documented contract,
+    ///   which failed for every bundle this handler produced before);
+    /// - the decoded record's `cap_root_hash` is the minted one, so it is the
+    ///   record for *this* capability rather than a placeholder.
+    ///
+    /// The secret assertion is implied by decoding: the root secret is not
+    /// canonical `HolderRecord` JSON, so a payload that decodes cannot also be
+    /// the secret. Spelled out anyway, because "implied" is how a secret ends
+    /// up in a bundle in the first place.
     #[test]
-    fn handle_holder_record_bytes_carries_capability_root() {
+    fn holder_record_bytes_carries_a_real_record_and_not_the_root_secret() {
         let capability = [0xa1u8; 32];
-        let out = IssueHandler::new()
+        let sample_id = sample_identity();
+        let sample_reg = sample_registry();
+        let out = IssueHandler::new(&sample_id, &*sample_reg)
             .handle(&IssueRequest {
                 holder_did: sample_did(),
                 capability,
             })
             .unwrap();
         let env = envelope_from(&out);
-        assert_eq!(env.bundle.holder_record_bytes, capability.to_vec());
+
+        assert_ne!(
+            env.bundle.holder_record_bytes,
+            capability.to_vec(),
+            "the issued bundle must not carry the capability root secret"
+        );
+
+        // The documented decode must now succeed on real production output.
+        let record = octo_cap_macaroon::holder_record::HolderRecord::canonical_de(
+            &env.bundle.holder_record_bytes,
+        )
+        .expect("holder_record_bytes must decode via the documented boundary");
+        assert_eq!(record.holder_did, sample_did());
+    }
+
+    /// Minting writes a `HolderRecord`, so the registry is no longer empty.
+    ///
+    /// This is the guard-census property: before this handler minted, the
+    /// `HolderRecord` construction census held by construction. It also proves
+    /// the record is *reachable by lookup*, which is what a verifier needs.
+    #[test]
+    fn issuing_registers_a_holder_record_in_the_registry() {
+        let sample_id = sample_identity();
+        let sample_reg = sample_registry();
+        let out = IssueHandler::new(&sample_id, &*sample_reg)
+            .handle(&IssueRequest {
+                holder_did: sample_did(),
+                capability: [0xb2u8; 32],
+            })
+            .unwrap();
+        let env = envelope_from(&out);
+        let record = octo_cap_macaroon::holder_record::HolderRecord::canonical_de(
+            &env.bundle.holder_record_bytes,
+        )
+        .unwrap();
+
+        let found = sample_reg.lookup(&record.cap_root_hash).unwrap();
+        assert!(
+            found.is_some(),
+            "the minted holder record must be readable back from the registry"
+        );
     }
 }

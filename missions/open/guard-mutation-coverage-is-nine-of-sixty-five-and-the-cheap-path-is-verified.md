@@ -62,11 +62,16 @@ Two were genuinely exposed and both are now floored:
 - the registry-reach scan, whose sibling walks the same tree and already floored
   what it saw
 
-One more is exposed only in half. `the_wallet_crate_does_not_depend_on_storage`
-compares a boolean for its manifest half, so that half cannot pass vacuously, but
-the walk over octo-wallet source feeding its first assertion has no floor. It is
-deliberately left unfloored rather than half-fixed, because a guard whose two
-halves enforce different properties is worth fixing as a whole or not at all.
+The seventh is now floored too. `the_wallet_crate_does_not_depend_on_storage`
+compares a boolean for its manifest half, so that half was never at risk, but the
+walk over octo-wallet source feeding its first assertion was. It was left alone
+for one commit on the reasoning that a guard whose halves enforce different
+properties is worth fixing as a whole or not at all — which was wrong. Adding a
+floor is additive protection, not a partial repair, and nothing about that guard
+is half-fixed by counting the files its walk already reads.
+
+So all three exposed scans are floored, and the remaining four were cleared by
+reading each one rather than by pattern-matching it.
 
 ## Which harness entries are actually proven
 

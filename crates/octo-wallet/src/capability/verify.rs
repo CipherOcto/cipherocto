@@ -158,7 +158,8 @@ pub enum VerifyError {
 /// third-party discharges.** `verify_holder_sig` at step 4 covers the
 /// *signature over* the caveat bytes; it does not evaluate the caveats
 /// themselves. A token carrying escrow, revocation or rate-limit caveats
-/// (RFC-0957 §3.6) passes this function with those caveats unexamined.
+/// (RFC-0957 §Discharge Protocol) passes this function with those caveats
+/// unexamined.
 ///
 /// An earlier version of this doc described the chain verification as
 /// "delegated to the catalog ... the caller's responsibility". That

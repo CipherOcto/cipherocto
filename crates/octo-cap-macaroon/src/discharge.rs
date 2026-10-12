@@ -1,4 +1,4 @@
-//! Discharge channels (RFC-0957 §3.6).
+//! Discharge channels (RFC-0957 §Discharge Protocol).
 //!
 //! Discharge macaroons are issued by **third-party channels** to satisfy
 //! third-party caveats on the root capability. CipherOcto defines three
@@ -24,7 +24,7 @@ use crate::token::DischargeMacaroon;
 /// Channel identifier (opaque string). Standard channels: "escrow", "revocation", "rate-limit".
 pub type ChannelId = String;
 
-/// Standard discharge channels (RFC-0957 §3.6).
+/// Standard discharge channels (RFC-0957 §Discharge Protocol).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DischargeChannel {
     /// Settlement oracle (escrow).
@@ -60,7 +60,7 @@ impl std::str::FromStr for DischargeChannel {
     }
 }
 
-/// Request to mint a discharge macaroon (RFC-0957 §3.6 mint flow).
+/// Request to mint a discharge macaroon (RFC-0957 §Discharge Protocol mint flow).
 ///
 /// Holder presents their `CapabilityToken`; the channel provider inspects
 /// the third-party caveats targeting this channel, runs its own predicate
@@ -89,7 +89,7 @@ pub struct DischargeVerification {
     pub reason: Option<String>,
 }
 
-/// Errors from the discharge protocol (RFC-0957 §3.6 verify flow).
+/// Errors from the discharge protocol (RFC-0957 §Discharge Protocol verify flow).
 #[derive(Debug, thiserror::Error)]
 pub enum DischargeError {
     #[error("discharge for unknown channel `{0}`")]
@@ -100,7 +100,7 @@ pub enum DischargeError {
     MissingDischarge { channel: ChannelId },
 }
 
-/// Trait implemented by third-party channel operators (RFC-0957 §3.6).
+/// Trait implemented by third-party channel operators (RFC-0957 §Discharge Protocol).
 ///
 /// Providers are stateless from the trait's perspective; concrete impls
 /// hold the operator's state (escrow ledger, revocation list, rate-limit
@@ -264,7 +264,7 @@ pub fn verify_discharges(
     Ok(())
 }
 
-// --- Escrow provider (RFC-0957 §3.6 + RFC-0959 settlement oracle) ---
+// --- Escrow provider (RFC-0957 §Discharge Protocol + RFC-0959 settlement oracle) ---
 //
 // The escrow channel checks that the holder has sufficient OCTO-W escrow
 // balance to cover the requested settlement amount. The amount is read
@@ -417,7 +417,7 @@ pub struct RevocationDischargeProvider {
     now: std::sync::Mutex<u64>,
 }
 
-/// Maximum lifetime of a revocation discharge (RFC-0957 §3.6).
+/// Maximum lifetime of a revocation discharge (RFC-0957 §Discharge Protocol).
 pub const REVOCATION_DISCHARGE_TTL_SECS: u64 = 60;
 
 impl RevocationDischargeProvider {
@@ -677,7 +677,7 @@ mod tests {
 
     #[test]
     fn discharge_macaroon_construction() {
-        // Cover the DischargeMacaroon struct fields per RFC-0957 §3.6.
+        // Cover the DischargeMacaroon struct fields per RFC-0957 §Discharge Protocol.
         let dm = DischargeMacaroon {
             channel: "escrow".to_owned(),
             root_secret_hash: [0xab; 32],
@@ -1028,7 +1028,7 @@ mod tests {
             discharge,
         );
         // Empty escrow context → EscrowDischargeProvider returns valid=false
-        // ("missing context" decodes as 0 bytes, fails-closed per RFC-0957 §3.6).
+        // ("missing context" decodes as 0 bytes, fails-closed per RFC-0957 §Discharge Protocol).
         let err = verify_discharges(&token, &registry, &HashMap::new()).unwrap_err();
         // R5 finding: pin the exact Display string BEFORE destructuring
         // (thiserror #[error(...)] regression guard). The destructure

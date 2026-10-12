@@ -8,6 +8,11 @@ metadata:
   v: "1.0"
   depends_on:
     - RFC-0957
+    # RFC-0957 is `rfcs/accepted/economics/0957-capability-token-format.md`.
+    # `0957-a1-holder-registry.md` amends it in place and does not renumber, so
+    # the discharge protocol is specified by the base RFC under
+    # §Discharge Protocol — not by a numbered 3.6, which the source comments
+    # still cite and which does not resolve in the current text.
 ---
 
 # Mission `0957-a2-capability-chain-and-discharge-verification`
@@ -68,7 +73,8 @@ re-exported from production source in both `octo-cap-macaroon` and
 Every other reference constructs, serialises, or tests.
 
 The consequence is concrete. A `CapabilityToken` carrying third-party caveats —
-escrow, revocation, rate-limit per RFC-0957 §3.6 — passes this path with those
+escrow, revocation, rate-limit per RFC-0957 §Discharge Protocol — passes this
+path with those
 caveats unexamined, because the verifier that would examine them is never
 invoked. `verify_holder_sig` covers the signature over the caveat bytes; it
 does not evaluate them.

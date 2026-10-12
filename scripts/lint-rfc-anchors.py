@@ -48,11 +48,21 @@ HEADING = re.compile(r"^#{1,6}\s+(.*?)\s*$")
 
 
 def normalize(text: str) -> str:
-    """Strip emphasis and trailing punctuation. Parentheticals are handled at
-    match time, not here, because `§Adversarial Review (12-finding table)` and
-    `§Adversarial Review` must both resolve."""
+    """Strip emphasis, a leading section sign, and trailing punctuation.
+
+    The leading `§` is the subtle one. ANCHOR captures a cited name *without*
+    its `§`, but this repo also authors headings that way — `## §Format
+    Bypass Defense`, `## §S6 — TimestampOpaque newtype`. Leaving the sign on
+    the heading side made every such heading unaddressable, so the linter
+    fabricated dangling findings for it and then baselined them: 44 baselined
+    names resolved the moment it was stripped, and the baseline shrank from
+    743 entries to 699 with no entry added.
+
+    Parentheticals are handled at match time, not here, because `§Adversarial
+    Review (12-finding table)` and `§Adversarial Review` must both resolve.
+    """
     text = re.sub(r"[*_`]", "", text)
-    return text.strip().rstrip(".,;:)]}").strip().lower()
+    return text.strip().lstrip("§").strip().rstrip(".,;:)]}").strip().lower()
 
 
 def candidates(name: str) -> list[str]:

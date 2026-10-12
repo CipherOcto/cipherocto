@@ -1,6 +1,4 @@
 ac-8 2-cycle
-adapter crate list
-adapter crate list (5
 adapter extensions
 adversarial review + §economic analysis
 adversarial review phase 10
@@ -64,10 +62,6 @@ algorithms); --confirm-acknowledge
 algorithms:phantomcallsite (r55-n5
 alreadyintransition (cli
 alternatives considered + §why
-amendment surface
-amendment surface (
-amendment surface (commit
-amendment surface (deferred
 amendment surface §amendment surface
 api version
 append-only contract
@@ -158,7 +152,6 @@ coverage table
 cross-domain aggregation
 cross-layer aggregation
 cross-repo coordination; §implementation phases phase g cross-repo coordination
-cross-rfc atomicity
 cross-sub-group messaging + §sub-group decommission +
 crypto agility
 d1 deviation + 0206-008 §d1 deviation
@@ -214,8 +207,6 @@ dual-stake; rfc-0909 §economic analysis
 dynamic registration
 egress transform + §adversary a5
 election algorithm) landed
-emergency revocation
-emergency revocation (separate
 encryption keys
 envelope codec
 error handling "variant
@@ -247,12 +238,7 @@ f3 holderregistry
 feature gate architecture):                         ║
 feature-gated provider initialization
 fiat-shamir "internal
-firmware attestation
 follow-on §f
-format bypass defense
-format bypass defense (35
-format bypass defense (substrate-level
-format bypass defense (test-level
 future roles
 future work + ac#12
 future work / f2
@@ -270,10 +256,6 @@ future work §fw5 + §fw6 layer c
 fw2 + rfc-0014-v2 §fw4
 fw2 + §fw4
 fw3 + §s5
-fw6 (canonical
-fw6 (canonical scrubber patterns +
-fw6 (cross-rfc
-fw6 (single
 fw6 + ac-11 + ac-12
 g5 "gateway federation: 1000+
 gossip envelope
@@ -285,7 +267,6 @@ hex32 +
 holder sign; ed25519
 holderkind and
 holderregistry unique
-hw key custody
 hw key custody §firmware attestation
 hw key custody §firmware attestation: 30-day
 ia #6
@@ -367,7 +348,6 @@ inbound path
 inference pipeline
 invalidstatetransition (cli
 json schema validation
-key custody policy
 key files + f-8
 key files + §mission decomposition
 key files l847
@@ -380,9 +360,6 @@ key handling rules); §key handling rules
 kind uuid registry
 kind uuid registry (private
 layer a/b/c/d/e
-layer b type renames
-layer b type renames (90+
-layer b type renames (legitimate
 layer direction note
 lifecycle requirements §classa
 lifecycle requirements §role-binding state machine
@@ -455,16 +432,8 @@ phase 1 r13-n8
 phase 3 peer exchange
 platform-mediated handover
 platformadapter receiver
-pre-existing substrate
-pre-existing substrate (4
-pre-existing substrate (already
-pre-existing substrate (cite
-pre-existing substrate (keep
-pre-v0 tag lifecycle
 primary key
 principle 12
-promotion path
-promotion path (gated
 promotion path condition 1
 prompt cache
 provider sdk type registry
@@ -485,12 +454,10 @@ redaction layer §stdin
 redaction layer) must
 redaction layer; json
 related use cases + §appendices (template §731
-release-tag pin policy
 request routing algorithm
 reserved exit codes + appendix d)<br/>low (5):<br/>• f-12
 revocation oracles
 rfc process + rfc-0015 §version history
-rfc process audit (accepted 2026-08-20
 rfc process audit condition 2
 rfc process"
 rfc process; r4
@@ -535,8 +502,6 @@ s7 §table c
 sample kinds (forward
 sample walk-through a
 sample walk-through §a
-sc2 (canonical
-sc2 (this rfc); rfc-0014-v2 §s5
 sc2 +
 sc2 + §s5
 security #1
@@ -643,14 +608,9 @@ subcommand taxonomy phase 9
 subcommand taxonomy →
 subcommand taxonomy)"
 subdcdelegationpolicy (no
-substrate cross-reference
 substrate discipline
 substrate migration
-substrate newtype refactor
 substrate newtype refactor "≤ 8
-substrate re-export block
-substrate re-export block (8
-substrate re-export block (new
 substrate re-export block +
 substrate re-export block properties
 substrate re-export block rfc
@@ -671,7 +631,6 @@ substrate-faithfulness + phase 12 r2
 summary "internet analogy"
 summary "substrate-faithful
 summary #6 (mintdual algorithm
-summary updates
 system architecture layer 1; ci
 tally canonicalisation
 test vectors + 4
@@ -700,8 +659,6 @@ test vectors §squareddistance
 test vectors): tv-aud-3
 the rfc process: "1
 third-party discharge
-three-tier architecture
-three-tier architecture (with
 tokenizer lookup function uncertain assignments
 tools → implementation guides
 top k
@@ -713,7 +670,6 @@ transfer flow: replay
 transitionreceipt; cli
 trust level canonical uuids); must
 trust level canonical uuids); not
-two-tier architecture
 typed uuid
 unit system
 user extensions (forward

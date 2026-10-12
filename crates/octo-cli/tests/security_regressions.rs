@@ -304,6 +304,39 @@ fn m12_no_chrome_launcher_disables_the_renderer_sandbox() {
              this guard is passing vacuously"
         );
     }
+
+    // The list above is hand-written. Measured today it is complete: exactly
+    // three crates depend on the Chrome session packages and none of the
+    // others carry a Chrome, webdriver or chromedriver launcher. But a fourth
+    // launcher added without touching this list would drive a profile
+    // holding a live WhatsApp Web session with no sandbox check applied, and
+    // this guard would still report green.
+    //
+    // Same lesson as C-4's store list: a hand-written list is only as good as
+    // its worst entry, so the list is checked against the rule it claims.
+    let mut launchers: Vec<String> = Vec::new();
+    let crates_dir = workspace_root().join("crates");
+    let Ok(entries) = std::fs::read_dir(&crates_dir) else {
+        panic!("crates/ must be readable");
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !entry.path().join("Cargo.toml").is_file() {
+            continue;
+        }
+        let manifest = std::fs::read_to_string(entry.path().join("Cargo.toml")).unwrap_or_default();
+        let is_known = CHROME_LAUNCHERS.iter().any(|p| p.contains(&name));
+        let depends_on_chrome = manifest.contains("whatsapp_chrome_");
+        if depends_on_chrome && !is_known {
+            launchers.push(name);
+        }
+    }
+    assert!(
+        launchers.is_empty(),
+        "M-12: these crates depend on the Chrome session packages but are not \
+         in CHROME_LAUNCHERS: {launchers:?}. Their sources get no renderer \
+         sandbox check. Add them to the list."
+    );
 }
 
 /// Minimal recursive walk; avoids pulling in a dependency for three directories.

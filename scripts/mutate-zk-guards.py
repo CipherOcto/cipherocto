@@ -316,6 +316,29 @@ MUTATIONS = [
         ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
          "no_production_code_calls_a_placeholder_decoder", "--", "--exact"],
     ),
+    (
+        # A verification site rebuilding its key from bytes instead of taking the
+        # algorithm's key — which is what makes the algorithm parameter able to
+        # be anything at all. The guard's own comment records that a past pass
+        # proved this by hand; this makes that proof re-runnable.
+        #
+        # It compiles, which is the part that was not obvious. A fully-qualified
+        # path resolves because the crate depends on ed25519-dalek directly, and
+        # the path still contains the substring the guard matches. A mutation
+        # that merely named the constructor in a comment would have been caught
+        # by nothing and proved nothing.
+        "G-F: a verification site rebuilds its key from bytes",
+        "crates/octo-wallet/src/capability/hop_envelope.rs",
+        '        assert_eq!(&wrapped.inner.aad[..4], b"hpaa");\n    }\n}\n',
+        '        assert_eq!(&wrapped.inner.aad[..4], b"hpaa");\n    }\n}\n'
+        "\n/// Probe: a verification site that rebuilds the key instead of taking it.\n"
+        "#[allow(dead_code)]\n"
+        "fn probe_hardcoded_key_ctor(bytes: &[u8; 32]) -> bool {\n"
+        "    ed25519_dalek::VerifyingKey::from_bytes(bytes).is_ok()\n"
+        "}\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "no_verification_site_hardcodes_an_algorithm", "--", "--exact"],
+    ),
 ]
 
 # NOT MUTATED, deliberately: `OpenOptionsExt::mode(0o600)` at creation inside

@@ -266,6 +266,32 @@ MUTATIONS = [
         ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
          "no_path_dependency_is_declared_and_never_referenced", "--", "--exact"],
     ),
+    (
+        # A `.rs` file naming a private working note. The guard holds Rust source
+        # to zero; markdown is a deliberately counted baseline instead, so this
+        # mutation targets source where the rule is absolute. A comment is
+        # enough to trigger it and cannot fail to compile.
+        "G-C: a Rust source file cites a private working note",
+        "crates/octo-adapter-irc/src/lib.rs",
+        '            "key 20 should be the remaining entry"\n        );\n    }\n}\n',
+        '            "key 20 should be the remaining entry"\n        );\n    }\n}\n'
+        "\n// Probe: see no-parallel-abstractions for the rationale.\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "no_source_or_doc_file_cites_a_private_working_note", "--", "--exact"],
+    ),
+    (
+        # A mission claiming a named vector that is not in the tree. This is the
+        # exact shape the guard exists for: an acceptance box ticked on a claim
+        # about code that does not exist. Editing a mission file costs nothing
+        # to build, so this entry needs no closure argument at all.
+        "G-D: a mission claims a test vector that is absent",
+        "missions/claimed/0009-e3-wallet-node-signing-oracle.md",
+        "| `the_sign_request_wire_form_is_unchanged`                     | RFC-0871's request contract did not move          |\n",
+        "| `the_sign_request_wire_form_is_unchanged`                     | RFC-0871's request contract did not move          |\n"
+        "| `probe_absent_vector_name`                                    | a vector that does not exist in the tree          |\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "missions_claiming_named_vectors_have_those_names_in_the_tree", "--", "--exact"],
+    ),
 ]
 
 # NOT MUTATED, deliberately: `OpenOptionsExt::mode(0o600)` at creation inside

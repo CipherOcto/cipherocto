@@ -979,14 +979,53 @@ mod tests {
         assert_eq!(we.voter_count(), 1);
     }
 
+    /// The governance model must change the *outcome*, not just a label.
+    ///
+    /// This test previously set the model to `Dao` and discarded the result,
+    /// with a comment conceding "we just confirm the call doesn't panic". The
+    /// name promised a causal relationship the body never checked — the
+    /// setter was called and nothing depended on it.
+    ///
+    /// The election input is held constant across all four calls below, so a
+    /// difference in result can only come from the model. That is what makes
+    /// this an assertion about `set_governance_model` rather than a second
+    /// panic check.
     #[test]
     fn writer_election_set_governance_model_affects_elect() {
-        // Centralized with no designator + no eligible ballots returns Empty
-        // per RFC-0862p-a §Election Algorithm. Federated with no ballots
-        // also returns Empty. We just confirm the call doesn't panic.
+        let mission = [0x01u8; 32];
+        let designator: CoordinatorId = [0xA7; 32];
         let mut we = WriterElection::default();
+
+        // Same input under every model: one designator, no ballots, no stakes.
+        let centralized = we
+            .elect_coordinator(mission, 100, Some(designator))
+            .expect("Centralized with a designator must elect");
+        assert_eq!(centralized.winner, designator);
+
         we.set_governance_model(GovernanceModel::Dao);
-        let _ = we.elect_coordinator([0x01u8; 32], 100, None);
+        let dao = we
+            .elect_coordinator(mission, 100, Some(designator))
+            .expect_err("Dao ignores the designator, and with no stakes it cannot elect");
+        assert!(
+            matches!(dao, CoordinatorError::NoCandidates),
+            "Dao must fail for lack of candidates, not by another route: {dao:?}"
+        );
+
+        we.set_governance_model(GovernanceModel::AiAssisted);
+        let ai = we
+            .elect_coordinator(mission, 100, Some(designator))
+            .expect_err("AiAssisted is not implemented");
+        assert!(
+            matches!(ai, CoordinatorError::GovernanceModelNotImplemented(_)),
+            "an unimplemented model must say so rather than fall through: {ai:?}"
+        );
+
+        // The setter is not one-way: switching back must restore the outcome.
+        we.set_governance_model(GovernanceModel::Centralized);
+        let back = we
+            .elect_coordinator(mission, 100, Some(designator))
+            .expect("switching back to Centralized must elect again");
+        assert_eq!(back.winner, designator);
     }
 
     #[test]

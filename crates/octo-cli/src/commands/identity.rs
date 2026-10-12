@@ -3053,7 +3053,14 @@ pub(crate) mod tests {
         // leaves the envelope reporting 64 zeros and the vector green
         // across the whole module. Pin the binding's source too.
         assert!(
-            reg.contains("let key_pubkey = key.public_key_bytes();")
+            // Prefix, not the full statement. This pinned the exact text
+            // `let key_pubkey = key.public_key_bytes();` and went red when
+            // the binding gained a `.to_vec()` — a change that altered no
+            // provenance. What this guard exists to protect is that
+            // `key_pubkey` is read off the key rather than being a
+            // constant, and a prefix pins that just as tightly without
+            // failing on an incidental receiver or allocation.
+            reg.contains("let key_pubkey = key.public_key_bytes()")
                 && reg.contains("hex::encode(key_pubkey)"),
             "pubkey_hex must be the record's public key read off the key, hex-encoded - \
              pinning only the `hex::encode` conjunct lets a constant through: {reg}"

@@ -1344,12 +1344,42 @@ mod tests {
 
     #[test]
     fn snapshot_output_schema_declares_string_fields() {
-        // Schemars pin: the envelope payload declares its
-        // fields as strings (not as `[u8; 32]`). The substrate
-        // BLAKE3-256 hex encoding happens at the dispatch
-        // boundary so downstream tooling sees stable wire
-        // form.
-        let _ = schemars::schema_for!(SnapshotOutput);
+        // The envelope payload must declare its hash fields as JSON strings,
+        // not as `[u8; 32]`. The substrate BLAKE3-256 hex encoding happens at
+        // the dispatch boundary so downstream tooling sees a stable wire form.
+        //
+        // This test previously generated the schema and threw it away with
+        // `let _`, so it only proved the schema builds. The field types it is
+        // named for were never inspected, and a change to `[u8; 32]` would
+        // have left it green.
+        let schema = schemars::schema_for!(SnapshotOutput);
+        let value = serde_json::to_value(&schema).expect("schema must serialize to JSON");
+        let props = value
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+            .expect("schema must declare properties");
+
+        for field in ["snapshot_id", "chain_id", "root_manifest_hash"] {
+            let declared = props
+                .get(field)
+                .unwrap_or_else(|| panic!("schema must declare `{field}`"))
+                .get("type")
+                .unwrap_or_else(|| panic!("`{field}` must declare a type"));
+
+            // `chain_id` is an `Option<String>`, so schemars emits a type
+            // array. A plain `String` emits a bare string. Both are correct;
+            // a fixed-size integer array is not.
+            let declares_string = match declared {
+                serde_json::Value::String(t) => t == "string",
+                serde_json::Value::Array(items) => items.iter().any(|i| i == "string"),
+                other => panic!("`{field}` declares an unexpected type: {other}"),
+            };
+            assert!(
+                declares_string,
+                "`{field}` must be emitted as a JSON string so downstream \
+                 tooling sees a stable wire form, but it declares {declared}"
+            );
+        }
     }
 
     #[test]

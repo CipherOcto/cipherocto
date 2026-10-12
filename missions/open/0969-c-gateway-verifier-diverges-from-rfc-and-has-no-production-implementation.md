@@ -495,9 +495,39 @@ decision, and RFC-0957-A1 §4 names `StoolapHolderRegistry` as the reference
 implementation rather than asking for one. Building a second store to make the
 wiring convenient would be §No parallel abstractions.
 
-So the honest remaining question is narrow: **does `octo-wallet-node` get a
-Stoolap handle, or does the caller outside the node persist?** Everything above
-that line is now measured rather than assumed.
+### The topology question is answered, and it was not mine to guess
+
+The section above framed the open question as a deployment choice: does the
+wallet node get a Stoolap handle, or does a caller outside it persist? **RFC-0871
+answers it, and the answer says the wallet does neither.**
+
+§G9: _"Wallet depends on storage = 0 — Wallet asks nodes via envelope. Node
+answers."_ And §Why no wallet-to-storage dependency: _"The wallet is a pure
+crypto primitive; business rules live in the node-side handler."_
+
+So the correct wiring is **not** handing `MintHandler` a catalog. The wallet mints
+— pure crypto, persistence-free, correct as it stands — and the **node-side
+handler** that consumes `WALLET_MINT_CAPABILITY` persists through the catalog.
+That is also consistent with RFC-0957-A1 §6, which assigns the write to the
+caller, and with RFC-0870 G5, which wants the record verifiable by a peer after
+sync.
+
+The earlier framing was wrong in a way worth recording: I was about to treat a
+layer rule as a deployment decision. It is not a decision at all, it is written
+down, and it had been sitting in G9 the whole time.
+
+Two things follow that are already actionable:
+
+- **RFC-0871 §G9 is violated today**, by three non-test sites in `octo-wallet`,
+  and nothing was checking. Pinned now by
+  `the_wallet_crate_does_not_depend_on_storage`.
+- **`octo-ident-storage` did not need to be a dependency at all.** Its own
+  Cargo comment said it was there for test fixtures, and that was true except it
+  was declared as a regular one. Moved to `[dev-dependencies]`; nothing in the
+  crate's non-test source referenced it.
+
+So the remaining work is: a **node-side** mint handler that persists. Not a
+wallet change, and not a topology choice.
 
 A closing note on the census guard: it went red the moment the accessor test
 called `HolderRecord::from_capability` from a new file, and recorded it only

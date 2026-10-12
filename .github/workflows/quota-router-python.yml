@@ -7,6 +7,13 @@ on:
     paths:
       - "crates/quota-router-pyo3/**"
       - "python/**"
+      # The suite this workflow runs lives here: `pytest tests/` and
+      # `python tests/smoke_test.py`. Without this entry a pull request that
+      # edits only the tests skips the job entirely, which is precisely when
+      # a broken test lands. Measured: all six most recent commits touching
+      # this directory touched no filtered path, so every one of them would
+      # have skipped the gate.
+      - "tests/**"
 
 jobs:
   test:

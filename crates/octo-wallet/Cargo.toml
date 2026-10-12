@@ -70,10 +70,7 @@ zk-verifier = { path = "../zk-verifier" }
 # `octo-wallet ask publish/list/show/revoke` CLI subcommand set
 # (mission 0959-a §CLI surface).
 quota-router-storage = { path = "../quota-router-storage" }
-# Mission 0206-003 v3.0: StoolapHolderRegistry impl lives in
-# octo-ident-storage; octo-wallet test fixtures import directly from
-# the new declarer crate (Layer C adapter).
-octo-ident-storage = { path = "../octo-ident-storage" }
+
 
 # S4 codemod (RFC-0105 DFP): CLI bin constructs `AxisRate { rate_per_1k: Dqa }`
 # from a parsed u128 CLI arg. Git dep matches workspace version (avoids
@@ -205,6 +202,16 @@ octo-audit = { path = "../octo-audit" }
 octo-audit-internal = ["octo-audit/octo-audit-internal"]
 
 [dev-dependencies]
+# Mission 0206-003 v3.0: the StoolapHolderRegistry impl lives in
+# octo-ident-storage, and octo-wallet's test fixtures import it directly from
+# that declarer crate (Layer C adapter).
+#
+# Dev-only, which is what its own comment here always claimed: the crate's
+# non-test source never references `octo_ident_storage`, only `capability/
+# verify.rs`'s `#[cfg(test)] mod` and five integration tests do. As a regular
+# dependency it made the crate import storage-bearing code it does not use, and
+# RFC-0871 §G9 says a wallet's storage dependency count is zero.
+octo-ident-storage = { path = "../octo-ident-storage" }
 # The second real algorithm (mission 0009-d). Dev-only: this crate must not
 # depend on it at runtime, and the test exists precisely to show a lifecycle
 # proof signed under one algorithm does not verify under the other.

@@ -3829,3 +3829,94 @@ fn holder_records_are_never_constructed_in_production() {
          CapError::HolderUnknown before the ask is ever read."
     );
 }
+
+/// Files where **non-test** `octo-wallet` source still imports
+/// `quota_router_storage`.
+///
+/// RFC-0871 §G9: *"Wallet depends on storage = 0 — Wallet asks nodes via
+/// envelope. Node answers. No `quota-router-storage` import in `octo-wallet`."*
+///
+/// **The gate is currently violated**, and nothing was checking. The four
+/// Three production sites, and they are not equally guilty:
+///
+/// - `capability/verify.rs` — the wallet's own verification substrate using
+///   `Clock`, `HolderRegistry` and `RegistryError`. These are substrate types
+///   that arguably belong below Layer B rather than in `quota-router-storage`.
+/// - `capability/bearer_capsule_re_export.rs` — re-exports `BearerCapsule`.
+/// - `bin/octo-wallet.rs` — the `ask publish/list/show/revoke` CLI subcommands.
+///   A client asking a node over the envelope is exactly the shape G9 describes,
+///   so this one is plausibly compliant in spirit while still being an import.
+///
+/// Whether they are acceptable is an RFC question. That it was *failing
+/// silently* is not — nothing checked G9 at all.
+///
+/// Pinned rather than asserted empty, so the set can shrink and the gate still
+/// says something. Deleting the last entry is the fix.
+const WALLET_STORAGE_IMPORT_SITES: &[&str] = &[
+    "crates/octo-wallet/src/capability/verify.rs",
+    "crates/octo-wallet/src/capability/bearer_capsule_re_export.rs",
+    "crates/octo-wallet/src/bin/octo-wallet.rs",
+];
+
+/// RFC-0871 §G9 — the wallet does not depend on storage.
+///
+/// Two layers, because G9 is stated in two places and either can be violated
+/// on its own. The manifest can list the dependency while no source uses it,
+/// and the source can import it while the manifest has been cleaned.
+#[test]
+fn the_wallet_crate_does_not_depend_on_storage() {
+    // Layer one: non-test source that imports the crate.
+    let mut sites: Vec<String> = Vec::new();
+    for path in walk_rs(&workspace_root().join("crates/octo-wallet/src")) {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let production = match test_region_start(&text) {
+            Some(at) => &text[..at],
+            None => &text[..],
+        };
+        if !production.contains("quota_router_storage") {
+            continue;
+        }
+        let rel = path
+            .strip_prefix(workspace_root())
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if !WALLET_STORAGE_IMPORT_SITES.contains(&rel.as_str()) {
+            sites.push(rel);
+        }
+    }
+
+    assert!(
+        sites.is_empty(),
+        "RFC-0871 §G9: non-test octo-wallet source imports quota_router_storage \
+         here: {sites:?}. Recorded exceptions are {WALLET_STORAGE_IMPORT_SITES:?} — \
+         if a site is new, the gate has been widened."
+    );
+
+    // Layer two: the manifest, conditioned on layer one.
+    //
+    // The recorded sites need the crate, so the dependency is present while
+    // they exist. Deriving the check from the census rather than asserting a
+    // flat "absent" keeps this guard green today and red when the fix lands —
+    // at which point the sites go, and the manifest must follow. Asserting
+    // "absent" unconditionally would just be a permanently failing test, which
+    // is a note, not a gate.
+    let manifest = read("crates/octo-wallet/Cargo.toml");
+    let has_dep = manifest
+        .split("[dependencies]")
+        .nth(1)
+        .and_then(|s| s.split("\n[").next())
+        .unwrap_or("")
+        .contains("quota-router-storage");
+
+    assert_eq!(
+        has_dep,
+        !WALLET_STORAGE_IMPORT_SITES.is_empty(),
+        "RFC-0871 §G9: the manifest and the recorded exception list disagree. \
+         The dependency is declared: {has_dep}, while {} site(s) are recorded. \
+         Delete the dependency when the last import goes, not before.",
+        WALLET_STORAGE_IMPORT_SITES.len()
+    );
+}

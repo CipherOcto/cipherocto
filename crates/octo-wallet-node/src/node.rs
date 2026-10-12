@@ -628,6 +628,72 @@ mod tests {
         );
     }
 
+    /// `PAID_QUERY_VERIFY` reaches the paid-query handler through the envelope.
+    ///
+    /// This kind is reached through `octo_paid_query::PAID_QUERY_VERIFY` rather
+    /// than `octo_protocol::payload_kind::`, so a guard that matched on the
+    /// `payload_kind::` prefix never saw it and never required coverage. The
+    /// kind existed, was dispatched, and was untested at this layer.
+    ///
+    /// It is asserted rather than assumed: the envelope path supplies no
+    /// `holder_did` hint, so this also pins what production actually gets. It
+    /// gets a rejection, because the ledger is keyed by `(holder_did,
+    /// macaroon_id)` and no balance exists under an empty holder DID.
+    #[test]
+    fn envelope_paid_query_verify_is_routed_and_fails_closed_without_a_holder() {
+        let id = Arc::new(sample_identity());
+        let node = WalletNode::new(config_with(id));
+
+        let caveat = octo_cap_macaroon::PaymentCaveat::new(
+            octo_cap_macaroon::caveat::payment::octo_w_asset_id(),
+            octo_determin::Dqa::new(1_000_000, 0).expect("scale=0 valid"),
+            "gpt-4",
+            u64::MAX,
+            octo_cap_macaroon::Epoch::new(0),
+            octo_cap_macaroon::Nonce([0x01; 32]),
+        );
+        let req = PaidQueryVerifyRequest {
+            macaroon_id: [0x77; 16],
+            caveat: caveat.clone(),
+            query_cost: octo_determin::Dqa::new(1_000, 0).expect("scale=0 valid"),
+            query_model: "gpt-4".to_owned(),
+            now_unix_ms: 1_700_000_000_000,
+        };
+        let envelope = envelope_for(octo_paid_query::PAID_QUERY_VERIFY, req.to_borsh().unwrap());
+
+        let out = node
+            .handle_envelope(&envelope)
+            .expect("routed and answered, not refused at the envelope");
+        assert_eq!(
+            out.response_payload_kind,
+            Some(octo_paid_query::PAID_QUERY_VERIFY),
+            "the kind must reach the handler, not fall through to unsupported"
+        );
+
+        // And it must not authorise the query. The envelope path supplies no
+        // holder hint, the ledger is keyed by `(holder_did, macaroon_id)`, and
+        // no balance exists under an empty holder DID — so `try_deduct` fails
+        // and the handler downgrades to a rejection. Asserted rather than
+        // inferred: an empty DID standing in for a real one is the same shape
+        // as the fabricated-identity defects fixed elsewhere in this arc.
+        let payload = out.response_payload.expect("response payload present");
+        let resp: octo_paid_query::PaidQueryResponse =
+            borsh::from_slice(&payload).expect("decode PaidQueryResponse");
+        assert!(
+            !matches!(
+                resp.decision,
+                octo_paid_query::PaidQueryDecision::Proceed { .. }
+            ),
+            "a query with no holder must never be authorised, got {:?}",
+            resp.decision
+        );
+        assert_eq!(
+            resp.receipt.drained_amount,
+            octo_determin::Dqa::new(0, 0).expect("scale=0"),
+            "nothing may be drained for an unauthorised query"
+        );
+    }
+
     /// TV (mission 0959-placeholder-identity-binding) — when a
     /// network_key is configured, `broadcast_announce` produces a
     /// `RouterAnnouncePayload` whose HMAC verifies against the same

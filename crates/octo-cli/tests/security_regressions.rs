@@ -3987,13 +3987,24 @@ fn every_dispatched_payload_kind_is_driven_through_an_envelope_in_tests() {
             }
         };
 
-        // Dispatch arms read `k if k == octo_protocol::payload_kind::NAME`.
+        // Dispatch arms read `k if k == <path>::NAME`. Matching on the module
+        // prefix instead would miss kinds whose constant lives elsewhere —
+        // `PAID_QUERY_VERIFY` is reached through `octo_paid_query::`, not
+        // `octo_protocol::payload_kind::`, and was invisible to this guard for
+        // exactly that reason.
         let dispatched: Vec<&str> = production
-            .match_indices("payload_kind::")
-            .map(|(i, _)| &production[i + "payload_kind::".len()..])
+            .match_indices("k if k == ")
+            .map(|(i, _)| &production[i + "k if k == ".len()..])
             .filter_map(|rest| {
-                rest.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                    .map(|end| &rest[..end])
+                // Bound the token first. Scanning to the end of the file for a
+                // `::` segment grabs whatever appears last in the file rather
+                // than the identifier under the arm, which silently reduced
+                // this guard to extracting nothing at all.
+                let end = rest
+                    .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == ':'))
+                    .unwrap_or(rest.len());
+                let token = &rest[..end];
+                token.rsplit("::").next().filter(|seg| !seg.is_empty())
             })
             // Constant naming, not type naming: `WALLET_SIGN_ED25519` is a
             // payload kind, `PayloadKindId` is the type those constants have.
@@ -4006,7 +4017,7 @@ fn every_dispatched_payload_kind_is_driven_through_an_envelope_in_tests() {
             .collect();
 
         for kind in &dispatched {
-            let needle = format!("payload_kind::{kind}");
+            let needle = format!("::{kind}");
             if !test_region.contains(&needle) {
                 gaps.push(format!(
                     "{rel}: {needle} is dispatched but no test builds it"

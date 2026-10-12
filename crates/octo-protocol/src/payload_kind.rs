@@ -649,11 +649,13 @@ pub(crate) const __DEF_LINE_CAPABILITY_ISSUE: u32 = line!();
 
 /// Capability revoke (RFC-0871 §Roles and Authorities, mission 0871d).
 ///
-/// Phase 3 MVP stub: validates `token_id` length (16 bytes per
-/// RFC-0957 §Wire Format `token_id = macaroon_id`) and returns a
-/// placeholder acknowledgement. The full revocation flow
-/// (RFC-0957-A1 §HolderRecord State Machine transitions and RFC-0965
-/// `RevocationCaveat`) lands in mission 0957 Phase 2 follow-on.
+/// Takes the 32-byte `cap_root_hash` — the key `HolderRegistry` is indexed by —
+/// and marks the record revoked in the node's registry per RFC-0957-A1
+/// §HolderRecord State Machine. The response says whether this registry held
+/// the capability; a capability it never held is not reported as revoked.
+///
+/// Request-level authorization for revocation is **unspecified** and remains
+/// open. See `missions/deferred/0969-a1-revocation-authorization.md`.
 ///
 /// UUID: `0x0009:0005:0000:0000:0000:0000:0000:0002`
 pub const CAPABILITY_REVOKE: PayloadKindId = PayloadKindId([

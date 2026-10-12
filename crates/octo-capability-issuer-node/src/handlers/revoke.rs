@@ -35,11 +35,36 @@
 //! consistency gossip for revocation propagation across nodes is a separate
 //! concern (RFC-0957-A1 revocation sync — not yet spec'd).
 //!
-//! Authorization for the revoke itself — RFC-0965 `RevocationCaveat` issued by
-//! the original issuer or a higher-authority governance capability — is **not**
-//! enforced here. Any holder that can reach this payload kind can revoke any
-//! capability this node knows. That is an open gap with no mission filed
-//! against it yet; RFC-0965 owns the rule.
+//! ## Authorization for the revoke itself is unspecified, not unimplemented
+//!
+//! **Any caller that reaches this payload kind can revoke any capability this
+//! node knows.** The envelope's own signature and TTL are checked upstream in
+//! the dispatcher, but nothing ties the signer to the capability being revoked.
+//!
+//! This was previously documented here as needing "RFC-0965 `RevocationCaveat`
+//! issued by the original issuer or a higher-authority governance capability".
+//! **RFC-0965 does not mention revocation at all** — zero occurrences — and
+//! discriminator `0x1A` is in its *reserved* range, not allocated. The same
+//! phantom citation appeared in two claimed missions. It made an undesigned
+//! security boundary look like an implementation backlog item.
+//!
+//! What the RFCs actually say:
+//!
+//! - RFC-0957-A1 specifies the **mechanism** — `revoke(cap_root_hash, clock)`,
+//!   idempotent, `revoked_at_millis_unix` — and `lookup_active` refuses a
+//!   revoked record. That is implemented and correct.
+//! - RFC-0957-A1 §Roles and Authorities gives the **Token Issuer** the
+//!   authority "mint + revoke + register". That is a role statement, not a
+//!   request rule: it says the issuer may revoke, not how a request proves the
+//!   sender is the issuer.
+//! - **No RFC specifies who may invoke a revoke.** There is no `Revocation`
+//!   variant in `Caveat` (the enum is `#[non_exhaustive]` and has none), and no
+//!   discriminator allocated for one.
+//!
+//! So this is an unspecified security boundary rather than a missing feature,
+//! and closing it needs an RFC that allocates the caveat and states the rule.
+//! Filed as a deferred mission for that reason. Until it lands, the honest state
+//! is what this doc says: revocation works, and it is not gated.
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use octo_cap_macaroon::{Clock, HolderRegistry};

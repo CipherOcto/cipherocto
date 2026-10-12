@@ -38,14 +38,18 @@
 //!
 //! - `CAPABILITY_ISSUE` requires `Authorization::Signature` from issuer
 //!   (issuer's HSM key) + holder's pre-signed commitment envelope.
-//! - `CAPABILITY_REVOKE` requires `Authorization::Capability(token)` with
-//!   `RevocationCaveat` (RFC-0965 reserved range).
+//! - `CAPABILITY_REVOKE` authorization is **unspecified**. The rule previously
+//!   cited here — a `RevocationCaveat` from RFC-0965's reserved range — does not
+//!   exist: RFC-0965 never mentions revocation, and `Caveat` has no `Revocation`
+//!   variant. RFC-0957-A1 gives the Token Issuer the authority to revoke, which
+//!   is a role statement and not a request rule. See
+//!   `missions/deferred/0969-a1-revocation-authorization.md`.
 //!
 //! The dispatcher performs envelope-level verification (`envelope_id` dedup +
 //! expiry + signature). Fine-grained authorization (holder pre-signed
-//! commitment + RFC-0965 `RevocationCaveat` validation) is still the substrate
-//! layer's responsibility and remains open. Revocation in particular is not yet
-//! gated on who asked: see §Authorization model above.
+//! commitment + revocation authorization) is still the substrate layer's
+//! responsibility and remains open. Revocation in particular is not gated on who
+//! asked: see §Authorization model above.
 //!
 //! ## Replay + authorization
 //!

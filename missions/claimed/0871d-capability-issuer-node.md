@@ -35,7 +35,7 @@ Build `crates/octo-capability-issuer-node/` — the capability issuer specialize
 
 - [x] `CAPABILITY_ISSUE` handler: input = `(holder_did: String, capability: [u8; 32])`; validates canonical DID via `CanonicalCodec::parse(s, false)`; derives deterministic 16-byte `token_id` via `octo_cap_macaroon::macaroon_id` (Phase 3 MVP stub — full `CapabilityToken::mint` + holder signature + `HolderRegistry::register` per RFC-0957 §Algorithms + RFC-0957-A1 §Data Structures lands in 0957 Phase 2)
 - [ ] `CAPABILITY_LOOKUP` handler: deferred to follow-on mission (Phase 3 MVP exposes only ISSUE + REVOKE; LOOKUP requires HolderRegistry production substrate)
-- [x] `CAPABILITY_REVOKE` handler: **input changed from `token_id: [u8; 16]` to `cap_root_hash: [u8; 32]` on 2026-10-12.** The 16-byte `MacaroonId` could not address the registry, which is keyed by a 32-byte BLAKE3 `cap_root_hash` with exact matching and no lookup-by-channel-id anywhere in the workspace. The handler now calls `HolderRegistry::revoke(cap_root_hash, clock)` and reports `revoked: false` for a capability the registry never held, rather than acknowledging unconditionally. RFC-0965 `RevocationCaveat` validation and event emission remain open. **No mission is filed against either**, so this line is a live gap rather than queued work — the handler revokes for any caller that reaches the payload kind.
+- [x] `CAPABILITY_REVOKE` handler: **input changed from `token_id: [u8; 16]` to `cap_root_hash: [u8; 32]` on 2026-10-12.** The 16-byte `MacaroonId` could not address the registry, which is keyed by a 32-byte BLAKE3 `cap_root_hash` with exact matching and no lookup-by-channel-id anywhere in the workspace. The handler now calls `HolderRegistry::revoke(cap_root_hash, clock)` and reports `revoked: false` for a capability the registry never held, rather than acknowledging unconditionally. Revocation **authorization** remains open, and the rule is unspecified rather than unimplemented: **RFC-0965 does not mention revocation at all** and discriminator `0x1A` is in its reserved range, so the `RevocationCaveat` this line previously cited does not exist. There is no `Revocation` variant in `Caveat`. Filed as `missions/deferred/0969-a1-revocation-authorization.md`, pending an RFC that allocates the caveat and states who may revoke. Until then any caller reaching the payload kind can revoke any capability the node knows.
 - [x] All handlers: DID validation via `octo_ident::CanonicalCodec::parse(s, false)` (RFC-0010 v1.2 F4 + mission 0010-d)
 - [x] All handlers: route through `EnvelopeDispatcher` for envelope_id dedup + expiry + signature verification (RFC-0871 §Adversary A6)
 - [ ] Rate-limiting per RFC-0871 §Replay Protection: deferred (no per-node rate-limiter in the MVP per RFC-0871 wallet-node mirror pattern; dispatcher-side dedup is the Phase 3 mitigation)
@@ -49,7 +49,7 @@ Build `crates/octo-capability-issuer-node/` — the capability issuer specialize
 ### Authorization model
 
 - [ ] `CAPABILITY_ISSUE`: production semantics require `Authorization::Signature` from issuer + holder's pre-signed commitment envelope (RFC-0871 §Authorization). Phase 3 MVP: dispatcher enforces envelope-level signature; fine-grained authorization lands with substrate in 0957 Phase 2.
-- [ ] `CAPABILITY_REVOKE`: production semantics require `Authorization::Capability(token)` with `RevocationCaveat` (RFC-0965). Phase 3 MVP: stub returns acknowledgement without caveat validation; lands in 0957 Phase 2.
+- [ ] `CAPABILITY_REVOKE`: **request-level authorization is unspecified.** The stub is gone — the handler now revokes for real — but nothing specifies who may ask. The `RevocationCaveat (RFC-0965)` this line named never existed; see `missions/deferred/0969-a1-revocation-authorization.md`.
 - [x] No anonymous writes — all handlers route through dispatcher which requires signed envelope.
 
 ### Replay + integrity
@@ -102,7 +102,7 @@ Per BLUEPRINT §Mission template. RFC-0871 §Roles and Authorities + RFC-0957 + 
 - RFC-0871 — accepted substrate (envelope shape)
 - RFC-0957 — capability token format (macaroon v1)
 - RFC-0957-A1 — holder registry + catalog storage substrate
-- RFC-0965 — caveat discriminator (for `RevocationCaveat`)
+- ~~RFC-0965 — caveat discriminator (for `RevocationCaveat`)~~ — **phantom citation.** RFC-0965 never mentions revocation and allocates no such discriminator.
 - RFC-0863 — `NodeTransport` + `NetworkReceiver` trait
 - `crates/octo-protocol` — Phase 1 envelope types (mission `0871-protocol-core-envelope.md`)
 - `crates/octo-wallet` — wallet substrate (`CapabilityToken::mint`, macaroon substrate)
@@ -189,7 +189,7 @@ NEW payload kinds in `crates/octo-protocol/src/payload_kind.rs` (9 new tests, 0 
 **Phase 3 MVP disclosures (honest scope):**
 
 - `CAPABILITY_ISSUE` does NOT call `CapabilityToken::mint`; substrate lands in 0957 Phase 2 follow-on (macaroon struct + caveat + discharge + wire migrations). Phase 3 MVP uses `octo_cap_macaroon::macaroon_id` for deterministic `token_id` derivation.
-- `CAPABILITY_REVOKE` does NOT mutate `HolderRegistry`; returns acknowledgement stub. Substrate (RFC-0957-A1 §HolderRecord State Machine transitions + RFC-0965 `RevocationCaveat`) lands in 0957 Phase 2.
+- `CAPABILITY_REVOKE` did NOT mutate `HolderRegistry` and returned an unconditional acknowledgement. **Both fixed 2026-10-12**: it now calls `HolderRegistry::revoke(cap_root_hash, clock)` and reports what happened. Authorization remains open and is unspecified, not merely unimplemented.
 - `CAPABILITY_LOOKUP` is NOT exposed in Phase 3 MVP (requires HolderRegistry production substrate for real lookups; deferred to follow-on mission).
 - `broadcast_announce` is a stub envelope (full `RouterAnnouncePayload` extension in 0870-b follow-on; opcode already allocated).
 - `CapabilityIssuerNodeConfig` carries only `transport`; `Arc<IdentityKey>` + `Arc<dyn HolderRegistry>` slot in with substrate in 0957 Phase 2.

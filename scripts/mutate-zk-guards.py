@@ -1022,6 +1022,63 @@ fn probe_unverified_linkage(b: &str, c: &str) -> LinkageResult {
         ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
          "a_parsed_auth_header_set_carries_no_identity_verdict", "--", "--exact"],
     ),
+    (
+        # A pending entry pins a *count*, so a file gaining a site without the
+        # table being updated is the failure the table exists to catch: a
+        # fifteenth site in a crate holding four would be invisible otherwise.
+        # This file already holds four `Signature::from_bytes` sites, so the
+        # mutation is one more and nothing else has to move.
+        "G-ll: a pending file gains a site the table does not count",
+        "crates/quota-router-core/src/receipt.rs",
+        "        let sig = ed25519_dalek::Signature::from_bytes(&[0x42; 64]);",
+        "        let sig = ed25519_dalek::Signature::from_bytes(&[0x42; 64]);\n"
+        "        let extra_probe_site = ed25519_dalek::Signature::from_bytes(&[0x43; 64]);",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "ac11_pending_sites_are_counted_and_still_present", "--", "--exact"],
+    ),
+    (
+        # The second check on the same table: a pending file is counted, an
+        # allowlisted file is skipped, and a file cannot be both without the two
+        # gates giving opposite answers to one question. Recording the path in
+        # both tables is how that happens.
+        # A pending file is counted; a dispatched one is gated for zero sites.
+        # A path under a dispatched root is therefore answering both questions
+        # at once, and the two gates would race to disagree. The path used here
+        # exists, so the existence assertion cannot be what fires — only the
+        # disjointness check can.
+        "G-mm: a path under a dispatched root is also recorded as pending",
+        "crates/octo-cli/tests/security_regressions.rs",
+        '        "crates/octo-vault/src/cache_subscriber.rs",\n        0,',
+        '        "crates/octo-wallet/src/vault.rs",\n        0,',
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "ac11_pending_sites_are_counted_and_still_present", "--", "--exact"],
+    ),
+    (
+        # The pre-fix defect was duplicated across both reputation stores, each
+        # checking shape, freshness and quorum and none checking the signature.
+        # The comment above the check names the function it calls, which is why
+        # the guard strips comments first — matching on the comment would let
+        # the call be deleted with the guard still green.
+        "G-nn: a reputation store stops verifying the governance signature",
+        "crates/octo-reputation/src/store/memory.rs",
+        "        proof.verify_signature(now_unix)?;\n",
+        "",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "c4_every_reputation_store_verifies_the_governance_signature", "--", "--exact"],
+    ),
+    (
+        # The other store, same defect, same guard. Fixing one implementation
+        # and leaving the other is precisely the drift this guard exists to
+        # prevent, so proving it on both halves is what makes it worth running.
+        # The second store's `slash_recorder` sits inside a cfg-gated module, so
+        # the memory store's signature call is the reliable anchor.
+        "G-oo: the stoolap store stops verifying the governance signature",
+        "crates/octo-reputation/src/store/stoolap.rs",
+        "            proof.verify_signature(now_unix)?;\n",
+        "",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "c4_every_reputation_store_verifies_the_governance_signature", "--", "--exact"],
+    ),
 ]
 # G-kk (dropping HandlerOutput's bundle prefix) was written and removed: it
 # targeted the same guard as G-hh, so it added no guard coverage, and adding a

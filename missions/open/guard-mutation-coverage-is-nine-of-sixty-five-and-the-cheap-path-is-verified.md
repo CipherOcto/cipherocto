@@ -15,7 +15,7 @@ metadata:
 ## Status
 
 Largely resolved. The path-dependency guard's blind spot is **fixed** — see §A
-blind spot below — and mutation coverage has moved from 9 of 65 guards to **43 of 65**, a figure the harness now derives from its own
+blind spot below — and mutation coverage has moved from 9 of 65 guards to **45 of 65**, a figure the harness now derives from its own
 table rather than one maintained by hand — see §Coverage counted twice, and the
 count that was wrong. Adding one of them exposed a false pass in the harness
 itself, now fixed — see §A false pass found below.
@@ -308,7 +308,7 @@ now produced by reading the harness table and collecting the distinct
 
 ```
 $ python3 scripts/mutate-zk-guards.py --list | tail -1
-  55 entries -> 43 distinct guards in security_regressions.rs  (+7 entries targeting other crates' suites)
+  59 entries -> 45 distinct guards in security_regressions.rs  (+7 entries targeting other crates' suites)
 ```
 
 That line is printed by the harness itself, derived by reading its own table. It
@@ -316,7 +316,7 @@ did not exist when the count was first wrong, and putting it there is the fix:
 the number can no longer drift from the thing it counts, because it is recomputed
 every time anyone asks.
 
-**55 entries cover 43 guards, and the two numbers must not be conflated.** Seven
+**59 entries cover 45 guards, and the two numbers must not be conflated.** Seven
 entries do not target `security_regressions.rs` at all — three run
 `zk-vendor`'s `library_path` suite, two run `zk-verifier`, two run
 `cipherocto-fs-perms`. They are real mutations against real guards, but those
@@ -567,8 +567,12 @@ recorded rather than assumed absent elsewhere.
       redeclaration in another crate and once removed for not compiling —
       and `a_parsed_auth_header_set_carries_no_identity_verdict`, twice, for the
       field coming back and for header parsing deriving a verdict from
-      unverified decoders),
-      taking coverage from 9 of 65 to **43 of 65**
+      unverified decoders — plus `ac11_pending_sites_are_counted_and_still_present`,
+      twice, for a pending file gaining an uncounted site and for a path recorded
+      under both a dispatched root and the pending table, and
+      `c4_every_reputation_store_verifies_the_governance_signature`, twice, one
+      per store),
+      taking coverage from 9 of 65 to **45 of 65**
 - [x] Any harness using the prebuilt-binary path refuses to run when the binary
       is older than the guard source — **satisfied a different way**: the
       committed harness runs through cargo, which rebuilds by construction, so
@@ -603,7 +607,7 @@ green as it applies to a guard's.
 ## Why the rest is filed rather than fixed
 
 The blind-spot fix is done and needs no defence. What remains is the coverage
-gap, and that is not urgent: twenty-two unbacked guards is a large number that
+gap, and that is not urgent: twenty unbacked guards is a large number that
 reads as alarming and is not. These guards were written by adversarial review
 and several were mutation-checked by hand during that work. What is missing is
 the _re-runnable record_, which is what this harness would supply — and the

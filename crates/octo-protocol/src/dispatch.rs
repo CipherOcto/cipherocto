@@ -39,10 +39,47 @@ use crate::time::Clock;
 /// `IdentityResolveResult`, `WalletSignResponse`); this crate returns the
 /// raw borsh-serialized payload bytes + the response envelope skeleton so
 /// downstream code can fill in the payload_kind-specific fields.
-#[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct HandlerOutput {
-    /// Borsh-serialized response payload body (caller-decodes).
-    pub payload: Vec<u8>,
+    /// Borsh-serialized response envelope body (caller-decodes).
+    ///
+    /// After mission `0957-f-v2-bundle-cutover` this is typically the V2
+    /// bundle envelope (`CapabilityBundleV2Envelope::canonical_ser()`) bytes.
+    /// Decoders MUST start by checking the 16-byte
+    /// `CIPHEROCTO_V2_BUNDLE_PREFIX` prefix. `None` means the handler had no
+    /// response, only a local effect.
+    pub response_payload: Option<Vec<u8>>,
+    /// Which payload kind `response_payload` is (RFC-0871 §Response
+    /// convention). Lets a caller route a reply without re-sniffing bytes.
+    pub response_payload_kind: Option<crate::PayloadKindId>,
+    /// Human-readable note for logs. **Never on the wire** — a note is for the
+    /// operator, and anything derived from it must not reach a peer.
+    pub note: Option<String>,
+}
+
+impl HandlerOutput {
+    /// Empty output (no response, no local effect).
+    #[must_use]
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    /// Build a response payload plus the payload kind it is.
+    #[must_use]
+    pub fn response(payload: Vec<u8>, payload_kind: crate::PayloadKindId) -> Self {
+        Self {
+            response_payload: Some(payload),
+            response_payload_kind: Some(payload_kind),
+            note: None,
+        }
+    }
+
+    /// Attach a note (for logs).
+    #[must_use]
+    pub fn with_note(mut self, note: impl Into<String>) -> Self {
+        self.note = Some(note.into());
+        self
+    }
 }
 
 /// Per-node-type configuration supplied by `RouterAnnouncePayload` (RFC-0871
@@ -336,8 +373,13 @@ impl EnvelopeDispatcher for ReferenceDispatcher {
         // echoes the payload; concrete payload_kind-specific handlers land in
         // Phase 2 (wallet node mission `0871a`) and Phase 3 (specialized
         // node adoption missions `0870-b`, `0871b/c/d`).
+        // Phase 2/3 nodes replace this echo with the handler's real output;
+        // the shape is now the real one so that swap is a behaviour change
+        // rather than a type change.
         Ok(HandlerOutput {
-            payload: envelope.payload.clone(),
+            response_payload: Some(envelope.payload.clone()),
+            response_payload_kind: Some(envelope.payload_kind),
+            note: None,
         })
     }
 }
@@ -457,7 +499,10 @@ mod tests {
         let env = signed_envelope(7, IDENTITY_RESOLVE, [0xff; 32], 1_735_689_600_000);
         let dispatcher = test_dispatcher(1_735_689_500_000);
         let out = dispatcher.dispatch(&env).unwrap();
-        assert_eq!(out.payload, vec![0x01, 0x02, 0x03]);
+        assert_eq!(out.response_payload, Some(vec![0x01, 0x02, 0x03]));
+        // The echo reports the kind it is echoing, so a caller can route a
+        // reply without sniffing the bytes.
+        assert_eq!(out.response_payload_kind, Some(IDENTITY_RESOLVE));
     }
 
     #[test]

@@ -21,7 +21,7 @@
 use ed25519_dalek::Signer;
 use ed25519_dalek::SigningKey;
 use octo_protocol::authorization::{Authorization, Ed25519SignatureBytes};
-use octo_protocol::dispatch::{test_dispatcher, EnvelopeDispatcher, HandlerOutput};
+use octo_protocol::dispatch::{test_dispatcher, EnvelopeDispatcher};
 use octo_protocol::envelope::{NodeEnvelope, VERSION_TAG_V2};
 use octo_protocol::payload_kind::WALLET_RESOLVE_DID;
 use octo_protocol::recipient::RecipientRef;
@@ -66,8 +66,12 @@ fn tv7_cross_domain_envelope_echoes_payload() {
     }];
 
     let dispatcher = test_dispatcher(1_735_689_500_000);
-    let HandlerOutput { payload: out } = dispatcher
+    let out = dispatcher
         .dispatch(&env)
         .expect("TV7 cross-domain dispatch");
-    assert_eq!(out, asker_did.as_str().as_bytes());
+    assert_eq!(
+        out.response_payload.as_deref(),
+        Some(asker_did.as_str().as_bytes()),
+        "the reference dispatcher echoes the payload"
+    );
 }

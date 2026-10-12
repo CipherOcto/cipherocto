@@ -4152,3 +4152,76 @@ fn missions_claiming_named_vectors_have_those_names_in_the_tree() {
          guard is what keeps them the same one. Scanned {checked} mission(s)."
     );
 }
+
+/// Crates that serve node payload kinds and therefore hold a `HandlerOutput`.
+const HANDLER_OUTPUT_CRATES: &[&str] = &[
+    "crates/octo-wallet-node",
+    "crates/octo-capability-issuer-node",
+    "crates/octo-identity-resolver-node",
+    "crates/octo-reputation-anchor-node",
+];
+
+/// Exactly one `HandlerOutput` definition exists, and it is the real one.
+///
+/// The four node crates each declared their own — byte-identical, three fields,
+/// same names — while `octo-protocol` held a placeholder the reference
+/// dispatcher echoed into and a comment deferred to "Phase 2/3 node adoption".
+/// The substrate was unfinished and every node grew around it.
+///
+/// §No parallel abstractions: four copies of one type can only agree by luck.
+/// A field added to one is silently absent from the other three, and there is no
+/// compiler error for it. The protocol type is now the real shape, the four
+/// crates re-export it, and this guard fails if a fifth copy appears.
+///
+/// **Calibration matters here.** A broad version of this scan — every public
+/// name defined in more than one crate — reported 365 hits, of which the large
+/// majority are `new`, `len`, `verify` and other ordinary method names that say
+/// nothing. A check that reports 365 findings and means two is worse than no
+/// check, because it trains you to ignore it. This one names the exact type and
+/// counts definitions of it, which is a question with a small honest answer.
+#[test]
+fn exactly_one_handler_output_type_is_defined() {
+    let root = workspace_root();
+
+    let mut definitions: Vec<String> = Vec::new();
+    for path in walk_rs(&root.join("crates")) {
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        // This file names the declaration in order to forbid it.
+        if path.ends_with("security_regressions.rs") {
+            continue;
+        }
+        if text.contains("pub struct HandlerOutput") {
+            definitions.push(
+                path.strip_prefix(&root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+            );
+        }
+    }
+    definitions.sort();
+
+    assert_eq!(
+        definitions,
+        vec!["crates/octo-protocol/src/dispatch.rs".to_owned()],
+        "HandlerOutput must be defined once, in octo-protocol, and re-exported \
+         elsewhere. Found {definitions:?}. A second definition is a parallel \
+         abstraction that can only stay in step by luck."
+    );
+
+    // And each node crate must be re-exporting, not redeclaring.
+    for crate_path in HANDLER_OUTPUT_CRATES {
+        let mod_rs = root.join(crate_path).join("src/handlers/mod.rs");
+        let text = std::fs::read_to_string(&mod_rs).unwrap_or_default();
+        assert!(
+            text.contains("pub use octo_protocol::HandlerOutput"),
+            "{crate_path} must re-export octo_protocol::HandlerOutput rather than \
+             declare its own copy"
+        );
+    }
+}

@@ -16,6 +16,15 @@ pub mod registration;
 pub mod resolve;
 pub mod resolve_with_chain;
 
+/// The one `HandlerOutput`, defined once in `octo-protocol`.
+///
+/// This module used to declare its own copy — four identical ones across
+/// the node crates, plus a placeholder in `octo-protocol` that the
+/// reference dispatcher echoed into. The placeholder is now the real
+/// shape, so the node handlers and the dispatcher agree by construction
+/// instead of by four copies having stayed in step by luck.
+pub use octo_protocol::HandlerOutput;
+
 pub use chain::{
     BackendResolveOutcome, ChainResolveRequest, ChainResolveResponse, LocalResolverBackend,
     ResolveChainHandler, ResolverBackend, ResolverChainContext, ResolverHop,
@@ -29,45 +38,6 @@ pub use resolve::{ResolveHandler, ResolveRequest, ResolveResponse};
 pub use resolve_with_chain::{
     ResolveWithChainHandler, ResolveWithChainRequest, ResolveWithChainResponse,
 };
-
-/// Output of an identity-resolver handler invocation.
-///
-/// Either returns a response envelope that the caller (`IdentityResolverNode`)
-/// transmits back to the originating peer.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct HandlerOutput {
-    /// Optional response envelope to send back to the requester.
-    pub response_payload: Option<Vec<u8>>,
-    /// Optional response payload kind (RFC-0871 §Response convention).
-    pub response_payload_kind: Option<octo_protocol::PayloadKindId>,
-    /// Optional human-readable note (for logs; never on wire).
-    pub note: Option<String>,
-}
-
-impl HandlerOutput {
-    /// Empty output (no response, no local effect).
-    #[must_use]
-    pub fn empty() -> Self {
-        Self::default()
-    }
-
-    /// Build a response envelope payload + payload kind.
-    #[must_use]
-    pub fn response(payload: Vec<u8>, payload_kind: octo_protocol::PayloadKindId) -> Self {
-        Self {
-            response_payload: Some(payload),
-            response_payload_kind: Some(payload_kind),
-            note: None,
-        }
-    }
-
-    /// Attach a note (for logs).
-    #[must_use]
-    pub fn with_note(mut self, note: impl Into<String>) -> Self {
-        self.note = Some(note.into());
-        self
-    }
-}
 
 /// Identity-resolver specific errors.
 ///

@@ -17,52 +17,16 @@ use octo_protocol::ProtocolError;
 
 pub mod query;
 
+/// The one `HandlerOutput`, defined once in `octo-protocol`.
+///
+/// This module used to declare its own copy — four identical ones across
+/// the node crates, plus a placeholder in `octo-protocol` that the
+/// reference dispatcher echoed into. The placeholder is now the real
+/// shape, so the node handlers and the dispatcher agree by construction
+/// instead of by four copies having stayed in step by luck.
+pub use octo_protocol::HandlerOutput;
+
 pub use query::{QueryAnchorHandler, QueryAnchorRequest, QueryAnchorResponse};
-
-/// Output of a reputation-anchor handler invocation.
-///
-/// Either returns a response envelope that the caller
-/// (`ReputationAnchorNode`) transmits back to the originating peer, or a
-/// local effect (e.g. an updated reputation record), or both, or neither.
-///
-/// Phase 3 MVP: only `response_payload` + `response_payload_kind` are
-/// populated. The reputation event emission (RFC-0968 §11. Audit Trail)
-/// arrives with the full `REPUTATION_UPDATE` handler in the follow-on
-/// mission 0968a-reputation-anchoring.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct HandlerOutput {
-    /// Optional response envelope to send back to the requester.
-    pub response_payload: Option<Vec<u8>>,
-    /// Optional response payload kind (RFC-0871 §Response convention).
-    pub response_payload_kind: Option<octo_protocol::PayloadKindId>,
-    /// Optional human-readable note (for logs; never on wire).
-    pub note: Option<String>,
-}
-
-impl HandlerOutput {
-    /// Empty output (no response, no local effect).
-    #[must_use]
-    pub fn empty() -> Self {
-        Self::default()
-    }
-
-    /// Build a response envelope payload + payload kind.
-    #[must_use]
-    pub fn response(payload: Vec<u8>, payload_kind: octo_protocol::PayloadKindId) -> Self {
-        Self {
-            response_payload: Some(payload),
-            response_payload_kind: Some(payload_kind),
-            note: None,
-        }
-    }
-
-    /// Attach a note (for logs).
-    #[must_use]
-    pub fn with_note(mut self, note: impl Into<String>) -> Self {
-        self.note = Some(note.into());
-        self
-    }
-}
 
 /// Map a `octo_ident::DidError` to a `ProtocolError` for invalid DID inputs.
 ///

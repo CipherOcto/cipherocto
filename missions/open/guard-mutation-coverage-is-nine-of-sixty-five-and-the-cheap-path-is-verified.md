@@ -379,57 +379,34 @@ holds, and the harness classifies it correctly.
 
 ## Where coverage stops, and what is left
 
-**56 of 65.** The remaining fourteen are not all equally reachable, and
-pretending otherwise would make the number decorative. Grouped by why:
+**56 of 65.** The point of the table below is that _"nine unbacked guards" reads
+very differently from "nine unbacked guards, of which five cannot be backed and
+three name a missing capability in the harness"_ — and only the second sentence
+is actionable. An earlier version of this section grouped them by guess and got
+the grouping wrong twice; what follows is what survived measurement.
 
-**Structurally unreachable — a mutation cannot be built (4).**
-`the_two_algorithm_crates_stay_independent_and_additive` and
-`ac11_the_ed25519_registration_itself_is_where_keys_get_built` are covered under
-§Two checks that cannot be reached. Two more are the same shape: their
-assertions are `contains` over a compiled crate with several occurrences, and
-one contiguous replacement cannot remove them all.
+**Re-measured after the replace-all flag landed.** The grouping below is what
+survived measurement, not what was predicted:
 
-**Blocked on its own sibling (2).** `ac11_every_allowlist_entry_still_exists_and_still_has_a_reason`
-iterates `AC11_ALLOWED`, which is **empty**. The loop body asserts nothing
-today. A mutation cannot make an empty table non-empty without editing the
-test file's own constant, which proves the test rather than the guard. It is
-dormant, not broken — an empty allowlist is the state the guard wants — but it
-has never fired and will not until something is allowlisted.
+| Guard                                                                      | Why it has no mutation                                                                                                                                                                      |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `the_two_algorithm_crates_stay_independent_and_additive`                   | Cargo refuses the mutation first — a cyclic package dependency. The layer rule is already enforced by cargo.                                                                                |
+| `ac11_the_ed25519_registration_itself_is_where_keys_get_built`             | The constructor occurs once, so replace-all was never the obstacle. Deleting the only construction path does not compile.                                                                   |
+| `c4_the_signature_verifier_is_a_single_shared_choke_point`                 | The rename spans `auth.rs` and `store/memory.rs`; the harness mutates one file per entry.                                                                                                   |
+| `ac11_every_allowlist_entry_still_exists_and_still_has_a_reason`           | Iterates an **empty** table, so its body asserts nothing today. A mutation cannot fill the table without editing the test's own constant, which would prove the test rather than the guard. |
+| `ac11_pending_table_is_complete_for_every_crate_it_covers`                 | Walks three crate roots, all inside octo-cli's dependency closure, so a planted site forces a recompile — and the sibling pending-count guard is already covered by `G-ll`.                 |
+| `every_verifier_trait_has_a_production_implementation_or_is_accounted_for` | Not yet written.                                                                                                                                                                            |
+| `m10_persist_contacts_still_accepts_a_valid_pagination_pair`               | Asserts a **valid** input is still accepted, so the mutation has to make the script reject valid pagination rather than accept a bad one. Not yet written.                                  |
+| `the_production_split_survives_an_item_level_test_marker`                  | Asserts a property of the harness itself; the plant has to sit in another crate's `#[cfg(test)]` module and keep compiling.                                                                 |
+| `every_dispatched_payload_kind_is_driven_through_an_envelope_in_tests`     | Same shape — a plant in another crate's test module.                                                                                                                                        |
 
-**Needs a behavioural mutation, not a textual one (3).**
-`m10_persist_contacts_still_accepts_a_valid_pagination_pair` asserts that a
-_valid_ input is accepted; the only way to break it is to make the script
-reject valid pagination, which is a different script edit than the sibling
-guard's and has not been written.
-`the_production_split_survives_an_item_level_test_marker` and
-`every_dispatched_payload_kind_is_driven_through_an_envelope_in_tests` assert on
-properties of the test harness itself, so a mutation has to be planted in a
-`#[cfg(test)]` module of another crate and stay compiling.
+**Nine is a small, well-understood list now**, and three of the nine name a
+concrete missing capability rather than a defect: a multi-file entry, a way to
+make a table non-empty without editing the guard that reads it, and a replace
+mode for `#[cfg(test)]` plants. Those are harness work, and they are listed as
+such rather than as coverage gaps.
 
-**The "one token, many occurrences" class grew to five.** `m4_ffi_calls_are_serialized`
-and `c4_the_signature_verifier_is_a_single_shared_choke_point` join
-`ac11_the_ed25519_registration_itself_is_where_keys_get_built`: each asserts on a
-token that occurs several times in a **compiled** crate. Renaming it breaks
-every call site; replacing one occurrence leaves the rest and the guard stays
-green. The harness replaces one contiguous span and has no replace-all, so all
-three are unreachable here. That is a **harness limitation, not a property of
-the guards** — adding a replace-all mode would convert all three at once, and it
-is the highest-value single change left in the tool.
-
-**Remaining without a mutation (10).** `m10_persist_contacts_still_accepts_a_valid_pagination_pair`,
-`the_production_split_survives_an_item_level_test_marker`,
-`every_dispatched_payload_kind_is_driven_through_an_envelope_in_tests`,
-`every_verifier_trait_has_a_production_implementation_or_is_accounted_for`,
-`ac11_pending_table_is_complete_for_every_crate_it_covers`,
-`ac11_every_allowlist_entry_still_exists_and_still_has_a_reason` and the
-five above.
-
-The point of the grouping is that **"fourteen unbacked guards" reads very
-differently from "fourteen unbacked guards, of which six cannot be backed, two
-would need a mutation that proves the test rather than the guard, and six are
-ordinary work"** — and only the second sentence is actionable.
-
-## A replace-all would convert five guards at once
+## A replace-all that unlocked one guard, not the three predicted
 
 Five guards are unreachable **because of the harness**, not because of anything
 about the guards themselves. Each asserts on a token that appears several times

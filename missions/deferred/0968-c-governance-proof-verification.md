@@ -1,6 +1,6 @@
 ---
 name: 0968-c-governance-proof-verification
-description: Retirement authorisation runs through stub_verify_proof_shape, which performs no cryptographic verification. The set-hash check is self-consistency between two caller-supplied fields, the quorum check counts entries in a caller-supplied Vec without checking distinctness, and the signature check is a byte length on bytes that are never parsed. The same struct is fully verified on the suspension and slash paths through verify_governance_signature, so the retirement path is the outlier rather than an unimplemented subsystem. RFC-0968 also requires the governance set hash to be checked against GovernanceRegistry::lookup_at_snapshot, which does not exist in the tree.
+description: Partially closed. The signature and quorum-distinctness halves are implemented on all three recorder governance paths (suspension, slash, retirement), each mutation-verified, and the fake byte-length signature check was removed. What remains open is the set-hash half: RFC-0968 requires it be checked against GovernanceRegistry::lookup_at_snapshot's active-set digest, but that comparison is against the proof's own claim, two fields the caller supplies, and no such registry exists anywhere in the tree. Deciding where the active governance set comes from is what blocks this mission.
 metadata:
   node_type: mission
   type: specification
@@ -20,60 +20,70 @@ metadata:
 > turns out to be a _different_ retirement: the legacy-store retirement gate
 > owned by `0968-b-marketplace-integration`, not recorder retirement.
 
-> **DEFERRED — the quorum and set-hash halves need a governance registry
-> that does not exist.** The signature half is now implemented on both
-> governance paths; see §Slashing did not verify at all for that.
+> **DEFERRED — the set-hash half needs a governance registry that does not
+> exist.** The signature and quorum-distinctness halves are implemented on all
+> three governance paths.
 >
-> The signature half does not need a decision: the verifier already exists and
-> the suspension and slash paths already call it. What is deferred is the
-> narrower question of where the active governance set comes from.
+> The signature half needed no decision: the verifier already existed and the
+> suspension path already called it. What remains deferred is the narrower
+> question of where the active governance set comes from.
 
 ## Status
 
 Deferred (2026-10-12) — pending a decision on whether the active governance
 set is looked up from chain state or carried by the caller.
 
-## The gap
+## The gap, as found
 
-`stub_verify_proof_shape` is the only governance check on the retirement
-path. Both stores call it and nothing else, in `declare_retirement_eligible`
-(`store/memory.rs` and `store/stoolap.rs`). Measured, not assumed.
+**This section is the original finding, kept as written before the fixes
+landed. Several rows are no longer true and are marked.** See §Slashing did
+not verify at all and §What is closed for the current state.
 
-| Check                                        | What it actually does                                   | Forgeable? |
-| -------------------------------------------- | ------------------------------------------------------- | ---------- |
-| snapshot freshness                           | caller sets `finalized_at_unix`                         | yes        |
-| `governance_set_hash` equals the claim       | compares two fields the caller supplies                 | yes        |
-| quorum ≥ `GOVERNANCE_QUORUM`                 | `self.members.len()` — no distinctness, no verification | yes        |
-| signature ≥ `MIN_RETIREMENT_SIGNATURE_BYTES` | `proof.signature.len()`, bytes never parsed             | yes        |
+`stub_verify_proof_shape` was the only governance check on the retirement
+path. Both stores called it and nothing else, in
+`declare_retirement_eligible` (`store/memory.rs` and `store/stoolap.rs`).
+Measured, not assumed.
 
-`quorum_count` is `self.members.len() as u32` in `auth.rs`
-§GovernanceSnapshot. The module doc claimed "≥ 3 **distinct** members". It
-does not check distinctness, so `[x; 3]` satisfies it.
+| Check                                        | What it actually did                        | Forgeable? | Now                        |
+| -------------------------------------------- | ------------------------------------------- | ---------- | -------------------------- |
+| snapshot freshness                           | caller sets `finalized_at_unix`             | yes        | still                      |
+| `governance_set_hash` equals the claim       | compares two fields the caller supplies     | yes        | still                      |
+| quorum ≥ `GOVERNANCE_QUORUM`                 | `self.members.len()` — no distinctness      | yes        | **fixed**                  |
+| signature ≥ `MIN_RETIREMENT_SIGNATURE_BYTES` | `proof.signature.len()`, bytes never parsed | yes        | **removed**                |
+| —                                            | —                                           | —          | **signature now verified** |
 
-A caller who can reach this function can therefore obtain
+`quorum_count` was `self.members.len() as u32` in `auth.rs`
+§GovernanceSnapshot, while the module doc claimed "≥ 3 **distinct** members".
+It did not check distinctness, so `[x; 3]` satisfied it. It has since been
+superseded by `GovernanceSnapshot::meets_quorum`, which does.
+
+A caller who could reach this function could obtain
 `RetirementEligibility { eligible: true }` without holding a governance key:
 a fresh timestamp, a set hash matching itself, three members, and 96 bytes of
-anything.
+anything. That is no longer reachable — the stores verify the signature
+first.
 
-## The larger half: quorum and set-hash are hollow on every path
+## The larger half: the set-hash check is hollow on every path
 
 The checks above are not unique to retirement. `verify_governance_suspension`
 runs the identical three, in `store/memory.rs` and `store/stoolap.rs`:
 
-| Check                            | On the suspension and slash path           |
-| -------------------------------- | ------------------------------------------ |
-| snapshot freshness               | same — the caller sets `finalized_at_unix` |
-| `governance_set_hash` comparison | same — `snapshot` vs `auth`, both supplied |
-| quorum ≥ `GOVERNANCE_QUORUM`     | same — `members.len()`                     |
+| Check                            | On the suspension and slash path           | Now       |
+| -------------------------------- | ------------------------------------------ | --------- |
+| snapshot freshness               | same — the caller sets `finalized_at_unix` | still     |
+| `governance_set_hash` comparison | same — `snapshot` vs `auth`, both supplied | still     |
+| quorum ≥ `GOVERNANCE_QUORUM`     | same — `members.len()`                     | **fixed** |
+| signature verified               | only on suspension; slash verified nothing | **fixed** |
 
-Only the signature check differs, and on those paths it is real. So the
-correct reading is narrower and more alarming than "retirement skips
+So the correct reading is narrower and more alarming than "retirement skips
 verification":
 
-- **Signature verification** is present on suspension and slash, absent on
-  retirement. Those two paths are sound; retirement is not.
-- **Quorum and set-hash verification are absent everywhere.** They are
-  statements about the shape of caller-supplied data, and they are not load
+- **Signature verification** was present on suspension only. Slash and
+  retirement verified nothing; both now do, and each has mutation-verified
+  negative tests.
+- **Quorum distinctness** is now enforced everywhere. **Set-hash verification
+  remains absent everywhere** — it is a statement about the shape of
+  caller-supplied data, and it is not load
   bearing on any path.
 
 That matters because RFC-0968 presents the governance-set hash as the

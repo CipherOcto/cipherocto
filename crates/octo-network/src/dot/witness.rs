@@ -1,12 +1,30 @@
 //! Witness Validation Pipeline — RFC-0850p-c §8
 //!
-//! Implements the 10 witness validation rules for BIND envelopes, the
-//! `NonceReplayTable` (per R2-TGB-1, R3-4, R3-7 fixes), the first-BIND-wins
-//! rule (R3-9, R4-7), and the reconnect split-brain check (R2-DC-3, R3-1,
-//! R3-6).
+//! A validator for BIND envelopes, the `NonceReplayTable` (per R2-TGB-1, R3-4,
+//! R3-7 fixes), the first-BIND-wins rule (R3-9, R4-7), and the reconnect
+//! split-brain check (R2-DC-3, R3-1, R3-6).
 //!
 //! See mission `missions/claimed/0850p-c-base.md` (Phase 3) for the
 //! requirements.
+//!
+//! ## Status: this does not implement RFC-0850p-c §8
+//!
+//! The rule numbering below is the RFC's numbering, and the two lists are not
+//! the same list. Six of the RFC's ten rules are absent, materially weaker, or
+//! materially different — three absent outright — the first-BIND-wins rule
+//! cannot fire, the nonce table uses a different key and a 100-epoch window
+//! where §8 specifies `(bind_nonce, coordinator_id)` over 1000, and two rules
+//! that carry numbers here are not RFC rules at all.
+//!
+//! **Nothing calls this.** `validate_bind` has no production caller and
+//! [`BINDHook`] has no implementations, both measured across the workspace.
+//! The rules are enforced for whoever invokes this function, and today nobody
+//! does.
+//!
+//! The measured delta is filed as
+//! `missions/open/0850p-c-witness-rules-alignment.md`. The validator is not
+//! changed there either: it is Phase 3 of a claimed mission and it governs an
+//! Accepted RFC, so aligning it is a maintainer decision.
 
 use std::collections::BTreeMap;
 
@@ -245,7 +263,14 @@ pub fn validate_bind(
         };
     }
 
-    // Rule 5: first-BIND-wins
+    // Rule 5: first-BIND-wins — **inert, and inverted.**
+    //
+    // `ctx.first_bind_seen` is read here and never written anywhere in the
+    // workspace, so this cannot fire. It is also backwards: it rejects when the
+    // incoming `bind_hash` is LOWER than the one held, where RFC-0850p-c §8
+    // rule 10 says the witness switches to the lower `bind_hash` to converge.
+    // The first person to populate that field inherits a rule that fails the
+    // RFC in the direction that breaks witness convergence.
     if let Some(prev) = &ctx.first_bind_seen {
         if prev.bind_hash > envelope.bind_hash && prev.founder_peer_id == envelope.founder_peer_id {
             return ValidationOutcome::Reject {
@@ -304,12 +329,22 @@ pub fn validate_bind(
         };
     }
 
-    // Rule 10: rate limit — enforced at the higher level via the
-    // nonce table (a fresh nonce is required for each BIND). The
-    // nonce table effectively rate-limits to 1 BIND per non-replay,
-    // which combined with the 100-epoch timeout gives the required
-    // rate limit. We record the nonce above (in rule 2) so this
-    // rule is satisfied by construction.
+    // Rule 10: **not implemented, and not an RFC-0850p-c §8 rule.**
+    //
+    // This was previously a comment claiming the rate limit was "satisfied by
+    // construction" via the nonce table. That is false: the table stores one
+    // `(nonce, first_seen)` per `(platform, group_jid)`, so it is a set of the
+    // most recent nonce per group and cannot count BINDs at all. A second BIND
+    // for the same group with a fresh nonce is not a replay of the stored nonce
+    // and passes rule 2. Measured, not inferred — two BINDs for one group at
+    // epochs 100 and 101 with different nonces both return `Accept`.
+    //
+    // The claim also misread the constant. `BIND_WITNESS_TIMEOUT = 100` is the
+    // implicit-coordinator BIND_ACK timeout in §3, with 3 retries at
+    // `50, 200, 800` epochs. It is not a per-group submission rate limit, and
+    // §8 does not specify one.
+    //
+    // See `missions/open/0850p-c-witness-rules-alignment.md`.
 
     ValidationOutcome::Accept
 }
@@ -394,6 +429,15 @@ pub fn first_bind_wins(prev: Option<&BindEnvelope>, new: &BindEnvelope) -> bool 
 /// `octo-adapter-telegram`) implements this trait; the implementation
 /// MUST call `witness::validate_bind` on the first DOT envelope to a
 /// group and reject envelopes that fail validation.
+///
+/// **No implementation exists yet**, so this contract governs nothing today.
+/// That is Phase 5 of the base mission and is outstanding.
+///
+/// It should not be satisfied as written. `validate_bind` does not implement
+/// RFC-0850p-c §8 — see the module docs and
+/// `missions/open/0850p-c-witness-rules-alignment.md` — so wiring an adapter
+/// to it today would put a claimed-enforced rule set on a live path. Resolve
+/// that mission first.
 pub trait BINDHook: Send + Sync {
     /// Returns the platform string the adapter is bound to.
     fn platform(&self) -> &'static str;

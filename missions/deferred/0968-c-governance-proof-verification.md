@@ -20,7 +20,9 @@ metadata:
 > turns out to be a _different_ retirement: the legacy-store retirement gate
 > owned by `0968-b-marketplace-integration`, not recorder retirement.
 
-> **DEFERRED — the set-hash half needs a governance registry that does not exist.**
+> **DEFERRED — the quorum and set-hash halves need a governance registry
+> that does not exist.** The signature half is now implemented on both
+> governance paths; see §Slashing did not verify at all for that.
 >
 > The signature half does not need a decision: the verifier already exists and
 > the suspension and slash paths already call it. What is deferred is the
@@ -263,15 +265,17 @@ all three red.
 
 ## Acceptance Criteria
 
-- [ ] Retirement carries the algorithm it will be verified under.
-- [ ] `declare_retirement_eligible` verifies the proof signature through
-      `verify_governance_signature` on both store implementations. **Blocked
-      on the same record-shape question**, now narrowed: the field and the
-      `verify_signature` method it needs both exist, so this is the remaining
-      wiring rather than a design question.
-- [ ] A proof signed by the wrong key is refused, mutation-checked against the
-      length-only check it replaces. **Satisfied for `slash_recorder`** (three
-      tests, mutation-verified) and still open for retirement.
+- [x] Retirement carries the algorithm it will be verified under.
+- [x] `declare_retirement_eligible` verifies the proof signature on both store
+      implementations.
+- [x] A proof signed by the wrong key is refused, mutation-checked against the
+      check it replaces. **Satisfied on both paths** — three tests each for
+      `slash_recorder` and retirement, every one mutation-verified red.
+- [x] `MIN_RETIREMENT_SIGNATURE_BYTES` resolved against the real signature
+      shape. It is **removed**: the constant described a 3-sig packing that
+      `GovernanceProof`, carrying a single signature, could never produce, so
+      it rejected every genuine proof while accepting any long enough run of
+      zeros.
 - [ ] The active governance set is resolved from a trust anchor rather than
       from the proof.
 - [ ] Quorum counts distinct, verified signers.

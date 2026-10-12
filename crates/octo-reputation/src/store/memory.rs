@@ -424,6 +424,11 @@ impl ReputationStore for InMemoryReputationStore {
     ) -> StoreResult<RetirementEligibility> {
         // Stubbed governance + evidence validation per `docs/05-process/engineering-rules.md` §Deferred versus unspecified.
         crate::retirement::stub_verify_proof_shape(&proof, now_unix)?;
+        // The signature check. `stub_verify_proof_shape` compares a caller
+        // supplied set hash against the proof's own claim and counts members;
+        // every input to it is chosen by whoever built the proof. Without
+        // this, `eligible: true` was reachable holding no key at all.
+        proof.verify_signature(now_unix)?;
         crate::retirement::validate_evidence(&evidence)?;
         let arr = crate::retirement::retirement_envelope_hash(
             &evidence.evidence_hash,
@@ -1088,18 +1093,23 @@ mod tests {
             governance_set_hash: [1u8; 32],
             members: vec![[1u8; 32], [2u8; 32], [3u8; 32]],
         };
-        let proof = GovernanceProof {
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let mut proof = GovernanceProof {
             governance_algorithm_id: crate::auth::default_governance_algorithm_id(),
-            governance_pubkey: vec![1u8; 32],
+            governance_pubkey: sk.verifying_key().to_bytes().to_vec(),
             recorder_id: RecorderId::from_u64(0),
             reason_hash: [0u8; 32],
-            signature: vec![0u8; 96], // 3 × 32-byte stub sigs
+            signature: Vec::new(),
             snapshot: snap,
             governance_set_hash: [1u8; 32],
             slash_destination: None,
             slash_amount: 0,
             slash_asset: AssetTag::None,
         };
+        let digest = proof.suspension_signature_digest(now);
+        proof.signature = ed25519_dalek::Signer::sign(&sk, &digest)
+            .to_bytes()
+            .to_vec();
         let evidence = ParityEvidence {
             adapter: 0x03, // Marketplace
             parity_score: 9_999,

@@ -120,7 +120,7 @@ pub use retention::{
 pub use retirement::{
     declare_on, retirement_envelope_hash, stub_verify_proof_shape, validate_evidence,
     ADAPTER_DC_SLASH, ADAPTER_MARKETPLACE, ADAPTER_SLASH, KNOWN_ADAPTERS,
-    MIN_RETIREMENT_BUCKET_COUNT, MIN_RETIREMENT_PARITY_SCORE_BP, MIN_RETIREMENT_SIGNATURE_BYTES,
+    MIN_RETIREMENT_BUCKET_COUNT, MIN_RETIREMENT_PARITY_SCORE_BP,
 };
 pub use slash_api::{issue_governance_slash, MismatchField};
 pub use sliding::{effective_window, sliding_window, MAX_SLIDING_WINDOW_SECS};

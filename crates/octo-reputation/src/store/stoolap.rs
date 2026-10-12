@@ -1042,6 +1042,7 @@ mod real {
             now_unix: u64,
         ) -> StoreResult<RetirementEligibility> {
             crate::retirement::stub_verify_proof_shape(&proof, now_unix)?;
+            proof.verify_signature(now_unix)?;
             crate::retirement::validate_evidence(&evidence)?;
             let arr = crate::retirement::retirement_envelope_hash(
                 &evidence.evidence_hash,

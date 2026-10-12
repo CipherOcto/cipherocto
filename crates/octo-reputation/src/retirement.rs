@@ -8,13 +8,13 @@
 //!    parity score ≥ 0.999 (basis points × 10_000 encoded as `u32`).
 //! 2. **Bucket coverage** — the evidence bundle covers at least
 //!    `MIN_RETIREMENT_BUCKET_COUNT` distinct 1h buckets.
-//! 3. **Governance authorisation** — a fresh governance snapshot whose
-//!    `members` list reaches `GOVERNANCE_QUORUM` entries, and a signature
-//!    blob of at least `MIN_RETIREMENT_SIGNATURE_BYTES`.
+//! 3. **Governance authorisation** — a verified signature, plus a fresh
+//!    snapshot whose `members` list reaches `GOVERNANCE_QUORUM` entries.
 //!
-//! Real signature verification is **deferred** to whichever mission owns
-//! governance key provisioning — see `docs/05-process/engineering-rules.md` §Deferred versus unspecified. The stub
-//! here:
+//! The signature is now verified. `declare_retirement_eligible` calls
+//! `GovernanceProof::verify_signature` before reporting eligibility, so this
+//! module's shape check is no longer the whole of it. What is still shape
+//! only:
 //!
 //! - Asserts the snapshot is fresh (`MAX_GOVERNANCE_SNAPSHOT_AGE_SECS`).
 //! - Asserts the snapshot's `governance_set_hash` matches the proof claim.
@@ -27,15 +27,19 @@
 //!   entries. It does not check the members are distinct, and it does not
 //!   verify anything about any of them, so repeating one 32-byte value
 //!   three times satisfies it.
-//! - Asserts the proof carries a signature blob of at least
-//!   `MIN_RETIREMENT_SIGNATURE_BYTES` (>= 96 bytes). That is a length
-//!   check on bytes that are never parsed. RFC-0968 specifies an Ed25519
-//!   `signature: [u8; 64]` verified against `governance_pubkey`.
+//! A caller who reaches this function alone can still satisfy every check
+//! here: a fresh `finalized_at_unix`, a set hash matching itself, and three
+//! members. That is why the store no longer treats this as sufficient — it
+//! verifies the signature too. The quorum and set-hash halves remain open,
+//! tracked in `missions/deferred/0968-c-governance-proof-verification.md`.
 //!
-//! A caller who can reach this function can therefore produce a `GovernanceProof`
-//! that passes it without holding a governance key: a fresh `finalized_at_unix`,
-//! a set hash matching itself, three members, and 96 bytes of anything. What
-//! is missing is tracked in `missions/deferred/0968-c-governance-proof-verification.md`.
+//! The `signature.len() >= MIN_RETIREMENT_SIGNATURE_BYTES` check that used
+//! to sit here is **removed**. The constant documented itself as "3 × 32 =
+//! 96, the compact ed25519-packing for a 3-sig governance proof", but
+//! `GovernanceProof` carries a single signature, so no genuine signature
+//! from the registered algorithm could have reached 96 bytes. It rejected
+//! every real proof while accepting any long enough run of zeros. Signature
+//! validity is the verifier's business now.
 //!
 //! Returns `RetirementEligibility { eligible, since_unix, evidence_hash, adapter }`
 //! on success. The `evidence_hash` is the canonical envelope:
@@ -67,10 +71,6 @@ pub const MIN_RETIREMENT_PARITY_SCORE_BP: u32 = 9_999;
 /// Minimum number of distinct 1h buckets the parity evidence must cover.
 pub const MIN_RETIREMENT_BUCKET_COUNT: u64 = 24;
 
-/// Minimum signature blob size (bytes). 3 × 32 = 96, the conventional
-/// compact ed25519-packing for a 3-sig governance proof.
-pub const MIN_RETIREMENT_SIGNATURE_BYTES: usize = 96;
-
 /// Adapter identifier for the Marketplace read-side. Per mission 0968-b.
 pub const ADAPTER_MARKETPLACE: u8 = 0x03;
 
@@ -93,7 +93,6 @@ fn known_adapter(a: u8) -> bool {
 /// - snapshot is fresh against `now_unix`
 /// - snapshot's `governance_set_hash` equals the proof's claim
 /// - `snapshot.members` holds at least `GOVERNANCE_QUORUM` entries
-/// - proof signature blob is at least `MIN_RETIREMENT_SIGNATURE_BYTES`
 ///
 /// **None of these is an authorisation check.** The set-hash comparison is
 /// self-consistency between two caller-supplied fields, the member count is
@@ -122,9 +121,6 @@ pub fn stub_verify_proof_shape(
             signatures: proof.snapshot.quorum_count(),
             quorum: GOVERNANCE_QUORUM,
         });
-    }
-    if proof.signature.len() < MIN_RETIREMENT_SIGNATURE_BYTES {
-        return Err(ReputationError::RetirementNotAuthorized("signature_blob"));
     }
     Ok(())
 }
@@ -211,18 +207,31 @@ mod tests {
     }
 
     fn good_proof(now: u64) -> GovernanceProof {
-        GovernanceProof {
+        // Signed over the proof's own suspension preimage.
+        //
+        // This used to emit a 32-byte all-ones pubkey and a signature of
+        // `MIN_RETIREMENT_SIGNATURE_BYTES` zeros — a byte-length stub. It
+        // passed because nothing on this path parsed the signature, which is
+        // precisely why the suite could not tell retirement authorisation
+        // from a shape check.
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let mut proof = GovernanceProof {
             governance_algorithm_id: crate::auth::default_governance_algorithm_id(),
-            governance_pubkey: vec![1u8; 32],
+            governance_pubkey: sk.verifying_key().to_bytes().to_vec(),
             recorder_id: RecorderId::from_u64(0),
             reason_hash: [0u8; 32],
-            signature: vec![0u8; MIN_RETIREMENT_SIGNATURE_BYTES],
+            signature: Vec::new(),
             snapshot: good_snapshot(now),
             governance_set_hash: [1u8; 32],
             slash_destination: None,
             slash_amount: 0,
             slash_asset: AssetTag::None,
-        }
+        };
+        let digest = proof.suspension_signature_digest(now);
+        proof.signature = ed25519_dalek::Signer::sign(&sk, &digest)
+            .to_bytes()
+            .to_vec();
+        proof
     }
 
     fn good_evidence(adapter: u8) -> ParityEvidence {
@@ -262,13 +271,18 @@ mod tests {
         assert_eq!(r.since_unix, now);
     }
 
+    /// Retirement eligibility must require a signature, not a byte count.
+    ///
+    /// Every check `stub_verify_proof_shape` makes describes caller-supplied data:
+    /// a freshness timestamp the caller sets, a set hash compared against the
+    /// proof's own claim, and a member count. Before the verifier was wired in,
+    /// `eligible: true` was reachable holding no key at all.
     #[tokio::test]
-    async fn declare_retirement_two_of_three_sigs_rejected() {
+    async fn declare_retirement_refuses_an_unsigned_proof() {
         let store = InMemoryReputationStore::new();
         let now = now_unix();
         let mut proof = good_proof(now);
-        // Trim to 2 * 32 = 64 bytes (below 96-byte threshold).
-        proof.signature = vec![0u8; MIN_RETIREMENT_SIGNATURE_BYTES - 1];
+        proof.signature = vec![0u8; 64];
         let err = store
             .declare_retirement_eligible(
                 ADAPTER_MARKETPLACE,
@@ -279,8 +293,68 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(
-            err,
-            ReputationError::RetirementNotAuthorized("signature_blob")
+            err.discriminant(),
+            0x11,
+            "an unsigned retirement proof must be refused as an invalid signature"
+        );
+    }
+
+    /// A proof signed by a key other than the one it names.
+    #[tokio::test]
+    async fn declare_retirement_refuses_a_proof_signed_by_another_key() {
+        let store = InMemoryReputationStore::new();
+        let now = now_unix();
+        let mut proof = good_proof(now);
+        let other = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32]);
+        let digest = proof.suspension_signature_digest(now);
+        proof.signature = ed25519_dalek::Signer::sign(&other, &digest)
+            .to_bytes()
+            .to_vec();
+        assert!(
+            store
+                .declare_retirement_eligible(
+                    ADAPTER_MARKETPLACE,
+                    good_evidence(ADAPTER_MARKETPLACE),
+                    proof,
+                    now,
+                )
+                .await
+                .is_err(),
+            "a signature from a key other than the named one must not confer \
+         retirement eligibility"
+        );
+    }
+
+    /// A proof whose signature is truncated must be refused.
+    ///
+    /// This used to be a length check against a 96-byte threshold, and the
+    /// constant behind it documented itself as "3 × 32 = 96, the compact
+    /// ed25519-packing for a 3-sig governance proof". `GovernanceProof`
+    /// carries a **single** `signature`, so no genuine signature from the
+    /// registered algorithm could ever have reached 96 bytes — the check
+    /// rejected every real proof and accepted any long enough run of zeros.
+    ///
+    /// It is replaced rather than reworded: the signature is now verified,
+    /// so a truncated one fails as a signature failure and not as a length.
+    #[tokio::test]
+    async fn declare_retirement_truncated_signature_rejected() {
+        let store = InMemoryReputationStore::new();
+        let now = now_unix();
+        let mut proof = good_proof(now);
+        proof.signature.truncate(32);
+        let err = store
+            .declare_retirement_eligible(
+                ADAPTER_MARKETPLACE,
+                good_evidence(ADAPTER_MARKETPLACE),
+                proof,
+                now,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.discriminant(),
+            0x11,
+            "expected an invalid-signature refusal"
         );
     }
 

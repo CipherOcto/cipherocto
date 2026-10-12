@@ -145,16 +145,20 @@ pub trait ReputationStore: Send + Sync {
 
     /// Declare a recorder eligible for retirement.
     ///
-    /// **No cryptographic verification occurs on this path.** The governance
-    /// proof is shape-checked only: freshness, a self-consistency comparison
-    /// of the set hash against the proof's own claim, a count of
-    /// `snapshot.members`, and a signature length. The bytes are never parsed
-    /// and no key is checked, so a caller can reach `eligible: true` without
-    /// holding a governance key.
+    /// The governance proof's signature **is** verified, via
+    /// `GovernanceProof::verify_signature`, before eligibility is reported.
     ///
-    /// This is the one governance entry point that does not delegate to
-    /// `auth::verify_governance_signature`, and it cannot as written:
-    /// `GovernanceProof` carries no algorithm field to dispatch on. See
+    /// That was not true when this path was written: it shape-checked only —
+    /// freshness, a self-consistency comparison of the set hash against the
+    /// proof's own claim, and a count of `snapshot.members` — every input
+    /// chosen by whoever built the proof. `eligible: true` was reachable
+    /// holding no key.
+    ///
+    /// What remains open is the *quorum* half, which is still a count of
+    /// entries with no distinctness check and nothing verified about any of
+    /// them, and the set-hash half, which RFC-0968 requires be checked
+    /// against `GovernanceRegistry::lookup_at_snapshot` — no such registry
+    /// exists in the tree. See
     /// `missions/deferred/0968-c-governance-proof-verification.md`.
     async fn declare_retirement_eligible(
         &self,

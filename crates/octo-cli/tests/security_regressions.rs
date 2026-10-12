@@ -4148,6 +4148,54 @@ fn every_dispatched_payload_kind_is_driven_through_an_envelope_in_tests() {
          reached only by a direct call in tests proves the handler, not the routing. \
          Add a test that builds a NodeEnvelope for the kind and calls handle_envelope."
     );
+
+    // The list of node files is hand-written, and nothing checked it against
+    // the thing it exists to cover. Measured today it is complete: exactly
+    // four crates in the workspace define `handle_envelope`, and all four are
+    // listed. But a fifth node crate, added without touching the list, would
+    // dispatch payload kinds with no envelope-level test and this guard would
+    // report green — which is the exact failure the guard was written for,
+    // one crate over.
+    //
+    // Same treatment as the reputation store list and the Chrome launcher
+    // list: check the list against the rule it claims.
+    let mut unscanned: Vec<String> = Vec::new();
+    let crates_dir = workspace_root().join("crates");
+    let Ok(entries) = std::fs::read_dir(&crates_dir) else {
+        panic!("crates/ must be readable");
+    };
+    let mut found_any = false;
+    for entry in entries.flatten() {
+        if !entry.path().join("Cargo.toml").is_file() {
+            continue;
+        }
+        for src in walk_rs(&entry.path().join("src")) {
+            let Ok(text) = std::fs::read_to_string(&src) else {
+                continue;
+            };
+            if !text.contains("fn handle_envelope") {
+                continue;
+            }
+            found_any = true;
+            let Ok(rel) = src.strip_prefix(workspace_root()) else {
+                continue;
+            };
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            if !NODE_DISPATCH_FILES.iter().any(|f| *f == rel) {
+                unscanned.push(rel);
+            }
+        }
+    }
+    assert!(
+        found_any,
+        "no crate defines handle_envelope, so this completeness check is \
+         reading nothing and reporting green"
+    );
+    assert!(
+        unscanned.is_empty(),
+        "these crates define handle_envelope and are not in NODE_DISPATCH_FILES: \
+         {unscanned:?}. Their dispatch arms get no envelope-level test. Add them."
+    );
 }
 
 /// A mission may assert that its named test vectors exist by exact name.

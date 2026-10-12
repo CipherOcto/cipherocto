@@ -4283,3 +4283,88 @@ fn a_parsed_auth_header_set_carries_no_identity_verdict() {
          Linkage belongs to `evaluate_linkage` over verified structs."
     );
 }
+
+/// The module that defines the placeholder decoders. It names them in its own
+/// docs, so it is excluded the way a guard excludes its own source.
+const UNVERIFIED_DECODER_HOME: &str = "crates/octo-wallet/src/capability/dispatch.rs";
+
+/// No production code may call a placeholder decoder.
+///
+/// `unverified_decode_bearer` and `unverified_decode_capability` return a
+/// `BearerVerification` / `CapabilityVerification` — the same structs a real
+/// verifier returns — by deriving a DID and an ask id from the first bytes of
+/// the token string. Nothing about the returned value says it was not checked.
+///
+/// That is exactly the shape that produced the fabricated identity linkage in
+/// `DispatchSet`, and the shape survives in the decoders themselves: they are
+/// `pub`, and a caller can pass the result straight to `evaluate_linkage`,
+/// which cannot tell it apart from a verified one. Production `authenticate()`
+/// injects real verifiers, so no live path does this today.
+///
+/// Test code is not a finding. Both decoders exist so tests can exercise
+/// linkage evaluation without a signing key, and suppressing that would push
+/// the checks somewhere less honest rather than remove them.
+#[test]
+fn no_production_code_calls_a_placeholder_decoder() {
+    let root = workspace_root();
+    let crates = root.join("crates");
+    let mut findings: Vec<String> = Vec::new();
+    let mut scanned = 0usize;
+
+    let mut stack: Vec<PathBuf> = std::fs::read_dir(&crates)
+        .expect("crates/ must be readable")
+        .flatten()
+        .map(|e| e.path().join("src"))
+        .collect();
+    while let Some(dir) = stack.pop() {
+        if !dir.is_dir() {
+            continue;
+        }
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(rel) = path.strip_prefix(&root) else {
+                continue;
+            };
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            if rel == UNVERIFIED_DECODER_HOME {
+                continue;
+            }
+            scanned += 1;
+            // Production region only. A `#[cfg(test)]` module legitimately
+            // builds unverified structs to drive the linkage logic.
+            let production = text.split("#[cfg(test)]").next().unwrap_or(&text);
+            let code = strip_comments(production);
+            for line in code.lines() {
+                let hits = ["unverified_decode_bearer", "unverified_decode_capability"]
+                    .iter()
+                    .filter(|needle| line.contains(*needle))
+                    .count();
+                if hits > 0 {
+                    findings.push(format!(
+                        "{rel}: {hits} placeholder decoder call(s) in production"
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        scanned > 500,
+        "no production source was read, so this guard passed vacuously: {scanned} files"
+    );
+    assert!(
+        findings.is_empty(),
+        "production code must not consume a placeholder decoder: {findings:?}. A \
+         BearerVerification from these functions is indistinguishable from a verified one."
+    );
+}

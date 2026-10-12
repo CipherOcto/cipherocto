@@ -1046,11 +1046,157 @@ fn dense(s: &str) -> String {
     s.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
-fn production_region(src: &str) -> &str {
-    match src.find("#[cfg(test)]") {
-        Some(i) => &src[..i],
-        None => src,
+/// The production region of a source file: everything except test-only code.
+///
+/// Guards that look for a production construct must not match the crate's own
+/// regression test asserting on that construct — which is the third way a
+/// substring scan goes vacuous, after comments and dead sibling functions.
+///
+/// **This is not a cut at the first `#[cfg(test)]`, and that difference was
+/// measured, not assumed.** `#[cfg(test)]` appears on single items as well as
+/// on modules — a test-only accessor is an item — and cutting at the first
+/// marker therefore hides every production construct below it.
+/// `octo-protocol/src/dispatch.rs` carries a method-level `#[cfg(test)]`
+/// accessor twenty lines above `verify_all`. Under the old cut, a production
+/// call to a placeholder decoder planted below that accessor left the decoder
+/// guard green; the identical call planted above it turned the guard red.
+/// Same rule, same file, opposite outcomes, decided purely by which side of
+/// an unrelated test accessor the code sat on.
+///
+/// Both shapes are removed here:
+///  - `#[cfg(test)] mod NAME { ... }`, brace-matched, which is the common case
+///  - `#[cfg(test)]` on a single item, dropped through that item's body
+fn production_region(src: &str) -> String {
+    split_regions(src).0
+}
+
+/// The production/test split must survive an item-level test marker.
+///
+/// Six guards depend on `split_regions` being right, and the failure it used
+/// to have is invisible from the passing side: a method-level `#[cfg(test)]`
+/// accessor truncated the file, and every production construct below it became
+/// invisible to the guard that existed to find it. A green run did not mean
+/// the region was scanned.
+///
+/// This pins the mechanism on a synthetic source, so the property is checked
+/// directly rather than inferred from whichever guards happen to run today.
+#[test]
+fn the_production_split_survives_an_item_level_test_marker() {
+    // A distinct needle per function. One shared needle would be satisfied by
+    // the copy above the marker alone, so truncating at the marker would still
+    // pass — which is the failure this exists to catch.
+    let src = "\
+fn production_above() -> u8 { NEEDLE_ABOVE }
+#[cfg(test)]
+fn test_only_accessor() -> u8 { 0 }
+fn production_below() -> u8 { NEEDLE_BELOW }
+#[cfg(test)]
+mod tests {
+    fn t() { NEEDLE_TEST }
+}
+mod helper_mod {
+    pub fn keeps_this() -> u8 { NEEDLE_HELPER }
+}
+";
+    let (production, tests) = split_regions(src);
+
+    for needle in ["NEEDLE_ABOVE", "NEEDLE_BELOW", "NEEDLE_HELPER"] {
+        assert!(
+            production.contains(needle),
+            "a method-level test marker must not truncate the production half; \
+             {needle} was lost: {production:?}"
+        );
     }
+    assert!(
+        !production.contains("test_only_accessor"),
+        "the marked item itself is test-only and must be excluded: {production:?}"
+    );
+    assert!(
+        tests.contains("NEEDLE_TEST"),
+        "test regions must be captured, not dropped: {tests:?}"
+    );
+    for needle in ["NEEDLE_ABOVE", "NEEDLE_BELOW", "NEEDLE_HELPER"] {
+        assert!(
+            !tests.contains(needle),
+            "production code must not leak into the test half; {needle} did: {tests:?}"
+        );
+    }
+}
+
+/// Split a source file into its production and test-only halves.
+///
+/// See [`production_region`] for why this is not a cut at the first test
+/// marker. Returns `(production, test_only)`.
+fn split_regions(src: &str) -> (String, String) {
+    const MARKER: &str = "#[cfg(test)]";
+    const TEST_MOD: &str = "mod tests";
+    let mut out = String::with_capacity(src.len());
+    let mut taken = String::new();
+    let mut rest = src;
+    loop {
+        // Either shape of test-only region: an explicitly gated item, or a
+        // conventionally-named `mod tests` block that some files leave
+        // ungated. Taking the earlier of the two is what stops an item-level
+        // marker from deciding where the file ends.
+        let marked = rest.find(MARKER);
+        let named = rest.find(TEST_MOD).filter(|i| {
+            // `mod tests` must be a whole name, not the prefix of
+            // `mod tests_helper`.
+            !rest[i + TEST_MOD.len()..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_')
+        });
+        let (at, skip) = match (marked, named) {
+            (Some(x), Some(y)) if x <= y => (x, MARKER.len()),
+            (Some(_), Some(y)) => (y, TEST_MOD.len()),
+            (Some(x), None) => (x, MARKER.len()),
+            (None, Some(y)) => (y, TEST_MOD.len()),
+            (None, None) => break,
+        };
+        let (head, tail) = rest.split_at(at);
+        out.push_str(head);
+        let after = &tail[skip..];
+        let span_start = at;
+
+        // A `mod` block carries `{` after its name; a statement item like
+        // `use x;` carries `;` first. Whichever comes first decides the shape.
+        let brace = after.find('{');
+        let semi = after.find(';');
+        let is_block = match (brace, semi) {
+            (Some(b), Some(s)) => b < s,
+            (Some(_), None) => true,
+            _ => false,
+        };
+
+        let consumed = if is_block {
+            let mut depth = 0i32;
+            let mut consumed = 0usize;
+            for (i, c) in after.char_indices() {
+                match c {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            consumed = i + c.len_utf8();
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            consumed
+        } else {
+            // A single item: through its `;`, or to end of line when the
+            // attribute itself is all there is.
+            semi.or_else(|| after.find('\n'))
+                .map_or(after.len(), |e| e + 1)
+        };
+        taken.push_str(&rest[span_start..span_start + skip + consumed]);
+        rest = &after[consumed..];
+    }
+    out.push_str(rest);
+    (out, taken)
 }
 
 #[test]
@@ -1063,7 +1209,7 @@ fn m17_keystore_import_does_not_read_file_supplied_kdf_params() {
     // on the message `unsupported kdfparams`, so a whole-file `contains` is
     // satisfied by the test even when the production check is deleted.
     let raw = read("crates/octo-wallet/src/keystore.rs");
-    let src = strip_comments(production_region(&raw));
+    let src = strip_comments(&production_region(&raw));
     assert!(
         src.contains("unsupported kdfparams"),
         "M-17: import must reject a file whose declared params do not match \
@@ -1416,7 +1562,7 @@ fn m13_cdp_trace_is_private_and_defaults_outside_tmp() {
     let raw = read("crates/whatsapp_chrome_driver/src/main.rs");
     // Scoped to the production region: the regression test itself names the
     // old default in its assertion, which would otherwise satisfy this check.
-    let src = strip_comments(production_region(&raw));
+    let src = strip_comments(&production_region(&raw));
     assert!(
         !src.contains("/tmp/whatsapp_chrome_driver.jsonl"),
         "M-13: the trace default is a world-readable /tmp path. That file \\
@@ -1438,7 +1584,7 @@ fn m13_cdp_trace_is_private_and_defaults_outside_tmp() {
 fn l5_health_server_does_not_trust_client_forwarded_for() {
     // The label reached the auth-failure metric, and the header is set by the
     // client — so a security signal became a forgeable field.
-    let src = strip_comments(production_region(&read(
+    let src = strip_comments(&production_region(&read(
         "crates/octo-whatsapp/src/observability/health_server.rs",
     )));
     assert!(
@@ -1492,7 +1638,7 @@ fn l7_active_symlink_swap_is_atomic() {
 fn l8_pairing_uri_is_withheld_unless_show_secret_is_set() {
     // The raw FIDO URI is the secret the phone is about to prove possession of,
     // and terminal output is routinely captured.
-    let src = strip_comments(production_region(&read(
+    let src = strip_comments(&production_region(&read(
         "crates/octo-whatsapp-onboard/src/main.rs",
     )));
     let body = fn_body(&src, "fn build_passkey_authenticator");
@@ -1515,7 +1661,7 @@ fn l8_pairing_uri_is_withheld_unless_show_secret_is_set() {
 fn l9_vault_uses_the_base64_crate_not_a_hand_rolled_parser() {
     // The hand-rolled decoder accepted `QQ=A`: it saw `chunk[2] == '='` and
     // skipped the `chunk[3]` check.
-    let src = strip_comments(production_region(&read("crates/octo-wallet/src/vault.rs")));
+    let src = strip_comments(&production_region(&read("crates/octo-wallet/src/vault.rs")));
     let body = fn_body(&src, "fn base64_decode");
     assert!(
         body.contains("STANDARD.decode(") || body.contains("STANDARD\n"),
@@ -2200,7 +2346,7 @@ fn h7_the_session_export_is_not_written_with_a_umask_derived_mode() {
     // Scoped to the production region: the `#[cfg(test)]` module below seeds
     // fixtures with `fs::write`, which is not a disclosure — a test writing
     // fake bytes into its own tempdir has no security surface.
-    let dense_src = dense(production_region(&strip_comments(&raw)));
+    let dense_src = dense(&production_region(&strip_comments(&raw)));
 
     assert!(
         !dense_src.contains(&dense("fs::write(")),
@@ -4095,14 +4241,6 @@ fn no_source_or_doc_file_cites_a_private_working_note() {
     );
 }
 
-/// Byte offset where a file's test-only region begins, if it has one.
-fn test_region_start(text: &str) -> Option<usize> {
-    text.find("#[cfg(test)]")
-        .into_iter()
-        .chain(text.find("mod tests"))
-        .min()
-}
-
 /// The only files permitted to build a `HolderRecord` outside a test module.
 ///
 /// **Two, and two is the correct number.** RFC-0871 gives the mesh two distinct
@@ -4195,11 +4333,11 @@ fn only_the_issuing_nodes_build_a_holder_record_in_production() {
             continue;
         }
 
-        let production_region = match test_region_start(&text) {
-            Some(at) => &text[..at],
-            None => &text[..],
-        };
-        if production_region.contains("HolderRecord::from_capability") {
+        // `production_region`, not a cut at the first test marker: a
+        // method-level `#[cfg(test)]` accessor would otherwise truncate the
+        // file above this and hide the very construction being hunted.
+        let production = production_region(&text);
+        if production.contains("HolderRecord::from_capability") {
             production_calls.push(rel.clone());
         }
 
@@ -4271,10 +4409,7 @@ fn the_wallet_crate_does_not_depend_on_storage() {
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let production = match test_region_start(&text) {
-            Some(at) => &text[..at],
-            None => &text[..],
-        };
+        let production = production_region(&text);
         if !production.contains("quota_router_storage") {
             continue;
         }
@@ -4355,13 +4490,16 @@ fn every_dispatched_payload_kind_is_driven_through_an_envelope_in_tests() {
             continue;
         };
 
-        let (production, test_region) = match text.find("#[cfg(test)]") {
-            Some(at) => (&text[..at], &text[at..]),
-            None => {
-                gaps.push(format!("{rel}: no test module to check against"));
-                continue;
-            }
-        };
+        // Both halves come from the same split, so a method-level
+        // `#[cfg(test)]` accessor cannot truncate the production half above a
+        // dispatch arm that was added below it. Splitting only at the first
+        // marker hid exactly those arms, and this guard would have reported
+        // them as covered.
+        let (production, test_region) = split_regions(&text);
+        if test_region.trim().is_empty() {
+            gaps.push(format!("{rel}: no test module to check against"));
+            continue;
+        }
 
         // Dispatch arms read `k if k == <path>::NAME`. Matching on the module
         // prefix instead would miss kinds whose constant lives elsewhere —
@@ -4691,10 +4829,22 @@ fn a_parsed_auth_header_set_carries_no_identity_verdict() {
         let text = std::fs::read_to_string(&path).unwrap_or_default();
         // Only the production region. The test module legitimately constructs
         // verified structs to exercise `evaluate_linkage` directly.
-        let production = text.split("#[cfg(test)]").next().unwrap_or(&text);
+        let production = production_region(&text);
 
         // The field must not exist on the type.
-        let struct_start = production.find("pub struct DispatchSet").unwrap_or(0);
+        //
+        // The type must also still be found. `unwrap_or(0)` here would start
+        // the scan at the top of the file, so a renamed or deleted
+        // `DispatchSet` turns this into a search of unrelated text that finds
+        // nothing and passes — a guard that stops guarding without going red.
+        let struct_start = production
+            .find("pub struct DispatchSet")
+            .unwrap_or_else(|| {
+                panic!(
+                    "{rel}: no `pub struct DispatchSet` in the production region. If it \
+                 was renamed or removed this guard is now reading nothing."
+                )
+            });
         let struct_end = production[struct_start..]
             .find("\n}")
             .map(|i| struct_start + i)
@@ -4780,8 +4930,8 @@ fn no_production_code_calls_a_placeholder_decoder() {
             scanned += 1;
             // Production region only. A `#[cfg(test)]` module legitimately
             // builds unverified structs to drive the linkage logic.
-            let production = text.split("#[cfg(test)]").next().unwrap_or(&text);
-            let code = strip_comments(production);
+            let production = production_region(&text);
+            let code = strip_comments(&production);
             for line in code.lines() {
                 let hits = ["unverified_decode_bearer", "unverified_decode_capability"]
                     .iter()

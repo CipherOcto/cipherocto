@@ -762,6 +762,78 @@ MUTATIONS = [
         ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
          "no_verification_site_pins_its_key_to_a_fixed_size_array", "--", "--exact"],
     ),
+    (
+        # The manifest and the source census have to agree. Three sites need
+        # `quota_router_storage` today and are recorded, so the dependency is
+        # declared; adding a fourth import without recording it makes layer one
+        # fire and is exactly the "the gate has been widened" case the
+        # assertion names. Recorded exception plus unrecorded import is the
+        # combination that is invisible to either layer alone.
+        "G-ee: a fourth wallet import appears without being recorded",
+        "crates/octo-wallet/src/vault.rs",
+        "fn base64_decode(s: &str) -> Result<Vec<u8>, WalletError> {",
+        "fn base64_decode(s: &str) -> Result<Vec<u8>, WalletError> {\n"
+        "    let _probe: Option<quota_router_storage::RegistryError> = None;",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "the_wallet_crate_does_not_depend_on_storage", "--", "--exact"],
+    ),
+    (
+        # The bespoke decoder accepted `QQ=A`: it saw `chunk[2] == '='` and
+        # skipped the `chunk[3]` check, so a misplaced-padded string decoded to
+        # bytes instead of erroring. Delegating to the crate removes the whole
+        # class rather than patching the index arithmetic, which is why the
+        # guard checks for the delegation and not for a particular bound.
+        #
+        # Written as "stops decoding" rather than "decodes wrongly" because a
+        # compiling hand-rolled decoder is a lot of text that proves the same
+        # thing: the function no longer asks `base64` for anything, and the
+        # guard's first assertion is exactly that.
+        "G-ff: the vault base64 decoder stops delegating to the crate",
+        "crates/octo-wallet/src/vault.rs",
+        """    use base64::engine::general_purpose::STANDARD;
+    use base64::Engine as _;
+    STANDARD
+        .decode(s)
+        .map_err(|e| WalletError::Config(format!("base64 invalid: {e}")))
+}""",
+        """    let _ = s;
+    Err(WalletError::Config("base64 unavailable".to_string()))
+}""",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "l9_vault_uses_the_base64_crate_not_a_hand_rolled_parser", "--", "--exact"],
+    ),
+    (
+        # `verify_dispatch` is the one way in, and the point of the registry is
+        # that no scan keyed on that entry point can see a caller who bypassed
+        # it. A function that takes the registry itself and calls `verify`
+        # directly is precisely that, and it is invisible to every other AC-11
+        # guard here — they all walk for `verify_dispatch`.
+        "G-gg: a verification site reaches the registry by hand",
+        "crates/octo-cap-macaroon/src/token.rs",
+        """        Ok(Self {
+            algorithm_id,
+            bytes: bytes.to_vec(),
+        })
+    }""",
+        """        Ok(Self {
+            algorithm_id,
+            bytes: bytes.to_vec(),
+        })
+    }
+
+    /// Probe: a verification site that takes the algorithm by hand.
+    #[allow(dead_code)]
+    fn probe_registry_by_hand(key: &[u8], msg: &[u8], sig: &[u8]) -> bool {
+        let Ok(registry) = octo_algo_ed25519::shared_registry() else {
+            return false;
+        };
+        let Ok(algorithm) = registry.get(octo_algo_ed25519::ed25519_algorithm_id()) else {
+            return false;
+        };
+        algorithm.verify(key, msg, sig).is_ok()\n    }""",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "no_verification_site_reaches_the_algorithm_registry_by_hand", "--", "--exact"],
+    ),
 ]
 
 # NOT MUTATED, deliberately: `OpenOptionsExt::mode(0o600)` at creation inside

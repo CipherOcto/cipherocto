@@ -377,6 +377,49 @@ the mutation `G-dd` — a real production call passing `&[0u8; 32]` — goes red
 added on purpose; the earlier statement that every mutation was free no longer
 holds, and the harness classifies it correctly.
 
+## Where coverage stops, and what is left
+
+**51 of 65.** The remaining fourteen are not all equally reachable, and
+pretending otherwise would make the number decorative. Grouped by why:
+
+**Structurally unreachable — a mutation cannot be built (4).**
+`the_two_algorithm_crates_stay_independent_and_additive` and
+`ac11_the_ed25519_registration_itself_is_where_keys_get_built` are covered under
+§Two checks that cannot be reached. Two more are the same shape: their
+assertions are `contains` over a compiled crate with several occurrences, and
+one contiguous replacement cannot remove them all.
+
+**Blocked on its own sibling (2).** `ac11_every_allowlist_entry_still_exists_and_still_has_a_reason`
+iterates `AC11_ALLOWED`, which is **empty**. The loop body asserts nothing
+today. A mutation cannot make an empty table non-empty without editing the
+test file's own constant, which proves the test rather than the guard. It is
+dormant, not broken — an empty allowlist is the state the guard wants — but it
+has never fired and will not until something is allowlisted.
+
+**Needs a behavioural mutation, not a textual one (3).**
+`m10_persist_contacts_still_accepts_a_valid_pagination_pair` asserts that a
+_valid_ input is accepted; the only way to break it is to make the script
+reject valid pagination, which is a different script edit than the sibling
+guard's and has not been written.
+`the_production_split_survives_an_item_level_test_marker` and
+`every_dispatched_payload_kind_is_driven_through_an_envelope_in_tests` assert on
+properties of the test harness itself, so a mutation has to be planted in a
+`#[cfg(test)]` module of another crate and stay compiling.
+
+**Simply not reached yet (5).** `m4_ffi_calls_are_serialized`,
+`no_capability_token_api_names_ed25519_dalek`,
+`c4_the_signature_verifier_is_a_single_shared_choke_point`,
+`every_governance_signature_verification_also_verifies_its_snapshot`,
+`the_alias_helpers_find_the_indirection_they_exist_for` and
+`only_the_issuing_nodes_build_a_holder_record_in_production` are ordinary
+cases with straightforward mutations that have not been written. That is the
+honest state: not hard, just not done.
+
+The point of the grouping is that **"fourteen unbacked guards" reads very
+differently from "fourteen unbacked guards, of which six cannot be backed, two
+would need a mutation that proves the test rather than the guard, and six are
+ordinary work"** — and only the second sentence is actionable.
+
 ## Two checks that cannot be reached, and why that is worth knowing
 
 Two entries were written for guards on the two-algorithm layering rule and the

@@ -123,6 +123,67 @@ lacks expiry field; root TTL lives in caveat" — and the caveats are among the
 things the envelope does not carry. The expiry was moved out of reach along with
 everything else.
 
+## Root cause, corrected: the missing capability is the RFC's shape, not an implementation slip
+
+This section originally blamed the whole finding on the implementation byte-ifying
+RFC-0009's typed fields. **That is right about `holder_record` and wrong about the
+capability, and the difference decides who owns the fix.**
+
+RFC-0009 §Forward compatibility defines `CapabilityTokenV2` with exactly six
+fields:
+
+```rust
+pub struct CapabilityTokenV2 {
+    pub chain_depth: u8,
+    pub chain_parent: [u8; 32],
+    pub audience_did: String,
+    pub channel_id: [u8; 16],
+    pub expires_at_unix_secs: u64,
+    pub issuer_did: String,
+}
+```
+
+There is no macaroon in it, and no capability key, and nothing a holder could
+present. `CapabilityBundleV2` wraps that with a holder record and a discharge
+macaroon — and the discharge is empty for a root mint. So the RFC's V2 wire form
+is a **descriptor envelope**. The implementation reproduces that schema field for
+field. On this point the implementation did not drift; it complied.
+
+The byte-ification is a real and separate defect, and it is now fixed: the two
+producers write canonical `HolderRecord` bytes and agree byte for byte. But
+byte-ification cannot explain a missing capability, because the typed version was
+missing one too.
+
+**So this is a Layer A defect and the fix belongs to the RFC, not to a mission.**
+RFC-0009 is RFC-frozen and changes only by semver-major amendment, which is why
+the route is a draft amendment rather than a patch here.
+
+### The consumer measurement that settles the direction
+
+Counting who actually reads each wire form in this workspace gives a result that
+inverts the assumption the cutover was built on.
+
+| Wire form                     | Production consumers                                                                                           | Test-only consumers         |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| v1 macaroon wire              | **2** — `verify_with_resolve` (the production verification path) and the `WALLET_ATTENUATE_CAPABILITY` handler | several                     |
+| `CapabilityBundleV2` envelope | **0**                                                                                                          | every call site in the repo |
+
+Every `CapabilityBundleV2Envelope::canonical_de` in the workspace is inside a
+test. Production writes the V2 bundle from two mint handlers and reads it
+nowhere. Meanwhile `ProductionCapabilityVerifier::verify` takes a `&str` — the v1
+wire — and the attenuate handler takes `existing_token_wire` — also v1. **The
+credential the system verifies is not the credential the system issues.**
+
+That is why the loop did not run when persistence was fixed. It is not a
+missing link in a chain; it is two ends of the chain that were never joined, and
+the cutover mission moved the issuing end without moving either consumer.
+
+The honest reading is that the V2 bundle-as-credential was a regression that
+replaced a working payload with a non-credential. Reverting the mint response to
+the v1 macaroon wire is the direction the measurement supports; whether the V2
+bundle survives as a scoped descriptor is the maintainers' call, and it is
+written up as draft RFC-0009-A1 rather than decided here.
+
 ## Root cause: the RFC specified typed fields, and the implementation byte-ified them
 
 This is the part that makes the finding fixable rather than merely real.

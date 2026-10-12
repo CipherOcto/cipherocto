@@ -206,14 +206,15 @@ Once accepted:
 
 ### Process & Meta (RFC-0000-0099)
 
-| RFC                     | Title                            | Status   | Description                                                         |
-| ----------------------- | -------------------------------- | -------- | ------------------------------------------------------------------- |
-| RFC-0000 (Process/Meta) | CipherOcto Architecture Overview | Draft    | System architecture                                                 |
-| RFC-0001 (Process/Meta) | Mission Lifecycle                | Accepted | Mission framework                                                   |
-| RFC-0002 (Process/Meta) | Agent Manifest Specification     | Accepted | Agent definition                                                    |
-| RFC-0003 (Process/Meta) | Deterministic Execution Standard | Draft    | Core determinism requirements                                       |
-| RFC-0004 (Process/Meta) | Implementation Roadmap           | Draft    | Phased implementation plan                                          |
-| RFC-0011-x (Process)    | Wallet Store Identity Substrate  | Draft    | `WalletStore`, the unlock split, and the `OctoCliError` slots 92-94 |
+| RFC                     | Title                             | Status   | Description                                                                                                       |
+| ----------------------- | --------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
+| RFC-0000 (Process/Meta) | CipherOcto Architecture Overview  | Draft    | System architecture                                                                                               |
+| RFC-0001 (Process/Meta) | Mission Lifecycle                 | Accepted | Mission framework                                                                                                 |
+| RFC-0002 (Process/Meta) | Agent Manifest Specification      | Accepted | Agent definition                                                                                                  |
+| RFC-0003 (Process/Meta) | Deterministic Execution Standard  | Draft    | Core determinism requirements                                                                                     |
+| RFC-0004 (Process/Meta) | Implementation Roadmap            | Draft    | Phased implementation plan                                                                                        |
+| RFC-0011-x (Process)    | Wallet Store Identity Substrate   | Draft    | `WalletStore`, the unlock split, and the `OctoCliError` slots 92-94                                               |
+| RFC-0009-A1 (Process)   | The V2 Bundle Is Not A Credential | Draft    | Restore the v1 macaroon wire as the mint response payload; the V2 bundle describes a capability without being one |
 
 > **This table is not a complete index of the RFC-0011 family.** RFC-0011 and its
 > amendments `-a` through `-w` are accepted and unindexed here, so the absence of a

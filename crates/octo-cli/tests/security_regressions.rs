@@ -4020,3 +4020,122 @@ fn every_dispatched_payload_kind_is_driven_through_an_envelope_in_tests() {
          Add a test that builds a NodeEnvelope for the kind and calls handle_envelope."
     );
 }
+
+/// A mission may assert that its named test vectors exist by exact name.
+/// When it does, that assertion is checkable, so it is checked.
+const EXACT_VECTOR_NAME_CLAIM: &str = "exists under its specified name";
+
+/// When a mission claims its vectors exist under their specified names, the
+/// names must resolve to functions in the tree.
+///
+/// Three missions in this arc carried a "the vectors exist" claim that did not
+/// survive contact with the code: `0957-phase2c` (two of four never written),
+/// `0009-e3` (three of five present but red), and `0009-e4` (one of four absent
+/// as a function). None was caught by reading the mission.
+///
+/// **Scope is deliberately narrow.** This only fires on missions that make the
+/// exact-name claim, and only on names in the first column of their
+/// §Test vectors table. A wider scan over every backticked identifier produces
+/// far more hits and they do not mean the same thing — a name that resolves to
+/// nothing may have been renamed, which is a different and much weaker finding.
+/// Calibration mattered: the first version of this scan reported 51 missions,
+/// which was wrong in both directions until the type-name and rename confusions
+/// were removed.
+#[test]
+fn missions_claiming_named_vectors_have_those_names_in_the_tree() {
+    let root = workspace_root();
+    let missions_dir = root.join("missions");
+
+    // Every `fn NAME` in the workspace.
+    let mut defined: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for rs in walk_rs(&root.join("crates")) {
+        if let Ok(text) = std::fs::read_to_string(&rs) {
+            for line in text.lines() {
+                let trimmed = line.trim_start();
+                let rest = trimmed
+                    .strip_prefix("pub ")
+                    .or_else(|| trimmed.strip_prefix("pub(crate) "))
+                    .unwrap_or(trimmed);
+                let rest = rest.strip_prefix("async ").unwrap_or(rest);
+                if let Some(after) = rest.strip_prefix("fn ") {
+                    let name: String = after
+                        .chars()
+                        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                        .collect();
+                    if !name.is_empty() {
+                        defined.insert(name);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut violations: Vec<String> = Vec::new();
+    let mut checked = 0_usize;
+
+    for dir in ["claimed", "archived"] {
+        let mut files: Vec<std::path::PathBuf> = walk_rs(&missions_dir.join(dir))
+            .into_iter()
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("md"))
+            .collect();
+        files.sort();
+        for path in files {
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let lower = text.to_lowercase();
+            if !lower.contains(EXACT_VECTOR_NAME_CLAIM) {
+                continue;
+            }
+            let Some(start) = lower.find("## test vectors") else {
+                continue;
+            };
+            let end = text[start..]
+                .find("\n## ")
+                .map(|i| start + i)
+                .unwrap_or(text.len());
+            let section = &text[start..end];
+
+            // First cell of each table row is the vector name.
+            let mut names: Vec<&str> = Vec::new();
+            for row in section.lines() {
+                let row = row.trim();
+                if !row.starts_with('|') {
+                    continue;
+                }
+                let first = row.trim_matches('|').split('|').next().unwrap_or("");
+                for token in first.split('`') {
+                    if token.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                        && token.len() > 3
+                    {
+                        names.push(token);
+                    }
+                }
+            }
+            checked += 1;
+
+            let missing: Vec<&str> = names
+                .iter()
+                .copied()
+                .filter(|n| !defined.contains(*n))
+                .collect();
+            if !missing.is_empty() {
+                let rel = path
+                    .strip_prefix(&root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                violations.push(format!("{rel}: {missing:?}"));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "missions claim their vectors exist under their specified names, but these \
+         names resolve to no function in the tree: {violations:?}. Either the test is \
+         missing — in which case write it — or it was renamed, in which case update the \
+         mission. A ticked criterion and a green vector are different claims; this \
+         guard is what keeps them the same one. Scanned {checked} mission(s)."
+    );
+}

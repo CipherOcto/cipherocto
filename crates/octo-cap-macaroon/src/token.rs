@@ -659,6 +659,54 @@ mod tests {
             .expect("a genuine holder signature must verify through dispatch");
     }
 
+    /// The holder signature binds the **key**, not just the message.
+    ///
+    /// A token carries `holder_pub` and a signature. If verification used the
+    /// token's own `holder_pub` without the signature actually being bound to
+    /// it, a holder could re-point a capability at a key they control and the
+    /// check would still pass. This is the property that makes `holder_pub`
+    /// safe to carry in-band at all.
+    ///
+    /// Named for mission `0009-e4`'s vector of this name, which the mission
+    /// claimed existed under its exact name and did not. Nothing in the
+    /// workspace reassigned `holder_pub` at all, so the binding had no direct
+    /// coverage: the adjacent `a_tampered_holder_signature_is_still_rejected`
+    /// flips a byte under the same key, which leaves the key-binding question
+    /// untouched because the signature there is garbage either way.
+    ///
+    /// **What it is and is not proven to catch.** Removing the signature
+    /// verification outright turns this red — but so does the adjacent test, so
+    /// that mutant does not distinguish them and is not claimed as if it did.
+    /// What is new here is the *shape*: an otherwise valid signature paired
+    /// with the wrong key, which no other test in the crate constructs.
+    #[test]
+    fn a_token_minted_under_one_key_never_verifies_for_another() {
+        let (mut token, signer) = minted_token();
+        token
+            .verify_holder_sig()
+            .expect("control: the genuine token verifies");
+
+        // A different key, with its own valid public key.
+        let other_key = [0x24u8; 32];
+        let other_vk = ed25519_dalek::SigningKey::from_bytes(&other_key)
+            .verifying_key()
+            .to_bytes();
+
+        // Same signature, re-pointed at the other key.
+        token.holder_pub = other_vk.to_vec();
+        assert!(
+            token.verify_holder_sig().is_err(),
+            "a signature minted under one key must not verify against another key"
+        );
+
+        // And the genuine binding still holds after restoring it, so the
+        // refusal above is about the key and not a broken token.
+        token.holder_pub = signer.pub_bytes.to_vec();
+        token
+            .verify_holder_sig()
+            .expect("restoring the real holder key must verify again");
+    }
+
     #[test]
     fn a_token_naming_an_unregistered_algorithm_is_refused() {
         // The property that matters. Before this, `verify_holder_sig`

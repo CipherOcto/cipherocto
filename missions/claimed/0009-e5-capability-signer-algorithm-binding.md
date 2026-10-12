@@ -139,6 +139,22 @@ constraint applies and the prefix would need to be a field there too. That
 would change the wire format and the three-segment shape, and it should be
 decided on its own evidence.
 
+> **ANNOTATED 2026-10-12 — the last vector below does not exist under that
+> name, and should not be created.**
+>
+> `mismatched_algorithm_and_signature_are_refused` resolves to no function in
+> the workspace. Writing it was considered and rejected: its property — "a wrong
+> pairing cannot be constructed" — is already covered by two existing tests,
+> `a_token_naming_an_unregistered_algorithm_is_refused` for the wrong algorithm
+> and `a_tampered_holder_signature_is_still_rejected` for the wrong signature.
+> Only one algorithm is registered in this crate's test registry, so a
+> third test under this name would be a near-duplicate of one of them, which is
+> worse than the gap: it would look like coverage and add none.
+>
+> **The vector name is wrong, not the coverage.** The honest fix is to record
+> which tests carry the property, which is what this banner does. The other
+> three vectors exist under their exact names.
+
 ## Test vectors
 
 | Vector                                                 | What it pins                              |
@@ -146,7 +162,8 @@ decided on its own evidence.
 | `mint_records_the_signers_own_algorithm`               | the token claims what the signer named    |
 | `a_non_ed25519_survivor_is_not_downgraded_by_the_wire` | the round-trip does not silently re-stamp |
 | `the_algorithm_survives_the_wire_round_trip`           | the field is transported, not re-invented |
-| `mismatched_algorithm_and_signature_are_refused`       | a wrong pairing cannot be constructed     |
+| `a_token_naming_an_unregistered_algorithm_is_refused`  | a wrong algorithm cannot verify           |
+| `a_tampered_holder_signature_is_still_rejected`        | a wrong signature cannot verify           |
 
 ## Acceptance criteria
 

@@ -99,6 +99,21 @@ is the design below.
   the `envelope_v2`-style inquiry into whether its input is already
   domain-separated.
 
+> **ANNOTATED 2026-10-12 — one of the four vectors below did not exist.**
+>
+> The acceptance criterion "Every vector above exists under its specified name"
+> was not true. `a_token_minted_under_one_key_never_verifies_for_another`
+> resolved to no function anywhere in the workspace, and nothing in the crate
+> reassigned `holder_pub` at all, so the property had no direct coverage: the
+> adjacent test flips a byte in the signature under the **same** key, which
+> leaves the key-binding question untouched.
+>
+> The test now exists under exactly this name and passes. Found by scanning
+> missions whose acceptance criteria claim vectors exist by exact name and
+> checking each name against the tree — two missions made that claim and both
+> were false. This is the third mission in this arc whose "vectors exist" claim
+> did not survive contact with the code, after `0957-phase2c` and `0009-e3`.
+
 ## Test vectors
 
 | Vector                                                    | What it pins                                           |

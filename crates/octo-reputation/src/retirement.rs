@@ -8,8 +8,9 @@
 //!    parity score ≥ 0.999 (basis points × 10_000 encoded as `u32`).
 //! 2. **Bucket coverage** — the evidence bundle covers at least
 //!    `MIN_RETIREMENT_BUCKET_COUNT` distinct 1h buckets.
-//! 3. **Governance authorisation** — a fresh governance snapshot with quorum
-//!    ≥ `GOVERNANCE_QUORUM` and a non-trivial signature set.
+//! 3. **Governance authorisation** — a fresh governance snapshot whose
+//!    `members` list reaches `GOVERNANCE_QUORUM` entries, and a signature
+//!    blob of at least `MIN_RETIREMENT_SIGNATURE_BYTES`.
 //!
 //! Real signature verification is **deferred** to whichever mission owns
 //! governance key provisioning — see `docs/05-process/engineering-rules.md` §Deferred versus unspecified. The stub
@@ -17,9 +18,24 @@
 //!
 //! - Asserts the snapshot is fresh (`MAX_GOVERNANCE_SNAPSHOT_AGE_SECS`).
 //! - Asserts the snapshot's `governance_set_hash` matches the proof claim.
-//! - Asserts the snapshot has quorum (≥ 3 distinct members).
+//!   **This is self-consistency, not authorisation.** Both sides are fields
+//!   the caller supplies, so agreement between them proves only that the
+//!   caller filled in both. RFC-0968 requires this hash to be checked
+//!   against `GovernanceRegistry::lookup_at_snapshot`'s active-set digest,
+//!   which is a lookup against state this function never consults.
+//! - Asserts `snapshot.members.len() >= GOVERNANCE_QUORUM`. It counts
+//!   entries. It does not check the members are distinct, and it does not
+//!   verify anything about any of them, so repeating one 32-byte value
+//!   three times satisfies it.
 //! - Asserts the proof carries a signature blob of at least
-//!   `MIN_RETIREMENT_SIGNATURE_BYTES` (>= 96 bytes = 3 × 32-byte sigs).
+//!   `MIN_RETIREMENT_SIGNATURE_BYTES` (>= 96 bytes). That is a length
+//!   check on bytes that are never parsed. RFC-0968 specifies an Ed25519
+//!   `signature: [u8; 64]` verified against `governance_pubkey`.
+//!
+//! A caller who can reach this function can therefore produce a `GovernanceProof`
+//! that passes it without holding a governance key: a fresh `finalized_at_unix`,
+//! a set hash matching itself, three members, and 96 bytes of anything. What
+//! is missing is tracked in `missions/deferred/0968-b-governance-proof-verification.md`.
 //!
 //! Returns `RetirementEligibility { eligible, since_unix, evidence_hash, adapter }`
 //! on success. The `evidence_hash` is the canonical envelope:
@@ -72,14 +88,22 @@ fn known_adapter(a: u8) -> bool {
     KNOWN_ADAPTERS.contains(&a)
 }
 
-/// Stub-verify a `GovernanceProof` shape. Returns `Ok(())` iff:
+/// Shape-check a `GovernanceProof`. Returns `Ok(())` iff:
 ///
 /// - snapshot is fresh against `now_unix`
 /// - snapshot's `governance_set_hash` equals the proof's claim
-/// - snapshot has quorum (≥ `GOVERNANCE_QUORUM` distinct members)
+/// - `snapshot.members` holds at least `GOVERNANCE_QUORUM` entries
 /// - proof signature blob is at least `MIN_RETIREMENT_SIGNATURE_BYTES`
 ///
-/// Real signature verification is deferred.
+/// **None of these is an authorisation check.** The set-hash comparison is
+/// self-consistency between two caller-supplied fields, the member count is
+/// a length with no distinctness and nothing verified about the members, and
+/// the signature check is a length on bytes that are never parsed. RFC-0968
+/// requires an Ed25519 signature checked against `governance_pubkey` and a
+/// set hash checked against the governance registry's active-set digest.
+///
+/// Real signature verification is deferred. See the module docs and
+/// `missions/deferred/0968-b-governance-proof-verification.md`.
 pub fn stub_verify_proof_shape(
     proof: &GovernanceProof,
     now_unix: u64,

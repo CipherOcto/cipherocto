@@ -14,7 +14,6 @@ use crate::auth::{
     Attestation, AttestorId, AttestorRegistration, GovernanceProof, GovernanceSnapshot,
     SuspensionAuth,
 };
-use crate::constants::GOVERNANCE_QUORUM;
 use crate::error::ReputationError;
 use crate::gossip::GossipCatchUp;
 use crate::recorder::verify_registration;
@@ -313,21 +312,7 @@ impl ReputationStore for InMemoryReputationStore {
         snapshot: &GovernanceSnapshot,
         now_unix: u64,
     ) -> StoreResult<()> {
-        if !snapshot.is_fresh(now_unix) {
-            return Err(ReputationError::GovernanceSnapshotStale {
-                age_secs: snapshot.age_secs(now_unix),
-                max: crate::constants::MAX_GOVERNANCE_SNAPSHOT_AGE_SECS,
-            });
-        }
-        if snapshot.governance_set_hash != auth.governance_set_hash {
-            return Err(ReputationError::GovernanceSetHashMismatch);
-        }
-        if !snapshot.meets_quorum() {
-            return Err(ReputationError::GovernanceQuorumNotMet {
-                signatures: snapshot.quorum_count(),
-                quorum: GOVERNANCE_QUORUM,
-            });
-        }
+        crate::auth::verify_governance_snapshot(snapshot, &auth.governance_set_hash, now_unix)?;
         // The signature over the canonical suspension digest. This is
         // the check the module doc used to claim and did not perform: without
         // it a `GovernanceProof` with an arbitrary `recorder_id` suspends or
@@ -378,21 +363,7 @@ impl ReputationStore for InMemoryReputationStore {
         // internally; it now takes the caller's reference timestamp, which is
         // the same value the signature is verified against, so freshness and
         // authenticity cannot disagree about what "now" was.
-        if !snap.is_fresh(now_unix) {
-            return Err(ReputationError::GovernanceSnapshotStale {
-                age_secs: snap.age_secs(now_unix),
-                max: crate::constants::MAX_GOVERNANCE_SNAPSHOT_AGE_SECS,
-            });
-        }
-        if snap.governance_set_hash != proof.governance_set_hash {
-            return Err(ReputationError::GovernanceSetHashMismatch);
-        }
-        if !snap.meets_quorum() {
-            return Err(ReputationError::GovernanceQuorumNotMet {
-                signatures: snap.quorum_count(),
-                quorum: GOVERNANCE_QUORUM,
-            });
-        }
+        crate::auth::verify_governance_snapshot(&snap, &proof.governance_set_hash, now_unix)?;
         let dest = proof
             .slash_destination
             .ok_or(ReputationError::SlashDestinationMismatch {
@@ -699,11 +670,7 @@ mod tests {
         octo_algo_ed25519::install().expect("install ed25519");
         let store = InMemoryReputationStore::new();
         let now = crate::migrations::now_unix();
-        let snapshot = GovernanceSnapshot {
-            finalized_at_unix: now,
-            governance_set_hash: [7u8; 32],
-            members: vec![[1u8; 32], [2u8; 32], [3u8; 32]],
-        };
+        let snapshot = GovernanceSnapshot::consistent(now, vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
         let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
         let recorder_id = RecorderId::from_u64(42);
         let reason_hash = [0xABu8; 32];
@@ -722,7 +689,7 @@ mod tests {
                 .to_bytes()
                 .to_vec(),
             snapshot: snapshot.clone(),
-            governance_set_hash: [7u8; 32],
+            governance_set_hash: snapshot.governance_set_hash,
         };
         store
             .verify_governance_suspension(&auth, &snapshot, now)
@@ -747,11 +714,7 @@ mod tests {
         octo_algo_ed25519::install().expect("install ed25519");
         let store = InMemoryReputationStore::new();
         let now = crate::migrations::now_unix();
-        let snapshot = GovernanceSnapshot {
-            finalized_at_unix: now,
-            governance_set_hash: [7u8; 32],
-            members: vec![[1u8; 32], [2u8; 32], [3u8; 32]],
-        };
+        let snapshot = GovernanceSnapshot::consistent(now, vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
         let named = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
         let other = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32]);
         let recorder_id = RecorderId::from_u64(42);
@@ -769,7 +732,7 @@ mod tests {
                 .to_bytes()
                 .to_vec(),
             snapshot: snapshot.clone(),
-            governance_set_hash: [7u8; 32],
+            governance_set_hash: snapshot.governance_set_hash,
         };
         assert!(
             store
@@ -798,11 +761,8 @@ mod tests {
 
         // Genuine signature, distinct members — the only thing changed below is
         // the member set.
-        let mut snapshot = GovernanceSnapshot {
-            finalized_at_unix: now,
-            governance_set_hash: [7u8; 32],
-            members: vec![[1u8; 32], [2u8; 32], [3u8; 32]],
-        };
+        let mut snapshot =
+            GovernanceSnapshot::consistent(now, vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
         let auth = SuspensionAuth {
             governance_algorithm_id: crate::auth::default_governance_algorithm_id(),
             governance_pubkey: pubkey,
@@ -810,16 +770,21 @@ mod tests {
             reason_hash,
             signature,
             snapshot: snapshot.clone(),
-            governance_set_hash: [7u8; 32],
+            governance_set_hash: snapshot.governance_set_hash,
         };
         store
             .verify_governance_suspension(&auth, &snapshot, now)
             .await
             .expect("the control must verify before the negative case means anything");
 
+        // Re-derive the set hash with the degenerate members. Leaving it at the
+        // control's value would trip `GovernanceSetHashMismatch` first and the
+        // test would pass without ever reaching the quorum check.
         snapshot.members = vec![[0xAB; 32]; 3];
+        snapshot.governance_set_hash = crate::auth::governance_set_hash(&snapshot.members);
         let degenerate = SuspensionAuth {
             snapshot: snapshot.clone(),
+            governance_set_hash: snapshot.governance_set_hash,
             ..auth
         };
         let err = store
@@ -830,6 +795,78 @@ mod tests {
             err.discriminant(),
             0x12,
             "three copies of one member must not satisfy a 3-of-3 quorum"
+        );
+    }
+
+    /// A snapshot whose claimed set hash disagrees with its own members.
+    ///
+    /// Both fields a caller can pair — the snapshot's `governance_set_hash`
+    /// and the record's — are filled in together by whoever builds the proof,
+    /// so comparing one against the other proves only that the caller was
+    /// self-consistent. Before the canonical derivation was checked against the
+    /// members, a proof could claim one set hash while shipping a different
+    /// member set, and the equality held.
+    ///
+    /// The members below are *distinct*, so quorum is satisfied and the
+    /// `meets_quorum` check cannot be what refuses this. Only
+    /// `set_hash_matches_members` can.
+    #[tokio::test]
+    async fn suspension_refuses_a_set_hash_that_disagrees_with_its_members() {
+        octo_algo_ed25519::install().expect("install ed25519");
+        let store = InMemoryReputationStore::new();
+        let now = crate::migrations::now_unix();
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let recorder_id = RecorderId::from_u64(42);
+        let reason_hash = [0xABu8; 32];
+        let pubkey = sk.verifying_key().to_bytes().to_vec();
+        let digest =
+            crate::auth::governance_suspension_digest(&recorder_id, &reason_hash, &pubkey, now);
+        let signature = ed25519_dalek::Signer::sign(&sk, &digest)
+            .to_bytes()
+            .to_vec();
+
+        // Genuine signature over a snapshot whose set hash is derived from its
+        // members — the control must verify, or the negative case means nothing.
+        let mut snapshot =
+            GovernanceSnapshot::consistent(now, vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
+        let auth = SuspensionAuth {
+            governance_algorithm_id: crate::auth::default_governance_algorithm_id(),
+            governance_pubkey: pubkey,
+            recorder_id,
+            reason_hash,
+            signature,
+            snapshot: snapshot.clone(),
+            governance_set_hash: snapshot.governance_set_hash,
+        };
+        store
+            .verify_governance_suspension(&auth, &snapshot, now)
+            .await
+            .expect("the control must verify before the negative case means anything");
+
+        // Swap in a different — still distinct, still quorum-sized — member set
+        // while the claimed set hash stays put. The record's own
+        // `governance_set_hash` is updated to match, so the equality between the
+        // two caller-controlled fields still holds.
+        snapshot.members = vec![[9u8; 32], [8u8; 32], [7u8; 32]];
+        assert_eq!(snapshot.members.len(), snapshot.quorum_count() as usize);
+        assert!(
+            snapshot.meets_quorum(),
+            "quorum must hold, or this test would be measuring the quorum check"
+        );
+        let mismatched = SuspensionAuth {
+            snapshot: snapshot.clone(),
+            governance_set_hash: snapshot.governance_set_hash,
+            ..auth
+        };
+        let err = store
+            .verify_governance_suspension(&mismatched, &snapshot, now)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.discriminant(),
+            0x13,
+            "a claimed set hash that is not the canonical hash of the members \
+             it ships must be refused as a mismatch"
         );
     }
 
@@ -851,11 +888,7 @@ mod tests {
             .to_vec();
         assert_eq!(pubkey.len(), 33, "the record must be able to carry this");
 
-        let snapshot = GovernanceSnapshot {
-            finalized_at_unix: now,
-            governance_set_hash: [7u8; 32],
-            members: vec![[1u8; 32], [2u8; 32], [3u8; 32]],
-        };
+        let snapshot = GovernanceSnapshot::consistent(now, vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
         let recorder_id = RecorderId::from_u64(42);
         let reason_hash = [0xABu8; 32];
 
@@ -875,7 +908,7 @@ mod tests {
             reason_hash,
             signature,
             snapshot: snapshot.clone(),
-            governance_set_hash: [7u8; 32],
+            governance_set_hash: snapshot.governance_set_hash,
         };
 
         store
@@ -982,19 +1015,15 @@ mod tests {
         // freshness gate to pass; use `crate::migrations::now_unix()`
         // as the finalized_at_unix so the snapshot's age = 0.
         let now = crate::migrations::now_unix();
-        let snap = GovernanceSnapshot {
-            finalized_at_unix: now,
-            governance_set_hash: [0u8; 32],
-            members: vec![[1u8; 32], [2u8; 32], [3u8; 32]],
-        };
+        let snap = GovernanceSnapshot::consistent(now, vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
         let proof = GovernanceProof {
             governance_algorithm_id: crate::auth::default_governance_algorithm_id(),
             governance_pubkey: vec![1u8; 32],
             recorder_id: RecorderId::from_u64(0),
             reason_hash: [0u8; 32],
             signature: vec![],
+            governance_set_hash: snap.governance_set_hash,
             snapshot: snap,
-            governance_set_hash: [0u8; 32],
             slash_destination: None,
             slash_amount: 100,
             slash_asset: AssetTag::Octo,
@@ -1018,20 +1047,17 @@ mod tests {
         now: u64,
     ) -> GovernanceProof {
         let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        // Distinct: quorum counts distinct members, so three copies
+        // of one value is not a 3-of-3 set.
+        let snapshot = GovernanceSnapshot::consistent(now, vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
         let mut proof = GovernanceProof {
             governance_algorithm_id: crate::auth::default_governance_algorithm_id(),
             governance_pubkey: sk.verifying_key().to_bytes().to_vec(),
             recorder_id,
             reason_hash: [0xAB; 32],
             signature: Vec::new(),
-            snapshot: GovernanceSnapshot {
-                finalized_at_unix: now,
-                governance_set_hash: [0u8; 32],
-                // Distinct: quorum counts distinct members, so three copies
-                // of one value is not a 3-of-3 set.
-                members: vec![[1u8; 32], [2u8; 32], [3u8; 32]],
-            },
-            governance_set_hash: [0u8; 32],
+            governance_set_hash: snapshot.governance_set_hash,
+            snapshot,
             slash_destination: Some(destination),
             slash_amount: amount,
             slash_asset: asset,
@@ -1064,12 +1090,58 @@ mod tests {
             now,
         );
         // Same shape and a genuine signature — only the member set is degenerate.
+        // Re-derive both set hashes with it: leaving them at the control's value
+        // would trip `GovernanceSetHashMismatch` first, and this test would pass
+        // without ever reaching the quorum check.
         proof.snapshot.members = vec![[0xAB; 32]; 3];
+        proof.snapshot.governance_set_hash =
+            crate::auth::governance_set_hash(&proof.snapshot.members);
+        proof.governance_set_hash = proof.snapshot.governance_set_hash;
         let err = store.slash_recorder(proof, now).await.unwrap_err();
         assert_eq!(
             err.discriminant(),
             0x12,
             "three copies of one member must not satisfy a 3-of-3 quorum"
+        );
+    }
+
+    /// The slash twin of
+    /// `suspension_refuses_a_set_hash_that_disagrees_with_its_members`.
+    ///
+    /// Both stores carry their own copy of this verification, and the slash
+    /// path is the one that actually moves funds — so a check wired into
+    /// suspension and not slash would leave the worse of the two unguarded.
+    /// Distinct members again, so `meets_quorum` cannot be what refuses this.
+    #[tokio::test]
+    async fn slash_recorder_refuses_a_set_hash_that_disagrees_with_its_members() {
+        let store = InMemoryReputationStore::new();
+        let now = crate::migrations::now_unix();
+        let mut proof = signed_slash_proof(
+            RecorderId::from_u64(0),
+            SlashDestination::Treasury,
+            100,
+            AssetTag::Octo,
+            now,
+        );
+        // A second, distinct and quorum-sized member set. Unlike the repeated
+        // -members test above, the hash is deliberately *not* re-derived: that
+        // disagreement is the thing under test.
+        proof.snapshot.members = vec![[9u8; 32], [8u8; 32], [7u8; 32]];
+        assert!(
+            proof.snapshot.meets_quorum(),
+            "quorum must hold, or this test would be measuring the quorum check"
+        );
+        assert_eq!(
+            proof.snapshot.governance_set_hash, proof.governance_set_hash,
+            "the two caller-controlled fields must still agree, or the equality \
+             check would refuse this instead of the one under test"
+        );
+        let err = store.slash_recorder(proof, now).await.unwrap_err();
+        assert_eq!(
+            err.discriminant(),
+            0x13,
+            "a claimed set hash that is not the canonical hash of the members \
+             it ships must be refused as a mismatch"
         );
     }
 
@@ -1151,19 +1223,15 @@ mod tests {
         // Pick a timestamp well in the past so age_secs(now) >
         // MAX_GOVERNANCE_SNAPSHOT_AGE_SECS (600s by default).
         let stale = 1_700_000_000; // ~Jan 2024 (current epoch is 2026)
-        let snap = GovernanceSnapshot {
-            finalized_at_unix: stale,
-            governance_set_hash: [0u8; 32],
-            members: vec![[1u8; 32], [2u8; 32], [3u8; 32]],
-        };
+        let snap = GovernanceSnapshot::consistent(stale, vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
         let proof = GovernanceProof {
             governance_algorithm_id: crate::auth::default_governance_algorithm_id(),
             governance_pubkey: vec![1u8; 32],
             recorder_id: RecorderId::from_u64(0),
             reason_hash: [0u8; 32],
             signature: vec![],
+            governance_set_hash: snap.governance_set_hash,
             snapshot: snap,
-            governance_set_hash: [0u8; 32],
             slash_destination: Some(SlashDestination::Treasury),
             slash_amount: 100,
             slash_asset: AssetTag::Octo,
@@ -1265,11 +1333,7 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let snap = GovernanceSnapshot {
-            finalized_at_unix: now,
-            governance_set_hash: [1u8; 32],
-            members: vec![[1u8; 32], [2u8; 32], [3u8; 32]],
-        };
+        let snap = GovernanceSnapshot::consistent(now, vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
         let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
         let mut proof = GovernanceProof {
             governance_algorithm_id: crate::auth::default_governance_algorithm_id(),
@@ -1277,8 +1341,8 @@ mod tests {
             recorder_id: RecorderId::from_u64(0),
             reason_hash: [0u8; 32],
             signature: Vec::new(),
+            governance_set_hash: snap.governance_set_hash,
             snapshot: snap,
-            governance_set_hash: [1u8; 32],
             slash_destination: None,
             slash_amount: 0,
             slash_asset: AssetTag::None,

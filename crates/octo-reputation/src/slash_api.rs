@@ -237,18 +237,19 @@ mod tests {
         // stub bytes were the reason those tests could not distinguish a
         // working governance path from a bypass.
         let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let snapshot = GovernanceSnapshot::consistent(
+            now_unix,
+            (0..GOVERNANCE_QUORUM).map(|i| [i as u8; 32]).collect(),
+        );
+        let set_hash = snapshot.governance_set_hash;
         let mut proof = GovernanceProof {
             governance_algorithm_id: crate::auth::default_governance_algorithm_id(),
             governance_pubkey: sk.verifying_key().to_bytes().to_vec(),
             recorder_id,
             reason_hash: [0u8; 32],
             signature: Vec::new(),
-            snapshot: GovernanceSnapshot {
-                finalized_at_unix: now_unix,
-                governance_set_hash: [0u8; 32],
-                members: (0..GOVERNANCE_QUORUM).map(|i| [i as u8; 32]).collect(),
-            },
-            governance_set_hash: [0u8; 32],
+            snapshot,
+            governance_set_hash: set_hash,
             slash_destination: destination,
             slash_amount: amount,
             slash_asset: asset,
@@ -453,18 +454,19 @@ mod tests {
             // `build_proof` in the outer test module for why the stub bytes
             // this used to carry are no longer possible.
             let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+            let snapshot = GovernanceSnapshot::consistent(
+                now_unix,
+                (0..GOVERNANCE_QUORUM).map(|i| [i as u8; 32]).collect(),
+            );
+            let set_hash = snapshot.governance_set_hash;
             let mut proof = GovernanceProof {
                 governance_algorithm_id: crate::auth::default_governance_algorithm_id(),
                 governance_pubkey: sk.verifying_key().to_bytes().to_vec(),
                 recorder_id,
                 reason_hash: [0u8; 32],
                 signature: Vec::new(),
-                snapshot: GovernanceSnapshot {
-                    finalized_at_unix: now_unix,
-                    governance_set_hash: [0u8; 32],
-                    members: (0..GOVERNANCE_QUORUM).map(|i| [i as u8; 32]).collect(),
-                },
-                governance_set_hash: [0u8; 32],
+                snapshot,
+                governance_set_hash: set_hash,
                 slash_destination: Some(destination),
                 slash_amount: amount,
                 slash_asset: asset,

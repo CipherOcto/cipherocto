@@ -58,7 +58,7 @@
 //! `0x05` (DcSlash). Operators must run a separate declaration per adapter.
 
 use crate::auth::GovernanceProof;
-use crate::constants::{BLAKE3_REPUTATION_RETIREMENT_DOMAIN, GOVERNANCE_QUORUM};
+use crate::constants::BLAKE3_REPUTATION_RETIREMENT_DOMAIN;
 use crate::error::ReputationError;
 use crate::store::{ReputationStore, StoreResult};
 use crate::types::{ParityEvidence, RetirementEligibility};
@@ -91,38 +91,31 @@ fn known_adapter(a: u8) -> bool {
 /// Shape-check a `GovernanceProof`. Returns `Ok(())` iff:
 ///
 /// - snapshot is fresh against `now_unix`
-/// - snapshot's `governance_set_hash` equals the proof's claim
-/// - `snapshot.members` holds at least `GOVERNANCE_QUORUM` entries
+/// - snapshot's `governance_set_hash` equals the proof's claim **and** is the
+///   canonical hash of the members the proof actually ships
+/// - `snapshot.members` holds at least `GOVERNANCE_QUORUM` **distinct** entries
 ///
-/// **None of these is an authorisation check.** The set-hash comparison is
-/// self-consistency between two caller-supplied fields, the member count is
-/// a length with no distinctness and nothing verified about the members, and
-/// the signature check is a length on bytes that are never parsed. RFC-0968
-/// requires an Ed25519 signature checked against `governance_pubkey` and a
-/// set hash checked against the governance registry's active-set digest.
+/// The delegation to [`crate::auth::verify_governance_snapshot`] is deliberate:
+/// these three checks used to be written out here and again in each store, and
+/// they had drifted — this site checked the members but not the field pair,
+/// the stores checked the field pair but not the members. The claims above
+/// were therefore each true of some sites and false of others.
 ///
-/// Real signature verification is deferred. See the module docs and
+/// **Still not an authorisation check, and still honestly named `stub_`.**
+/// Distinctness is not verification: nothing here shows any member signed
+/// anything, and the member list is supplied by whoever built the proof, so
+/// an attacker authorises themselves by listing themselves. The signature is
+/// verified by the caller through [`crate::auth::verify_governance_signature`],
+/// not here. RFC-0968 additionally requires the set hash checked against the
+/// governance registry's active-set digest, which does not exist yet.
+///
+/// See the module docs and
 /// `missions/deferred/0968-c-governance-proof-verification.md`.
 pub fn stub_verify_proof_shape(
     proof: &GovernanceProof,
     now_unix: u64,
 ) -> Result<(), ReputationError> {
-    if !proof.snapshot.is_fresh(now_unix) {
-        return Err(ReputationError::GovernanceSnapshotStale {
-            age_secs: proof.snapshot.age_secs(now_unix),
-            max: crate::constants::MAX_GOVERNANCE_SNAPSHOT_AGE_SECS,
-        });
-    }
-    if proof.snapshot.governance_set_hash != proof.governance_set_hash {
-        return Err(ReputationError::GovernanceSetHashMismatch);
-    }
-    if !proof.snapshot.meets_quorum() {
-        return Err(ReputationError::GovernanceQuorumNotMet {
-            signatures: proof.snapshot.quorum_count(),
-            quorum: GOVERNANCE_QUORUM,
-        });
-    }
-    Ok(())
+    crate::auth::verify_governance_snapshot(&proof.snapshot, &proof.governance_set_hash, now_unix)
 }
 
 /// Validate a `ParityEvidence` bundle for retirement-gate consumption.
@@ -199,11 +192,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn good_snapshot(now: u64) -> GovernanceSnapshot {
-        GovernanceSnapshot {
-            finalized_at_unix: now,
-            governance_set_hash: [1u8; 32],
-            members: vec![[1u8; 32], [2u8; 32], [3u8; 32]],
-        }
+        GovernanceSnapshot::consistent(now, vec![[1u8; 32], [2u8; 32], [3u8; 32]])
     }
 
     fn good_proof(now: u64) -> GovernanceProof {
@@ -215,14 +204,15 @@ mod tests {
         // precisely why the suite could not tell retirement authorisation
         // from a shape check.
         let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let snapshot = good_snapshot(now);
         let mut proof = GovernanceProof {
             governance_algorithm_id: crate::auth::default_governance_algorithm_id(),
             governance_pubkey: sk.verifying_key().to_bytes().to_vec(),
             recorder_id: RecorderId::from_u64(0),
             reason_hash: [0u8; 32],
             signature: Vec::new(),
-            snapshot: good_snapshot(now),
-            governance_set_hash: [1u8; 32],
+            governance_set_hash: snapshot.governance_set_hash,
+            snapshot,
             slash_destination: None,
             slash_amount: 0,
             slash_asset: AssetTag::None,
@@ -325,6 +315,60 @@ mod tests {
         );
     }
 
+    /// The claimed set hash must match the member list it ships with.
+    ///
+    /// `governance_set_hash(members)` is the canonical derivation and it has
+    /// been in this module the whole time, tested for order independence — and
+    /// called from nowhere but its own test. Every verification site instead
+    /// compared `snapshot.governance_set_hash` against the proof's own claim,
+    /// which are two fields the caller fills in together. So a proof could
+    /// claim one set hash while carrying members that hash to another, and
+    /// pass.
+    ///
+    /// This does **not** close single-key compromise: the members are still
+    /// supplied by whoever builds the proof, so an attacker authorises
+    /// themselves by putting themselves on the list. Closing that needs a
+    /// registry the tree does not have — `missions/deferred/0968-c-governance-proof-verification.md`.
+    /// What it closes is the internal disagreement, which is what the
+    /// canonical function exists to make impossible.
+    #[tokio::test]
+    async fn a_set_hash_that_disagrees_with_its_members_is_refused() {
+        let store = InMemoryReputationStore::new();
+        let now = now_unix();
+        let mut proof = good_proof(now);
+        // Re-sign after the change so the signature stays valid and the set
+        // hash is the only thing wrong with the proof.
+        let claimed = proof.snapshot.governance_set_hash;
+        proof.snapshot.members = vec![[0x11; 32], [0x22; 32], [0x33; 32]];
+        proof.governance_set_hash = claimed;
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let digest = proof.suspension_signature_digest(now);
+        proof.signature = ed25519_dalek::Signer::sign(&sk, &digest)
+            .to_bytes()
+            .to_vec();
+
+        let actual = crate::auth::governance_set_hash(&proof.snapshot.members);
+        assert_ne!(
+            actual, claimed,
+            "the fixture must actually disagree, or this test measures nothing"
+        );
+
+        let err = store
+            .declare_retirement_eligible(
+                ADAPTER_MARKETPLACE,
+                good_evidence(ADAPTER_MARKETPLACE),
+                proof,
+                now,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.discriminant(),
+            0x13,
+            "a set hash that disagrees with its own members must be refused"
+        );
+    }
+
     /// A proof whose signature is truncated must be refused.
     ///
     /// This used to be a length check against a 96-byte threshold, and the
@@ -364,11 +408,7 @@ mod tests {
         let now = now_unix();
         let mut proof = good_proof(now);
         // Snapshot is far in the past — past the staleness threshold.
-        proof.snapshot = GovernanceSnapshot {
-            finalized_at_unix: 0,
-            governance_set_hash: [1u8; 32],
-            members: vec![[1u8; 32], [2u8; 32], [3u8; 32]],
-        };
+        proof.snapshot = GovernanceSnapshot::consistent(0, vec![[1u8; 32], [2u8; 32], [3u8; 32]]);
         let err = store
             .declare_retirement_eligible(
                 ADAPTER_MARKETPLACE,

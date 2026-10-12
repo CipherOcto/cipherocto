@@ -43,6 +43,48 @@ pub struct GovernanceSnapshot {
 }
 
 impl GovernanceSnapshot {
+    /// True iff this snapshot's claimed set hash is the canonical hash of the
+    /// members it actually carries.
+    ///
+    /// [`governance_set_hash`] has been in this module the whole time, with a
+    /// test for order independence, and was called from nowhere but that test.
+    /// Every verification site instead compared `governance_set_hash` against
+    /// the proof's own claim — two fields the caller fills in together — so a
+    /// proof could claim one set hash while shipping members that hash to
+    /// another and pass.
+    ///
+    /// **This does not make the member list trustworthy.** The members are
+    /// still supplied by whoever built the proof, so an attacker authorises
+    /// themselves by listing themselves. Closing that needs a registry of
+    /// accepted sets, which does not exist in the tree — see
+    /// `missions/deferred/0968-c-governance-proof-verification.md`. What this
+    /// closes is the internal disagreement, which is precisely what the
+    /// canonical derivation exists to make impossible.
+    #[must_use]
+    pub fn set_hash_matches_members(&self) -> bool {
+        governance_set_hash(&self.members) == self.governance_set_hash
+    }
+}
+
+#[cfg(test)]
+impl GovernanceSnapshot {
+    /// A snapshot whose set hash is the canonical hash of its members.
+    ///
+    /// Test fixtures used to pair an arbitrary literal hash with an unrelated
+    /// member list, which passed while the set hash was only ever compared
+    /// against the proof's own claim. `set_hash_matches_members` now rejects
+    /// exactly that, so fixtures say what they mean through this constructor
+    /// instead of repeating a literal nobody had to keep consistent.
+    pub fn consistent(finalized_at_unix: u64, members: Vec<[u8; 32]>) -> Self {
+        Self {
+            finalized_at_unix,
+            governance_set_hash: governance_set_hash(&members),
+            members,
+        }
+    }
+}
+
+impl GovernanceSnapshot {
     pub fn age_secs(&self, now_unix: u64) -> u64 {
         now_unix.saturating_sub(self.finalized_at_unix)
     }
@@ -80,6 +122,56 @@ impl GovernanceSnapshot {
         }
         seen.len() as u32 >= crate::constants::GOVERNANCE_QUORUM
     }
+}
+
+/// The snapshot-level governance checks every path needs, in one place.
+///
+/// Freshness, the set-hash agreement, and distinct-member quorum were written
+/// out five times — twice in the in-memory store, twice in the stoolap store,
+/// once in retirement — and they had already drifted: the in-memory store
+/// compared the two caller-supplied set-hash fields without checking either
+/// against the members they shipped, and retirement checked the members but
+/// not the field pair. One site caught each half of the defect; neither
+/// caught both.
+///
+/// This mirrors [`verify_governance_signature`], which the same call sites
+/// share for the same reason. A site that stops calling this cannot be
+/// detected by a unit test on this function — the guard that catches it is
+/// `every_governance_verification_site_calls_the_shared_snapshot_check` in
+/// `octo-cli`'s security regressions.
+///
+/// **This still does not make the member list trustworthy.** The members are
+/// supplied by whoever built the proof, so an attacker authorises themselves
+/// by listing themselves. Closing that needs a registry of accepted sets,
+/// tracked in `missions/deferred/0968-c-governance-proof-verification.md`.
+///
+/// `now_unix` is a parameter rather than a clock read on purpose. It used to
+/// read the clock internally, and `is_fresh(0)` / `age_secs(0)` returns true /
+/// zero for any `finalized_at_unix`, because `saturating_sub` from zero never
+/// underflows — so a caller could pass any timestamp and freshness would hold.
+/// Taking the same value the signature is verified against means freshness and
+/// authenticity cannot disagree about what "now" was.
+pub fn verify_governance_snapshot(
+    snapshot: &GovernanceSnapshot,
+    claimed_set_hash: &[u8; 32],
+    now_unix: u64,
+) -> Result<(), ReputationError> {
+    if !snapshot.is_fresh(now_unix) {
+        return Err(ReputationError::GovernanceSnapshotStale {
+            age_secs: snapshot.age_secs(now_unix),
+            max: crate::constants::MAX_GOVERNANCE_SNAPSHOT_AGE_SECS,
+        });
+    }
+    if snapshot.governance_set_hash != *claimed_set_hash || !snapshot.set_hash_matches_members() {
+        return Err(ReputationError::GovernanceSetHashMismatch);
+    }
+    if !snapshot.meets_quorum() {
+        return Err(ReputationError::GovernanceQuorumNotMet {
+            signatures: snapshot.quorum_count(),
+            quorum: crate::constants::GOVERNANCE_QUORUM,
+        });
+    }
+    Ok(())
 }
 
 /// Where slashed tokens are routed. RFC-0968 §21 amendment.
@@ -907,11 +999,7 @@ mod tests {
     use ed25519_dalek::{Signer as _, SigningKey};
 
     fn dummy_snapshot(now: u64) -> GovernanceSnapshot {
-        GovernanceSnapshot {
-            finalized_at_unix: now,
-            governance_set_hash: [1u8; 32],
-            members: vec![[1u8; 32], [2u8; 32], [3u8; 32]],
-        }
+        GovernanceSnapshot::consistent(now, vec![[1u8; 32], [2u8; 32], [3u8; 32]])
     }
 
     #[test]
@@ -981,8 +1069,8 @@ mod tests {
             recorder_id: RecorderId::from_u64(42),
             reason_hash: [0xAB; 32],
             signature: vec![0u8; 96],
+            governance_set_hash: dummy_snapshot(now).governance_set_hash,
             snapshot: dummy_snapshot(now),
-            governance_set_hash: [1u8; 32],
             slash_destination: Some(SlashDestination::Treasury),
             slash_amount: 1_000,
             slash_asset: AssetTag::Octo,
@@ -1252,8 +1340,8 @@ mod tests {
             recorder_id,
             reason_hash,
             signature,
+            governance_set_hash: dummy_snapshot(now).governance_set_hash,
             snapshot: dummy_snapshot(now),
-            governance_set_hash: [1u8; 32],
             slash_destination: None,
             slash_amount: 0,
             slash_asset: AssetTag::None,

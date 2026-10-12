@@ -271,7 +271,15 @@ all three red.
 
 - `validate_evidence` and the parity and bucket rules, a separate gate.
 - The Stoolap backend's unimplemented dispatch, which already errors.
-- Suspension and slashing authorisation, which already verify.
+- Suspension and slashing authorisation, which already verify. **This was
+  believed on false grounds.** "Already verify" meant the signature is
+  verified; it did not mean the governance set is checked. Both paths compared
+  the snapshot's `governance_set_hash` against the proof's own claim — two
+  fields the caller fills in together — and `governance_set_hash`, the
+  canonical order-independent derivation of the member list, had been in
+  `auth.rs` with a test for its properties and called from nowhere but that
+  test. A proof could claim one set hash while shipping members that hashed to
+  another, and pass. See the set-hash row below.
 
 ## Acceptance Criteria
 
@@ -293,6 +301,29 @@ all three red.
       Distinctness is still not verification — no member is shown to have
       signed anything — so "distinct, _verified_ signers" remains open and is
       the same gap as the set-hash half below.
+- [x] The claimed set hash is the canonical hash of the members actually
+      shipped. **Done:** `GovernanceSnapshot::set_hash_matches_members`, wired
+      into every verification site, mutation-verified on all three paths
+      (suspension, slash, retirement). A proof claiming one set hash while
+      carrying a different — still distinct, still quorum-sized — member set is
+      refused.
+      The five sites had drifted apart and each caught only half of the
+      disagreement, so each site's tests passed while the other half was open.
+      They now share one implementation,
+      `auth::verify_governance_snapshot`, alongside the existing shared
+      `verify_governance_signature`.
+- [ ] The five sites stay wired to the shared check. **Guarded**, and the guard
+      is derived from the source rather than a list: any function that verifies
+      a governance signature must reach
+      `auth::verify_governance_snapshot`, directly or through one unambiguous
+      delegation. Pairing it with the existing signature guard makes the pair
+      complete by construction — a new governance entry point cannot reach
+      green with only one half.
+      Mutation-verified three ways: dropping a call from a store site, gutting
+      the delegated retirement check, and both stores intact.
+      The helper's own behaviour is **not** covered by that guard — gutting it
+      leaves every call site in place — and is held instead by the three
+      octo-reputation tests, confirmed red against that mutation.
 - [ ] No doc claims a check the code does not perform. **Satisfied for the
       four overstatements found, and deliberately not guarded** — a guard
       over a fixed list of already-corrected phrases is a census, not a check.

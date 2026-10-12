@@ -548,6 +548,71 @@ fn fn_body<'a>(src: &'a str, anchor: &str) -> &'a str {
     &rest[..end]
 }
 
+/// Extract the body of the function whose declaration begins at `header_line`
+/// of `rest`, or `None` if that declaration has no body.
+///
+/// `fn_body` above takes an anchor and cannot span a signature written across
+/// several lines. Every store method that matters here is written that way —
+/// `async fn verify_governance_suspension(` opens on one line and closes on
+/// another — so a caller matching on `fn ... {` found none of them, and this
+/// guard reported zero paths while the floor assertion said so instead of
+/// letting it pass. That is the floor earning its place, but the extraction
+/// still has to be right.
+fn fn_body_from(src: &str, header_line: usize) -> &str {
+    let lines: Vec<&str> = src.lines().collect();
+    let indent_of = |l: &str| l.len() - l.trim_start().len();
+
+    // The body opens on the first line after the declaration that ends in `{`.
+    // A `;` first means this is a trait declaration with nothing to inspect.
+    let mut open = header_line;
+    loop {
+        if open >= lines.len() {
+            return "";
+        }
+        let t = lines[open].trim();
+        if t.ends_with('{') {
+            break;
+        }
+        if t.ends_with(';') || t.is_empty() {
+            return "";
+        }
+        open += 1;
+    }
+
+    let body_indent = lines[open + 1..]
+        .iter()
+        .find(|l| !l.trim().is_empty())
+        .map_or(indent_of(lines[open]), |first| indent_of(first));
+    // The body ends at the first line that is exactly `}` and sits above
+    // `body_indent`; every inner block closes at or deeper than that.
+    let mut end = lines.len();
+    for (i, line) in lines.iter().enumerate().skip(open + 1) {
+        if line.trim() == "}" && indent_of(line) < body_indent {
+            end = i;
+            break;
+        }
+    }
+    let from = lines[..=open].iter().map(|l| l.len() + 1).sum::<usize>();
+    let to = if end >= lines.len() {
+        src.len()
+    } else {
+        lines[..end].iter().map(|l| l.len() + 1).sum::<usize>()
+    };
+    &src[from.min(to)..to]
+}
+
+/// True when a body verifies a governance signature, by either spelling.
+///
+/// The two call sites differ and both are real: the suspension paths call the
+/// shared free function `crate::auth::verify_governance_signature`, while the
+/// slash and retirement paths call the `GovernanceProof` method
+/// `proof.verify_signature`. One predicate, used by both guards below — two
+/// copies is how one of them ends up scanning nothing while reporting green,
+/// which is precisely the failure this work is about.
+fn verifies_governance_signature(body: &str) -> bool {
+    body.contains("verify_governance_signature(") || body.contains(".verify_signature(")
+}
+
 #[test]
 fn c4_every_reputation_store_verifies_the_governance_signature() {
     // The pre-fix defect was duplicated across all three implementations, each
@@ -576,7 +641,7 @@ fn c4_every_reputation_store_verifies_the_governance_signature() {
         ] {
             let body = fn_body(&src, method);
             assert!(
-                body.contains("verify_signature(") || body.contains("verify_governance_signature("),
+                verifies_governance_signature(body),
                 "C-4: {store} {method} does not verify the governance \
                  signature. A {record} would suspend, slash or retire an \
                  arbitrary recorder with no key material."
@@ -650,6 +715,201 @@ fn c4_every_reputation_store_verifies_the_governance_signature() {
         "C-4: these files implement verify_governance_suspension and are not \
          in REPUTATION_STORES and do not purely delegate: {unaccounted:?}. Add \
          them to the list or the governance paths they own go unscanned."
+    );
+}
+
+/// One non-test function found by the walk below.
+struct FnDef {
+    rel: String,
+    name: String,
+    signature: String,
+    body: String,
+}
+
+/// The declared name of a `fn` header line, or `None` if the line is not a
+/// definition (a mention in a body, a macro invocation, a trait declaration).
+fn declared_fn_name(trimmed: &str) -> Option<String> {
+    let after = trimmed.split_once("fn ")?.1;
+    let name: String = after
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+    if name.is_empty() {
+        return None;
+    }
+    Some(name)
+}
+
+/// RULE: any function that verifies a governance **signature** must also verify
+/// the governance **snapshot** it claims authority from, through the one shared
+/// helper `auth::verify_governance_snapshot`.
+///
+/// The snapshot checks — freshness, the set-hash agreement, distinct-member
+/// quorum — were written out five times, twice per store plus once in
+/// retirement, and they had already drifted: retirement checked the members
+/// against the canonical hash but not the proof's own set-hash field, while
+/// both stores checked the two caller-supplied fields against each other but
+/// never against the members they shipped. Each site caught half of the
+/// disagreement, so each site's tests passed while the other half was open.
+///
+/// C-4 above already forces every governance entry point to verify the
+/// signature. Pairing that rule with this one makes the pair complete by
+/// construction rather than by a list somebody has to remember to extend: a
+/// new entry point cannot reach green without both.
+///
+/// **What this does not cover:** the body of
+/// `verify_governance_snapshot` itself. Gutting the helper leaves every call
+/// site intact, so this test stays green — verified by planting exactly that
+/// mutation. The helper's own behaviour is held by the octo-reputation tests
+/// (`a_set_hash_that_disagrees_with_its_members_is_refused` and its two
+/// siblings), which do go red when the checks come out of it. This test is
+/// about wiring, that battery is about behaviour, and neither is asked to do
+/// the other's job.
+#[test]
+fn every_governance_signature_verification_also_verifies_its_snapshot() {
+    // Comments are stripped for the same reason C-4 strips them: both fixes
+    // carry comments naming the helpers, and matching on a comment would let
+    // this pass with the call deleted. That exact mutation was what this
+    // guard's first version would have missed.
+    let src_dir = workspace_root().join("crates/octo-reputation/src");
+    let mut functions: Vec<FnDef> = Vec::new();
+    let mut checked = 0usize;
+    let mut found: Vec<String> = Vec::new();
+    let mut offending: Vec<String> = Vec::new();
+    let mut stack = vec![src_dir];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let Ok(rel) = path.strip_prefix(workspace_root()) else {
+                continue;
+            };
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            let src = strip_comments(&std::fs::read_to_string(&path).unwrap_or_default());
+
+            // Every declaration in the file is a candidate, however its
+            // signature is wrapped — the store methods that matter all split
+            // their signatures over several lines.
+            //
+            // Test functions are identified by the attribute immediately above
+            // them, not by a `#[cfg(test)]` cutoff. A cutoff is wrong here:
+            // `auth.rs` opens a `#[cfg(test)] impl` block near its top, so
+            // cutting at the first marker would truncate the file before the
+            // helper being policed even appears — the walk then reports a
+            // shortfall instead of a violation, which is the wrong answer to
+            // the wrong question.
+            let mut next_is_test = false;
+            for (i, line) in src.lines().enumerate() {
+                let trimmed = line.trim();
+                if trimmed == "#[test]" || trimmed == "#[tokio::test]" {
+                    next_is_test = true;
+                    continue;
+                }
+                if !trimmed.contains("fn ") {
+                    continue;
+                }
+                let is_test = std::mem::take(&mut next_is_test);
+                if is_test {
+                    continue;
+                }
+                let Some(name) = declared_fn_name(trimmed) else {
+                    continue;
+                };
+                let body = fn_body_from(&src, i);
+                functions.push(FnDef {
+                    rel: rel.clone(),
+                    name,
+                    signature: trimmed.to_string(),
+                    body: body.to_string(),
+                });
+            }
+        }
+    }
+
+    // Which functions reach the snapshot check, directly or by delegating.
+    //
+    // `declare_retirement_eligible` in both stores verifies the signature and
+    // reaches the snapshot check through `stub_verify_proof_shape`, one call
+    // away. Demanding a direct call flagged correct code and would have
+    // pushed the fix towards duplicating the check at the call site — the
+    // opposite of what consolidation is for. Resolving the delegation keeps
+    // the rule about the *path* rather than about one line of it.
+    //
+    // A name is resolved crate-wide only where it is unambiguous, so two
+    // unrelated functions sharing a name cannot launder a missing check.
+    //
+    // Membership is per function, not per name. Keying it by name let an
+    // intact `verify_governance_suspension` in one store vouch for a gutted
+    // one in the other — both are called the same thing — and the guard
+    // reported green with the mutation in place. A check that cannot tell two
+    // same-named functions apart is not a check.
+    let mut reaches = vec![false; functions.len()];
+    loop {
+        let mut changed = false;
+        for (i, f) in functions.iter().enumerate() {
+            if reaches[i] {
+                continue;
+            }
+            if f.body.contains("verify_governance_snapshot(") {
+                reaches[i] = true;
+                changed = true;
+                continue;
+            }
+            // Delegation: a name called here that is unique in the crate and
+            // already reaches the check. Unique, because resolving an
+            // ambiguous name would let an unrelated function satisfy the rule
+            // — the direction this guard must never fail in.
+            let delegates = functions.iter().enumerate().any(|(j, target)| {
+                j != i
+                    && target.name != f.name
+                    && functions.iter().filter(|o| o.name == target.name).count() == 1
+                    && f.body.contains(&format!("{}(", target.name))
+                    && reaches[j]
+            });
+            if delegates {
+                reaches[i] = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    for (i, f) in functions.iter().enumerate() {
+        if f.name == "verify_governance_snapshot" {
+            // The helper itself. It cannot call itself.
+            continue;
+        }
+        if !verifies_governance_signature(&f.body) {
+            continue;
+        }
+        checked += 1;
+        found.push(format!("{}: {}", f.rel, f.signature));
+        if !reaches[i] {
+            offending.push(format!("{}: {}", f.rel, f.signature));
+        }
+    }
+    assert!(
+        checked >= 6,
+        "found only {checked} function(s) verifying a governance signature across \
+         octo-reputation/src; the walk is missing the paths it is meant to police, \
+         so a green result here would mean nothing. It found: {found:?}"
+    );
+    assert!(
+        offending.is_empty(),
+        "these functions verify the governance signature but never call \
+         auth::verify_governance_snapshot, so the set hash, the freshness window \
+         and distinct-member quorum are unchecked on them: {offending:?}"
     );
 }
 

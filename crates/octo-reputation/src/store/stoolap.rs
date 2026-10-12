@@ -922,21 +922,7 @@ mod real {
             snapshot: &GovernanceSnapshot,
             now_unix: u64,
         ) -> StoreResult<()> {
-            if !snapshot.is_fresh(now_unix) {
-                return Err(ReputationError::GovernanceSnapshotStale {
-                    age_secs: snapshot.age_secs(now_unix),
-                    max: crate::constants::MAX_GOVERNANCE_SNAPSHOT_AGE_SECS,
-                });
-            }
-            if snapshot.governance_set_hash != auth.governance_set_hash {
-                return Err(ReputationError::GovernanceSetHashMismatch);
-            }
-            if !snapshot.meets_quorum() {
-                return Err(ReputationError::GovernanceQuorumNotMet {
-                    signatures: snapshot.quorum_count(),
-                    quorum: crate::constants::GOVERNANCE_QUORUM,
-                });
-            }
+            crate::auth::verify_governance_snapshot(snapshot, &auth.governance_set_hash, now_unix)?;
             // The same check the memory store makes, through the same shared helper —
             // see `auth::verify_governance_signature`. The all-zero key is
             // rejected inside that helper rather than here, because a check at
@@ -982,21 +968,7 @@ mod real {
 
         async fn slash_recorder(&self, proof: GovernanceProof, now_unix: u64) -> StoreResult<()> {
             let snap = proof.snapshot.clone();
-            if !snap.is_fresh(now_unix) {
-                return Err(ReputationError::GovernanceSnapshotStale {
-                    age_secs: snap.age_secs(now_unix),
-                    max: crate::constants::MAX_GOVERNANCE_SNAPSHOT_AGE_SECS,
-                });
-            }
-            if snap.governance_set_hash != proof.governance_set_hash {
-                return Err(ReputationError::GovernanceSetHashMismatch);
-            }
-            if !snap.meets_quorum() {
-                return Err(ReputationError::GovernanceQuorumNotMet {
-                    signatures: snap.quorum_count(),
-                    quorum: crate::constants::GOVERNANCE_QUORUM,
-                });
-            }
+            crate::auth::verify_governance_snapshot(&snap, &proof.governance_set_hash, now_unix)?;
             if proof.slash_destination.is_none() {
                 return Err(ReputationError::SlashDestinationMismatch {
                     expected: 0,

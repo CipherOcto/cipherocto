@@ -626,6 +626,25 @@ that exists" — a market-side decision about _when_ a capability is bound to an
 ask, owned by RFC-0959 §Phase 3. That is a smaller and more honest mission than
 the one this file was carrying when the verifier shipped.
 
+**That was wrong, and it was wrong because I checked the substrate and not the
+handoff.** Closing the persistence blocker made it possible to try the whole
+loop, and the loop does not run. The mint handler's response payload is the V2
+envelope, which carries no macaroon: it is a 16-byte binary prefix plus borsh,
+`discharge_macaroon_bytes` is empty for a root mint, and the `HolderRecord`
+carries no macaroon either. The holder receives a descriptor of a capability,
+not the capability.
+
+So the substrate for ask binding is real and reachable, and it is still not the
+next thing to build — there is no capability to bind an ask to. The attenuation
+route works on a wire token the holder must already hold, and the node that
+mints never gives them one. The genuine next link is mission `0009-cj` §The V2
+wire form carries whatever a verifier needs; the market-side ask-binding
+decision sits behind that, not beside it.
+
+This is the same mistake the mission already corrects twice in §The blocker named
+by this mission did not block this work: naming the nearest blocker instead of
+the next one. It is easier to do when the nearest one has just been closed.
+
 ## The guard retired itself, which is the point of a guard
 
 `every_verifier_trait_has_a_production_implementation_or_is_accounted_for` went

@@ -15,25 +15,24 @@
 //! - `CAPABILITY_ISSUE` (UUID `0x0009:0005:0000:0000:0000:0000:0000:0001`)
 //! - `CAPABILITY_REVOKE` (UUID `0x0009:0005:0000:0000:0000:0000:0000:0002`)
 //!
-//! Each handler validates `holder_did` / `token_id` shape and returns
-//! a placeholder wire form. The full macaroon substrate
-//! (`CapabilityToken::mint` + `HolderRegistry` registration per RFC-0957
-//! §Algorithms + RFC-0957-A1 §Data Structures, and the RFC-0965
-//! `RevocationCaveat`) lands in mission 0957 Phase 2 follow-on.
+//! Both handlers operate on the real substrate: they mint and revoke through
+//! `HolderRegistry` rather than acknowledging requests.
 //!
-//! ## Phase 3 MVP scope
+//! ## Scope
 //!
 //! `CAPABILITY_ISSUE`:
 //! 1. Validates `holder_did` via `octo_ident::CanonicalCodec::parse(s, false)`
 //!    (RFC-0010 F4 — canonical form only; legacy bare form rejected).
-//! 2. Returns a placeholder wire form `CIPHEROCTO_ISSUE_V1:<holder_did>:<token_id>`.
-//! 3. No macaroon minting, no holder signature, no `HolderRegistry`
-//!    registration — substrate lands in 0957 Phase 2.
+//! 2. Mints a real `CapabilityToken` signed by the node's identity, and inserts
+//!    the `HolderRecord` into the node's registry (RFC-0957 §Algorithms,
+//!    RFC-0957-A1 §Roles and Authorities — the Token Issuer registers).
+//! 3. Refuses without an identity key, because minting signs with it.
 //!
 //! `CAPABILITY_REVOKE`:
-//! 1. Accepts the 16-byte `token_id` (= `MacaroonId` per RFC-0957 §Wire Format).
-//! 2. Returns an acknowledgement stub (no `HolderRegistry` mutation,
-//!    no event emission — substrate lands in 0957 Phase 2).
+//! 1. Accepts the 32-byte `cap_root_hash`, the key the registry is indexed by.
+//! 2. Marks the record revoked in the node's registry and reports what actually
+//!    happened. A capability the registry never held reports `revoked: false`
+//!    rather than an acknowledgement it cannot back up.
 //!
 //! ## Authorization model (production semantics, deferred to 0957 Phase 2)
 //!
@@ -42,11 +41,11 @@
 //! - `CAPABILITY_REVOKE` requires `Authorization::Capability(token)` with
 //!   `RevocationCaveat` (RFC-0965 reserved range).
 //!
-//! Phase 3 MVP: the dispatcher performs envelope-level verification
-//! (`envelope_id` dedup + expiry + signature). Fine-grained
-//! authorization (holder pre-signed commitment + revocation caveat
-//! validation) is the substrate layer's responsibility and lands in
-//! mission 0957 Phase 2.
+//! The dispatcher performs envelope-level verification (`envelope_id` dedup +
+//! expiry + signature). Fine-grained authorization (holder pre-signed
+//! commitment + RFC-0965 `RevocationCaveat` validation) is still the substrate
+//! layer's responsibility and remains open. Revocation in particular is not yet
+//! gated on who asked: see §Authorization model above.
 //!
 //! ## Replay + authorization
 //!
@@ -76,25 +75,18 @@ pub use node::{
     CapabilityIssuerNodeError, CapabilityIssuerNodeHandle,
 };
 
-use octo_protocol::PayloadKindId;
-
-/// All payload kinds served by `CapabilityIssuerNode` (RFC-0871 §Roles
-/// and Authorities, mission 0871d-capability-issuer-node).
+/// Payload kinds served by the capability issuer node.
 ///
-/// Phase 3 MVP exposes `CAPABILITY_ISSUE` + `CAPABILITY_REVOKE`.
-/// Follow-on missions add `CAPABILITY_LOOKUP` + `CAPABILITY_ATTENUATE`
-/// once the macaroon substrate (mission 0957 Phase 2) + `HolderRegistry`
-/// (RFC-0957-A1) are wired in production.
+/// **Re-exported from `octo-protocol`, not redeclared.** This crate used to
+/// carry its own copy of this list, and the copy was wrong: it named
+/// `CAPABILITY_ISSUE` and `CAPABILITY_REVOKE` and omitted `CAPABILITY_LOOKUP`,
+/// which `handle_envelope` dispatches. `CapabilityIssuerNode::start` iterates
+/// this list to register served kinds, so the node never registered a kind it
+/// nonetheless answered — a request the node served and had not declared.
 ///
-/// Public so callers can register handlers for these UUIDs on other
-/// dispatchers (e.g. quota-router's `EnvelopeDispatcher` for interop).
-pub const CAPABILITY_PAYLOAD_KINDS: &[PayloadKindId] = &[
-    octo_protocol::payload_kind::CAPABILITY_ISSUE,
-    octo_protocol::payload_kind::CAPABILITY_REVOKE,
-];
-
-/// True if `kind` is a capability-issuer payload kind.
-#[must_use]
-pub fn is_capability_payload_kind(kind: &PayloadKindId) -> bool {
-    CAPABILITY_PAYLOAD_KINDS.contains(kind)
-}
+/// Two definitions of one set is §No parallel abstractions: the second copy
+/// cannot be kept in step with the first, and here it was not.
+pub use octo_protocol::payload_kind::{
+    is_capability_payload_kind, CAPABILITY_ISSUE, CAPABILITY_LOOKUP, CAPABILITY_PAYLOAD_KINDS,
+    CAPABILITY_REVOKE,
+};

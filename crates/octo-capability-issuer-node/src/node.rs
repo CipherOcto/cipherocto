@@ -60,6 +60,11 @@ pub struct CapabilityIssuerNodeConfig {
     /// `revoked_at_millis_unix` field, and by `CAPABILITY_LOOKUP`
     /// to query by `cap_root_hash` PK.
     pub holder_registry: Arc<dyn quota_router_storage::HolderRegistry>,
+    /// Clock for `HolderRegistry::revoke`, which takes it by injection rather
+    /// than reading one internally (RFC-0957-A1 §HolderRegistry). Injecting it
+    /// here is what lets revocation tests pin a timestamp instead of reading
+    /// the wall clock.
+    pub clock: Arc<dyn octo_cap_macaroon::Clock>,
     /// HSM-routed identity (mission 0959 placeholder-identity-binding).
     /// When present, `broadcast_announce` derives the `RouterNodeId`
     /// from `identity.public_key_bytes()` and signs the announce HMAC
@@ -185,7 +190,7 @@ impl CapabilityIssuerNode {
             }
             k if k == octo_protocol::payload_kind::CAPABILITY_REVOKE => {
                 let req = RevokeRequest::from_borsh(&envelope.payload)?;
-                RevokeHandler::new().handle(&req)
+                RevokeHandler::new(&*self.config.holder_registry, &*self.config.clock).handle(&req)
             }
             k if k == octo_protocol::payload_kind::CAPABILITY_LOOKUP => {
                 let req = CapabilityLookupRequest::from_borsh(&envelope.payload)?;
@@ -322,6 +327,7 @@ fn self_clone_to_receiver(node: &CapabilityIssuerNode) -> Arc<dyn NetworkReceive
 mod tests {
     use super::*;
     use crate::handlers::{IssueRequest, RevokeRequest};
+    use octo_cap_macaroon::FixedClock;
     use octo_ident_storage::StoolapHolderRegistry;
 
     fn test_transport() -> Arc<NodeTransport> {
@@ -346,6 +352,7 @@ mod tests {
         CapabilityIssuerNodeConfig {
             transport: test_transport(),
             holder_registry: test_registry(),
+            clock: Arc::new(FixedClock::new(1_700_000_000_000)),
             identity: Some(test_identity()),
             network_key: [0u8; 32],
         }
@@ -370,6 +377,34 @@ mod tests {
         let _ = node.start();
         let err = node.start().unwrap_err();
         assert!(matches!(err, CapabilityIssuerNodeError::AlreadyStarted));
+    }
+
+    /// Every payload kind the node dispatches must be one it declares as served.
+    ///
+    /// This crate used to carry its own `CAPABILITY_PAYLOAD_KINDS` listing two
+    /// kinds while `handle_envelope` dispatched three, so `start` registered a
+    /// smaller set than the node answered. Pinning the set here is what stops a
+    /// handler being added to the dispatch match without being declared.
+    #[test]
+    fn every_dispatched_capability_kind_is_declared_as_served() {
+        // The three arms of `handle_envelope`'s `CAPABILITY_*` match.
+        let dispatched = [
+            octo_protocol::payload_kind::CAPABILITY_ISSUE,
+            octo_protocol::payload_kind::CAPABILITY_REVOKE,
+            octo_protocol::payload_kind::CAPABILITY_LOOKUP,
+        ];
+        for kind in dispatched {
+            assert!(
+                crate::CAPABILITY_PAYLOAD_KINDS.contains(&kind),
+                "{kind:?} is dispatched but not declared as served"
+            );
+        }
+        // And nothing is declared that the node would refuse as unsupported.
+        assert_eq!(
+            crate::CAPABILITY_PAYLOAD_KINDS.len(),
+            dispatched.len(),
+            "a served kind with no dispatch arm would answer UnsupportedPayloadKind"
+        );
     }
 
     #[test]
@@ -479,7 +514,7 @@ mod tests {
             <octo_ident::CanonicalCodec as octo_ident::DidCodec>::raw_to_wire(&placeholder_did)
                 .unwrap();
         let req = RevokeRequest {
-            token_id: [0x42; 16],
+            cap_root_hash: [0x42; 32],
         };
         let payload = req.to_borsh().unwrap();
         let envelope = NodeEnvelope::build(

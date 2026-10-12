@@ -3752,10 +3752,16 @@ const HOLDER_RECORD_PRODUCTION_FILES: &[&str] = &[
 /// holder* — an empty registry means every real capability is refused with
 /// `CapError::HolderUnknown`.
 ///
-/// `macaroon.rs` is the newest test-region entry and the guard caught it the day
+/// `macaroon.rs` is a test-region entry and the guard caught it the day
 /// it was written — the accessor test builds a `HolderRecord` to prove the new
 /// `CapabilityCatalog::holder_registry()` reaches one. Recording it is the guard
 /// doing its job rather than being worked around.
+///
+/// Three catches in this arc, which is the evidence that it measures something:
+/// `macaroon.rs` (accessor test), then the production registry writes on both
+/// issuing nodes, then `revoke.rs` (tests that assert a live record really
+/// flips to revoked). Each went red on arrival rather than being discovered by
+/// reading this list back.
 const HOLDER_RECORD_CONSTRUCTION_FILES: &[&str] = &[
     "crates/octo-cap-macaroon/src/holder_record.rs",
     "crates/octo-cap-macaroon/src/macaroon.rs",
@@ -3763,6 +3769,13 @@ const HOLDER_RECORD_CONSTRUCTION_FILES: &[&str] = &[
     "crates/octo-wallet/src/capability/verify.rs",
     "crates/octo-wallet-node/src/handlers/mint.rs",
     "crates/octo-capability-issuer-node/src/handlers/issue.rs",
+    // Test-region only. The revoke handler's tests build a live record so they
+    // can assert the registry row actually flips to revoked — a record asserted
+    // against a fixture would pass whether or not the handler wrote anything.
+    // This is NOT a production construction site and must not be added to
+    // `HOLDER_RECORD_PRODUCTION_FILES`; layer two of the guard below is what
+    // says so.
+    "crates/octo-capability-issuer-node/src/handlers/revoke.rs",
     "crates/quota-router-core/src/ingress/capability_verifier.rs",
 ];
 

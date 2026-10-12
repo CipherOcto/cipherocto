@@ -1,8 +1,34 @@
 # 0957-phase2c — Capability Issuer Node wiring
 
 **Status:** LANDED 2026-08-13 (commit b19fe57f). Drift-closed via audit 2026-08-13.
-**Substrate:** RFC-0871 §Roles and Authorities + RFC-0957-A1 §Algorithms / §HolderRecord State Machine
-**Closes:** 0871d Phase 3 MVP gaps (IdentityKey + HolderRegistry slots; macaroon substrate; `CAPABILITY_LOOKUP` payload kind) + `crates/octo-capability-issuer-node/src/handlers/mod.rs` dead-code
+
+> **PARTIALLY LANDED — annotated 2026-10-12. Two of four test vectors were never
+> implemented, and one of them could not have worked.**
+>
+> The commit landed the _config slots_ and the `CAPABILITY_LOOKUP` handler
+> (TV3, TV4). It did **not** land TV1 or TV2: `IssueHandler` and `RevokeHandler`
+> remained stubs taking no registry and no clock, until both were implemented
+> on 2026-10-12. The "Drift-closed via audit" line above was therefore not
+> accurate about the substrate wiring it names in §Closes.
+>
+> The gap survived because the archived mission's test vectors were never
+> written as tests. A mission can be marked LANDED with its TVs absent, and
+> nothing in the process checks for that.
+>
+> **The revoke specification in §Implementation step 4 is also wrong as
+> written.** It says `cap_root_hash` is derived from the 16-byte `token_id`
+> "first 16 bytes of the macaroon capability id". `HolderRegistry` is keyed by
+> a 32-byte BLAKE3 `cap_root_hash` and its `revoke` matches that key exactly
+> (`WHERE cap_root_hash = ?`). Truncating 32 bytes to 16 produces a key that
+> matches no row, so a revoke implemented to this spec would report success and
+> change nothing — the same lie the stub told, wearing a test vector's
+> authority. TV2 never ran, so the truncation was never exercised.
+>
+> Implemented instead: `RevokeRequest` carries the full 32-byte `cap_root_hash`,
+> which a holder computes from its own macaroon via
+> `compute_cap_root_hash_from_wire`.
+> **Substrate:** RFC-0871 §Roles and Authorities + RFC-0957-A1 §Algorithms / §HolderRecord State Machine
+> **Closes:** 0871d Phase 3 MVP gaps (IdentityKey + HolderRegistry slots; macaroon substrate; `CAPABILITY_LOOKUP` payload kind) + `crates/octo-capability-issuer-node/src/handlers/mod.rs` dead-code
 
 ## Scope
 

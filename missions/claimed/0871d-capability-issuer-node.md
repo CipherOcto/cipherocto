@@ -35,7 +35,7 @@ Build `crates/octo-capability-issuer-node/` — the capability issuer specialize
 
 - [x] `CAPABILITY_ISSUE` handler: input = `(holder_did: String, capability: [u8; 32])`; validates canonical DID via `CanonicalCodec::parse(s, false)`; derives deterministic 16-byte `token_id` via `octo_cap_macaroon::macaroon_id` (Phase 3 MVP stub — full `CapabilityToken::mint` + holder signature + `HolderRegistry::register` per RFC-0957 §Algorithms + RFC-0957-A1 §Data Structures lands in 0957 Phase 2)
 - [ ] `CAPABILITY_LOOKUP` handler: deferred to follow-on mission (Phase 3 MVP exposes only ISSUE + REVOKE; LOOKUP requires HolderRegistry production substrate)
-- [x] `CAPABILITY_REVOKE` handler: input = `token_id: [u8; 16]` (`MacaroonId` per RFC-0957 §Wire Format); returns acknowledgement stub (Phase 3 MVP — full `HolderRegistry::revoke` + RFC-0965 `RevocationCaveat` validation + event emission lands in 0957 Phase 2)
+- [x] `CAPABILITY_REVOKE` handler: **input changed from `token_id: [u8; 16]` to `cap_root_hash: [u8; 32]` on 2026-10-12.** The 16-byte `MacaroonId` could not address the registry, which is keyed by a 32-byte BLAKE3 `cap_root_hash` with exact matching and no lookup-by-channel-id anywhere in the workspace. The handler now calls `HolderRegistry::revoke(cap_root_hash, clock)` and reports `revoked: false` for a capability the registry never held, rather than acknowledging unconditionally. RFC-0965 `RevocationCaveat` validation and event emission remain open. **No mission is filed against either**, so this line is a live gap rather than queued work — the handler revokes for any caller that reaches the payload kind.
 - [x] All handlers: DID validation via `octo_ident::CanonicalCodec::parse(s, false)` (RFC-0010 v1.2 F4 + mission 0010-d)
 - [x] All handlers: route through `EnvelopeDispatcher` for envelope_id dedup + expiry + signature verification (RFC-0871 §Adversary A6)
 - [ ] Rate-limiting per RFC-0871 §Replay Protection: deferred (no per-node rate-limiter in the MVP per RFC-0871 wallet-node mirror pattern; dispatcher-side dedup is the Phase 3 mitigation)
@@ -184,7 +184,7 @@ NEW payload kinds in `crates/octo-protocol/src/payload_kind.rs` (9 new tests, 0 
 - All inbound envelopes route through `EnvelopeDispatcher` (replay defense + signature verification)
 - DID validation: `IssueHandler` rejects malformed DIDs AND legacy bare form via `CanonicalCodec::parse(s, false)`
 - `token_id` derivation: `IssueHandler` derives deterministic 16-byte `MacaroonId` via `octo_cap_macaroon::macaroon_id` primitive (the same primitive the full substrate uses)
-- `RevokeHandler` accepts `MacaroonId` (= `[u8; 16]`) and acknowledges
+- `RevokeHandler` **was**: accepts `MacaroonId` (= `[u8; 16]`) and acknowledges. **Now** (2026-10-12): takes a 32-byte `cap_root_hash` plus the node's registry and clock, and revokes for real
 
 **Phase 3 MVP disclosures (honest scope):**
 

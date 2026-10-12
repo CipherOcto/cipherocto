@@ -187,20 +187,17 @@ pub struct GovernanceProof {
     ///   chain-tx byte-equality on-wire lock (mission 0851p-a AC,
     ///   RFC-0968 §21 + §23 Review-Round-7).
     ///
-    /// Both forms are verified by
-    /// [`verify_governance_signature`].
+    /// Both forms are verified by [`verify_governance_signature`] — via this
+    /// record's own [`GovernanceProof::verify_signature`] where a
+    /// `GovernanceProof` is what was handed over.
     ///
-    /// **Not on every path, and not from this record.** The suspension and
-    /// slash paths verify through a [`SuspensionAuth`], which carries its own
-    /// `governance_algorithm_id` — the algorithm travels on the record, so a
-    /// store cannot silently fall back to Ed25519. This struct carries **no**
-    /// algorithm field, so it cannot be handed to the verifier as it stands:
-    /// [`verify_governance_signature`] takes the algorithm as an argument.
-    ///
-    /// The retirement path takes this type and does not verify it at all. See
-    /// `missions/deferred/0968-c-governance-proof-verification.md`. Wiring
-    /// retirement to the verifier therefore needs an algorithm on this record
-    /// or a switch to `SuspensionAuth`; neither is a local change.
+    /// **Not through a [`SuspensionAuth`].** The suspension path verifies a
+    /// different record, which carries its own `governance_algorithm_id`, so
+    /// a store cannot silently fall back to Ed25519. This record carries that
+    /// field too, and was verified by neither slash nor retirement until both
+    /// were wired up; each has mutation-verified negative tests now. See
+    /// `missions/deferred/0968-c-governance-proof-verification.md` for the
+    /// quorum and set-hash halves, which remain open.
     pub signature: Vec<u8>,
     /// Snapshot under which this proof is valid.
     pub snapshot: GovernanceSnapshot,

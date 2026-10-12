@@ -562,6 +562,157 @@ mod tests {
         Arc::new(NodeTransport::new(senders))
     }
 
+    /// Envelope-level coverage for the payload kinds this node dispatches.
+    ///
+    /// Added because the routing guard found all five dispatched kinds had no
+    /// envelope test: every handler here was tested by direct call, so the
+    /// node's own routing was untested.
+    fn envelope_for(kind: octo_protocol::PayloadKindId, payload: Vec<u8>) -> NodeEnvelope {
+        let pk = [0x31u8; 32];
+        let from_did = <octo_ident::CanonicalCodec as octo_ident::DidCodec>::raw_to_wire(
+            &octo_ident::CanonicalCodec::mint(&pk),
+        )
+        .expect("wire form");
+        NodeEnvelope::build(
+            from_did,
+            RecipientRef::Broadcast,
+            kind,
+            payload,
+            vec![],
+            [0u8; 32],
+            0,
+            VERSION_TAG_V2,
+        )
+        .expect("envelope")
+    }
+
+    /// A canonical DID derived from a real key, so shape validation passes.
+    fn did_for(pk: &[u8; 32]) -> String {
+        <octo_ident::CanonicalCodec as octo_ident::DidCodec>::raw_to_wire(
+            &octo_ident::CanonicalCodec::mint(pk),
+        )
+        .expect("wire form")
+        .as_str()
+        .to_owned()
+    }
+
+    fn resolver_node() -> IdentityResolverNode {
+        IdentityResolverNode::new(IdentityResolverNodeConfig {
+            transport: fresh_transport(),
+            ..IdentityResolverNodeConfig::default()
+        })
+    }
+
+    /// Put a DID straight into the node's registry, bypassing the write
+    /// coordinator. Setup for the read paths only — the write paths stay on the
+    /// envelope and assert their fail-closed refusal.
+    fn seed_registry(node: &IdentityResolverNode, pk: &[u8; 32]) {
+        let canonical_hash = octo_ident::CanonicalCodec::mint(pk).hash;
+        node.registry
+            .register(
+                &canonical_hash,
+                DidDocument {
+                    public_key: *pk,
+                    revoked: false,
+                    ..Default::default()
+                },
+            )
+            .expect("seed the registry");
+    }
+
+    /// Writes are fail-closed without a coordinator. That refusal now has
+    /// envelope-level coverage; it was previously reachable only by calling the
+    /// handler directly.
+    #[tokio::test]
+    async fn envelope_register_refuses_without_a_coordinator() {
+        let node = resolver_node();
+        let pk = [0x52u8; 32];
+        let req = RegisterRequest {
+            canonical_did: did_for(&pk),
+            public_key: pk,
+            revoked: false,
+        };
+        let err = node
+            .handle_envelope(&envelope_for(
+                octo_protocol::payload_kind::IDENTITY_REGISTER,
+                req.to_borsh().expect("borsh"),
+            ))
+            .await
+            .expect_err("no coordinator, so no write");
+        let ProtocolError::AuthorizationFailed(message) = &err else {
+            panic!("expected an authorization failure, got {err:?}");
+        };
+        assert!(
+            message.contains("coordinator"),
+            "the refusal must name the missing coordinator, got: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn envelope_revoke_refuses_without_a_coordinator() {
+        let node = resolver_node();
+        let pk = [0x53u8; 32];
+        seed_registry(&node, &pk);
+        let req = RevokeRequest(did_for(&pk));
+        let err = node
+            .handle_envelope(&envelope_for(
+                octo_protocol::payload_kind::IDENTITY_REVOKE,
+                req.to_borsh().expect("borsh"),
+            ))
+            .await
+            .expect_err("no coordinator, so no write");
+        assert!(
+            matches!(err, ProtocolError::AuthorizationFailed(_)),
+            "expected an authorization failure, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn envelope_resolve_chain_reaches_the_chain_handler() {
+        let node = resolver_node();
+        let pk = [0x54u8; 32];
+        seed_registry(&node, &pk);
+        // Empty hops is documented as equivalent to a local resolve.
+        let req = ChainResolveRequest {
+            target: did_for(&pk),
+            hops: Vec::new(),
+            ttl_remaining_ms: 5_000,
+        };
+        let out = node
+            .handle_envelope(&envelope_for(
+                octo_protocol::payload_kind::IDENTITY_RESOLVE_CHAIN,
+                req.to_borsh().expect("borsh"),
+            ))
+            .await
+            .expect("chain resolve through the envelope");
+        assert_eq!(
+            out.response_payload_kind,
+            Some(octo_protocol::payload_kind::IDENTITY_RESOLVE_CHAIN)
+        );
+    }
+
+    #[tokio::test]
+    async fn envelope_resolve_with_chain_reaches_its_handler() {
+        let node = resolver_node();
+        let pk = [0x55u8; 32];
+        seed_registry(&node, &pk);
+        let req = ResolveWithChainRequest {
+            query: did_for(&pk),
+            chain_id: "cipherocto-mainnet".to_owned(),
+        };
+        let out = node
+            .handle_envelope(&envelope_for(
+                octo_protocol::payload_kind::IDENTITY_RESOLVE_WITH_CHAIN,
+                req.to_borsh().expect("borsh"),
+            ))
+            .await
+            .expect("resolve-with-chain through the envelope");
+        assert_eq!(
+            out.response_payload_kind,
+            Some(octo_protocol::payload_kind::IDENTITY_RESOLVE_WITH_CHAIN)
+        );
+    }
+
     #[test]
     fn resolver_node_constructs_and_starts() {
         let transport = fresh_transport();

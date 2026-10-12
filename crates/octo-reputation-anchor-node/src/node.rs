@@ -311,6 +311,59 @@ mod tests {
         Arc::new(NodeTransport::new(senders))
     }
 
+    /// Envelope-level coverage for `REPUTATION_ANCHOR_QUERY`.
+    ///
+    /// Added because the routing guard found this node dispatched a kind with
+    /// no envelope test at all — the handler was tested by direct call, so the
+    /// node's routing was untested.
+    fn did_for(pk: &[u8; 32]) -> String {
+        <octo_ident::CanonicalCodec as octo_ident::DidCodec>::raw_to_wire(
+            &octo_ident::CanonicalCodec::mint(pk),
+        )
+        .expect("wire form")
+        .as_str()
+        .to_owned()
+    }
+
+    #[test]
+    fn envelope_anchor_query_is_refused_rather_than_scored_zero() {
+        let node = ReputationAnchorNode::new(ReputationAnchorNodeConfig {
+            transport: test_transport(),
+            identity: None,
+            network_key: [0u8; 32],
+        });
+        let pk = [0x61u8; 32];
+        let req = QueryAnchorRequest(did_for(&pk));
+        let envelope = NodeEnvelope::build(
+            <octo_ident::CanonicalCodec as octo_ident::DidCodec>::raw_to_wire(
+                &octo_ident::CanonicalCodec::mint(&[0x62u8; 32]),
+            )
+            .expect("wire form"),
+            RecipientRef::Broadcast,
+            octo_protocol::payload_kind::REPUTATION_ANCHOR_QUERY,
+            req.to_borsh().expect("borsh"),
+            vec![],
+            [0u8; 32],
+            0,
+            VERSION_TAG_V2,
+        )
+        .expect("envelope");
+
+        let err = node
+            .handle_envelope(&envelope)
+            .expect_err("no registry, so no score");
+        // The unsupported-kind arm also returns `AuthorizationFailed`, so the
+        // variant alone would pass even if this kind were not routed at all.
+        // Pin the cause, or the test is measuring the wrong thing.
+        let ProtocolError::AuthorizationFailed(message) = &err else {
+            panic!("expected an authorization failure, got {err:?}");
+        };
+        assert!(
+            message.contains("ReputationRegistry"),
+            "the refusal must name the missing registry, got: {message}"
+        );
+    }
+
     #[test]
     fn reputation_anchor_node_constructs_and_starts() {
         let transport = test_transport();

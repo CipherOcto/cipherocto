@@ -3950,6 +3950,8 @@ fn the_wallet_crate_does_not_depend_on_storage() {
 const NODE_DISPATCH_FILES: &[&str] = &[
     "crates/octo-wallet-node/src/node.rs",
     "crates/octo-capability-issuer-node/src/node.rs",
+    "crates/octo-identity-resolver-node/src/node.rs",
+    "crates/octo-reputation-anchor-node/src/node.rs",
 ];
 
 /// Every payload kind a node dispatches must be driven through an envelope in

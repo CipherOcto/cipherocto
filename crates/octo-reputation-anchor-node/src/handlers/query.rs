@@ -73,32 +73,27 @@ impl QueryAnchorHandler {
         Self
     }
 
-    /// Validate the DID query and return a stub anchor response.
+    /// Validate the DID query and refuse, because this node holds no anchors.
     ///
-    /// Phase 3 MVP: validates the canonical DID shape; returns a
-    /// `(0, 0)` placeholder response. The real registry lookup (RFC-0968
-    /// `ReputationRegistry`) lands in mission 0968a-reputation-anchoring.
+    /// The DID shape is still validated first: a malformed DID is a different
+    /// answer from a DID this node cannot speak for, and conflating them would
+    /// hide caller bugs behind the more common refusal.
     ///
     /// # Errors
-    /// Returns `ProtocolError::InvalidDid` if `query_did` is not a
-    /// canonical DID shape.
+    /// Returns `ProtocolError::InvalidDid` if `query_did` is not a canonical
+    /// DID shape, and `ProtocolError::AuthorizationFailed` for every well-formed
+    /// DID, naming the missing substrate.
     pub fn handle(&self, req: &QueryAnchorRequest) -> Result<HandlerOutput, ProtocolError> {
         // Validate canonical DID shape; reject legacy bare form.
         // (RFC-0010 F4 + mission 0010-d wallet-audience-validation.)
-        let _parsed =
-            octo_ident::CanonicalCodec::parse(&req.0, false).map_err(did_error_to_protocol)?;
+        octo_ident::CanonicalCodec::parse(&req.0, false).map_err(did_error_to_protocol)?;
 
-        let response = QueryAnchorResponse {
-            anchor_score: 0,
-            attestation_count: 0,
-        };
-        let payload = borsh::to_vec(&response)
-            .map_err(|e| ProtocolError::AuthorizationFailed(e.to_string()))?;
-        Ok(HandlerOutput::response(
-            payload,
-            octo_protocol::payload_kind::REPUTATION_ANCHOR_QUERY,
-        )
-        .with_note(format!("anchor query (MVP stub) for {}", req.0)))
+        Err(ProtocolError::AuthorizationFailed(format!(
+            "no reputation data for {}: this node holds no RFC-0968 ReputationRegistry, \
+             so it cannot report a score. A zero would be a claim about the subject, not \
+             an absence of one.",
+            req.0
+        )))
     }
 }
 
@@ -143,19 +138,48 @@ mod tests {
         assert!(matches!(err, ProtocolError::InvalidDid(_)));
     }
 
+    /// The anti-fabrication test. This handler used to answer `(0, 0)` for
+    /// every DID, which is a claim about a subject rather than an absence of
+    /// knowledge: a peer with real standing would be reported as having none,
+    /// and a consumer gating on that answer would refuse it on evidence this
+    /// node never had.
     #[test]
-    fn handle_returns_mvp_stub_response() {
+    fn a_well_formed_did_is_refused_rather_than_scored_zero() {
         let handler = QueryAnchorHandler::new();
         let req = QueryAnchorRequest(sample_did());
-        let out = handler.handle(&req).unwrap();
-        let payload = out.response_payload.expect("response payload present");
-        let resp: QueryAnchorResponse = borsh::from_slice(&payload).unwrap();
-        assert_eq!(resp.anchor_score, 0);
-        assert_eq!(resp.attestation_count, 0);
-        assert_eq!(
-            out.response_payload_kind,
-            Some(octo_protocol::payload_kind::REPUTATION_ANCHOR_QUERY)
+        let err = handler.handle(&req).expect_err("no registry, so no answer");
+        assert!(
+            matches!(err, ProtocolError::AuthorizationFailed(_)),
+            "expected a refusal, got {err:?}"
         );
+        // The refusal names the DID rather than answering generically, so a
+        // caller can tell which subject could not be answered for.
+        let ProtocolError::AuthorizationFailed(message) = &err else {
+            panic!("expected an authorization failure, got {err:?}");
+        };
+        assert!(
+            message.contains(&req.0),
+            "the refusal must name the DID it could not answer for, got: {message}"
+        );
+    }
+
+    /// Malformed input and unknown-but-valid input stay distinguishable. A
+    /// caller with a bug should not have it hidden behind the far more common
+    /// "no data" refusal.
+    #[test]
+    fn a_malformed_did_is_a_different_answer_from_an_unanswerable_one() {
+        let handler = QueryAnchorHandler::new();
+        let malformed = handler
+            .handle(&QueryAnchorRequest("did:octo:bad".into()))
+            .expect_err("malformed");
+        let unanswerable = handler
+            .handle(&QueryAnchorRequest(sample_did()))
+            .expect_err("no registry");
+        assert!(matches!(malformed, ProtocolError::InvalidDid(_)));
+        assert!(matches!(
+            unanswerable,
+            ProtocolError::AuthorizationFailed(_)
+        ));
     }
 
     #[test]

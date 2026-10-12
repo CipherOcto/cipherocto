@@ -353,7 +353,7 @@ What it needs first is a decision this mission should not make alone:
 - [x] `CapabilityVerification` can represent an ask-unbound capability, or the RFC states what a verifier reports for one and `evaluate_linkage` cannot compare it into a false link. **Done by refusal** — see §What landed part 4. The verifier never constructs a `CapabilityVerification` for an ask-unbound token, so no unbound `ask_id` exists to compare. The field itself is unchanged and still cannot represent absence; the route taken removes the need for it to.
 - [x] `CapabilityToken` exposes the RFC's ask-binding accessor, or RFC-0969 §Algorithms is amended to name the caveat-based accessor that replaces it. **Done** — `ask_binding()` reads `Caveat::AskBinding` from the macaroon, since `CapabilityToken` carries no `ask_id` field.
 - [x] Dispatch semantics are settled. **The RFC already answered this one** — v1.2's 4-way table is unambiguous and `BothSchemesUnsupported` / `NoAuth` are its names. The remaining question is only whether the implementation adopts it or the RFC is reopened, and adopting it is the default unless there is a recorded reason not to. **Adopted** — `authenticate_v12` + `routing_decision_v12`, additively; `authenticate` keeps pre-v1.2 semantics.
-- [x] A production caller persists the `HolderRecord` that mint deliberately does not. **Done** — the capability issuer node's `IssueHandler` holds the node's `&dyn HolderRegistry`, builds the `HolderRecord` from the minted token, writes it to the registry and puts those same canonical bytes in the V2 bundle. RFC-0871 §G9 puts persistence on the node-side handler rather than the wallet, so `MintHandler` was left alone and the node was the right place. See §The first blocker is closed. The previous claim on this line — that `CapabilityCatalog::holder_registry()` is defined in zero files and nothing registers a holder — was true when written and is now stale.
+- [x] A production caller persists the `HolderRecord` that mint deliberately does not. **Done, on both issuing paths.** The capability issuer node's `IssueHandler` and the wallet node's `MintHandler` each hold their node's `&dyn HolderRegistry`, build the `HolderRecord` from the minted token, write it to the registry and put the same canonical bytes in the V2 bundle. RFC-0871 §G9 puts persistence on the node-side handler rather than the wallet, and RFC-0957-A1 §Roles and Authorities gives the Token Issuer — the `IdentityKey` of an issuing node — the authority _"mint + revoke + register"_, so both nodes register and neither mints unregistered. `WalletNodeConfig.holder_registry` is required rather than optional for the same reason the issuer node fails closed without an identity: a mint that cannot register produces a credential every verifier refuses with `HolderUnknown`. See §The first blocker is closed.
 - [ ] A production mint path attaches a `Caveat::AskBinding`, so a capability that is ask-bound can exist. **Open, and no longer a substrate gap — the shape now exists and only needs to be used.** A capability can carry an ask binding today: attenuating `Caveat::AskBinding` through the wallet's attenuation handler attaches it, and the result verifies and reads back through `ask_binding()`. What is missing is a caller that does so on the market path, and it is gated behind the blocker above: attaching an ask to a token nobody can verify is not progress. Owned by RFC-0959 §Phase 3, where the item is already an unchecked box.
 - [ ] `CapabilityVerification.ask_id` can represent "unbound", matching the `Option` RFC-0970 already assumes `ask_binding()` returns. A bare `[u8; 32]` cannot, and that value flows into `AuthenticatedRequest.ask_id` and on into settlement. **Deliberately not done.** Refusing unbound is strictly safer than a representable absent, and is reversible; widening the field is neither. Revisit only if the market path needs unbound capabilities at the gateway, which RFC-0959 §Phase 3 would have to argue for.
 - [x] A production `impl CapabilityVerifier` exists that calls real verification and is reachable from `GatewayAuthenticator::new` outside tests. **Done** — `quota_router_core::ingress::capability_verifier::ProductionCapabilityVerifier`, injected as `Arc<dyn CapabilityVerifier>`, so `GatewayAuthenticator::new` needed no change.
@@ -550,6 +550,36 @@ Two details that were previously wrong and are now right:
   whole `CAPABILITY_ISSUE` dispatch arm deleted. It now pins the cause in the
   message.
 
+### There is a second issuing node, and it was minting unregistered
+
+Closing the issuer node surfaced something the mission had not recorded: there
+is a **second** node that mints capabilities, and it was not on this list.
+
+`octo-wallet-node` serves `WALLET_MINT_CAPABILITY`, a different payload-kind
+namespace from the issuer node's `CAPABILITY_ISSUE`. There is a test asserting
+those two UUIDs do not collide, with the reason written down — _"a collision
+would silently route capability issuance to the wrong receiver"_ — so the split
+is deliberate, not accidental duplication. And `MintHandler::handle` was no stub:
+it calls `CapabilityToken::mint`, signs with the node identity, and returns a
+real bundle.
+
+So the system had two real issuing nodes and one registrant. The RFC settles what
+the other one owes. RFC-0957-A1 §Roles and Authorities gives the Token Issuer —
+the `IdentityKey` of an issuing node — the authority _"mint + revoke + register"_,
+with no scoping to a single node. Both mint, so both register.
+
+`WalletNodeConfig` now carries a **required** `holder_registry`. Required, not
+optional, for the same reason the issuer node fails closed without an identity:
+an optional registry means a wallet node can be configured in a state where it
+mints a credential nothing can verify, which is the defect this whole chain has
+been removing. Refusing to mint is the honest failure.
+
+The derivation cost was zero, which is worth noting because it looked like it
+might not be. The wallet node already computed `compute_capability_id` to put in
+that field, and `compute_cap_root_hash_from_wire` delegates to exactly that
+function — so the value was always the correct registry primary key. Only the
+record around it was missing.
+
 ### The census guard had to be rewritten, not relaxed
 
 `holder_records_are_never_constructed_in_production` asserted that **no**
@@ -557,17 +587,20 @@ production code builds a `HolderRecord`. That was true and then stopped being
 true, and it went red the moment this landed — which is the guard measuring
 something rather than a change working around it.
 
-The fix was not to widen the exception list. The property worth guarding is
-**exactly one** production construction site, and a guard that only forbids
-growth will happily keep passing after the site is deleted. So it is now
-`exactly_one_production_site_builds_a_holder_record` and the production set is
-compared for **equality**: a second site is an unowned record nobody registers,
-and a missing one puts the registry back to empty and every real capability back
-to `HolderUnknown`.
+The fix was not to widen the exception list. A guard that only forbids growth
+will happily keep passing after the site is deleted, so the production set is
+compared for **equality** against a named list of sites: an unlisted site is an
+unowned record nobody registers, and a missing one puts the registry back to empty
+and every real capability back to `HolderUnknown`.
 
-All three failure modes were checked by planting them, not assumed: a second
-production site, a call from an unlisted file, and an emptied expected set. The
-third is the one the old guard could not have caught.
+It is now `only_the_issuing_nodes_build_a_holder_record_in_production`, and the
+list has **two** entries, because a second mint path turned up and two is the
+correct number rather than an exception taken for convenience — see
+§There is a second issuing node, and it was minting unregistered.
+
+All failure modes were checked by planting them, not assumed: a second production
+site, a call from an unlisted file, and an expected set emptied of a real
+registrant. The last is the one the old guard could not have caught.
 
 A closing note on the census guard, before it was rewritten: it went red the
 moment the accessor test called `HolderRecord::from_capability` from a new file,

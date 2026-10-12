@@ -41,6 +41,14 @@ use crate::is_wallet_payload_kind;
 pub struct WalletNodeConfig {
     /// Wallet's identity key (HSM-routed signing).
     pub identity: Arc<IdentityKey>,
+    /// Holder registry the mint handler writes to (RFC-0957-A1 §Roles and
+    /// Authorities gives the Token Issuer — the issuing node — the authority
+    /// _"mint + revoke + register"_). Required rather than optional: mint is
+    /// persistence-free by design (RFC-0957-A1 §6), so a mint that cannot
+    /// register produces a capability every verifier refuses with
+    /// `HolderUnknown`. Failing to mint is the honest outcome; minting an
+    /// unverifiable credential is not.
+    pub holder_registry: Arc<dyn octo_cap_macaroon::holder_registry::HolderRegistry>,
     /// Network transport (RFC-0863 NodeTransport).
     pub transport: Arc<NodeTransport>,
     /// Optional spend ledger (mission 0871e-phase5b). When present,
@@ -164,9 +172,12 @@ impl WalletNode {
             k if k == octo_protocol::payload_kind::WALLET_MINT_CAPABILITY => {
                 let req = MintRequest::from_borsh(&envelope.payload)
                     .map_err(|e| ProtocolError::AuthorizationFailed(format!("{e}")))?;
+                let registry = &*self.config.holder_registry;
                 match self.config.spend_ledger.as_ref() {
-                    Some(ledger) => MintHandler::with_ledger(identity, ledger.clone()).handle(&req),
-                    None => MintHandler::new(identity).handle(&req),
+                    Some(ledger) => {
+                        MintHandler::with_ledger(identity, registry, ledger.clone()).handle(&req)
+                    }
+                    None => MintHandler::new(identity, registry).handle(&req),
                 }
             }
             k if k == octo_protocol::payload_kind::WALLET_ATTENUATE_CAPABILITY => {
@@ -320,6 +331,13 @@ mod tests {
         IdentityKey::from_seed(seed)
     }
 
+    /// Real in-memory registry for node fixtures. A test double, not a
+    /// deployment component: RFC-0957-A1 §4 names `StoolapHolderRegistry`
+    /// backed by a real handle as the reference.
+    fn sample_registry() -> Arc<dyn octo_cap_macaroon::holder_registry::HolderRegistry> {
+        Arc::new(octo_ident_storage::StoolapHolderRegistry::open_in_memory().unwrap())
+    }
+
     #[test]
     fn wallet_node_constructs_and_starts() {
         let identity = Arc::new(sample_identity());
@@ -327,6 +345,7 @@ mod tests {
         let transport = Arc::new(NodeTransport::new(senders));
         let cfg = WalletNodeConfig {
             identity: identity.clone(),
+            holder_registry: sample_registry(),
             transport,
             spend_ledger: None,
             network_key: [0u8; 32],
@@ -343,6 +362,7 @@ mod tests {
         let transport = Arc::new(NodeTransport::new(senders));
         let cfg = WalletNodeConfig {
             identity: identity.clone(),
+            holder_registry: sample_registry(),
             transport,
             spend_ledger: None,
             network_key: [0u8; 32],
@@ -360,6 +380,7 @@ mod tests {
         let transport = Arc::new(NodeTransport::new(senders));
         let cfg = WalletNodeConfig {
             identity: identity.clone(),
+            holder_registry: sample_registry(),
             transport,
             spend_ledger: None,
             network_key: [0u8; 32],
@@ -405,6 +426,7 @@ mod tests {
         let network_key = [0x42u8; 32];
         let cfg = WalletNodeConfig {
             identity: identity.clone(),
+            holder_registry: sample_registry(),
             transport: transport.clone(),
             spend_ledger: None,
             network_key,

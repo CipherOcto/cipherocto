@@ -228,17 +228,27 @@ two meanings, one of them honest.
 ## Acceptance Criteria
 
 - [ ] The V2 wire form carries whatever a verifier needs to check a capability, or it is withdrawn as a wire form and the response payload reverts to the V1 macaroon it replaced.
-- [~] `holder_record_bytes` either holds canonical-JSON `HolderRecord` bytes that `HolderRecord::canonical_de` accepts, or it is replaced by a typed field and its documentation stops naming a type it does not enforce. **Half done.** The issuer node's `IssueHandler` now writes the serialized `HolderRecord`, which its own `HolderRecord::canonical_de` accepts; the leak of the capability root secret through this field is closed and pinned by a test that would fail if the secret came back. `octo-wallet-node`'s `MintHandler` still writes a 32-byte `capability_id` (the BLAKE3 output), with `handle_v2_envelope_holder_record_bytes_is_capability_id` pinning it — still not a `HolderRecord`, still not decodable as one.
-- [ ] Both producers agree, byte for byte, on what the field contains. **Now actively violated, in a way worth naming.** Before the issuer-node fix both producers were wrong in the same _shape_ — 32 bytes, not a record — so the agreement was accidental and both were equally broken. One was corrected and one was not, so the field now has two production meanings where it previously had two copies of one broken meaning. The third checkbox is not "still to do": it is the direct consequence of fixing one producer alone, and fixing it means deciding whether `octo-wallet-node`'s mint handler should also write a `HolderRecord` — and if so, whether it registers it, which is a second node-side registrant rather than a wire-format question.
+- [x] `holder_record_bytes` either holds canonical-JSON `HolderRecord` bytes that `HolderRecord::canonical_de` accepts, or it is replaced by a typed field and its documentation stops naming a type it does not enforce. **Done** — both producers write the serialized `HolderRecord`, and both tests decode it against real minted output. The leak of the capability root secret through this field is closed, and so is the second leak: the wallet node was writing a bare 32-byte `capability_id`, which is the record's primary key with none of the record around it.
+- [x] Both producers agree, byte for byte, on what the field contains. **Done**, and the route there is worth recording because the first fix created the divergence rather than removing it: correcting only the issuer node left two producers writing two different meanings, where before they had written the same wrong one. The wallet node's `MintHandler` now writes the same canonical bytes and inserts the record into its own node's registry, so the bytes on the wire are provably the bytes the registry stored. **Two production construction sites, and two is right**: RFC-0871 puts the wallet node and the capability issuer node on separate payload-kind namespaces, both mint, and RFC-0957-A1 §Roles and Authorities gives the Token Issuer — the `IdentityKey` of an issuing node — the authority _"mint + revoke + register"_. `compute_capability_id` is what `compute_cap_root_hash_from_wire` delegates to, so the wallet node was already deriving the correct registry PK; only the record around it was missing. The guard `only_the_issuing_nodes_build_a_holder_record_in_production` pins the set exactly in both directions, so a third site and a deleted registrant both go red.
 - [ ] A minted V2 envelope round-trips into something a verifier accepts — not merely into a decoded struct.
 - [ ] `expires_at_unix_secs` reflects the capability's real expiry rather than `u64::MAX`, or the field is removed and the caveat path is restored.
 
 ## What must not happen
 
-Do not add a test asserting that `holder_record_bytes` decodes to a `HolderRecord`.
-That test would have to be written against fixed fixture bytes, because it cannot
-pass against real minted output — which makes it a test that validates the
-fixture rather than the code, and a green board for a broken contract.
+**This rule was correct when written and is now overturned by the fix.** The
+prohibition on a test asserting that `holder_record_bytes` decodes to a
+`HolderRecord` stood on one premise: that the test would have to be written
+against fixed fixture bytes, because real minted output could not decode. That
+premise was true while both producers wrote 32 raw bytes, and false the moment
+they wrote a real record. Both mint handlers now have a test that decodes
+genuinely minted output, and it is the strongest test either handler has — a
+fixture-byte test would still pass if the producer regressed, which is the exact
+failure this rule was written to prevent.
+
+The transferable part is the reasoning, not the prohibition: before pinning a
+contract with a test, check whether the test can be written against real output
+rather than a fixture. If it cannot, the contract is probably the thing that is
+wrong, not the test.
 
 Do not resolve this by making the field `Option<Vec<u8>>` or emptying it. The
 field exists to carry a holder record; making it optional removes the signal that

@@ -68,8 +68,18 @@ impl MintRequest {
 }
 
 /// `WALLET_MINT_CAPABILITY` handler implementation.
+///
+/// Holds the node's `HolderRegistry` because RFC-0957-A1 §6 makes
+/// `CapabilityToken::mint` persistence-free by design and assigns the write to
+/// *the caller*. This handler is that caller: RFC-0957-A1 §Roles and Authorities
+/// gives the Token Issuer — the `IdentityKey` of the issuing node — the
+/// authority _"mint + revoke + register"_. A mint that does not register leaves
+/// the registry without the record, and every verification of that capability
+/// is refused with `HolderUnknown` before the caveats are ever read.
 pub struct MintHandler<'a> {
     identity: &'a IdentityKey,
+    /// Registry the minted holder record is written to.
+    registry: &'a dyn octo_cap_macaroon::holder_registry::HolderRegistry,
     /// Optional spend ledger (mission 0871e-phase5b). When present,
     /// mints with a `payment_caveat` seed the ledger with
     /// `(holder_did, capability_id) → caveat.budget`. Tests / non-paid
@@ -78,12 +88,16 @@ pub struct MintHandler<'a> {
 }
 
 impl<'a> MintHandler<'a> {
-    /// Construct a new `MintHandler` bound to the given identity key.
-    /// No spend ledger (tests + non-paid deployments).
+    /// Construct a new `MintHandler` bound to the given identity key and
+    /// holder registry. No spend ledger (tests + non-paid deployments).
     #[must_use]
-    pub const fn new(identity: &'a IdentityKey) -> Self {
+    pub const fn new(
+        identity: &'a IdentityKey,
+        registry: &'a dyn octo_cap_macaroon::holder_registry::HolderRegistry,
+    ) -> Self {
         Self {
             identity,
+            registry,
             spend_ledger: None,
         }
     }
@@ -92,9 +106,14 @@ impl<'a> MintHandler<'a> {
     /// by production deployments to seed the ledger at mint time so
     /// subsequent `WALLET_PAID_QUERY_VERIFY` calls can drain.
     #[must_use]
-    pub fn with_ledger(identity: &'a IdentityKey, spend_ledger: Arc<dyn SpendLedger>) -> Self {
+    pub fn with_ledger(
+        identity: &'a IdentityKey,
+        registry: &'a dyn octo_cap_macaroon::holder_registry::HolderRegistry,
+        spend_ledger: Arc<dyn SpendLedger>,
+    ) -> Self {
         Self {
             identity,
+            registry,
             spend_ledger: Some(spend_ledger),
         }
     }
@@ -144,12 +163,43 @@ impl<'a> MintHandler<'a> {
         // is NO LONGER the response payload. Downstream V2 consumers
         // decode via `CapabilityBundleV2Envelope::canonical_de` after
         // checking the 16-byte `CIPHEROCTO_V2_BUNDLE_PREFIX` prefix.
+        //
+        // `holder_record_bytes` carries the serialized `HolderRecord` —
+        // the same canonical bytes the registry stores, so the field
+        // decodes with the `HolderRecord::canonical_de` its own
+        // documentation names. It previously carried a bare 32-byte
+        // `capability_id`, which is the record's primary key and nothing
+        // else: same value, no record around it. The two mint producers
+        // now write byte-identical content (mission `0009-cj`).
         let holder_record_bytes = {
-            use octo_cap_macaroon::macaroon::compute_capability_id;
-            let cap_id = compute_capability_id(&token.macaroon);
-            let mut buf = Vec::with_capacity(32);
-            buf.extend_from_slice(&cap_id);
-            buf
+            use octo_cap_macaroon::holder_record::{
+                CapabilityClass, CapabilityTokenLike, HolderRecord,
+            };
+            // `compute_capability_id` is what
+            // `compute_cap_root_hash_from_wire` delegates to, so this is
+            // the same PK the registry is keyed by.
+            let cap_root_hash = octo_cap_macaroon::macaroon::compute_capability_id(&token.macaroon);
+            let record = HolderRecord::from_capability(
+                &CapabilityTokenLike {
+                    cap_root_hash,
+                    class: CapabilityClass::V1,
+                },
+                &self.identity.public_key_bytes_array().ok_or_else(|| {
+                    ProtocolError::AuthorizationFailed("issuer key is not 32 bytes".to_owned())
+                })?,
+                &req.holder_did,
+                None,
+                // `ttl_millis_unix = 0` is the TV14 contract for
+                // "active, no TTL expiry", matching the unbounded
+                // `expires_at_unix_secs` below.
+                0,
+            );
+            self.registry
+                .insert(record.clone())
+                .map_err(|e| ProtocolError::AuthorizationFailed(format!("registry insert: {e}")))?;
+            record.canonical_ser().map_err(|e| {
+                ProtocolError::AuthorizationFailed(format!("holder record ser: {e}"))
+            })?
         };
         let discharge_macaroon_bytes: Vec<u8> = Vec::new();
         let token_v2 = CapabilityTokenV2 {
@@ -236,6 +286,16 @@ mod tests {
         format!("did:octo:z{encoded}")
     }
 
+    /// Real in-memory registry, matching the fixture the wallet node's own tests
+    /// use. An in-memory `HolderRegistry` here is a test double, not a
+    /// production store: RFC-0957-A1 §4 names `StoolapHolderRegistry` backed by
+    /// a real handle as the reference, and §Alternatives rejects an in-memory
+    /// `HashMap` as lost on restart and unfederable. Test-local so it cannot be
+    /// mistaken for a deployment component.
+    fn sample_registry() -> Arc<dyn octo_cap_macaroon::holder_registry::HolderRegistry> {
+        Arc::new(octo_ident_storage::StoolapHolderRegistry::open_in_memory().unwrap())
+    }
+
     /// Helper: extract the V2 envelope from `out.response_payload` and
     /// decode it. Panics if the payload is missing or malformed.
     /// Mission `0957-f-v2-bundle-cutover`: `response_payload` IS the
@@ -292,7 +352,8 @@ mod tests {
     #[test]
     fn handle_rejects_invalid_did() {
         let id = sample_identity();
-        let handler = MintHandler::new(&id);
+        let reg = sample_registry();
+        let handler = MintHandler::new(&id, &*reg);
         let req = MintRequest {
             holder_did: "did:octo:bad".into(),
             capability: [0xab; 32],
@@ -317,7 +378,8 @@ mod tests {
     #[test]
     fn handle_emits_v2_envelope_as_primary_payload() {
         let id = sample_identity();
-        let handler = MintHandler::new(&id);
+        let reg = sample_registry();
+        let handler = MintHandler::new(&id, &*reg);
         let req = MintRequest {
             holder_did: sample_did(),
             capability: [0xab; 32],
@@ -339,7 +401,8 @@ mod tests {
     #[test]
     fn handle_v2_envelope_root_invariants() {
         let id = sample_identity();
-        let handler = MintHandler::new(&id);
+        let reg = sample_registry();
+        let handler = MintHandler::new(&id, &*reg);
         let req = MintRequest {
             holder_did: sample_did(),
             capability: [0xab; 32],
@@ -361,7 +424,8 @@ mod tests {
     #[test]
     fn handle_v2_envelope_audience_and_issuer_dids() {
         let id = sample_identity();
-        let handler = MintHandler::new(&id);
+        let reg = sample_registry();
+        let handler = MintHandler::new(&id, &*reg);
         let req = MintRequest {
             holder_did: sample_did(),
             capability: [0xab; 32],
@@ -385,7 +449,8 @@ mod tests {
     #[test]
     fn handle_v2_envelope_channel_id_is_16_bytes_and_unique_per_mint() {
         let id = sample_identity();
-        let handler = MintHandler::new(&id);
+        let reg = sample_registry();
+        let handler = MintHandler::new(&id, &*reg);
         let req = MintRequest {
             holder_did: sample_did(),
             capability: [0xab; 32],
@@ -411,7 +476,8 @@ mod tests {
     #[test]
     fn handle_rejects_non_canonical_did_before_mint() {
         let id = sample_identity();
-        let handler = MintHandler::new(&id);
+        let reg = sample_registry();
+        let handler = MintHandler::new(&id, &*reg);
         // Bare form (no `did:octo:` prefix) must fail canonical-codec
         // validation per RFC-0010 F4.
         let req = MintRequest {
@@ -426,14 +492,22 @@ mod tests {
         );
     }
 
-    /// TV6 — `holder_record_bytes` carries the 32-byte capability_id
-    /// (BLAKE3 keyed-hash of the macaroon) — the canonical registry PK
-    /// per RFC-0957-A1 §Phase 2. V2 envelope substrate for the
-    /// `CapRegistry::lookup_by_capability_id` flow.
+    /// TV6 — `holder_record_bytes` carries the serialized `HolderRecord`,
+    /// which is what the field's own documentation promises and what
+    /// `HolderRecord::canonical_de` accepts.
+    ///
+    /// **This test used to assert the opposite.** It pinned a bare 32-byte
+    /// `capability_id` (BLAKE3 of the macaroon) and called that correct. That
+    /// value is the record's primary key with none of the record around it,
+    /// so the field could not decode as the type it names. It is also the
+    /// value the capability issuer node stopped writing, which would have
+    /// left the two mint producers disagreeing byte for byte — the exact
+    /// failure mission `0009-cj` exists to name.
     #[test]
-    fn handle_v2_envelope_holder_record_bytes_is_capability_id() {
+    fn holder_record_bytes_decodes_as_a_holder_record() {
         let id = sample_identity();
-        let handler = MintHandler::new(&id);
+        let reg = sample_registry();
+        let handler = MintHandler::new(&id, &*reg);
         let req = MintRequest {
             holder_did: sample_did(),
             capability: [0xab; 32],
@@ -441,18 +515,50 @@ mod tests {
         };
         let out = handler.handle(&req).unwrap();
         let env = envelope_from(&out);
-        // 32-byte capability_id (BLAKE3 output).
+        let record = octo_cap_macaroon::holder_record::HolderRecord::canonical_de(
+            &env.bundle.holder_record_bytes,
+        )
+        .expect("holder_record_bytes must decode with the canonical_de its docs name");
+        assert_eq!(record.holder_did, sample_did());
         assert_eq!(
-            env.bundle.holder_record_bytes.len(),
-            32,
-            "holder_record_bytes carries 32-byte capability_id"
+            record.kind,
+            octo_cap_macaroon::holder_kind::HolderKind::V1,
+            "a v1 macaroon mint registers a V1 holder record"
         );
-        // Not all zero for a fresh mint (BLAKE3 of non-empty input).
-        assert_ne!(
-            env.bundle.holder_record_bytes,
-            vec![0u8; 32],
-            "capability_id is not the zero hash for fresh mint"
+    }
+
+    /// Minting writes a `HolderRecord`, so the registry is no longer empty and
+    /// a verifier resolving this capability finds its holder rather than
+    /// `HolderUnknown`. Without this the capability this handler just minted is
+    /// refused by every verifier, and nothing in the handler's own tests would
+    /// say so.
+    #[test]
+    fn minting_registers_a_holder_record_the_registry_can_return() {
+        let id = sample_identity();
+        let reg = sample_registry();
+        let handler = MintHandler::new(&id, &*reg);
+        let req = MintRequest {
+            holder_did: sample_did(),
+            capability: [0xab; 32],
+            payment_caveat: None,
+        };
+        let out = handler.handle(&req).unwrap();
+        let env = envelope_from(&out);
+        let record = octo_cap_macaroon::holder_record::HolderRecord::canonical_de(
+            &env.bundle.holder_record_bytes,
+        )
+        .expect("decode");
+        // The bytes on the wire are the bytes the registry stored — proved by
+        // looking the record up by the very PK the envelope carries.
+        let found = reg
+            .lookup(&record.cap_root_hash)
+            .expect("lookup")
+            .expect("the minted capability must be in the registry");
+        assert_eq!(
+            found.canonical_ser().unwrap(),
+            env.bundle.holder_record_bytes
         );
+        assert_eq!(found.holder_did, sample_did());
     }
 
     /// TV7 — `discharge_macaroon_bytes` is empty for a root mint (no
@@ -461,7 +567,8 @@ mod tests {
     #[test]
     fn handle_v2_envelope_discharge_macaroon_bytes_empty_for_root() {
         let id = sample_identity();
-        let handler = MintHandler::new(&id);
+        let reg = sample_registry();
+        let handler = MintHandler::new(&id, &*reg);
         let req = MintRequest {
             holder_did: sample_did(),
             capability: [0xab; 32],
@@ -488,7 +595,8 @@ mod tests {
         let holder_did_str = sample_did();
         let holder_did = WireDid::new(holder_did_str.clone());
         let ledger = Arc::new(octo_paid_query::InMemorySpendLedger::new());
-        let handler = MintHandler::with_ledger(&id, ledger.clone());
+        let reg = sample_registry();
+        let handler = MintHandler::with_ledger(&id, &*reg, ledger.clone());
         let payment = octo_cap_macaroon::PaymentCaveat::legacy_3arg(
             octo_determin::Dqa::new(1_000_000, 0).expect("scale=0 valid"),
             "gpt-4",
@@ -521,7 +629,8 @@ mod tests {
         let holder_did_str = sample_did();
         let holder_did = WireDid::new(holder_did_str.clone());
         let ledger = Arc::new(octo_paid_query::InMemorySpendLedger::new());
-        let handler = MintHandler::with_ledger(&id, ledger.clone());
+        let reg = sample_registry();
+        let handler = MintHandler::with_ledger(&id, &*reg, ledger.clone());
         let req = MintRequest {
             holder_did: holder_did_str.clone(),
             capability: [0xab; 32],

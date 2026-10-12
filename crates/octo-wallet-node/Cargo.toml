@@ -77,6 +77,12 @@ thiserror = "1"
 [dev-dependencies]
 # Test signer for HSM mock
 hex = "0.4"
+# Layer C storage adapter, TEST FIXTURES ONLY. The mint handler now writes a
+# real `HolderRecord`, so its tests need a registry to assert against;
+# `StoolapHolderRegistry::open_in_memory()` is the reference implementation
+# named by RFC-0957-A1 §4. Declared here rather than in `[dependencies]` so no
+# production path in this crate can reach storage — RFC-0871 §G9.
+octo-ident-storage = { path = "../octo-ident-storage" }
 # Ed25519 verification in tests (verify signature against public key)
 ed25519-dalek = { version = "2.2", features = ["serde"] }
 # bs58 for deriving public-key DID wire form in tests

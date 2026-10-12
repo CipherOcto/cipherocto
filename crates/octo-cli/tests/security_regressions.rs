@@ -3727,17 +3727,25 @@ fn test_region_start(text: &str) -> Option<usize> {
         .min()
 }
 
-/// The **only** file permitted to build a `HolderRecord` outside a test module.
+/// The only files permitted to build a `HolderRecord` outside a test module.
 ///
-/// RFC-0871 §G9 puts mint-time holder persistence in the node-side handler,
-/// not the wallet, and the capability issuer node is the registrant. It builds
-/// the record, writes it to the registry it holds, and puts the same canonical
-/// bytes in the V2 bundle — one construction, one consumer.
+/// **Two, and two is the correct number.** RFC-0871 gives the mesh two distinct
+/// issuing nodes on distinct payload-kind namespaces — the wallet node serves
+/// `WALLET_MINT_CAPABILITY`, the capability issuer node serves
+/// `CAPABILITY_ISSUE` — and RFC-0957-A1 §Roles and Authorities gives the Token
+/// Issuer, the `IdentityKey` of an issuing node, the authority _"mint + revoke +
+/// register"_. Both mint, so both register; neither is a copy of the other.
 ///
-/// The list is matched exactly in both directions, so deleting the registrant
-/// turns this guard red as surely as adding a second one does.
-const HOLDER_RECORD_PRODUCTION_FILES: &[&str] =
-    &["crates/octo-capability-issuer-node/src/handlers/issue.rs"];
+/// Each file builds the record, writes it to its own node's registry, and puts
+/// those same canonical bytes in its V2 bundle — which is also what makes the
+/// two producers agree byte for byte on the wire (mission `0009-cj`).
+///
+/// The list is matched exactly in both directions, so deleting a registrant
+/// turns this guard red as surely as adding a third one does.
+const HOLDER_RECORD_PRODUCTION_FILES: &[&str] = &[
+    "crates/octo-wallet-node/src/handlers/mint.rs",
+    "crates/octo-capability-issuer-node/src/handlers/issue.rs",
+];
 
 /// Every file allowed to call `HolderRecord::from_capability` at all, including
 /// from test modules. A new entry is a prompt to record *what registers a
@@ -3753,12 +3761,13 @@ const HOLDER_RECORD_CONSTRUCTION_FILES: &[&str] = &[
     "crates/octo-cap-macaroon/src/macaroon.rs",
     "crates/octo-ident-storage/src/holder_registry.rs",
     "crates/octo-wallet/src/capability/verify.rs",
+    "crates/octo-wallet-node/src/handlers/mint.rs",
     "crates/octo-capability-issuer-node/src/handlers/issue.rs",
     "crates/quota-router-core/src/ingress/capability_verifier.rs",
 ];
 
-/// Exactly one production site builds a `HolderRecord`, and it is the
-/// node-side registrant.
+/// Every production site that builds a `HolderRecord` is one of the two
+/// issuing nodes, and the set matches exactly.
 ///
 /// Two layers. Layer one — a file outside
 /// [`HOLDER_RECORD_CONSTRUCTION_FILES`] calls it. Layer two — the set of files
@@ -3768,7 +3777,7 @@ const HOLDER_RECORD_CONSTRUCTION_FILES: &[&str] = &[
 /// `ProductionCapabilityVerifier` refuses every real capability with
 /// `CapError::HolderUnknown` before the ask is ever read.
 #[test]
-fn exactly_one_production_site_builds_a_holder_record() {
+fn only_the_issuing_nodes_build_a_holder_record_in_production() {
     let mut new_files: Vec<String> = Vec::new();
     let mut production_calls: Vec<String> = Vec::new();
 

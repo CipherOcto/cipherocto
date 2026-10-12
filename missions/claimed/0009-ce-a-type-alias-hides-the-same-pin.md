@@ -878,7 +878,10 @@ byte shape to `HolderRecord::canonical_de` returns `expected value at line 1
 column 1`. The tests in those crates pin the raw-bytes behaviour and call it
 correct — `handle_holder_record_bytes_carries_capability_root`,
 `handle_v2_envelope_holder_record_bytes_is_capability_id` — so the contract
-violation is not merely undocumented, it is **tested in**.
+violation is not merely undocumented, it is **tested in**. (Both tests have since
+been rewritten to assert the opposite, and both producers now write the record
+this section says they should. The finding above is left as written because it is
+what was true when it was measured; see mission `0009-cj` §Acceptance Criteria.)
 
 ### Why this is the same shape as everything else in the arc
 

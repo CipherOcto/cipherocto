@@ -111,10 +111,16 @@ impl ParsedModel {
 /// Tuple of (provider, model) strings
 ///
 /// # Example
-/// ```
-/// let (provider, model) = parse_model("openai:gpt-4o").unwrap();
-/// assert_eq!(provider, "openai");
-/// assert_eq!(model, "gpt-4o");
+///
+/// This is a PyO3 binding returning a Python tuple, so it is called from
+/// Python and is not runnable as a Rust doctest.
+///
+/// ```ignore
+/// from quota_router_native import parse_model
+///
+/// provider, model = parse_model("openai:gpt-4o")
+/// assert provider == "openai"
+/// assert model == "gpt-4o"
 /// ```
 #[pyfunction]
 #[pyo3(name = "parse_model")]

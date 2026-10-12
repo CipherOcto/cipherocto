@@ -175,6 +175,47 @@ jobs:
             cargo clippy -p octo-cap-macaroon --features hex-ids --all-targets -- -D warnings;
           fi
 
+      # Feature gates that pull in NO dependencies. Unlike `query` and
+      # `otlp`, there is no build-budget reason to exclude these — they
+      # declare an empty dependency list, so enabling them costs the job
+      # nothing beyond compiling the tests they gate. The measured
+      # default-vs-feature test counts are recorded per step, because a
+      # step whose delta silently reaches zero is a step that measures
+      # nothing: that is the failure mode to notice, not the build.
+      #
+      # No clippy under these features, deliberately. The hex-ids step
+      # above runs it because that feature changes production code. These
+      # two gate test modules, and the job's own disk comment explains it
+      # has already exhausted a hosted runner twice.
+
+      - name: Test attach-key-rotation feature gate (octo-runtime)
+        # Measured: 91 tests by default, 102 with this feature.
+        run: |
+          if [ -f Cargo.toml ]; then
+            cargo test -p octo-runtime --features octo-attach-key-rotation;
+          fi
+
+      - name: Test octo-audit-internal feature gate (octo-audit)
+        # Measured across all targets: 125 tests by default, 131 with
+        # this feature.
+        #
+        # Scoped to octo-audit, not octo-wallet. The same feature is
+        # declared in octo-wallet too, but there it gates a production
+        # branch in src/agent.rs rather than any test, so running it
+        # executes no additional test. That branch is tracked separately.
+        run: |
+          if [ -f Cargo.toml ]; then
+            cargo test -p octo-audit --features octo-audit-internal;
+          fi
+
+      - name: Test octo-vault testing feature gate
+        # Measured across all targets: 94 tests by default, 95 with
+        # this feature.
+        run: |
+          if [ -f Cargo.toml ]; then
+            cargo test -p octo-vault --features testing;
+          fi
+
       - name: Check telegram-cli builds with real-tdlib
         # The Telegram CLI (octo-telegram-onboard) is excluded from the main
         # workspace (see root Cargo.toml) to prevent TDLib's libc++ runtime

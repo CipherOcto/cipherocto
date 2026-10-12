@@ -21,7 +21,10 @@ count that was wrong. Adding one of them exposed a false pass in the harness
 itself, now fixed — see §A false pass found below.
 
 Separately, and more importantly: the harness has now been run in full for the
-first time. **All 24 entries observed red**, in 55 seconds. The mission
+first time. **All 24 entries observed red**, in 55 seconds, and the table has
+since grown to 42 entries. **Re-run in full against the current table: 42
+mutations, 42 red, 0 vacuous, 0 bad-mutation, 0 bad-anchor**, with the tree
+clean afterwards and disk unmoved (7.5 GB free before, 7.4 GB after). The mission
 previously recorded that the expensive entries could not be reached; that was an
 estimate mistaken for a constraint, and the measurement is in §The cost
 assumption that was wrong.

@@ -4430,10 +4430,12 @@ const WALLET_STORAGE_IMPORT_SITES: &[&str] = &[
 fn the_wallet_crate_does_not_depend_on_storage() {
     // Layer one: non-test source that imports the crate.
     let mut sites: Vec<String> = Vec::new();
+    let mut files_read = 0usize;
     for path in walk_rs(&workspace_root().join("crates/octo-wallet/src")) {
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
+        files_read += 1;
         let production = production_region(&text);
         if !production.contains("quota_router_storage") {
             continue;
@@ -4453,6 +4455,22 @@ fn the_wallet_crate_does_not_depend_on_storage() {
         "RFC-0871 §G9: non-test octo-wallet source imports quota_router_storage \
          here: {sites:?}. Recorded exceptions are {WALLET_STORAGE_IMPORT_SITES:?} — \
          if a site is new, the gate has been widened."
+    );
+    // Layer one above reads a directory and asserts nothing about whether it
+    // read anything, so a walk that stopped — a renamed path, a crate move —
+    // would find no import sites and report the gate holding. Layer two is not
+    // a substitute: it compares a manifest boolean against the recorded list
+    // and stays true however blind the source scan has become.
+    //
+    // 41 files sit under octo-wallet source today. The floor sits below that
+    // with room for refactoring, as the other floors in this file do: the point
+    // is to catch a walk that reads nothing, not to pin a count that ordinary
+    // deletion would trip.
+    assert!(
+        files_read >= 30,
+        "the octo-wallet source scan read only {files_read} file(s) against a \
+         measured 41. A walk that stopped reaching the crate would otherwise find \
+         no import sites and report this gate holding."
     );
 
     // Layer two: the manifest, conditioned on layer one.

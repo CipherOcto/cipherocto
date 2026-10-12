@@ -5151,13 +5151,47 @@ fn no_path_dependency_is_declared_and_never_referenced() {
         // guard rests on, so only `[dependencies]` and
         // `[build-dependencies]` are in scope.
         let mut section = String::new();
+        // A path dependency may also be spelled as its own table rather than
+        // inline:
+        //
+        //     [dependencies.foo]
+        //     path = "../foo"
+        //
+        // There the dependency's name is in the table header, and that header
+        // does not end in "dependencies", so both the section test and the
+        // name below have to account for the form. The section body is kept
+        // because `optional` and `features` sit on their own lines here rather
+        // than inside a spec, and skipping those matters: an optional
+        // dependency is routinely unreferenced and still legitimate.
+        let mut section_dep: Option<String> = None;
+        let mut section_body = String::new();
         for line in text.lines() {
             let t = line.trim();
             if t.starts_with('[') && t.ends_with(']') {
                 section = t.trim_matches(|c| c == '[' || c == ']').to_owned();
+                section_dep = None;
+                section_body.clear();
+                let is_dep_table = (section.starts_with("dependencies.")
+                    || section.starts_with("build-dependencies."))
+                    && !section.starts_with("dev");
+                if is_dep_table {
+                    let dep = section.split_once('.').map(|(_, n)| n).unwrap_or("");
+                    if !dep.is_empty()
+                        && dep
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                        && !dep.starts_with(|c: char| c.is_ascii_digit())
+                    {
+                        section_dep = Some(dep.to_owned());
+                    }
+                }
                 continue;
             }
-            if !(section.ends_with("dependencies") && !section.starts_with("dev")) {
+            section_body.push_str(t);
+            section_body.push('\n');
+            if (!section.ends_with("dependencies") || section.starts_with("dev"))
+                && section_dep.is_none()
+            {
                 continue;
             }
             if !t.contains("path") || !t.contains("../") {
@@ -5166,16 +5200,16 @@ fn no_path_dependency_is_declared_and_never_referenced() {
             let Some(rest) = t.split_once('=') else {
                 continue;
             };
-            let name = rest.0.trim().to_owned();
             let spec = rest.1;
-            // Only inline-table entries carry the key `path`. A manifest
-            // that spells a dependency as its own `[dependencies.foo]`
-            // table has a bare `path = "..."` line, and reading that as a
-            // dependency named `path` is how a first pass produced a
-            // finding that named a crate that does not exist.
-            if !spec.contains('{') {
-                continue;
-            }
+            // Only an inline-table entry has the dependency's name on the left
+            // of the `=`. In the own-table form the left-hand side is the key
+            // `path`, and reading that as a dependency named `path` is how a
+            // first pass produced a finding naming a crate that does not
+            // exist. There the name comes from the header instead.
+            let name = match &section_dep {
+                Some(dep) => dep.clone(),
+                None => rest.0.trim().to_owned(),
+            };
             if name.is_empty()
                 || !name
                     .chars()
@@ -5185,6 +5219,11 @@ fn no_path_dependency_is_declared_and_never_referenced() {
                 continue;
             }
             examined += 1;
+
+            let mut spec = spec;
+            if section_dep.is_some() {
+                spec = section_body.as_str();
+            }
 
             if spec.contains("optional = true") {
                 skipped_optional += 1;

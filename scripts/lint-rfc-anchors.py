@@ -29,8 +29,11 @@ BASELINE_PATH = Path(__file__).resolve().parent / "lint-rfc-anchors-baseline.txt
 # Sources whose headings an RFC `§X` reference may legitimately target.
 # BLUEPRINT.md is in this list because the single most common dangling
 # reference in the corpus is `§Adversarial Review Process`, which is a
-# BLUEPRINT section and not an RFC section.
-INDEX_SOURCES = [RFC_ROOT, ROOT / "docs", ROOT / "missions"]
+# BLUEPRINT section and not an RFC section. CLAUDE.md is in this list for the
+# same reason: it is the document that *defines* the `§section_name`
+# convention, so a great many references legitimately target its sections and
+# none of them could resolve while it went unindexed.
+INDEX_SOURCES = [RFC_ROOT, ROOT / "docs", ROOT / "missions", ROOT / "CLAUDE.md"]
 
 # `§Section Name` — the name runs to a backtick, pipe, newline, comma, an em or
 # en dash, or the start of the next sentence. The comma terminator matters:

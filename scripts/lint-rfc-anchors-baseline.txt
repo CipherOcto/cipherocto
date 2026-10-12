@@ -107,7 +107,6 @@ base url alias
 binding domain
 bootstrap envelope types
 bootstrap orchestrator
-branch strategy
 breaking changes bc#9
 budget computation procedure
 budget computation procedure (clarifies
@@ -146,7 +145,6 @@ confirmation flag phase 9
 constraint encoding
 coordinator lifecycle
 core engineering principles "no
-core engineering principles ("no
 cost computation
 coverage table
 cross-domain aggregation
@@ -199,7 +197,6 @@ deterministic canonical serialization (dcs
 deterministic constant
 deterministic encoding
 deterministic encoding (big-endian
-documentation standards
 domain separators
 driver surface / §wire form
 dual-stake; rfc-0909
@@ -461,9 +458,6 @@ rfc process + rfc-0015 §version history
 rfc process audit condition 2
 rfc process"
 rfc process; r4
-rfc reference conventions
-rfc reference conventions (line
-rfc reference conventions (rfc-0010
 rfc reference conventions guard 2
 rfc reference conventions reaffirmed
 rfc reference conventions); "rfc-0960 §substrate

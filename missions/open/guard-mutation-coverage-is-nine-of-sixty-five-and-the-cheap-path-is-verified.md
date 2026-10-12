@@ -15,7 +15,7 @@ metadata:
 ## Status
 
 Largely resolved. The path-dependency guard's blind spot is **fixed** — see §A
-blind spot below — and mutation coverage has moved from 9 of 65 guards to **49 of 65**, a figure the harness now derives from its own
+blind spot below — and mutation coverage has moved from 9 of 65 guards to **51 of 65**, a figure the harness now derives from its own
 table rather than one maintained by hand — see §Coverage counted twice, and the
 count that was wrong. Adding one of them exposed a false pass in the harness
 itself, now fixed — see §A false pass found below.
@@ -308,7 +308,7 @@ now produced by reading the harness table and collecting the distinct
 
 ```
 $ python3 scripts/mutate-zk-guards.py --list | tail -1
-  63 entries -> 49 distinct guards in security_regressions.rs  (+7 entries targeting other crates' suites)
+  65 entries -> 51 distinct guards in security_regressions.rs  (+7 entries targeting other crates' suites)
 ```
 
 That line is printed by the harness itself, derived by reading its own table. It
@@ -316,7 +316,7 @@ did not exist when the count was first wrong, and putting it there is the fix:
 the number can no longer drift from the thing it counts, because it is recomputed
 every time anyone asks.
 
-**63 entries cover 49 guards, and the two numbers must not be conflated.** Seven
+**65 entries cover 51 guards, and the two numbers must not be conflated.** Seven
 entries do not target `security_regressions.rs` at all — three run
 `zk-vendor`'s `library_path` suite, two run `zk-verifier`, two run
 `cipherocto-fs-perms`. They are real mutations against real guards, but those
@@ -376,6 +376,35 @@ the mutation `G-dd` — a real production call passing `&[0u8; 32]` — goes red
 `G-dd` recompiles `octo-cap-macaroon`, so it is the first rebuild-class entry
 added on purpose; the earlier statement that every mutation was free no longer
 holds, and the harness classifies it correctly.
+
+## Two checks that cannot be reached, and why that is worth knowing
+
+Two entries were written for guards on the two-algorithm layering rule and the
+Ed25519 registration, and neither is in the table. Both failed for structural
+reasons rather than effort ones, and both say something about the guards.
+
+**`the_two_algorithm_crates_stay_independent_and_additive` is unreachable.**
+Adding an algorithm dependency to `octo-ident` — the Layer B / Layer E
+direction the guard forbids — was refused by cargo before the guard ever ran:
+
+```
+cyclic package dependency: package `octo-algo-ed25519` ...
+```
+
+Both algorithm crates already depend on `octo-ident`, so the reverse edge is a
+cycle and the workspace does not resolve. The layer rule is already enforced
+one level down, by cargo. The assertion is not wrong and is not useless — it
+names the invariant and catches a _new_ algorithm crate that does not create a
+cycle — but for the two algorithms that exist today it cannot fail, and a
+reader who believes it is the thing holding the line would be wrong about which
+thing holds it.
+
+**`ac11_the_ed25519_registration_itself_is_where_keys_get_built` needs a
+replace-all.** The assertion is `src.contains("VerifyingKey::from_bytes")` over
+a compiled crate, and the constructor appears at more than one call site. The
+harness replaces one contiguous span, so removing the first leaves the rest and
+the guard stays green. The entry would have been a permanent false pass wearing
+a mutation's clothes, which is worse than no entry.
 
 ## A guard that counts files, not declarations
 
@@ -574,8 +603,10 @@ recorded rather than assumed absent elsewhere.
       per store — and `l11_transport_addr_len_uses_checked_arithmetic`,
       `l12_macaroon_id_derivation_is_pinned`,
       `m17_keystore_import_does_not_read_file_supplied_kdf_params` and
-      `c5_the_integrity_only_verifier_no_longer_claims_authenticity`),
-      taking coverage from 9 of 65 to **49 of 65**
+      `c5_the_integrity_only_verifier_no_longer_claims_authenticity`,
+      `h4_redemption_evaluates_time_caveats_before_anything_else` and
+      `h4_every_time_bearing_caveat_variant_is_covered`),
+      taking coverage from 9 of 65 to **51 of 65**
 - [x] Any harness using the prebuilt-binary path refuses to run when the binary
       is older than the guard source — **satisfied a different way**: the
       committed harness runs through cargo, which rebuilds by construction, so
@@ -610,7 +641,7 @@ green as it applies to a guard's.
 ## Why the rest is filed rather than fixed
 
 The blind-spot fix is done and needs no defence. What remains is the coverage
-gap, and that is not urgent: sixteen unbacked guards is a large number that
+gap, and that is not urgent: fourteen unbacked guards is a large number that
 reads as alarming and is not. These guards were written by adversarial review
 and several were mutation-checked by hand during that work. What is missing is
 the _re-runnable record_, which is what this harness would supply — and the

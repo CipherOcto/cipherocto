@@ -1133,7 +1133,62 @@ fn probe_unverified_linkage(b: &str, c: &str) -> LinkageResult {
         ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
          "c5_the_integrity_only_verifier_no_longer_claims_authenticity", "--", "--exact"],
     ),
+    (
+        # Time caveats are evaluated before shape and policy. Reordering them
+        # makes redemption answer on structure first, so an expired capability
+        # reports a shape error instead of an expiry — and a caller with a
+        # generous retry policy treats the two very differently.
+        "G-tt: redemption checks shape before time caveats",
+        "crates/octo-wallet/src/capability/redemption.rs",
+        "    time_caveats_admit(cap, evaluators, now_unix)?;\n    redeem_shape_and_policy(cap, catalog)\n}",
+        "    redeem_shape_and_policy(cap, catalog)?;\n    time_caveats_admit(cap, evaluators, now_unix)\n}",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "h4_redemption_evaluates_time_caveats_before_anything_else", "--", "--exact"],
+    ),
+    (
+        # `time_bounds` classifies which variants carry a deadline, and its
+        # match is exhaustive with no wildcard on purpose. A contributor facing
+        # an exhaustiveness error after adding a variant reaches for `_ =>`,
+        # and that is precisely what makes the new variant silently
+        # unenforced — the defect this guard exists to catch, and the one a
+        # capability whose only deadline was `Before` actually shipped.
+        #
+        # Written as adding the wildcard rather than deleting an arm: the match
+        # has no fallback, so removing `Self::Before` from it would not compile.
+        "G-uu: time_bounds grows a wildcard arm",
+        "crates/octo-cap-macaroon/src/caveat/mod.rs",
+        """            | Self::AssetBinding(_) => None,
+        }
+    }
+
+    /// Registry key for caveat predicate evaluation""",
+        """            | Self::AssetBinding(_) => None,
+            | _ => None,
+        }
+    }
+
+    /// Registry key for caveat predicate evaluation""",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "h4_every_time_bearing_caveat_variant_is_covered", "--", "--exact"],
+    ),
 ]
+# Two entries were written and withdrawn rather than parked in the table.
+#
+# G-vv would have removed `VerifyingKey::from_bytes` from the Ed25519
+# registration so `ac11_the_ed25519_registration_itself_is_where_keys_get_built`
+# fires. That assertion is `src.contains("VerifyingKey::from_bytes")` over a
+# compiled crate, and the constructor appears at several call sites — one
+# contiguous replacement leaves the rest, so the guard stays green and the
+# entry would have been a permanent false pass. Making it work needs a
+# replace-all the harness does not have.
+#
+# G-ww would have added an algorithm dependency to `octo-ident` so
+# `the_two_algorithm_crates_stay_independent_and_additive` fires. Cargo
+# refused it first: `octo-algo-ed25519` already depends on `octo-ident`, so the
+# reverse edge is a cycle and the workspace will not resolve. The layer rule
+# that assertion checks is therefore already enforced one level down, by cargo
+# itself. Recorded as a finding rather than as a mutation, because a check
+# that cannot be reached is worth knowing about.
 # G-kk (dropping HandlerOutput's bundle prefix) was written and removed: it
 # targeted the same guard as G-hh, so it added no guard coverage, and adding a
 # field breaks the struct's one construction site, which a single contiguous

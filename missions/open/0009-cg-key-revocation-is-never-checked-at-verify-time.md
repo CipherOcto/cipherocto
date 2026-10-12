@@ -40,6 +40,34 @@ registry. Neither has anything to do with key revocation.
 So the revocation **flag** is modelled and readable, and the revocation **gate**
 AC#14 asks a verifier to perform does not exist.
 
+### A verifier now exists. It does not close this.
+
+`ProductionCapabilityVerifier` landed in `quota-router-core` after this mission
+was filed, and it is worth being precise about what that did and did not do,
+because the two are easy to confuse.
+
+**There are three distinct revocation concepts in this workspace, not two.**
+
+| Concept                      | Where it lives                        | Enforced in production?                                |
+| ---------------------------- | ------------------------------------- | ------------------------------------------------------ |
+| Capability-holder revocation | `HolderRecord.revoked_at_millis_unix` | **yes** — `lookup_active` in `verify_with_resolve`     |
+| Per-key revocation (AC#14)   | `VerificationMethod.revoked_at`       | **no** — `is_revoked()` still has no production caller |
+| Identity-scoped revocation   | `octo-ident` registry                 | **no** — same gap, second half of AC#14                |
+
+The verifier enforces the **first**. That is real progress against the class of
+problem, and it is mutation-verified — `a_revoked_holder_is_refused` fails if the
+active check is disabled, and only that test fails.
+
+But AC#14 names the **second and third**. Those remain exactly as they were:
+`is_revoked()` still has no production caller, and nothing in any verification
+path reads `VerificationMethod.revoked_at`. Checked rather than assumed — the
+verifier's source contains no reference to `is_revoked`, `VerificationMethod`, or
+`revoked_at` at all.
+
+So this mission stays open in full, and the one-line status change is: _a
+production capability verifier exists, and it enforces the holder gate only._
+Recording it as closed would be claiming a neighbour's fix.
+
 ## Why this is filed rather than closed
 
 This is not a missing test for a missing feature. The data model exists and looks

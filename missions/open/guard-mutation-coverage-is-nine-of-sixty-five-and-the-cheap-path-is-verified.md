@@ -15,7 +15,7 @@ metadata:
 ## Status
 
 Largely resolved. The path-dependency guard's blind spot is **fixed** — see §A
-blind spot below — and mutation coverage has moved from 9 of 65 guards to **41 of 65**, a figure the harness now derives from its own
+blind spot below — and mutation coverage has moved from 9 of 65 guards to **43 of 65**, a figure the harness now derives from its own
 table rather than one maintained by hand — see §Coverage counted twice, and the
 count that was wrong. Adding one of them exposed a false pass in the harness
 itself, now fixed — see §A false pass found below.
@@ -308,7 +308,7 @@ now produced by reading the harness table and collecting the distinct
 
 ```
 $ python3 scripts/mutate-zk-guards.py --list | tail -1
-  52 entries -> 41 distinct guards in security_regressions.rs  (+7 entries targeting other crates' suites)
+  55 entries -> 43 distinct guards in security_regressions.rs  (+7 entries targeting other crates' suites)
 ```
 
 That line is printed by the harness itself, derived by reading its own table. It
@@ -316,7 +316,7 @@ did not exist when the count was first wrong, and putting it there is the fix:
 the number can no longer drift from the thing it counts, because it is recomputed
 every time anyone asks.
 
-**52 entries cover 41 guards, and the two numbers must not be conflated.** Seven
+**55 entries cover 43 guards, and the two numbers must not be conflated.** Seven
 entries do not target `security_regressions.rs` at all — three run
 `zk-vendor`'s `library_path` suite, two run `zk-verifier`, two run
 `cipherocto-fs-perms`. They are real mutations against real guards, but those
@@ -376,6 +376,53 @@ the mutation `G-dd` — a real production call passing `&[0u8; 32]` — goes red
 `G-dd` recompiles `octo-cap-macaroon`, so it is the first rebuild-class entry
 added on purpose; the earlier statement that every mutation was free no longer
 holds, and the harness classifies it correctly.
+
+## A guard that counts files, not declarations
+
+`exactly_one_handler_output_type_is_defined` walks the crate tree and, for every
+file whose text contains `pub struct HandlerOutput`, pushes **the path**:
+
+```rust
+assert_eq!(
+    definitions,
+    vec!["crates/octo-protocol/src/dispatch.rs".to_owned()],
+    ...
+);
+```
+
+So a second declaration is only a finding if it lands in a **different file**.
+The first version of mutation `G-hh` declared `HandlerOutputLegacy` directly
+above the real one, in the same file, and the guard stayed green — not because
+the guard is weak about parallel abstractions, but because it counts files and a
+second declaration in one file leaves one entry.
+
+That is worth stating plainly rather than treating as a defect: the vector is
+about a node crate redeclaring the type instead of re-exporting it, which is the
+thing that actually happened and the thing the second half of the guard checks
+directly. A second declaration _in the same file_ cannot compile as
+`HandlerOutput`, so the case is unreachable in valid Rust.
+
+The mutation now declares the type in a different crate, which is what the guard
+is for.
+
+**Two entries were removed rather than fixed.** A "drop the bundle prefix"
+mutation targeted the same guard and could not compile — adding a field breaks
+the struct's one construction site — so it was left as a comment rather than in
+the table as an entry that never runs.
+
+## Adding a field is not one contiguous edit
+
+The obvious mutation for a guard that says "this struct must not have field X"
+is to add the field back. It does not compile, because every construction site
+now misses it — and `DispatchSet` has exactly one, sixty lines below the struct.
+
+The harness replaces one contiguous span, so the mutation was generated to span
+**struct and construction site together**: the field is added and the single
+`Ok(DispatchSet { bearer, capability })` gains it. Sixty-three lines of anchor
+is ugly, and it is what the tool can express. Written by hand it would have
+drifted from the file the first time either side moved, and a silently
+non-matching anchor is reported as BAD-ANCHOR rather than silently passing, so
+the failure mode is loud.
 
 ## A VACUOUS verdict that was the mutation's fault, three times
 
@@ -515,8 +562,13 @@ recorded rather than assumed absent elsewhere.
       `no_verification_site_pins_its_key_to_a_fixed_size_array`,
       `the_wallet_crate_does_not_depend_on_storage`,
       `l9_vault_uses_the_base64_crate_not_a_hand_rolled_parser` and
-      `no_verification_site_reaches_the_algorithm_registry_by_hand`),
-      taking coverage from 9 of 65 to **41 of 65**
+      `no_verification_site_reaches_the_algorithm_registry_by_hand`,
+      `exactly_one_handler_output_type_is_defined` — twice, once for a
+      redeclaration in another crate and once removed for not compiling —
+      and `a_parsed_auth_header_set_carries_no_identity_verdict`, twice, for the
+      field coming back and for header parsing deriving a verdict from
+      unverified decoders),
+      taking coverage from 9 of 65 to **43 of 65**
 - [x] Any harness using the prebuilt-binary path refuses to run when the binary
       is older than the guard source — **satisfied a different way**: the
       committed harness runs through cargo, which rebuilds by construction, so
@@ -551,7 +603,7 @@ green as it applies to a guard's.
 ## Why the rest is filed rather than fixed
 
 The blind-spot fix is done and needs no defence. What remains is the coverage
-gap, and that is not urgent: twenty-four unbacked guards is a large number that
+gap, and that is not urgent: twenty-two unbacked guards is a large number that
 reads as alarming and is not. These guards were written by adversarial review
 and several were mutation-checked by hand during that work. What is missing is
 the _re-runnable record_, which is what this harness would supply — and the

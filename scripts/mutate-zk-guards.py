@@ -834,7 +834,200 @@ MUTATIONS = [
         ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
          "no_verification_site_reaches_the_algorithm_registry_by_hand", "--", "--exact"],
     ),
+    (
+        # Two output types means every handler's return type is ambiguous at the
+        # call site and a response can be built against either. The guard walks
+        # the whole crate tree, so a second declaration anywhere is the finding.
+        # The guard collects the *path* of every file declaring the type, so a
+        # second declaration beside the first is invisible to it — the vector
+        # had one entry in the first version of this mutation and stayed green.
+        # What it is actually for is a redeclaration in another crate, which is
+        # the parallel abstraction the node crates are supposed to re-export
+        # rather than copy.
+        "G-hh: a second handler output type is declared in another crate",
+        "crates/octo-adapter-irc/src/lib.rs",
+        '            "key 20 should be the remaining entry"\n        );\n    }\n}\n',
+        '            "key 20 should be the remaining entry"\n        );\n    }\n}\n'
+        "\n/// A second response envelope type, declared outside octo-protocol.\n"
+        "#[allow(missing_docs)]\n"
+        "pub struct HandlerOutput {\n"
+        "    pub payload_kind: u32,\n"
+        "}\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "exactly_one_handler_output_type_is_defined", "--", "--exact"],
+    ),
+    (
+        # `DispatchSet` used to carry `identity_linkage`, computed by running
+        # both tokens through the placeholder decoders — which derive a DID and
+        # an ask id from the first bytes of the token string. Two identical
+        # strings produced `Linked`. Three tests asserted on it, which is what
+        # made it look exercised. Reintroducing the field is the landmine going
+        # back in the ground, and it is named like an authentication decision
+        # so the next reader reaches for it.
+        "G-ii: the parsed header set regains an identity verdict",
+        "crates/octo-wallet/src/capability/dispatch.rs",
+        """pub struct DispatchSet {
+    pub bearer: Option<AuthHeader>,
+    pub capability: Option<AuthHeader>,
+}
+
+/// Parse `Authorization` + `X-Capability-Token` headers from a request map.
+///
+/// Identity linkage evaluation (RFC-0969 §Phase 1 + AC-A2):
+/// - Both bearer + capability present → decode stubs run → compare
+///   `subject_did == holder_did` AND `ask_id == ask_id`.
+///   - Both match → `Linked { subject_did, ask_id }`.
+///   - Subject match + ask mismatch → `AskBindingMismatch { bearer_ask, cap_ask }`
+///     (mission 0969-a3 AC-B2.1.b).
+///   - Subject mismatch → `Mismatched`.
+/// - One present, other absent → `Indeterminate` (cannot evaluate linkage).
+/// - Neither present → `ParseError::NoAuthHeader` (upstream of `AuthError::NoAuthHeader`
+///   via `From<ParseError> for AuthError`).
+/// - Authorization header with unrecognized scheme (e.g., `Basic <b64>`) →
+///   `ParseError::UnsupportedScheme(scheme)` (mission 0969-a3 AC-B2.1.a;
+///   upstream of `AuthError::UnsupportedScheme`).
+pub fn parse_auth_headers(headers: &[(String, String)]) -> Result<DispatchSet, ParseError> {
+    let mut bearer = None;
+    let mut capability = None;
+    let mut cap_count = 0;
+    for (name, value) in headers {
+        let lower = name.to_lowercase();
+        if lower == "authorization" {
+            // RFC-7235 §2.1: scheme names are case-insensitive. Real-world
+            // deployments send `bearer <token>` (lowercase) and
+            // `Bearer <token>` interchangeably; matching only the exact
+            // case would silently discard valid credentials and emit
+            // `UnsupportedScheme("bearer")` instead of routing to the
+            // bearer pipeline. Compare byte-by-byte against the
+            // canonical scheme prefix, case-folded, to find the actual
+            // token start in the original-case `value`.
+            if let Some(token_start) = strip_scheme_ci(value, "bearer ") {
+                bearer = Some(AuthHeader::Bearer(value[token_start..].to_string()));
+            } else if let Some(token_start) = strip_scheme_ci(value, "cipherocto-cap ") {
+                capability = Some(AuthHeader::CipherOctoCap(value[token_start..].to_string()));
+                cap_count += 1;
+            } else {
+                // Unknown scheme — mission 0969-a3 AC-B2.1.a: surface the
+                // scheme name so `authenticate()` can return
+                // `AuthError::UnsupportedScheme(scheme)`. The previous
+                // silent-discard policy (pre-AC-B2.1) dropped the scheme.
+                let scheme = value.split_whitespace().next().unwrap_or("").to_owned();
+                return Err(ParseError::UnsupportedScheme(scheme));
+            }
+        } else if lower == "x-capability-token" {
+            capability = Some(AuthHeader::CipherOctoCap(value.clone()));
+            cap_count += 1;
+        }
+    }
+    if cap_count > 1 {
+        return Err(ParseError::DuplicateCapabilityHeader);
+    }
+    if bearer.is_none() && capability.is_none() {
+        return Err(ParseError::NoAuthHeader);
+    }
+    // No identity verdict here. Deciding linkage from these bytes would mean
+    // deriving an identity from an unverified token, which is the placeholder
+    // decoder's job and nothing else's. See `DispatchSet`.
+    Ok(DispatchSet { bearer, capability })""",
+        """pub struct DispatchSet {
+    pub bearer: Option<AuthHeader>,
+    pub capability: Option<AuthHeader>,
+    pub identity_linkage: LinkageResult,
+}
+
+/// Parse `Authorization` + `X-Capability-Token` headers from a request map.
+///
+/// Identity linkage evaluation (RFC-0969 §Phase 1 + AC-A2):
+/// - Both bearer + capability present → decode stubs run → compare
+///   `subject_did == holder_did` AND `ask_id == ask_id`.
+///   - Both match → `Linked { subject_did, ask_id }`.
+///   - Subject match + ask mismatch → `AskBindingMismatch { bearer_ask, cap_ask }`
+///     (mission 0969-a3 AC-B2.1.b).
+///   - Subject mismatch → `Mismatched`.
+/// - One present, other absent → `Indeterminate` (cannot evaluate linkage).
+/// - Neither present → `ParseError::NoAuthHeader` (upstream of `AuthError::NoAuthHeader`
+///   via `From<ParseError> for AuthError`).
+/// - Authorization header with unrecognized scheme (e.g., `Basic <b64>`) →
+///   `ParseError::UnsupportedScheme(scheme)` (mission 0969-a3 AC-B2.1.a;
+///   upstream of `AuthError::UnsupportedScheme`).
+pub fn parse_auth_headers(headers: &[(String, String)]) -> Result<DispatchSet, ParseError> {
+    let mut bearer = None;
+    let mut capability = None;
+    let mut cap_count = 0;
+    for (name, value) in headers {
+        let lower = name.to_lowercase();
+        if lower == "authorization" {
+            // RFC-7235 §2.1: scheme names are case-insensitive. Real-world
+            // deployments send `bearer <token>` (lowercase) and
+            // `Bearer <token>` interchangeably; matching only the exact
+            // case would silently discard valid credentials and emit
+            // `UnsupportedScheme("bearer")` instead of routing to the
+            // bearer pipeline. Compare byte-by-byte against the
+            // canonical scheme prefix, case-folded, to find the actual
+            // token start in the original-case `value`.
+            if let Some(token_start) = strip_scheme_ci(value, "bearer ") {
+                bearer = Some(AuthHeader::Bearer(value[token_start..].to_string()));
+            } else if let Some(token_start) = strip_scheme_ci(value, "cipherocto-cap ") {
+                capability = Some(AuthHeader::CipherOctoCap(value[token_start..].to_string()));
+                cap_count += 1;
+            } else {
+                // Unknown scheme — mission 0969-a3 AC-B2.1.a: surface the
+                // scheme name so `authenticate()` can return
+                // `AuthError::UnsupportedScheme(scheme)`. The previous
+                // silent-discard policy (pre-AC-B2.1) dropped the scheme.
+                let scheme = value.split_whitespace().next().unwrap_or("").to_owned();
+                return Err(ParseError::UnsupportedScheme(scheme));
+            }
+        } else if lower == "x-capability-token" {
+            capability = Some(AuthHeader::CipherOctoCap(value.clone()));
+            cap_count += 1;
+        }
+    }
+    if cap_count > 1 {
+        return Err(ParseError::DuplicateCapabilityHeader);
+    }
+    if bearer.is_none() && capability.is_none() {
+        return Err(ParseError::NoAuthHeader);
+    }
+    // No identity verdict here. Deciding linkage from these bytes would mean
+    // deriving an identity from an unverified token, which is the placeholder
+    // decoder's job and nothing else's. See `DispatchSet`.
+    Ok(DispatchSet { bearer, capability, identity_linkage: LinkageResult::Mismatched })""",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "a_parsed_auth_header_set_carries_no_identity_verdict", "--", "--exact"],
+    ),
+    (
+        # The other half of the same guard: even with the field gone, the parse
+        # function must not compute a verdict from unverified decoders. Nothing
+        # production reads such a value today, which is exactly why it is a
+        # landmine rather than a bypass — but the type it feeds is public and
+        # the decoders are public, so a caller can hand it straight to
+        # `evaluate_linkage`, which cannot tell it apart from a verified one.
+        "G-jj: header parsing derives linkage from unverified decoders",
+        "crates/octo-wallet/src/capability/dispatch.rs",
+        """pub struct DispatchSet {
+    pub bearer: Option<AuthHeader>,
+    pub capability: Option<AuthHeader>,
+}""",
+        """pub struct DispatchSet {
+    pub bearer: Option<AuthHeader>,
+    pub capability: Option<AuthHeader>,
+}
+
+fn probe_unverified_linkage(b: &str, c: &str) -> LinkageResult {
+    let _left = unverified_decode_bearer(b);
+    let _right = unverified_decode_capability(c);
+    LinkageResult::Mismatched
+}""",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "a_parsed_auth_header_set_carries_no_identity_verdict", "--", "--exact"],
+    ),
 ]
+# G-kk (dropping HandlerOutput's bundle prefix) was written and removed: it
+# targeted the same guard as G-hh, so it added no guard coverage, and adding a
+# field breaks the struct's one construction site, which a single contiguous
+# replacement cannot reach. Recorded rather than left in the table as an entry
+# that never runs.
 
 # NOT MUTATED, deliberately: `OpenOptionsExt::mode(0o600)` at creation inside
 # create_private. Removing it is behaviourally undetectable - the post-open

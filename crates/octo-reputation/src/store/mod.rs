@@ -103,9 +103,17 @@ pub trait ReputationStore: Send + Sync {
 
     /// Verify a suspension authorisation against the on-chain governance
     /// snapshot. Signature verification is performed by
-    /// `auth::verify_governance_signature`, the single choke point every
-    /// implementation delegates to; this method validates shape, freshness,
-    /// quorum, and the signature.
+    /// `auth::verify_governance_signature`, the single choke point the
+    /// implementations that verify delegate to; this method validates shape,
+    /// freshness, quorum, and the signature.
+    ///
+    /// "Quorum" here means `snapshot.members.len() >= GOVERNANCE_QUORUM` —
+    /// a count of entries, with no distinctness check and nothing verified
+    /// about any member. It is not a quorum of signed attestations, and the
+    /// set-hash check beside it compares two caller-supplied fields rather
+    /// than looking the set up. The signature is the load-bearing check on
+    /// this path; the quorum signal is not one. See
+    /// `missions/deferred/0968-b-governance-proof-verification.md`.
     async fn verify_governance_suspension(
         &self,
         auth: &SuspensionAuth,
@@ -126,8 +134,19 @@ pub trait ReputationStore: Send + Sync {
     /// slash_asset` field consistency before any chain tx.
     async fn slash_recorder(&self, proof: GovernanceProof) -> StoreResult<()>;
 
-    /// Declare a recorder eligible for retirement. Stubbed governance proof
-    /// check; returns `RetirementEligibility` with the recorded evidence hash.
+    /// Declare a recorder eligible for retirement.
+    ///
+    /// **No cryptographic verification occurs on this path.** The governance
+    /// proof is shape-checked only: freshness, a self-consistency comparison
+    /// of the set hash against the proof's own claim, a count of
+    /// `snapshot.members`, and a signature length. The bytes are never parsed
+    /// and no key is checked, so a caller can reach `eligible: true` without
+    /// holding a governance key.
+    ///
+    /// This is the one governance entry point that does not delegate to
+    /// `auth::verify_governance_signature`, and it cannot as written:
+    /// `GovernanceProof` carries no algorithm field to dispatch on. See
+    /// `missions/deferred/0968-b-governance-proof-verification.md`.
     async fn declare_retirement_eligible(
         &self,
         adapter: u8,

@@ -2,11 +2,27 @@
 //!
 //! Per RFC-0968 §21: every authoritative signature or registration carries
 //! one of these types and is shape-validated before any chain-side effect.
-//! The shape, freshness, and quorum checks are enforced by the store layer;
-//! signature verification is performed by [`verify_governance_signature`],
-//! which every store implementation delegates to. The preimage constructions
-//! are byte-pinned so the production signer can be swapped in later without
-//! API churn.
+//! Shape and freshness are enforced by the store layer, and signature
+//! verification is performed by [`verify_governance_signature`]. The
+//! preimage constructions are byte-pinned so the production signer can be
+//! swapped in later without API churn.
+//!
+//! Two corrections to what this module used to claim, both worth stating
+//! because the gap is invisible from the call sites:
+//!
+//! - The signature verifier is **not** delegated to by every store
+//!   implementation. The suspension and slash paths do; the retirement path
+//!   does not, and cannot — `GovernanceProof` carries no algorithm field to
+//!   dispatch on. See `missions/deferred/0968-b-governance-proof-verification.md`.
+//! - The **quorum** check is a count, not a quorum. `quorum_count` is
+//!   `members.len()`: it does not check the members are distinct and nothing
+//!   is verified about any of them. RFC-0968 presents the governance-set
+//!   hash as the mechanism that closes the single-key-compromise attack, and
+//!   the set-hash check on every path is a comparison between two
+//!   caller-supplied fields. There is no registry lookup anywhere in the
+//!   tree. On the suspension and slash paths the real signature check still
+//!   stands on its own, so those paths are sound and their quorum signal is
+//!   not.
 
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Serialize};

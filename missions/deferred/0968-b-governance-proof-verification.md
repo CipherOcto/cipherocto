@@ -45,6 +45,40 @@ A caller who can reach this function can therefore obtain
 a fresh timestamp, a set hash matching itself, three members, and 96 bytes of
 anything.
 
+## The larger half: quorum and set-hash are hollow on every path
+
+The checks above are not unique to retirement. `verify_governance_suspension`
+runs the identical three, in `store/memory.rs` and `store/stoolap.rs`:
+
+| Check                            | On the suspension and slash path           |
+| -------------------------------- | ------------------------------------------ |
+| snapshot freshness               | same — the caller sets `finalized_at_unix` |
+| `governance_set_hash` comparison | same — `snapshot` vs `auth`, both supplied |
+| quorum ≥ `GOVERNANCE_QUORUM`     | same — `members.len()`                     |
+
+Only the signature check differs, and on those paths it is real. So the
+correct reading is narrower and more alarming than "retirement skips
+verification":
+
+- **Signature verification** is present on suspension and slash, absent on
+  retirement. Those two paths are sound; retirement is not.
+- **Quorum and set-hash verification are absent everywhere.** They are
+  statements about the shape of caller-supplied data, and they are not load
+  bearing on any path.
+
+That matters because RFC-0968 presents the governance-set hash as the
+mechanism that **closes the single-key-compromise attack**, "binding the
+proof to a governance-set hash that itself requires quorum agreement to
+mutate". Neither half of that sentence is implemented: there is no registry
+lookup, and there is no agreement — `members` is a vector of bare 32-byte
+values with no signature attached to any of them.
+
+The practical consequence on the suspension and slash paths is bounded: a
+caller still needs a valid governance key, so a single compromised officer
+key can act alone and the quorum check does not make it harder. The check
+reports `GovernanceQuorumNotMet` as though it were a real threshold, so an
+operator reading the error would believe a quorum had been assessed.
+
 ## Why this is an outlier, not a missing subsystem
 
 The same crate already verifies this class of record properly, on the paths
@@ -144,6 +178,10 @@ in §Why it is not a one-line fix. What remains is the verification itself.
    models bare `[u8; 32]` members with no signature attached. The anchor path
    has `AnchorGovernanceSigner` with both fields, so one of the two shapes is
    wrong and the anchor path is the better-founded one.
+3. **Whether the suspension and slash paths may keep a hollow quorum check.**
+   They are sound without it. Keeping a check named `GovernanceQuorumNotMet`
+   that counts unattached bytes is worse than removing it, because it reports
+   an authorisation assessment that did not happen.
 
 ## Scope
 

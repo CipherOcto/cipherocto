@@ -130,8 +130,12 @@ def main() -> int:
 
     rfc_files = sorted(RFC_ROOT.rglob("*.md"))
     if not rfc_files:
-        print("no RFCs found", file=sys.stderr)
-        return 0
+        # Not a pass. An absent or renamed corpus means this gating step
+        # verified nothing, and returning 0 here would let that read as a
+        # clean run — the same "reads nothing, reports green" shape this
+        # suite exists to catch.
+        print(f"no RFCs found under {RFC_ROOT}", file=sys.stderr)
+        return 2
 
     known: set[str] = set()
     for source in INDEX_SOURCES:

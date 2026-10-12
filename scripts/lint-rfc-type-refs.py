@@ -202,8 +202,10 @@ def main() -> int:
     args = parser.parse_args()
 
     if not RFC_ROOT.is_dir():
-        print("no rfcs/ directory", file=sys.stderr)
-        return 0
+        # Not a pass — see the note in lint-rfc-anchors.py. A missing corpus
+        # is a broken gate, not a clean one.
+        print(f"no rfcs/ directory at {RFC_ROOT}", file=sys.stderr)
+        return 2
 
     resolved = known()
     ignored_lower = normalize_ignored()
@@ -223,6 +225,12 @@ def main() -> int:
         return 0
 
     if not unresolved:
+        if not resolved:
+            # Zero symbols indexed and zero references found is agreement
+            # between two empty sets, not evidence that references resolve.
+            print("nothing indexed and nothing referenced — corpus is empty",
+                  file=sys.stderr)
+            return 2
         print(f"type-reference lint clean — {len(resolved)} symbols indexed")
         return 0
 

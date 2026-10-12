@@ -117,14 +117,28 @@ echo ""
 echo "Summary: CHECKED=$CHECKED"
 echo "         IN_SYNC=$IN_SYNC"
 echo "         OUT_OF_SYNC_YAML_OLDER=$OUT_OF_SYNC_OLDER"
-echo "         OUT_OF_SYNC_YAML_NEWER=$OUT_OF_SYNC_YAML_NEWER"
+echo "         OUT_OF_SYNC_YAML_NEWER=$OUT_OF_SYNC_NEWER"
 echo "         NO_VH_NO_YAML=$NO_VH_NO_YAML"
 echo "         KEEP_AS_IS (short plans, no VH required)=$KEEP_AS_IS"
+
+# A lint that examined no files has verified nothing. Its default PLAN_ROOT
+# is a path outside the repository, so on a CI runner it resolves to a
+# directory that does not exist, `find` yields nothing, and every counter
+# stays at zero — which prints PASS and exits 0. That is the failure mode
+# this guard exists to make impossible: a check that cannot see its corpus
+# must not report that its corpus is clean.
+if [ "$CHECKED" -eq 0 ]; then
+    echo ""
+    echo "FAIL: no plan files were examined (PLAN_ROOT=$PLAN_ROOT)."
+    echo "This lint verified nothing. Point PLAN_ROOT at the intended corpus"
+    echo "before treating a pass as meaningful."
+    exit 1
+fi
 
 if [ "$EXIT_CODE" -ne 0 ]; then
     echo ""
     echo "FAIL: plan YAML/VH sync drift detected."
-    echo "Fix: align YAML frontmatter `version:` with latest ## Version History row."
+    echo 'Fix: align YAML frontmatter `version:` with latest ## Version History row.'
     exit 1
 fi
 

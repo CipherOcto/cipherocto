@@ -118,6 +118,19 @@ echo "         NO_STATUS_VERSION=$NO_STATUS_VERSION"
 echo "         NO_VH=$NO_VH"
 echo "         DUAL_VH=$DUAL_VH (informational only, e.g., RFC-0126)"
 
+# A lint that examined no files has verified nothing, and must not report that
+# its corpus is clean. Each of these scripts takes its corpus root from the
+# environment, so pointing it at a path that does not exist — which is exactly
+# what happens on a CI runner when the default names a directory outside the
+# repository — used to print PASS and exit 0.
+if [ "$CHECKED" -eq 0 ]; then
+    echo ""
+    echo "FAIL: no files were examined (RFC_ROOT=$RFC_ROOT)."
+    echo "This lint verified nothing. Point RFC_ROOT at the intended corpus"
+    echo "before treating a pass as meaningful."
+    exit 1
+fi
+
 if [ "$EXIT_CODE" -ne 0 ]; then
     echo ""
     echo "FAIL: Status/VH sync drift detected."

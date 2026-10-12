@@ -3753,6 +3753,7 @@ fn no_verification_site_pins_its_key_to_a_fixed_size_array() {
                 .replace('\\', "/");
             let src = std::fs::read_to_string(&path).unwrap();
             let stripped = strip_comments(&src);
+            let production = strip_comments(&production_region(&src));
             // Fixed-size array aliases: this file's own, plus every alias
             // declared anywhere in the workspace, because a `use` brings one in
             // from another crate and the pin is identical. This file's own
@@ -3807,6 +3808,27 @@ fn no_verification_site_pins_its_key_to_a_fixed_size_array() {
                     if binding.is_empty()
                         || !binding.chars().all(|c| c.is_alphanumeric() || c == '_')
                     {
+                        // Not a binding, so the checks below cannot resolve it —
+                        // and until this was written, that was the end of the
+                        // matter. An inline `[u8; N]` key has no binding to look
+                        // up and was therefore invisible: `verify_dispatch` with
+                        // a hardcoded 32-byte key passed, which is the pin the
+                        // guard exists to reject, spelled the one way the lookup
+                        // could not see.
+                        //
+                        // Production only. A test may deliberately verify
+                        // against a known-wrong key — that is what a probe for
+                        // fail-closed behaviour is — and
+                        // `octo-cap-macaroon`'s token tests do exactly that with
+                        // an all-zero key. The property is "the key must not be
+                        // hardcoded", and a hardcoded key in a test is the point
+                        // rather than the defect.
+                        let key_text = args[1].trim();
+                        if production.contains(&sig)
+                            && (key_text.starts_with("&[") || key_text.starts_with("["))
+                        {
+                            offenders.push(format!("{rel} (key is an inline fixed-size array)"));
+                        }
                         continue;
                     }
                     let by_ref = format!("{binding}: &[u8;");

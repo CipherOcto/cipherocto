@@ -15,7 +15,7 @@ metadata:
 ## Status
 
 Largely resolved. The path-dependency guard's blind spot is **fixed** — see §A
-blind spot below — and mutation coverage has moved from 9 of 65 guards to **37 of 65**, a figure the harness now derives from its own
+blind spot below — and mutation coverage has moved from 9 of 65 guards to **38 of 65**, a figure the harness now derives from its own
 table rather than one maintained by hand — see §Coverage counted twice, and the
 count that was wrong. Adding one of them exposed a false pass in the harness
 itself, now fixed — see §A false pass found below.
@@ -308,7 +308,7 @@ now produced by reading the harness table and collecting the distinct
 
 ```
 $ python3 scripts/mutate-zk-guards.py --list | tail -1
-  48 entries -> 37 distinct guards in security_regressions.rs  (+7 entries targeting other crates' suites)
+  49 entries -> 38 distinct guards in security_regressions.rs  (+7 entries targeting other crates' suites)
 ```
 
 That line is printed by the harness itself, derived by reading its own table. It
@@ -316,7 +316,7 @@ did not exist when the count was first wrong, and putting it there is the fix:
 the number can no longer drift from the thing it counts, because it is recomputed
 every time anyone asks.
 
-**48 entries cover 37 guards, and the two numbers must not be conflated.** Seven
+**49 entries cover 38 guards, and the two numbers must not be conflated.** Seven
 entries do not target `security_regressions.rs` at all — three run
 `zk-vendor`'s `library_path` suite, two run `zk-verifier`, two run
 `cipherocto-fs-perms`. They are real mutations against real guards, but those
@@ -329,6 +329,53 @@ is exactly why neither was visible.
 
 Nothing about the harness changed to produce this — the same figure is derivable
 from the committed file at any time, and it was not before.
+
+## The pin the key-shape guard could not see — FIXED
+
+`no_verification_site_pins_its_key_to_a_fixed_size_array` is the AC-11 check for
+the _second_ half of the algorithm-indirection requirement. Every site had been
+converted from `key: &VerifyingKey` to `key: &[u8; 32]`, which removed a type-level
+Ed25519 assertion and left a length-level one: Stark-Schnorr public keys are 33
+bytes, so a `[u8; 32]` parameter cannot carry the second algorithm.
+
+It resolved the key's declared type by **name**. Anything that was not a bare
+identifier ended the check:
+
+```rust
+if binding.is_empty()
+    || !binding.chars().all(|c| c.is_alphanumeric() || c == '_')
+{
+    continue;
+}
+```
+
+An inline `&[0u8; 32]` has no name to look up, so it took that `continue` — the
+pin stated the one way the lookup could not reach. A hardcoded 32-byte key at a
+verification site passed.
+
+**Measured before changing anything.** A scan of every `verify_dispatch` call
+across the ten `AC11_DISPATCHED` crates found ten non-identifier key arguments.
+Nine are field accesses (`&self.public_key`, `&intent.sender_id`,
+`&envelope.hop_cap.wrapping_node_pub`) — legitimate, and not pins at all. One is
+an inline array: `&[0u8; 32]` in `octo-cap-macaroon`'s token tests, where it is
+deliberate. The test verifies that a signature naming a fabricated algorithm
+fails closed, and an all-zero key is how that is probed.
+
+So the gap is narrow and the one real site is correct code. The fix reports an
+inline array literal, **scoped to the production region**: the property is that
+the key must not be hardcoded, and a hardcoded key in a test is the point rather
+than the defect. The nine field accesses are unaffected because they are neither
+identifiers nor array literals.
+
+The scan is what made the scope decision possible rather than a guess. Counting
+ten hits and reporting a ten-site hole would have been wrong in both magnitude
+and direction.
+
+Verified both ways: the suite is green with the deliberate probe in place, and
+the mutation `G-dd` — a real production call passing `&[0u8; 32]` — goes red.
+`G-dd` recompiles `octo-cap-macaroon`, so it is the first rebuild-class entry
+added on purpose; the earlier statement that every mutation was free no longer
+holds, and the harness classifies it correctly.
 
 ## A VACUOUS verdict that was the mutation's fault, three times
 
@@ -465,7 +512,7 @@ recorded rather than assumed absent elsewhere.
       `m15_the_telegram_adapter_is_a_documented_opt_out`,
       `h6_the_private_writer_is_shared_not_duplicated` and
       `h10_quic_replay_cache_is_reachable_from_the_accept_loop`),
-      taking coverage from 9 of 65 to **37 of 65**
+      taking coverage from 9 of 65 to **38 of 65**
 - [x] Any harness using the prebuilt-binary path refuses to run when the binary
       is older than the guard source — **satisfied a different way**: the
       committed harness runs through cargo, which rebuilds by construction, so
@@ -500,7 +547,7 @@ green as it applies to a guard's.
 ## Why the rest is filed rather than fixed
 
 The blind-spot fix is done and needs no defence. What remains is the coverage
-gap, and that is not urgent: twenty-eight unbacked guards is a large number that
+gap, and that is not urgent: twenty-seven unbacked guards is a large number that
 reads as alarming and is not. These guards were written by adversarial review
 and several were mutation-checked by hand during that work. What is missing is
 the _re-runnable record_, which is what this harness would supply — and the

@@ -724,6 +724,44 @@ MUTATIONS = [
         ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
          "h10_quic_replay_cache_is_reachable_from_the_accept_loop", "--", "--exact"],
     ),
+    (
+        # The pin the key-shape guard could not see. It resolves the key's
+        # declared type by name, so any key argument that is not a bare
+        # identifier ended the check — and an inline `&[u8; N]` has no name to
+        # look up. That is the pin stated the one way the lookup could not
+        # reach, so the guard passed over a hardcoded 32-byte key.
+        #
+        # It compiles: `verify_dispatch` takes `public_key: &[u8]`, and
+        # `&[u8; 32]` coerces to a slice. Written as a separate function rather
+        # than by editing an existing call so the mutation does not depend on
+        # whatever key type that call site happens to hold.
+        "G-dd: a verification site passes an inline fixed-size key",
+        "crates/octo-cap-macaroon/src/token.rs",
+        """        .map_err(|e| MintError::HolderSig(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Compose the holder signature message:""",
+        """        .map_err(|e| MintError::HolderSig(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Probe: a verification site whose key is pinned to a 32-byte array.
+    #[allow(dead_code)]
+    fn probe_inline_pinned_key(msg: &[u8], sig: &[u8]) -> bool {
+        octo_algo_ed25519::verify_dispatch(
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &[0u8; 32],
+            msg,
+            sig,
+        )
+        .is_ok()
+    }
+
+    /// Compose the holder signature message:""",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "no_verification_site_pins_its_key_to_a_fixed_size_array", "--", "--exact"],
+    ),
 ]
 
 # NOT MUTATED, deliberately: `OpenOptionsExt::mode(0o600)` at creation inside

@@ -123,6 +123,16 @@ pub struct GatewayAuthenticator {
     pub holder_registry: Arc<dyn HolderRegistry>,
     pub bearer_verifier: Arc<dyn BearerVerifier>,
     pub cap_verifier: Arc<dyn CapabilityVerifier>,
+    /// Stored, never read. It is **not** wired into capability verification.
+    ///
+    /// `octo_wallet::capability::verify_with_resolve` documents the macaroon
+    /// caveat-chain check as delegated to "the caller's catalog". This field is
+    /// that catalog, and nothing reads it — so on the live ingress path the
+    /// caveat chain and third-party discharges are both unevaluated. A reader
+    /// must not infer from this field's presence that either check runs.
+    ///
+    /// Closing it needs a protocol decision, not a wiring change. See
+    /// `missions/open/0957-a2-capability-chain-and-discharge-verification.md`.
     #[allow(dead_code)] // Future AC: catalog lookup for gossip/settlement.
     pub catalog: Arc<dyn CapabilityCatalog>,
 }

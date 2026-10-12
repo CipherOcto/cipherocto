@@ -143,6 +143,35 @@ pub enum VerifyError {
 /// High-level helper: compute cap_root_hash, look up the holder record,
 /// extract `holder_did` + `holder_pub`, then deserialize + verify.
 ///
+/// # What this verifies
+///
+/// 1. wire parse and `cap_root_hash` computation
+/// 2. holder record lookup — the registry is authoritative on holder identity,
+///    not the wire's claim
+/// 3. active check, covering revoked and expired holders
+/// 4. the Ed25519 holder signature over the macaroon root id and caveats wire
+/// 5. the RFC-0973 attestation dispatch
+///
+/// # What this does NOT verify
+///
+/// **The macaroon caveat chain is not evaluated here, and neither are
+/// third-party discharges.** `verify_holder_sig` at step 4 covers the
+/// *signature over* the caveat bytes; it does not evaluate the caveats
+/// themselves. A token carrying escrow, revocation or rate-limit caveats
+/// (RFC-0957 §3.6) passes this function with those caveats unexamined.
+///
+/// An earlier version of this doc described the chain verification as
+/// "delegated to the catalog ... the caller's responsibility". That
+/// delegation governs nothing: the only catalog on the live ingress path is
+/// held as `#[allow(dead_code)]`, annotated as future work, and
+/// `ProductionCapabilityVerifier::verify` never consults it. The composite
+/// and transport catalogs exist and work — nothing on ingress reaches them.
+/// `verify_discharges` is likewise exported and never called.
+///
+/// Both gaps need a protocol decision before they can be closed, which is
+/// why this is stated rather than fixed. The correct half is tracked in
+/// `missions/open/0957-a2-capability-chain-and-discharge-verification.md`.
+///
 /// # Errors
 /// Returns `VerifyError` on any pipeline failure (wire / registry / verify).
 pub fn verify_with_resolve(
@@ -171,14 +200,12 @@ pub fn verify_with_resolve(
     // authoritative on holder identity, not the wire's claims).
     let token = deserialize_wire(token_wire, rec.holder_did.clone(), &rec.holder_pub)?;
 
-    // Verify macaroon (R7-N9: macaroon.verify_chain is the chain-only check;
-    // the holder signature is verified separately. Mission 0957-d ships
-    // the registry-aware wrapper; full chain verify remains the caller's
-    // responsibility via the issuer's catalog. Deviation: this implementation
-    // uses the existing `verify_holder_sig` (which covers the Ed25519
-    // signature over the macaroon root_id + caveats wire) — the
-    // macaroon-chain verify is delegated to the catalog (RFC-0957-A1
-    // §Algorithms:adapter_mode).
+    // The macaroon caveat CHAIN is not verified below. `verify_holder_sig`
+    // covers the signature over the root id and the caveat wire; it does not
+    // evaluate the caveats, and neither third-party discharges nor the
+    // catalog lookup happen here. See the function doc — this comment used to
+    // describe the chain verify as delegated to the catalog, which described
+    // a delegation no caller on this path performs.
     token
         .verify_holder_sig()
         .map_err(|e| VerifyError::HolderSig(format!("{e}")))?;

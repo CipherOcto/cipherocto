@@ -71,7 +71,7 @@ octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "ne
 # gateway_authenticator.rs + audit_log.rs + federation.rs).
 # Ed25519 signature type (CapabilityToken.holder_sig field).
 ed25519-dalek = { version = "2.2", features = ["serde"] }
-# base64 for capability token wire format encoding (RFC-0957 §3.7).
+# base64 for capability token wire format encoding (RFC-0957 §Wire Format).
 base64 = "0.22"
 # Borsh derives for `caveat::PaymentCaveat` only (mission
 # 0957-phase2b): the `PaidQueryRequest` envelope + the
@@ -80,7 +80,7 @@ base64 = "0.22"
 # borsh ONLY here (not on the rest of the macaroon substrate) keeps
 # the coupling minimal — the canonical serde form remains the wire
 # substrate for `Macaroon` / `CapabilityToken` / `Caveat` (RFC-0126
-# + RFC-0957 §3.7). Borsh is required by the wallet-node + paid-query
+# + RFC-0957 §Wire Format). Borsh is required by the wallet-node + paid-query
 # envelope layer (Layer C / Layer E) which sit above the substrate.
 borsh = { version = "=1.5.0", features = ["derive"] }
 # Mission D substrate primitives (`AssetRegistry`, `NonceRegistry`,

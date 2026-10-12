@@ -33,7 +33,7 @@ octo-paid-query = { path = "../octo-paid-query" }
 # is workspace-excluded. Cost arithmetic uses `dqa_cmp` / `dqa_sub`
 # helpers exposed by the substrate.
 octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
-# Layer 4 extension: macaroon wire form substrate (RFC-0957 §3.7,
+# Layer 4 extension: macaroon wire form substrate (RFC-0957 §Wire Format,
 # mission 0957-phase2a). `serialize_wire` / `deserialize_wire` /
 # `compute_cap_root_hash_from_wire` live here; the wallet-node handler
 # emits the real v1 wire form (replacing the Phase 1 MVP

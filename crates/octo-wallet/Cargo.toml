@@ -115,7 +115,6 @@ borsh = { version = "1", optional = true }
 # workspace deps). Bounded via length-prefixed encoding (see federation.rs).
 
 # Typed Constraint substrate (RFC-0964) for Caveat::Factory pre_conditions
-cipherocto-encoding = { path = "../cipherocto-encoding" }
 
 # Policy Object Graph (RFC-0967) — subgraph check at redemption (Gap 1)
 octo-policy = { path = "../octo-policy" }

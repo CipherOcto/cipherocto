@@ -15,11 +15,15 @@ metadata:
 ## Status
 
 Substantially resolved. The path-dependency guard's blind spot is **fixed** —
-see §A blind spot below — and two mutations have landed, taking mutation
-coverage from 9 of 65 guards to **11 of 65**. Adding the second of those exposed
-a false pass in the harness itself, now fixed — see §A false pass found below.
-The remaining 54 guards still have no mutation, and no full campaign has been
-run.
+see §A blind spot below — and four mutations have landed, taking mutation
+coverage from 9 of 65 guards to **13 of 65**. Adding one of them exposed a false
+pass in the harness itself, now fixed — see §A false pass found below. The
+remaining 52 guards still have no mutation, and no full campaign has been run.
+
+The pattern for adding one is now proven end to end: pick a guard that reads the
+tree at run time, plant a violation in a file outside octo-cli's dependency
+closure so no rebuild is needed, confirm the guard names the right file and
+token, restore, then add the entry and run it through the harness filtered.
 
 ## The finding
 
@@ -134,9 +138,11 @@ pushed off indefinitely.
 - [x] That change is verified in both directions: a planted unused
       section-form dependency goes red, and the four real ones stay green
 - [x] A mutation is added for each guard that reads files at runtime, starting
-      with the ones whose names promise the most — **two landed**
-      (`no_test_has_an_empty_body`, `no_path_dependency_is_declared_and_never_referenced`),
-      taking coverage from 9 of 65 to **11 of 65**
+      with the ones whose names promise the most — **four landed**
+      (`no_test_has_an_empty_body`, `no_path_dependency_is_declared_and_never_referenced`,
+      `no_source_or_doc_file_cites_a_private_working_note`,
+      `missions_claiming_named_vectors_have_those_names_in_the_tree`),
+      taking coverage from 9 of 65 to **13 of 65**
 - [x] Any harness using the prebuilt-binary path refuses to run when the binary
       is older than the guard source — **satisfied a different way**: the
       committed harness runs through cargo, which rebuilds by construction, so

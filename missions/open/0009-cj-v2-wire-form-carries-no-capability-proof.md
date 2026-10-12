@@ -147,6 +147,36 @@ contract became a comment. That is why the two producers disagree with each
 other, and it is why one of them put a secret in there: the type that would have
 refused it was replaced by bytes and nothing replaced it.
 
+### The recorded rationale does not survive checking
+
+`bundle_v2` documents the deviation as keeping "layer discipline" and avoiding
+a `Borsh` derive cascade. **The layer half is stale, and checking it changes the
+conclusion.**
+
+The rationale is to avoid a `Layer 4 → Layer B-substrate` edge by not
+depending on `quota-router-storage`. But `HolderRecord` is defined in
+`crates/octo-cap-macaroon/src/holder_record.rs` — **the same crate** that
+defines `CapabilityBundleV2` — and `DischargeMacaroon` lives in that crate's
+`token` module too. There is no cross-crate edge to avoid. The types the RFC
+asks for are siblings of the struct, and a typed field would compile with no
+dependency change at all.
+
+The derive-cascade half is **still true**: `DischargeMacaroon` derives
+`Serialize`/`Deserialize` but not `Borsh`, and it contains `Vec<Caveat>` where
+`Caveat` has two dozen variants, so dropping it into a borsh struct cascades.
+The honest statement is therefore narrower than the one in the code —
+serde-encoding these two fields is defensible; the layer argument for it is not.
+
+And the reason the producers cannot simply put the real type in is neither of
+those. **Neither production mint has a `HolderRecord` to put there.**
+`HolderRecord::from_capability` has six call sites in the workspace and every
+one sits inside a `#[cfg(test)] mod tests`. There is no constructor to call, so
+the field has no legitimate content — which is exactly why one site writes a
+capability id and the other writes a root secret.
+
+That is the real root cause, and it is one layer down from where the search
+started.
+
 This is §Stable Abstractions Principle failing in an unusual direction. The
 abstraction was _removed_ to avoid a dependency, and the dependency was the thing
 enforcing the contract. The resolution is probably not "put the concrete type

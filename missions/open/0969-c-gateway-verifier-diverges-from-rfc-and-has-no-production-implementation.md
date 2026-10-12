@@ -395,11 +395,25 @@ directly: two _different_ unbound capabilities held by the same subject would
 compare equal and read as linked to a shared ask neither asserted. Refusing is
 the fail-closed direction and is reversible.
 
-**The cost, stated rather than buried.** No production mint attaches an
-`AskBinding`, so **every capability the system can mint today is refused by this
-verifier.** That is correct verifier behaviour and a broken deployment state.
-The two are tracked apart: the verifier is right, and RFC-0959 §Phase 3 is the
-open item above.
+**The cost, stated rather than buried.** Every capability the system can mint
+today is refused by this verifier. **The reason was wrong when this was first
+written, and correcting it matters more than the fix.**
+
+This section used to say the refusal came from the missing
+`Caveat::AskBinding`. That is true in the sense that no mint attaches one —
+but it is the **second** refusal, and in production nobody reaches it.
+`verify_with_resolve` resolves `holder_pub` and `holder_did` from a
+`HolderRegistry`, and **no production code constructs a `HolderRecord`**, so
+that registry is permanently empty. A real capability is refused with
+`CapError::HolderUnknown` at the registry lookup, before the ask is read.
+
+The chain is: nothing registers a holder → the registry is empty → every
+capability is `HolderUnknown` → and only once that were fixed would the
+missing `AskBinding` begin to matter. There are two blockers, and the one
+recorded here was the second.
+
+The first is now pinned by `holder_records_are_never_constructed_in_production`,
+so closing it turns that guard red.
 
 ## What this unblocked: ask binding is now attachable
 

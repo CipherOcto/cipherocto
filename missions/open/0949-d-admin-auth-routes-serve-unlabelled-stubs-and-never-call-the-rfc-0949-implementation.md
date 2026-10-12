@@ -20,10 +20,39 @@ measured, not inferred from reading.
 
 ## Severity
 
-**This is the most serious finding of this arc.** The surface mints bearer
-tokens from unverified client input. Whether it is reachable outside a test
-harness is the first question to answer, and the router gives no indication
-either way.
+**Local-only, not remote.** The reachability question that gated this
+mission is now answered — see §Reachability, resolved. Both servers the
+`quota-router` binary starts bind `127.0.0.1`, so these routes are not
+reachable from off-host. That lowers the urgency but does not make the
+behaviour correct, and it is one reverse proxy away from being remote
+again.
+
+## Reachability, resolved
+
+Traced from the route handlers outward:
+
+| Question                                     | Answer            | Evidence                                                                 |
+| -------------------------------------------- | ----------------- | ------------------------------------------------------------------------ |
+| Is `handle_request` reachable from a server? | Yes               | `AdminServer::run` serves it over HTTP/1.1 via `http1::Builder`          |
+| Is that server bound publicly?               | No, loopback only | `SocketAddr::from(([127, 0, 0, 1], self.port))`                          |
+| Does anything start it?                      | Yes               | the `proxy` subcommand spawns `AdminServer::run` alongside `ProxyServer` |
+| Is that a shipped binary?                    | Yes               | `[[bin]] name = "quota-router"`                                          |
+| Is the sibling proxy public?                 | No, also loopback | `SocketAddr::from(([127, 0, 0, 1], self.port))` in `proxy.rs`            |
+| Are the routes documented as real?           | No                | `auth/token` appears in no doc under `docs/quota-router-cli/`            |
+
+So: any process on the host can mint a bearer token from this listener and
+have `/auth/token/introspect` confirm it active. Nothing off-host can, today.
+
+Two things make that worth closing rather than deferring indefinitely.
+`/auth/token/introspect` answering `active: true` for an arbitrary string is
+wrong under any deployment, and loopback-only is a deployment property, not
+a code property — the usual way to expose a loopback service is a reverse
+proxy or a port forward, and either one turns this into a remote
+authentication bypass without touching this crate.
+
+The routes are undocumented rather than falsely documented. There is no
+false claim in the CLI API reference to correct; the problem is confined to
+the code.
 
 ## The finding
 
@@ -121,10 +150,9 @@ reviewer would look first.
 
 Three questions are not the agent's to answer:
 
-1. **Is this router mounted in a production binary?** If it is, the token
-   endpoint is an authentication bypass and the response is an incident, not a
-   mission. If it is dev-only, it is still a trap for the next person who
-   wires it up.
+1. ~~**Is this router mounted in a production binary?**~~ Answered: yes, and
+   loopback-only. See §Reachability, resolved. The remaining two questions
+   are still open.
 2. **Should the routes be deleted, or wired to `oauth2.rs`?** Wiring them
    requires provider configuration, a session store and a blacklist that the
    router does not currently receive as parameters. `handle_request` takes
@@ -137,8 +165,9 @@ All three need a maintainer.
 
 ## What is NOT claimed
 
-- No claim that the auth surface is currently reachable from a deployed
-  binary. Not established either way.
+- No claim that these routes are reachable off-host. Established: both
+  listeners bind `127.0.0.1`. See §Reachability, resolved.
+- No claim that a vulnerability has been exploited. None is evidenced.
 - No claim that `oauth2.rs` is defective. It was not modified and is not the
   subject of this mission.
 - No claim that HTTP 200 on token exchange is wrong per se. RFC-6749 uses 200
@@ -146,16 +175,18 @@ All three need a maintainer.
 
 ## Acceptance Criteria
 
-- [ ] Reachability of the `admin.rs` router in a production binary is
-      established and written down
+- [x] Reachability of the `admin.rs` router in a production binary is
+      established and written down — loopback only, started by the `proxy`
+      subcommand of the shipped `quota-router` binary
 - [ ] A decision is recorded: wire the routes to `auth::sso::oauth2`, or
       remove them and return 404
 - [ ] `/auth/token/introspect` reports `active: false` for an unrecognised
       token
 - [ ] `/auth/jwks` serves the real key set, or the route is removed
-- [ ] Every handler reached from this router is labelled if it is a stub, or
-      contains no stub behaviour
-- [ ] The nine tests over these routes assert real responses instead of
+- [x] Every handler reached from this router is labelled if it is a stub —
+      the five stub handlers now carry a `STUB` doc comment naming this
+      mission
+- [x] The nine tests over these routes assert real responses instead of
       discarding them
 
 ## Related work in this arc

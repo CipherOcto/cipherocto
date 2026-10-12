@@ -43,7 +43,7 @@ chain-ID substrate (Accepted).
 DID (e.g., "route-quality", "uptime-30d", "policy-conformance") and
 appends it to the operator's append-only attestation ledger. The set
 of attestation kinds is an **extension surface**: per
-`cipherocto-design-principles.md` §Extension over enumeration, the
+``docs/architecture/design-principles.md`.md` §Extension over enumeration, the
 CLI does NOT enumerate attestation kinds; the operator passes
 `--attestation-kind <kind_ref>` as a string, and the substrate
 resolves the kind via its RFC-0855 attestation-kind registry.
@@ -567,7 +567,7 @@ reorg drift across calls).
 `octo_governance::attest` accepts `--attestation-kind <kind_ref>` as
 a string. The substrate resolves `kind_ref` via the RFC-0855
 **attestation-kind registry** (TypedDiscriminator pattern per
-`cipherocto-design-principles.md` §Extension over enumeration).
+``docs/architecture/design-principles.md`.md` §Extension over enumeration).
 
 | Aspect                   | Value                                                                                                                                                                                                                                                                                                                                                                                           |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -968,7 +968,7 @@ governance vote` are new commands; existing commands
 > RFC-0011-g. This value is pinned at RFC-0011-g acceptance time;
 > amendments to this RFC and follow-on governance amendments bump the
 > version (next: `7`). Old CLI ignores unknown fields per RFC-0011
-> §Output Envelope. See `cipherocto-design-principles.md` §Stable
+> §Output Envelope. See ``docs/architecture/design-principles.md`.md` §Stable
 > Abstractions Principle for the layer-stability rationale.
 
 - `OutputEnvelope<T>::schema_version = 6` for RFC-0011-g. Future
@@ -1081,9 +1081,9 @@ for binary invocation + `assert_json` for output schema validation.
 
 | Approach                                                                           | Pros                                                                       | Cons                                                                                                                                                                 |
 | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **A. Three subcommands under `octo governance {snapshot,attest,vote}` (THIS RFC)** | Matches RFC-0011 §Phase 8 design; mirrors substrate 1:1; minimal new types | Substrate coupling (acceptable; per `cipherocto-design-principles.md` no parallel abstractions)                                                                      |
+| **A. Three subcommands under `octo governance {snapshot,attest,vote}` (THIS RFC)** | Matches RFC-0011 §Phase 8 design; mirrors substrate 1:1; minimal new types | Substrate coupling (acceptable; per ``docs/architecture/design-principles.md`.md` no parallel abstractions)                                                                      |
 | B. Single `octo governance` command with sub-flags                                 | One binary; less tree noise                                                | Conflates read vs write; harder to express `--confirm` semantics                                                                                                     |
-| C. Embed governance operations in `octo capability` subcommand                     | Capability is the substrate for authorization; one tree                    | Conflates governance with capability substrate; violates `cipherocto-design-principles.md` no-parallel-abstractions; vote capability is one of many capability kinds |
+| C. Embed governance operations in `octo capability` subcommand                     | Capability is the substrate for authorization; one tree                    | Conflates governance with capability substrate; violates ``docs/architecture/design-principles.md`.md` `docs/architecture/design-principles.md` §No parallel abstractions; vote capability is one of many capability kinds |
 | D. Move governance operations to a separate binary `octo-governance`               | Separation of concerns                                                     | Two binaries to install; cross-binary UX confusion; RFC-0011 §Phase 8 already commits to `octo governance` tree                                                      |
 | E. Web UI instead of CLI                                                           | Easier UX for non-technical operators                                      | Out of scope for RFC-0011 (CLI substrate); web UI is a separate RFC                                                                                                  |
 | F. Defer Phase 2 until RFC-0855p-d / RFC-0855p-e reach Accepted                    | Avoids the partial-prereq warning; "cleaner" RFC                           | Operators MUST wait for two further substrate RFC acceptance cycles; governance tooling is delayed; vote surface is on the critical path for protocol evolution      |
@@ -1247,7 +1247,7 @@ operators and auditors a working governance visibility surface
 while the Phase 2 subcommands wait for RFC-0855p-d / RFC-0855p-e
 to land. Splitting the RFC into Phase 1 + Phase 2 surfaces the
 partial prereq caveat explicitly per
-`cipherocto-design-principles.md` §"Discipline at first call site
+``docs/architecture/design-principles.md`.md` §"Discipline at first call site
 pays off" — the alternative (deferring the entire `governance`
 tree until all prereqs land) would delay a critical operator UX
 win without substrate justification.
@@ -1255,7 +1255,7 @@ win without substrate justification.
 ### Why no central enum for attestation kinds
 
 Attestation kinds are an extension surface (Layer E). Per
-`cipherocto-design-principles.md` §Extension over enumeration,
+``docs/architecture/design-principles.md`.md` §Extension over enumeration,
 the CLI must not introduce a central enum for attestation kinds.
 New kinds are added via:
 
@@ -1287,7 +1287,7 @@ specific `Audience(proposal_id)` so the substrate can reject
 re-use across proposals. The CLI requires `--vote-cap <cap_id>`
 per §7.7; the substrate verifies the capability before
 recording. This pattern is the canonical
-`cipherocto-design-principles.md` §"Attenuation invariants cross
+``docs/architecture/design-principles.md`.md` §"Attenuation invariants cross
 boundaries" — capability verification at the substrate is the
 canonical defense; CLI mode is advisory.
 
@@ -1300,7 +1300,7 @@ quorum contribution without a separate substrate call. Omitting
 these would force the operator to re-query substrate for every
 vote they cast — wasteful and confusing.
 
-### Why bare RFC numbers (per `cipherocto-design-principles.md`)
+### Why bare RFC numbers (per ``docs/architecture/design-principles.md`.md`)
 
 References to RFCs use bare numbers (e.g., `RFC-0855p-e`) per
 CLAUDE.md §RFC Reference Conventions Reaffirmed. Status, version

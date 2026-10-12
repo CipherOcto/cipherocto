@@ -223,7 +223,7 @@ Coverage split per Phase 5 RFC-0011-m precedent: CLI tests cover clap parsing + 
 
 ## Rationale
 
-RFC-0011-r closes the G13 deferred stub per "everything included, no deferral" directive. The substrate extension (2 new async trait methods on existing `ReputationStore`) lands FIRST per `no-phantom-mission-pointers` pairing invariant, then CLI dispatch atop it. The additive trait extension pattern (Phase 4 G22 precedent) preserves backward compatibility: existing callers unchanged; new callers can use new methods.
+RFC-0011-r closes the G13 deferred stub per "everything included, no deferral" directive. The substrate extension (2 new async trait methods on existing `ReputationStore`) lands FIRST per `docs/05-process/engineering-rules.md` §No phantom mission pointers pairing invariant, then CLI dispatch atop it. The additive trait extension pattern (Phase 4 G22 precedent) preserves backward compatibility: existing callers unchanged; new callers can use new methods.
 
 ## Version History
 

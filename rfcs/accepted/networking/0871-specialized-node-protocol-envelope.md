@@ -653,7 +653,7 @@ The full byte-exact parity is verified by two complementary mechanisms:
 | Mesh routing QoS (per-payload-kind priority in `SendContext`)                                                                                                       | TBD        | post-v2.0                          | RFC-0870 transport extension                                          |
 | Wallet-capability announcement extension RFC (extends `RouterAnnouncePayload` with payload_kinds advertised; required for TV5's wallet-specific kind advertisement) | TBD        | post-v2.0                          | RFC-0871 §Wallet Node Lifecycle TV5 + RFC-0870 §NodeEnvelope Adoption |
 
-> **Note on Future Work table:** per `deferred-vs-unspecified` rule, Future Work items MUST carry an owner + schedule. Items marked `TBD` will be assigned owners at promotion-to-Accepted time; the table is included now to prevent the "specified-but-unspecified" trap.
+> **Note on Future Work table:** per `docs/05-process/engineering-rules.md` §Deferred versus unspecified rule, Future Work items MUST carry an owner + schedule. Items marked `TBD` will be assigned owners at promotion-to-Accepted time; the table is included now to prevent the "specified-but-unspecified" trap.
 
 ## Rationale
 

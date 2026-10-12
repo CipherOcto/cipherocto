@@ -29,7 +29,7 @@ RFC-0011-j lands the **bootstrap lifecycle + slash reputation visibility + autho
 | `octo network slash list`           | Operator            | `SlashReputationStoreCompat::list(filter)`                 | `0011-h-s-a-slash-store` (G6)                |
 | `octo network slash show`           | Operator            | `SlashReputationStoreCompat::show(slash_id)`               | `0011-h-s-a-slash-store` (G6)                |
 
-**Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per `cipherocto-design-principles`). CLI dispatch lands Layer C; substrate additions in this RFC = **4 companion missions (Layer B)**; 1 of 8 subcommands has substrate already present (`authority show`), 4 require G6/G6b, 2 require G1, 1 requires G8.
+**Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per `docs/architecture/design-principles.md`). CLI dispatch lands Layer C; substrate additions in this RFC = **4 companion missions (Layer B)**; 1 of 8 subcommands has substrate already present (`authority show`), 4 require G6/G6b, 2 require G1, 1 requires G8.
 
 ## Dependencies
 
@@ -48,10 +48,10 @@ RFC-0011-j lands the **bootstrap lifecycle + slash reputation visibility + autho
 
 ## Design Goals
 
-1. **Substrate-first ordering** — companion substrate missions (G1/G6/G6b/G8) land BEFORE CLI dispatch per `no-phantom-mission-pointers` pairing invariant. Pre-companion, CLI dispatch surfaces exit 89 `NetworkSubstrateUnavailable`; post-companion, dispatch routes to substrate.
-2. **Substrate-faithfulness** — no parallel abstractions, no CLI-side substrate shadow. CLI translates substrate return values 1:1 to JSON envelopes per `cipherocto-design-principles` §No premature coupling.
+1. **Substrate-first ordering** — companion substrate missions (G1/G6/G6b/G8) land BEFORE CLI dispatch per `docs/05-process/engineering-rules.md` §No phantom mission pointers pairing invariant. Pre-companion, CLI dispatch surfaces exit 89 `NetworkSubstrateUnavailable`; post-companion, dispatch routes to substrate.
+2. **Substrate-faithfulness** — no parallel abstractions, no CLI-side substrate shadow. CLI translates substrate return values 1:1 to JSON envelopes per `docs/architecture/design-principles.md` §No premature coupling.
 3. **Slot arithmetic preserved** — Phase 2 lands exactly 2 of the 10 RFC-0011-h-defined OctoCliError variants (slots 82 + 89). The remaining 4 (slots 87, 88, 90) + slot 91 pre-allocated land in subsequent phases per the `0011-h-multiphase-rollout-plan` plan.
-4. **Layer discipline preserved** — zero Layer A change; Layer B substrate = 4 companion missions (G1/G6/G6b/G8); Layer C CLI dispatch = 8 subcommand arms. Companion missions land in Layer B only per `cipherocto-design-principles` §Stable Abstractions Principle.
+4. **Layer discipline preserved** — zero Layer A change; Layer B substrate = 4 companion missions (G1/G6/G6b/G8); Layer C CLI dispatch = 8 subcommand arms. Companion missions land in Layer B only per `docs/architecture/design-principles.md` §Stable Abstractions Principle.
 5. **Test vector coverage** — 17 test vectors (3 for mode + 3 for authority + 5 for slash stats + 6 for slash list/show) per RFC-0011-h §Implementation Phases Phase 2.
 
 ## Motivation
@@ -102,7 +102,7 @@ graph TD
     SUBSTRATE --> FROZEN
 ```
 
-Per `cipherocto-design-principles` §Stable Abstractions Principle, Layer A is unchanged. Per §No premature coupling, CLI does not reach into substrate internals — only into public substrate functions.
+Per `docs/architecture/design-principles.md` §Stable Abstractions Principle, Layer A is unchanged. Per §No premature coupling, CLI does not reach into substrate internals — only into public substrate functions.
 
 ### Binary Surface
 
@@ -252,7 +252,7 @@ Write-path tests (tv_net2_16 + tv_net2_17) only fire `--dry-run` path; `--confir
 
 ## Substrate-Additions Companion Missions
 
-Per `no-phantom-mission-pointers` pairing invariant, this RFC cites 4 companion substrate missions. All 4 are Open as of 2026-09-20.
+Per `docs/05-process/engineering-rules.md` §No phantom mission pointers pairing invariant, this RFC cites 4 companion substrate missions. All 4 are Open as of 2026-09-20.
 
 | Companion mission                            | Substrate addition                                                        | Layer |
 | -------------------------------------------- | ------------------------------------------------------------------------- | ----- |
@@ -270,7 +270,7 @@ Per `0011-h-multiphase-rollout-plan` §2.2 split recommendation:
 1. **Substrate-first slice (4 companion missions, BLOCKED pre-Phase 2 IMPLEMENTATION):** G1 → G6 → G6b → G8 land in `crates/octo-network/src/mon/bootstrap.rs` + `crates/octo-network/src/reputation/slash_store.rs` + `crates/octo-reputation/src/...` per companion mission YAMLs.
 2. **CLI dispatch slice (Phase 2 IMPLEMENTATION):** 8 subcommand arms + 2 OctoCliError variants (slots 82 + 89) + 8 output envelopes + 17 test vectors land AFTER all 4 companion missions close per substrate-first ordering.
 
-User-gated decision on slice ordering: bundled RFC (current proposal) vs split RFC (substrate-first then CLI-first). Per `feedback_initiation_user_only`, user decides.
+User-gated decision on slice ordering: bundled RFC (current proposal) vs split RFC (substrate-first then CLI-first). Per `docs/05-process/engineering-rules.md` §Git workflow, user decides.
 
 ## Key Files to Modify
 
@@ -294,7 +294,7 @@ User-gated decision on slice ordering: bundled RFC (current proposal) vs split R
 
 Phase 2 lands the **bootstrap lifecycle + slash reputation visibility + authority rotation** surface. The 4 read-only operations (`mode show`, `authority show`, `slash excluded`, `slash stats`) are safe to expose with minimal substrate additions; the 2 read operations on the slash envelope log (`slash list`, `slash show`) require G6 substrate additions for the list/show readers; the 2 write operations (`mode set`, `authority rotate`) carry heavy 3-flag confirmation gates and require G1 + G8 substrate additions for the writer + builder respectively.
 
-Substrate-first ordering preserves `cipherocto-design-principles` §Stable Abstractions Principle: Layer B (substrate) lands BEFORE Layer C (CLI dispatch), so CLI never depends on a phantom substrate path.
+Substrate-first ordering preserves `docs/architecture/design-principles.md` §Stable Abstractions Principle: Layer B (substrate) lands BEFORE Layer C (CLI dispatch), so CLI never depends on a phantom substrate path.
 
 ## Version History
 

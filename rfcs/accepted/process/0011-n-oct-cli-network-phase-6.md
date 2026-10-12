@@ -29,10 +29,10 @@ Plus closure artifacts:
 | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
 | `0011-h-s-a-writer-election-struct` (G18)                          | new `WriterElection` struct wrapping `elect_coordinator` free function at `octo-coordinator-types/src/election.rs`      |
 | `0011-h-s-a-network-sender` (G20)                                  | new `NetworkSender` trait + `SendContext` per RFC-0863 General-Purpose Network Integration; per-extension crate pattern |
-| Drift-closure mission for `0011-h-drift-0851p-a-seed-health-check` | Pending follow-on mission YAML per `deferred-vs-unspecified` (drift identified during 6-phase rollout)                  |
-| 2 follow-on companion missions                                     | Created at CLAIMED-time per `no-phantom-mission-pointers`                                                               |
+| Drift-closure mission for `0011-h-drift-0851p-a-seed-health-check` | Pending follow-on mission YAML per `docs/05-process/engineering-rules.md` §Deferred versus unspecified (drift identified during 6-phase rollout)                  |
+| 2 follow-on companion missions                                     | Created at CLAIMED-time per `docs/05-process/engineering-rules.md` §No phantom mission pointers                                                               |
 
-**Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per `cipherocto-design-principles`). CLI dispatch lands Layer C; substrate additions in this RFC = **3 NEW Phase 6 companion missions (Layer B)**: G26 BootstrapOrchestrator (does NOT reuse Phase 2 G1 — R1 substrate-faithfulness finding corrected the false attribution), G18 WriterElection struct wrapper around existing `elect_coordinator` free function, G20 NetworkSender trait + SendContext (per-extension crate pattern).
+**Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per `docs/architecture/design-principles.md`). CLI dispatch lands Layer C; substrate additions in this RFC = **3 NEW Phase 6 companion missions (Layer B)**: G26 BootstrapOrchestrator (does NOT reuse Phase 2 G1 — R1 substrate-faithfulness finding corrected the false attribution), G18 WriterElection struct wrapper around existing `elect_coordinator` free function, G20 NetworkSender trait + SendContext (per-extension crate pattern).
 
 ## Dependencies
 
@@ -54,8 +54,8 @@ Plus closure artifacts:
 
 ## Design Goals
 
-1. **Substrate-first ordering** — companion substrate missions (G26 NEW Phase 6 + G18 NEW Phase 6 + G20 NEW Phase 6) land BEFORE CLI dispatch per `no-phantom-mission-pointers` pairing invariant. Pre-companion, CLI dispatch surfaces exit 2 (clap `UnrecognizedSubcommand`) per DEFERRED-clap-arm-not-registered pattern (RFC-0011-h row 91 footnote pattern a); post-companion, dispatch routes to substrate.
-2. **Substrate-faithfulness** — no parallel abstractions, no CLI-side substrate shadow. CLI translates substrate return values 1:1 to JSON envelopes per `cipherocto-design-principles` §No premature coupling.
+1. **Substrate-first ordering** — companion substrate missions (G26 NEW Phase 6 + G18 NEW Phase 6 + G20 NEW Phase 6) land BEFORE CLI dispatch per `docs/05-process/engineering-rules.md` §No phantom mission pointers pairing invariant. Pre-companion, CLI dispatch surfaces exit 2 (clap `UnrecognizedSubcommand`) per DEFERRED-clap-arm-not-registered pattern (RFC-0011-h row 91 footnote pattern a); post-companion, dispatch routes to substrate.
+2. **Substrate-faithfulness** — no parallel abstractions, no CLI-side substrate shadow. CLI translates substrate return values 1:1 to JSON envelopes per `docs/architecture/design-principles.md` §No premature coupling.
 3. **Slot arithmetic preserved (forward-looking)** — Phase 6 lands 0 NEW OctoCliError variants; reuses slot 89 (`NetworkSubstrateUnavailable`, REUSED from Phase 2 RFC-0011-j) FORWARD-LOOKING per RFC-0011-h §Error Handling row 89. Final slot allocation across Phases 1-6 (per RFC-0011-h §Error Handling + §Exit Codes tables): slots 79, 82, 83, 84, 85, 86, 87, 88, 89 = 9 variants allocated to Network* errors (all FORWARD-LOOKING — none of these variants exist in `crates/octo-cli/src/error.rs` today; they land during substrate-first implementation across Phases 2-6). Slot 90 = `NetworkCIDenyDefault` deferred per RFC-0011-h row 543 footnote pending G25 + user decision. **R2 substrate-fault-class finding:** this slot arithmetic is the PLAN, not current substrate state — substrate-faithful implementation lands these slots as companion missions close.
 4. **Layer discipline preserved** — zero Layer A change; Layer B substrate = 3 NEW Phase 6 companion missions (G26 BootstrapOrchestrator + G18 WriterElection struct + G20 NetworkSender + SendContext); Layer C CLI dispatch = 2 subcommand arms + final closure artifacts.
 5. **Test vector coverage** — 6 test vectors (3 for `bootstrap` + 3 for `status`) per RFC-0011-h §Implementation Phases Phase 6.
@@ -95,7 +95,7 @@ graph TD
     SUBSTRATE --> FROZEN
 ```
 
-Per `cipherocto-design-principles` §Stable Abstractions Principle, Layer A is unchanged. Per §No premature coupling, CLI does not reach into substrate internals — only into public substrate functions.
+Per `docs/architecture/design-principles.md` §Stable Abstractions Principle, Layer A is unchanged. Per §No premature coupling, CLI does not reach into substrate internals — only into public substrate functions.
 
 ### Binary Surface
 
@@ -200,15 +200,15 @@ Phase 6 lands additively. No existing CLI subcommand changes. No NEW OctoCliErro
 
 ## Substrate-Additions Companion Missions
 
-Per `no-phantom-mission-pointers` pairing invariant, this RFC cites 3 NEW Phase 6 companion substrate missions + 1 drift-closure mission + 2 follow-on companions.
+Per `docs/05-process/engineering-rules.md` §No phantom mission pointers pairing invariant, this RFC cites 3 NEW Phase 6 companion substrate missions + 1 drift-closure mission + 2 follow-on companions.
 
 | Companion mission                                        | Substrate addition                                                                                                                                               | Layer |
 | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
 | `0011-h-s-a-bootstrap-orchestrator-v2` (G26 NEW Phase 6) | `BootstrapOrchestrator` struct + `start_bootstrap(BootstrapConfig)` + `status() -> BootstrapState` at `crates/octo-network/src/mon/bootstrap.rs`                 | B     |
 | `0011-h-s-a-writer-election-struct` (G18 NEW Phase 6)    | `WriterElection` struct wrapping existing free function `elect_coordinator` at `octo-coordinator-types/src/election.rs`                                          | B     |
 | `0011-h-s-a-network-sender` (G20 NEW Phase 6)            | new `NetworkSender` trait + `SendContext` per RFC-0863 General-Purpose Network Integration at new `crates/octo-network/src/sender/`; per-extension crate pattern | B     |
-| `0011-h-drift-0851p-a-seed-health-check` (drift-closure) | Pending follow-on mission YAML per `deferred-vs-unspecified` (drift identified during 6-phase rollout)                                                           | B     |
-| 2 follow-on companion missions                           | Created at CLAIMED-time per `no-phantom-mission-pointers`                                                                                                        | B     |
+| `0011-h-drift-0851p-a-seed-health-check` (drift-closure) | Pending follow-on mission YAML per `docs/05-process/engineering-rules.md` §Deferred versus unspecified (drift identified during 6-phase rollout)                                                           | B     |
+| 2 follow-on companion missions                           | Created at CLAIMED-time per `docs/05-process/engineering-rules.md` §No phantom mission pointers                                                                                                        | B     |
 
 Phase 6 RFC carries 5-6 substrate additions total (3 NEW Phase 6 companions + 1 drift-closure + 2 follow-on); 0 substrate additions in this RFC itself (all substrate additions land via companion missions per substrate-first ordering). The Phase 2 G1 companion (`BootstrapConfig::from_toml` parser + `save_toml` writer) is consumed by Phase 2 only — it does NOT carry `BootstrapOrchestrator` (R1 substrate-faithfulness finding corrected the false attribution).
 
@@ -218,9 +218,9 @@ Per `0011-h-multiphase-rollout-plan` §2.6:
 
 1. **Substrate-first slice (5-6 companion missions):** G26 BootstrapOrchestrator → G18 WriterElection struct → G20 NetworkSender + SendContext → drift-closure → 2 follow-on companions land per companion mission YAMLs. (Phase 2 G1 is consumed by Phase 2 only — does NOT carry `BootstrapOrchestrator` per R1 substrate-faithfulness finding.)
 2. **CLI dispatch slice:** 2 subcommand arms + 2 output envelopes + 6 test vectors land AFTER all companion missions close per substrate-first ordering.
-3. **Closure artifacts:** final audit doc + memory card + MEMORY.md index entry + mission YAML archive transitions for all 6 phases per `feedback_initiation_user_only` workflow.
+3. **Closure artifacts:** final audit doc + memory card + MEMORY.md index entry + mission YAML archive transitions for all 6 phases per `docs/05-process/engineering-rules.md` §Git workflow workflow.
 
-User-gated decision on slice ordering per `feedback_initiation_user_only`.
+User-gated decision on slice ordering per `docs/05-process/engineering-rules.md` §Git workflow.
 
 ## Key Files to Modify
 
@@ -244,7 +244,7 @@ User-gated decision on slice ordering per `feedback_initiation_user_only`.
 
 Phase 6 lands the **closure artifacts** for the 6-phase rollout. It closes the `0011-deprecation-stub-removal` gap from 2026-09-17 by wiring `octo network bootstrap` + `octo network status` replacements, lands 3 NEW Phase 6 substrate companion missions (G26 BootstrapOrchestrator + G18 WriterElection struct + G20 NetworkSender + SendContext), and produces the final closure artifacts (drift-closure + 2 follow-on + audit + memory card + MEMORY.md index).
 
-Substrate-first ordering preserves `cipherocto-design-principles` §Stable Abstractions Principle: Layer B (substrate) lands BEFORE Layer C (CLI dispatch), so CLI never depends on a phantom substrate path.
+Substrate-first ordering preserves `docs/architecture/design-principles.md` §Stable Abstractions Principle: Layer B (substrate) lands BEFORE Layer C (CLI dispatch), so CLI never depends on a phantom substrate path.
 
 ## Substrate-faithfulness R1 Finding
 

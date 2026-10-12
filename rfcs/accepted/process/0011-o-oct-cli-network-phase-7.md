@@ -23,7 +23,7 @@ RFC-0011-o lands the **slash bridge observability + propagate** slice of RFC-001
 | `octo network slash-bridge list`                              | Operator       | `SlashBridge::list() → Vec<BridgedSlash>` (MISSING)                                                     | `0011-h-s-a-slash-bridge-trait` (G9) |
 | `octo network slash-bridge propagate <slash_envelope_id_hex>` | Operator       | `SlashBridge::propagate_to(slash_envelope_id: [u8; 32]) → Result<BridgeReceipt, BridgeError>` (MISSING) | `0011-h-s-a-slash-bridge-trait` (G9) |
 
-**Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per `cipherocto-design-principles`). CLI dispatch lands Layer C; substrate additions in this RFC = **1 companion mission (Layer B)**; 0 of 2 subcommands has substrate present today (both require companion mission G9 to land before CLI dispatch). Per-extension crate pattern preserved per `cipherocto-design-principles` §User extensibility — `SlashBridge` trait in Layer B `octo-network`; concrete per-transport impl crates OUT OF SCOPE.
+**Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per `docs/architecture/design-principles.md`). CLI dispatch lands Layer C; substrate additions in this RFC = **1 companion mission (Layer B)**; 0 of 2 subcommands has substrate present today (both require companion mission G9 to land before CLI dispatch). Per-extension crate pattern preserved per `docs/architecture/design-principles.md` §User extensibility — `SlashBridge` trait in Layer B `octo-network`; concrete per-transport impl crates OUT OF SCOPE.
 
 ## Dependencies
 
@@ -40,11 +40,11 @@ RFC-0011-o lands the **slash bridge observability + propagate** slice of RFC-001
 
 ## Design Goals
 
-1. **Substrate-first ordering** — companion substrate mission G9 lands BEFORE CLI dispatch per `no-phantom-mission-pointers` pairing invariant. Pre-companion, CLI dispatch surfaces exit 89 `NetworkSubstrateUnavailable` (REUSED slot from Phase 2 RFC-0011-j); post-companion, dispatch routes to substrate.
-2. **Substrate-faithfulness** — no parallel abstractions, no CLI-side substrate shadow. CLI translates substrate return values 1:1 to JSON envelopes per `cipherocto-design-principles` §No premature coupling. CLI does NOT reach into `SlashBridge` trait internals — only into public trait methods (`list`, `propagate_to`).
-3. **Per-extension crate pattern preserved** — `SlashBridge` trait in Layer B `octo-network` (`crates/octo-network/src/mon/slash_bridge.rs`); concrete per-transport impl crates (e.g. substrate-ext-bridge-ipfs, substrate-ext-bridge-libp2p) are OUT OF SCOPE per `cipherocto-design-principles` §User extensibility. CLI consumes the trait via a runtime registry lookup, identical to RFC-0863 `NetworkSender` pattern.
+1. **Substrate-first ordering** — companion substrate mission G9 lands BEFORE CLI dispatch per `docs/05-process/engineering-rules.md` §No phantom mission pointers pairing invariant. Pre-companion, CLI dispatch surfaces exit 89 `NetworkSubstrateUnavailable` (REUSED slot from Phase 2 RFC-0011-j); post-companion, dispatch routes to substrate.
+2. **Substrate-faithfulness** — no parallel abstractions, no CLI-side substrate shadow. CLI translates substrate return values 1:1 to JSON envelopes per `docs/architecture/design-principles.md` §No premature coupling. CLI does NOT reach into `SlashBridge` trait internals — only into public trait methods (`list`, `propagate_to`).
+3. **Per-extension crate pattern preserved** — `SlashBridge` trait in Layer B `octo-network` (`crates/octo-network/src/mon/slash_bridge.rs`); concrete per-transport impl crates (e.g. substrate-ext-bridge-ipfs, substrate-ext-bridge-libp2p) are OUT OF SCOPE per `docs/architecture/design-principles.md` §User extensibility. CLI consumes the trait via a runtime registry lookup, identical to RFC-0863 `NetworkSender` pattern.
 4. **Slot arithmetic preserved (forward-looking, REUSE)** — Phase 7 lands 0 NEW OctoCliError variants; REUSES slot 89 (`NetworkSubstrateUnavailable`, FORWARD-LOOKING per RFC-0011-h §Error Handling row 89 — variant does NOT exist in `crates/octo-cli/src/error.rs` today; lands during Phase 2 implementation). Substrate `BridgeError` variants translate to slot 89 with distinct error messages per §Error Handling reachability matrix below.
-5. **Layer discipline preserved** — zero Layer A change; Layer B substrate = 1 companion mission (G9 `SlashBridge` trait + types); Layer C CLI dispatch = 2 subcommand arms. Companion mission lands in Layer B only per `cipherocto-design-principles` §Stable Abstractions Principle.
+5. **Layer discipline preserved** — zero Layer A change; Layer B substrate = 1 companion mission (G9 `SlashBridge` trait + types); Layer C CLI dispatch = 2 subcommand arms. Companion mission lands in Layer B only per `docs/architecture/design-principles.md` §Stable Abstractions Principle.
 6. **Test vector coverage** — 7 test vectors (3 for `slash-bridge list` + 3 for `slash-bridge propagate` + 1 supplementary `tv_net7_6b` for `parse_32_byte_hex` uppercase-only acceptance per R2.5) per RFC-0011-h §Test Vectors Phase 7.
 
 ## Motivation
@@ -89,7 +89,7 @@ graph TD
     SUBSTRATE --> FROZEN
 ```
 
-Per `cipherocto-design-principles` §Stable Abstractions Principle, Layer A is unchanged. Per §No premature coupling, CLI does not reach into substrate internals — only into public trait methods. Per §User extensibility, per-extension crate pattern preserved: `SlashBridge` trait in Layer B, concrete impl crates in Layer D.
+Per `docs/architecture/design-principles.md` §Stable Abstractions Principle, Layer A is unchanged. Per §No premature coupling, CLI does not reach into substrate internals — only into public trait methods. Per §User extensibility, per-extension crate pattern preserved: `SlashBridge` trait in Layer B, concrete impl crates in Layer D.
 
 ### Binary Surface
 
@@ -275,13 +275,13 @@ Per RFC-0011-h §Test Vectors redact-did-1 row + §Security Considerations redac
 ## Alternatives Considered
 
 1. **Skip `slash-bridge list` (only wire `propagate`).** Rejected; RFC-0011-h §Substrate-Additions row G9 explicitly lands BOTH `list()` and `propagate_to()` on the `SlashBridge` trait, and operators cannot observe bridge state without `list`.
-2. **Single read-only stub RFC (defer `propagate` further).** Rejected; per `feedback_initiation_user_only`, mutating subcommands land WITH their companion substrate mission in the same amendment to keep the layer-A→B→C dependency graph visible. Splitting the read + write paths across two RFCs would create a phantom-substrate gap for `propagate` between amendments.
+2. **Single read-only stub RFC (defer `propagate` further).** Rejected; per `docs/05-process/engineering-rules.md` §Git workflow, mutating subcommands land WITH their companion substrate mission in the same amendment to keep the layer-A→B→C dependency graph visible. Splitting the read + write paths across two RFCs would create a phantom-substrate gap for `propagate` between amendments.
 3. **Land `slash-bridge` as part of Phase 6 (RFC-0011-n closure).** Rejected; RFC-0011-n explicitly closes the `bootstrap` + `status` DEFERRED gap from `0011-deprecation-stub-removal`. `slash-bridge` is unrelated to that gap; landing in Phase 7 preserves substrate-first ordering invariant and keeps each amendment scope-coherent.
 4. **Add NEW `NetworkBridgeError` OctoCliError variant instead of REUSING slot 89.** Rejected per user decision; per the mid-rollout no-new-cli-errors precedent, Phase 7 REUSES slot 89 with distinct messages to avoid expanding the OctoCliError surface mid-rollout. A future post-rollout RFC may add a dedicated `NetworkBridgeError` variant after the 6-phase + Phase 7 rollout closes.
 
 ## Substrate-Additions Companion Missions
 
-Per `no-phantom-mission-pointers` pairing invariant, this RFC cites 1 companion substrate mission. Mission YAML exists at `missions/archived/0011-h-s-a-slash-bridge-trait.md`.
+Per `docs/05-process/engineering-rules.md` §No phantom mission pointers pairing invariant, this RFC cites 1 companion substrate mission. Mission YAML exists at `missions/archived/0011-h-s-a-slash-bridge-trait.md`.
 
 Per RFC-0011-h §Substrate-Additions Companion Missions row G9:
 
@@ -289,7 +289,7 @@ Per RFC-0011-h §Substrate-Additions Companion Missions row G9:
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- | ----- |
 | `0011-h-s-a-slash-bridge-trait` (G9) | `SlashBridge` trait + `list() → Vec<BridgedSlash>` + `propagate_to(slash_envelope_id: [u8; 32]) → Result<BridgeReceipt, BridgeError>` | B     |
 
-Per-extension transport impl crates (substrate-ext-bridge-*) are OUT OF SCOPE for this RFC and for companion mission G9 per `cipherocto-design-principles` §User extensibility. Concrete impls land in Layer D per per-extension crate pattern.
+Per-extension transport impl crates (substrate-ext-bridge-*) are OUT OF SCOPE for this RFC and for companion mission G9 per `docs/architecture/design-principles.md` §User extensibility. Concrete impls land in Layer D per per-extension crate pattern.
 
 Phase 7 RFC carries 1 substrate addition; 0 substrate additions in this RFC itself (the 1 substrate addition is documented here but lands via companion mission G9 per substrate-first ordering).
 
@@ -300,7 +300,7 @@ Phase 7 RFC carries 1 substrate addition; 0 substrate additions in this RFC itse
 1. **Substrate-first slice (1 companion mission):** G9 `0011-h-s-a-slash-bridge-trait` lands per companion mission YAML at `missions/archived/0011-h-s-a-slash-bridge-trait.md`.
 2. **CLI dispatch slice:** 2 subcommand arms + 2 output envelopes + 7 test vectors (tv_net7_1 through tv_net7_6b per §Test Vectors split between CLI-parse-level + substrate-trait-level coverage) + 0 NEW OctoCliError variants (REUSES slot 89) land AFTER companion mission G9 closes per substrate-first ordering.
 
-User-gated decision on slice ordering per `feedback_initiation_user_only`.
+User-gated decision on slice ordering per `docs/05-process/engineering-rules.md` §Git workflow.
 
 > **Next amendment:** RFC-0011-p Phase 8 lands `octo network router status` + `octo network router peers <peer_node_id_hex>` against substrate companion G10 `0011-h-s-a-quota-router-node` (per RFC-0011-h §Substrate-Additions row G10). Phase 8 depends on Phase 7's `OutputEnvelope::new` wrapping pattern + BTreeMap determinism + `parse_32_byte_hex` pastejacking defense pattern.
 
@@ -315,7 +315,7 @@ User-gated decision on slice ordering per `feedback_initiation_user_only`.
 | `rfcs/accepted/process/0011-o-oct-cli-network-phase-7.md`                                   | (this RFC)                                                                                                                                 |
 | `rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md`                               | NO CHANGE (RFC-0011-h stays Accepted; RFC-0011-o is subordinate)                                                                           |
 | `missions/archived/0011-h-s-a-slash-bridge-trait.md`                                        | CLAIMED → COMPLETED transition at companion mission closure                                                                                |
-| `missions/archived/0011-h-network-slash-bridge.md` (NEW, per `no-phantom-mission-pointers`) | CLAIMED at Phase 7 RFC acceptance; COMPLETED at amendment closure                                                                          |
+| `missions/archived/0011-h-network-slash-bridge.md` (NEW, per `docs/05-process/engineering-rules.md` §No phantom mission pointers) | CLAIMED at Phase 7 RFC acceptance; COMPLETED at amendment closure                                                                          |
 | `docs/audits/2026-09-20-RFC-0011-o-dry-closure.md` (NEW)                                    | NEW closure audit (gitignored per `docs-audits-scratchpad`)                                                                                |
 | `~/.claude/projects/.../memory/2026-09-20-RFC-0011-o-dry-closure.md` (NEW)                  | NEW memory card                                                                                                                            |
 | `MEMORY.md`                                                                                 | ADD 1-line index entry at top of session resume cards                                                                                      |
@@ -329,9 +329,9 @@ User-gated decision on slice ordering per `feedback_initiation_user_only`.
 
 Phase 7 lands the **slash bridge observability + propagate** surface, closing G9 from RFC-0011-h §Substrate-Additions Companion Missions row G9 that has been DEFERRED since RFC-0011-h closure. The 1 mutating subcommand (`slash-bridge propagate`) carries 2 confirmation flags (`--dry-run` + `--confirm-acknowledge`); no `--confirm` flag per RFC-0011-h §Confirmation Flag precedent for reversible writes. Slot 89 REUSE confirmed per RFC-0011-h §Error Handling row 89 — 0 NEW OctoCliError variants in Phase 7.
 
-The per-extension crate pattern is preserved per `cipherocto-design-principles` §User extensibility: `SlashBridge` trait in Layer B, concrete impl crates in Layer D (OUT OF SCOPE). The CLI consumes the trait via a runtime registry lookup, identical to RFC-0863 `NetworkSender` pattern.
+The per-extension crate pattern is preserved per `docs/architecture/design-principles.md` §User extensibility: `SlashBridge` trait in Layer B, concrete impl crates in Layer D (OUT OF SCOPE). The CLI consumes the trait via a runtime registry lookup, identical to RFC-0863 `NetworkSender` pattern.
 
-Substrate-first ordering preserves `cipherocto-design-principles` §Stable Abstractions Principle: Layer B (substrate) lands BEFORE Layer C (CLI dispatch), so CLI never depends on a phantom substrate path.
+Substrate-first ordering preserves `docs/architecture/design-principles.md` §Stable Abstractions Principle: Layer B (substrate) lands BEFORE Layer C (CLI dispatch), so CLI never depends on a phantom substrate path.
 
 ## Version History
 

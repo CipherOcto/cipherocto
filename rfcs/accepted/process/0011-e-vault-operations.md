@@ -115,7 +115,7 @@ this RFC:
    vault ID, or the amount before signing — and signing without a
    CLI means private-key material touches a host that does not need
    to know it. The HSM is mandatory per
-   `~/.claude/projects/.../memory/cipherocto-design-principles.md`.
+   `~/.claude/projects/.../memory/`docs/architecture/design-principles.md`.md`.
 
 This RFC closes those three gaps with a Layer-C/D CLI amendment.
 
@@ -132,7 +132,7 @@ This RFC closes those three gaps with a Layer-C/D CLI amendment.
 | --------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ | ---------------------- |
 | Operator        | Active local DID (`OctoIdentity::active_did`)       | Run `octo vault {list,balance,transfer}` for vaults owned by the active DID                                                    | `Active` (per RFC-0009 §Identity Management)                             | RFC-0009               |
 | Auditor         | Read-only DID (separate from Operator; cannot sign) | Run `octo vault list` and `octo vault balance <id>` only                                                                       | `Active` (read-only role assigned per RFC-0011-d once Accepted)          | RFC-0011-d             |
-| HSM Slot        | Hardware signing module (`octo-wallet` HSM handle)  | Sign transfer envelopes (private key never leaves slot)                                                                        | `Provisioned` (per `cipherocto-design-principles.md` HSM mandatory rule) | RFC-0011 §Roles        |
+| HSM Slot        | Hardware signing module (`octo-wallet` HSM handle)  | Sign transfer envelopes (private key never leaves slot)                                                                        | `Provisioned` (per ``docs/architecture/design-principles.md`.md` HSM mandatory rule) | RFC-0011 §Roles        |
 | Vault Substrate | `octo-vault` crate (Layer B)                        | Authoritative source for `list_owned`, `project_vault_balance`, `initiate_transfer` (substrate additions pending RFC-0960-v38) | Stateless service boundary                                               | RFC-0960, RFC-0960-v37 |
 | Cache Layer     | `VaultBalanceCache` (LRU + TTL)                     | Caches `(chain_id, vault_id)` projections                                                                                      | `Epoch-bounded` (TTL per RFC-0960-v37 §2.3)                              | RFC-0960-v37           |
 | Chain Adapter   | Per-chain substrate (Layer D transport)             | Route `initiate_transfer` calls to the canonical chain for the vault                                                           | `Provisioned` (operator-chosen)                                          | RFC-0960, RFC-0010     |
@@ -467,7 +467,7 @@ RFC-0011 §Subcommand Taxonomy `capability list`).
 ### Substrate Additions (deferred to RFC-0960-v38)
 
 This RFC does NOT introduce substrate `[ADD]` signatures here. Per the
-layer model (`cipherocto-design-principles.md` §Layer A/B/C/D/E), a
+layer model (``docs/architecture/design-principles.md`.md` §Layer A/B/C/D/E), a
 Layer-C/D CLI amendment MUST NOT propose substrate Layer-B `[ADD]`
 signatures — substrate additions belong in a substrate RFC amendment.
 This RFC therefore defines the CLI surface only; substrate additions
@@ -543,7 +543,7 @@ distinction matters for the staleness invariant
 (§Security Considerations: balance projection staleness).
 
 > **No central enums for vault kinds:** vault kinds are not enumerated
-> here. Per `cipherocto-design-principles.md`, vault kinds are an
+> here. Per ``docs/architecture/design-principles.md`.md`, vault kinds are an
 > extension surface (Layer E); new vault types are added via a
 > `VaultKind` registry, NOT a central enum. RFC-0960 owns the
 > extension surface; this RFC merely exposes the canonical summary.
@@ -870,7 +870,7 @@ capability snapshot at invocation time.
 | Assumption                                                           | Where Relied Upon                                         | Blast Radius if False                                                                                                     | Mitigation / Status                                                                                                                                                                                                                                                                    |
 | -------------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Chain adapter reachable for each owned chain                         | §Transfer Flow: Pre-flight, §Performance Targets          | `vault list` and `vault balance` fail for vaults on the unreachable chain; transfer fails for the source chain            | Substrate returns `ChainAdapterUnreachable` (exit 100); CLI surfaces message naming the chain                                                                                                                                                                                          |
-| HSM slot provisioned for the active DID                              | §Transfer Flow: Pre-flight (transfer only)                | `vault transfer` rejected at pre-flight; no partial state                                                                 | `HsmUnavailable` (exit 100); per `cipherocto-design-principles.md` HSM mandatory rule, the substrate refuses to fall back to soft signing                                                                                                                                              |
+| HSM slot provisioned for the active DID                              | §Transfer Flow: Pre-flight (transfer only)                | `vault transfer` rejected at pre-flight; no partial state                                                                 | `HsmUnavailable` (exit 100); per ``docs/architecture/design-principles.md`.md` HSM mandatory rule, the substrate refuses to fall back to soft signing                                                                                                                                              |
 | `last_updated_unix` is monotonic per `(chain_id, vault_id)`          | §Vault Summary Shape, §Security Considerations: staleness | Operator sees a stale value and acts on it (e.g., initiates a transfer based on outdated balance)                         | Substrate enforces `max_occurred_at_unix` monotonicity per RFC-0960-v37 §2.2; CLI surfaces `last_updated_unix` and emits `">TTL seconds old: re-run with --no-cache"` in `VaultBalanceOutput.warnings` when the projection is older than the cache TTL (§Balance Projection Staleness) |
 | `VaultBalanceCache` TTL is bounded                                   | §Performance Targets cache hit ratio                      | Stale balance shown without operator awareness                                                                            | Substrate TTL per RFC-0960-v37 §2.3 (bounded LRU + unix-seconds TTL); CLI surfaces `cache_hit` and `source_kind` (in `record`) in `VaultBalanceOutput`                                                                                                                                 |
 | `octo identity whoami` returns exactly one active DID                | §Roles and Authorities: Operator                          | Multi-DID workstations could mint transfers from a wrong identity                                                         | RFC-0011 §Subcommand Taxonomy `whoami` already enforces exactly-one active; CLI rejects `vault transfer` if zero or multiple active                                                                                                                                                    |
@@ -913,7 +913,7 @@ capability snapshot at invocation time.
 ### HSM Downgrade (mirror of RFC-0011 §Security)
 
 The CLI MUST NOT accept a `--soft-sign` flag (or any equivalent) that
-bypasses the HSM. Per `cipherocto-design-principles.md`, HSM is
+bypasses the HSM. Per ``docs/architecture/design-principles.md`.md`, HSM is
 mandatory for any signing operation. The substrate refuses to fall
 back; the CLI surfaces a hard error if the HSM is unreachable
 (`HsmUnavailable`, exit 100).
@@ -1089,7 +1089,7 @@ operator who can see vault inventory can audit the substrate. The CLI
 does not create value, but it surfaces substrate state for operator
 inspection.
 
-> **Reference:** `cipherocto-design-principles.md` and
+> **Reference:** ``docs/architecture/design-principles.md`.md` and
 > `docs/04-tokenomics/token-design.md` for the dual-stake model. The
 > CLI does NOT enforce dual-stake — substrate does. This RFC only
 > defines the operator UX.
@@ -1234,9 +1234,9 @@ Canonical test cases (per BLUEPRINT.md §Test Vectors). At least 30:
 
 | Approach                                                                       | Pros                                                                                 | Cons                                                                                                                        |
 | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
-| **A. Three subcommands under `octo vault {list,balance,transfer}` (THIS RFC)** | Matches RFC-0011 §Phase 6 design; mirrors substrate substrate 1:1; minimal new types | Substrate coupling (acceptable; per `cipherocto-design-principles.md` no parallel abstractions)                             |
+| **A. Three subcommands under `octo vault {list,balance,transfer}` (THIS RFC)** | Matches RFC-0011 §Phase 6 design; mirrors substrate substrate 1:1; minimal new types | Substrate coupling (acceptable; per ``docs/architecture/design-principles.md`.md` no parallel abstractions)                             |
 | B. Single `octo vault` command with sub-flags                                  | One binary; less tree noise                                                          | Conflates read vs write; harder to express `--confirm` semantics                                                            |
-| C. Embed vault operations in `octo capability` subcommand                      | Capability is the substrate for authorization; one tree                              | Conflates authorization substrate with vault substrate; violates `cipherocto-design-principles.md` no-parallel-abstractions |
+| C. Embed vault operations in `octo capability` subcommand                      | Capability is the substrate for authorization; one tree                              | Conflates authorization substrate with vault substrate; violates ``docs/architecture/design-principles.md`.md` `docs/architecture/design-principles.md` §No parallel abstractions |
 | D. Move vault operations to a separate binary `octo-vault`                     | Separation of concerns                                                               | Two binaries to install; cross-binary UX confusion; RFC-0011 §Phase 6 already commits to `octo vault` tree                  |
 | E. Web UI instead of CLI                                                       | Easier UX for non-technical operators                                                | Out of scope for RFC-0011 (CLI substrate); web UI is a separate RFC                                                         |
 
@@ -1294,7 +1294,7 @@ Layer C/D CLI surface) and the read/write boundary inside the CLI:
 > into mission 3b.
 
 The decomposition follows the layer model
-(`cipherocto-design-principles.md` §Layer A/B/C/D/E):
+(``docs/architecture/design-principles.md`.md` §Layer A/B/C/D/E):
 
 - **Layer B first** — substrate additions land before CLI calls; a CLI
   that calls into a non-existent substrate signature fails at compile
@@ -1331,7 +1331,7 @@ transfer CLI mission owns TV-9..TV-12d + TV-14 + TV-15.
 
 Substrate additions for `octo vault` are **out of scope for this RFC**
 and deferred to RFC-0960-v38 (Vault Operations Substrate Additions).
-Per the layer model (`cipherocto-design-principles.md`), a CLI amendment
+Per the layer model (``docs/architecture/design-principles.md`.md`), a CLI amendment
 MUST NOT specify substrate `[ADD]` signatures; substrate changes live
 in a substrate RFC amendment and this RFC merely references them.
 
@@ -1379,7 +1379,7 @@ explicit: `list` and `balance` never prompt; `transfer` always prompts.
 
 `vault transfer` is a write operation that consumes substrate
 resources (DQA, gas) and produces a signed envelope. Per
-`cipherocto-design-principles.md` (no premature coupling), the CLI
+``docs/architecture/design-principles.md`.md` (no premature coupling), the CLI
 must not implement role provisioning — that is RFC-0011-d's
 responsibility. Until RFC-0011-d is Accepted, the CLI surfaces
 `RoleNotProvisioned` so the operator understands the gap without the
@@ -1388,7 +1388,7 @@ CLI silently failing.
 ### Why no central enum for vault kinds
 
 Vault kinds are an extension surface (Layer E). Per
-`cipherocto-design-principles.md`, the CLI must not introduce a
+``docs/architecture/design-principles.md`.md`, the CLI must not introduce a
 central enum for vault kinds. New vault types are added via a
 `VaultKind` registry in substrate (RFC-0960 owns this); the CLI
 forwards the registry's discriminant without enumerating it.

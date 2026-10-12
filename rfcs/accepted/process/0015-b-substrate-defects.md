@@ -23,7 +23,7 @@ RFC-0015 + RFC-0015-a + RFC-0016 reached a stylistic plateau in the R12 + R13 DR
 - **§X.3** state-machine test coverage (1 genuinely new edge: `Terminated → Running` cross-state rejection)
 - **§X.4** RFC-0015-a §Amendment Surface parity refresh (1 additive `AgentRecord` field + forward-pointer row)
 
-Defect 5 (phantom-event window on audit-append + rollback) is **DEFERRED** to a separate RFC-0012-v4 paired Layer A amendment cycle (requires `state_version: u64` field on `AuditEvent` + `audit_chain.tip.state_version: u64` accessor on `AppendOnlyAuditSink` in `octo-audit-core` Layer A frozen per CLAUDE.md §Layer A stability). Defect 5 is NOT in RFC-0015-b scope per `deferred-vs-unspecified`; RFC-0012-v4 paired amendment is a separate cycle.
+Defect 5 (phantom-event window on audit-append + rollback) is **DEFERRED** to a separate RFC-0012-v4 paired Layer A amendment cycle (requires `state_version: u64` field on `AuditEvent` + `audit_chain.tip.state_version: u64` accessor on `AppendOnlyAuditSink` in `octo-audit-core` Layer A frozen per CLAUDE.md §Layer A stability). Defect 5 is NOT in RFC-0015-b scope per `docs/05-process/engineering-rules.md` §Deferred versus unspecified; RFC-0012-v4 paired amendment is a separate cycle.
 
 The amendment is **strictly additive** — no breaking changes to existing public API per RFC migration etiquette. CLI behavior unchanged for all §X.x (error exit mappings pre-existing at parent RFC-0015-a acceptance); CLI security posture improves for §X.2 (no information leak on probe).
 
@@ -40,7 +40,7 @@ The amendment is **strictly additive** — no breaking changes to existing publi
 - RFC-0002 — Agent Manifest Specification (canonical `AgentState` + state-machine substrate authority per §Agent State Machine)
 - RFC-0008 — Deterministic AI Execution Boundary (execution class mapping per §RFC-0008 Execution Class Mapping)
 
-**Out-of-scope paired amendment (defect 5 DEFERRED per `deferred-vs-unspecified`):**
+**Out-of-scope paired amendment (defect 5 DEFERRED per `docs/05-process/engineering-rules.md` §Deferred versus unspecified):**
 
 - **RFC-0012-v4** (future cycle) — `AuditEvent.state_version: u64` field + `audit_chain.tip.state_version: u64` accessor on `AppendOnlyAuditSink` in `octo-audit-core` (Layer A frozen per CLAUDE.md §Layer A stability; requires semver-major). Defect 5 phantom-event detection deferred to this paired Layer A amendment cycle. NOT in RFC-0015-b scope. Listed in §Future Work F1.
 
@@ -68,7 +68,7 @@ The 7 substrate defects from the plateau declaration were re-examined against th
 | 2   | `AlreadyInTransition` doc-comment drift         | FOLDED into §X.1 impl mission (doc-comment update is sub-step hygiene)                                                                                                                                 |
 | 3   | `lookup_agent` existence-leak                   | REAL — closes enumeration side-channel                                                                                                                                                                 |
 | 4   | `transition_agent` TOCTOU window                | PHANTOM — `validate_reason` is pure function; canonical validate-first → lock-after → re-read inside lock pattern already closes the actual TOCTOU window per parent §6.1 (1) + §6.1 (6)               |
-| 5   | Phantom-event window on audit-append + rollback | DEFERRED — `state_version` field is Layer B + chain-tip accessor is Layer A frozen; full closure requires paired RFC-0012-v4 Layer A amendment (out of RFC-0015-b scope per `deferred-vs-unspecified`) |
+| 5   | Phantom-event window on audit-append + rollback | DEFERRED — `state_version` field is Layer B + chain-tip accessor is Layer A frozen; full closure requires paired RFC-0012-v4 Layer A amendment (out of RFC-0015-b scope per `docs/05-process/engineering-rules.md` §Deferred versus unspecified) |
 | 6   | Missing state-machine tests                     | REAL — 1 new edge (`Terminated → Running`; concurrent in-flight lives at §X.1 test TV-WLT-AGT-29; rest duplicate parent RFC-0015-a TVs)                                                                |
 | 7   | RFC-0015-a §Amendment Surface parity gap        | REAL but small — 1 additive row + 1 forward-pointer row; targets NEW `#### §Amendment Surface` heading on RFC-0015-a (mirrors RFC-0015 §Amendment Surface structure)                                   |
 
@@ -130,7 +130,7 @@ The 7 substrate defects from the plateau declaration were re-examined against th
 
 ### §X.2.1 `read_agent_state` out-of-scope forward-pointer
 
-**Note:** `crates/octo-wallet/src/agent.rs` §read_agent_state (lines ~515-529) carries the IDENTICAL existence-leak surface as §lookup_agent (returns `AgentNotFound` on Uuid miss + `ForbiddenHolderMismatch` on holder mismatch). RFC-0015-b §X.2 scopes the closure to `lookup_agent` ONLY (read-state path owned by RFC-0015 KEEP per `deferred-vs-unspecified`). The parallel closure for `read_agent_state` is DEFERRED to a RFC-0015 follow-on amendment cycle (read-path owner; out of RFC-0015-b scope per paired-acceptance discipline). Forward-pointer retained here per substrate-faithful single-source-of-truth principle.
+**Note:** `crates/octo-wallet/src/agent.rs` §read_agent_state (lines ~515-529) carries the IDENTICAL existence-leak surface as §lookup_agent (returns `AgentNotFound` on Uuid miss + `ForbiddenHolderMismatch` on holder mismatch). RFC-0015-b §X.2 scopes the closure to `lookup_agent` ONLY (read-state path owned by RFC-0015 KEEP per `docs/05-process/engineering-rules.md` §Deferred versus unspecified). The parallel closure for `read_agent_state` is DEFERRED to a RFC-0015 follow-on amendment cycle (read-path owner; out of RFC-0015-b scope per paired-acceptance discipline). Forward-pointer retained here per substrate-faithful single-source-of-truth principle.
 
 ### §X.3 State-machine test coverage (1 new canonical edge)
 
@@ -156,7 +156,7 @@ Concurrent in-flight rejection test coverage lives canonically at §X.1 TV-WLT-A
 
 ### §X.4 RFC-0015-a `#### §Amendment Surface` parity refresh
 
-**Defect:** RFC-0015-a lacks a `#### §Amendment Surface` heading at acceptance time. Per substrate-faithful single-source-of-truth principle + `deferred-vs-unspecified` (RFC-0015 §Amendment Surface §Amendment Surface is DEFERRED to RFC-0015-a — canonical home for additive write-path items), additive items landed post-RFC-0015-a acceptance require a parity refresh in RFC-0015-a itself.
+**Defect:** RFC-0015-a lacks a `#### §Amendment Surface` heading at acceptance time. Per substrate-faithful single-source-of-truth principle + `docs/05-process/engineering-rules.md` §Deferred versus unspecified (RFC-0015 §Amendment Surface §Amendment Surface is DEFERRED to RFC-0015-a — canonical home for additive write-path items), additive items landed post-RFC-0015-a acceptance require a parity refresh in RFC-0015-a itself.
 
 **Requirement:** paired impl mission adds a NEW `#### §Amendment Surface` heading to RFC-0015-a (mirrors RFC-0015 §Amendment Surface structure) with the following rows:
 
@@ -164,7 +164,7 @@ Concurrent in-flight rejection test coverage lives canonically at §X.1 TV-WLT-A
 
 Plus a forward-pointer row for the deferred defect 5:
 
-2. Defect 5 phantom-event detection (`state_version` field + `audit_chain.tip.state_version` accessor) — DEFERRED to RFC-0012-v4 paired Layer A amendment cycle; out of RFC-0015-b scope per `deferred-vs-unspecified`
+2. Defect 5 phantom-event detection (`state_version` field + `audit_chain.tip.state_version` accessor) — DEFERRED to RFC-0012-v4 paired Layer A amendment cycle; out of RFC-0015-b scope per `docs/05-process/engineering-rules.md` §Deferred versus unspecified
 
 Add timestamp entry:
 
@@ -297,7 +297,7 @@ Substrate-level test vectors (canonical numbering per parent RFC-0015-a §Test V
 - [ ] `missions/archived/completed/0016-a-audit-write-path-promotion.md` DRY CLOSED
 - [ ] RFC-0016-a promoted Draft → Accepted
 
-Defect 5 phantom-event detection lives in a separate RFC-0012-v4 paired Layer A amendment cycle (out of RFC-0015-b scope per `deferred-vs-unspecified`); tracked in §Future Work F1.
+Defect 5 phantom-event detection lives in a separate RFC-0012-v4 paired Layer A amendment cycle (out of RFC-0015-b scope per `docs/05-process/engineering-rules.md` §Deferred versus unspecified); tracked in §Future Work F1.
 
 ## Key Files to Modify
 
@@ -312,7 +312,7 @@ Defect 5 phantom-event detection lives in a separate RFC-0012-v4 paired Layer A 
 
 ## Future Work
 
-- **F1:** RFC-0012-v4 paired amendment (future cycle) — `AuditEvent.state_version: u64` field + `audit_chain.tip.state_version: u64` accessor on `AppendOnlyAuditSink` trait in `octo-audit-core` (Layer A frozen; semver-major per CLAUDE.md §Layer A stability). Required for defect 5 phantom-event detection closure. Out of RFC-0015-b scope (separate RFC cycle per Layer A stability contract + `deferred-vs-unspecified`).
+- **F1:** RFC-0012-v4 paired amendment (future cycle) — `AuditEvent.state_version: u64` field + `audit_chain.tip.state_version: u64` accessor on `AppendOnlyAuditSink` trait in `octo-audit-core` (Layer A frozen; semver-major per CLAUDE.md §Layer A stability). Required for defect 5 phantom-event detection closure. Out of RFC-0015-b scope (separate RFC cycle per Layer A stability contract + `docs/05-process/engineering-rules.md` §Deferred versus unspecified).
 - **F2:** RFC-0002 companion amendment — split `AgentState` 3-state (Registered/Running/Terminated) to 5-state (REGISTERED/ACTIVE/BUSY/ACTIVE/TERMINATED) per RFC-0015 §Summary substrate-faithful drift note. Out of RFC-0015-b critical path; deferred to RFC-0002 companion cycle.
 - **F3:** RFC-0015-c — full write-path formal authorization amendment. RFC-0015-b is a focused 4-defect closure; RFC-0015-c would consolidate the write-path surface into a single authoritative amendment. Out of RFC-0015-b scope.
 
@@ -322,7 +322,7 @@ The paired-acceptance pattern (RFC-0015-b amendment + `0015-b-substrate-defect-i
 
 The 7 plateau defects were re-examined against canonical substrate patterns established at parent RFC-0015-a acceptance. **4 defects survive canonicalization** as substantive §X.x requirements (defects 1, 3, 6, 7); defect 2 is folded into the §X.1 impl sub-step as doc-comment hygiene; defect 4 is rejected as a substrate contract change based on a flawed premise (that `validate_reason` reads the registry — it does not per parent §6.1 (6)); defect 5 is DEFERRED to RFC-0012-v4 paired Layer A amendment cycle (Layer A frozen per CLAUDE.md §Layer A stability; cannot land in RFC-0015-b alone). The canonical validate-first → lock-after → re-read inside lock pattern per parent §6.1 (1) + §6.1 (6) already closes the actual TOCTOU window.
 
-The 4 surviving defects have explicit acceptance criteria per §X.1-§X.4. The paired-acceptance pattern ensures RFC-0015-b text lands FIRST (formal authorization), then substrate code lands per parent RFC-0015-a §6.5 Layer A Paired-Acceptance Bridge. Defect 5 lives in a separate RFC-0012-v4 cycle (out of RFC-0015-b scope per `deferred-vs-unspecified`).
+The 4 surviving defects have explicit acceptance criteria per §X.1-§X.4. The paired-acceptance pattern ensures RFC-0015-b text lands FIRST (formal authorization), then substrate code lands per parent RFC-0015-a §6.5 Layer A Paired-Acceptance Bridge. Defect 5 lives in a separate RFC-0012-v4 cycle (out of RFC-0015-b scope per `docs/05-process/engineering-rules.md` §Deferred versus unspecified).
 
 ## Version History
 
@@ -342,7 +342,7 @@ The 4 surviving defects have explicit acceptance criteria per §X.1-§X.4. The p
 - RFC-0011-c — `octo agent` Subcommands (CLI consumers)
 - RFC-0002 — Agent Manifest Specification (canonical `AgentState` authority)
 - RFC-0008 — Deterministic AI Execution Boundary (execution class mapping)
-- RFC-0012-v4 — (future cycle) Layer A paired amendment for defect 5 phantom-event detection; out of RFC-0015-b scope per `deferred-vs-unspecified`
+- RFC-0012-v4 — (future cycle) Layer A paired amendment for defect 5 phantom-event detection; out of RFC-0015-b scope per `docs/05-process/engineering-rules.md` §Deferred versus unspecified
 
 ## Related Use Cases
 
@@ -375,7 +375,7 @@ Each §X.x maps back to the plateau declaration audit doc table:
 | §X.3 | 6        | Real (1 new state-machine edge TV; concurrent in-flight lives at §X.1 TV-WLT-AGT-29)            |
 | §X.4 | 7        | Real (NEW `#### §Amendment Surface` heading on RFC-0015-a + 1 additive row + 1 forward-pointer) |
 
-Defect 2 (doc-comment): folded into §X.1 impl sub-step as doc-comment hygiene. Defect 4 (TOCTOU contract): rejected as substrate contract change based on flawed premise (`validate_reason` is pure per parent §6.1 (6); canonical validate-first → lock-after pattern already closes the actual TOCTOU window). Defect 5 (phantom-event window): DEFERRED to RFC-0012-v4 paired Layer A amendment cycle per `deferred-vs-unspecified`; out of RFC-0015-b scope.
+Defect 2 (doc-comment): folded into §X.1 impl sub-step as doc-comment hygiene. Defect 4 (TOCTOU contract): rejected as substrate contract change based on flawed premise (`validate_reason` is pure per parent §6.1 (6); canonical validate-first → lock-after pattern already closes the actual TOCTOU window). Defect 5 (phantom-event window): DEFERRED to RFC-0012-v4 paired Layer A amendment cycle per `docs/05-process/engineering-rules.md` §Deferred versus unspecified; out of RFC-0015-b scope.
 
 ---
 

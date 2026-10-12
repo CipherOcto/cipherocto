@@ -8,7 +8,7 @@ Accepted (2026-09-02) — INDEX RFC. Superseded by per-concern split:
 - RFC-0855p-d2 — Sub-DC Delegation Lifecycle
 - RFC-0855p-d3 — Routing + Aggregation + Teardown
 
-The monolithic RFC-0855p-d v1.2 (~1200 lines, single spec for CGSB + SDCD/SDRV/SDRT + P2SR/S2PA/SGTP + state machine + Layer-C substrate + test vectors) restructured into 3 sibling RFCs on 2026-09-02 per the plateau declaration (`docs/audits/2026-09-02-rfc-0855p-de-review-plateau.md`). 11-wave 5-lens adversarial review loop (W1-W10 + W10.5) confirmed non-convergence; per `cipherocto-design-principles` §Discipline at first call site + §No parallel abstractions, restructure chosen over continued wave cycle.
+The monolithic RFC-0855p-d v1.2 (~1200 lines, single spec for CGSB + SDCD/SDRV/SDRT + P2SR/S2PA/SGTP + state machine + Layer-C substrate + test vectors) restructured into 3 sibling RFCs on 2026-09-02 per the plateau declaration (`docs/audits/2026-09-02-rfc-0855p-de-review-plateau.md`). 11-wave 5-lens adversarial review loop (W1-W10 + W10.5) confirmed non-convergence; per `docs/architecture/design-principles.md` §Discipline at first call site + §No parallel abstractions, restructure chosen over continued wave cycle.
 
 This INDEX retains cross-cutting concerns (dependencies, motivation, high-level overview) and indexes per-concern content to the sibling RFCs. Per-concern §Specification / §Data Structure / §Security / §Test Vectors live in d1/d2/d3. VH rows below preserve the v0.2 → v1.2 monolithic lineage; subsequent v1.3 entries point to the restructure event.
 
@@ -281,7 +281,7 @@ Chain-wide rejected alternatives:
 - **Flat hierarchy only**: working groups need parentage, policy lineage, scoped delegation, and deterministic descendant routing.
 - **Tags without nesting**: tag taxonomy cannot prove one active parent, bound child depth, child-scoped authority, or parent-dissolve cascade.
 - **Extend CGROUP with optional extension**: optional fields weaken old-client compatibility and make per-concern semantics non-obvious.
-- **Monolithic RFC**: confirmed non-convergent after 11-wave review; per-concern split chosen per `cipherocto-design-principles` §Discipline at first call site.
+- **Monolithic RFC**: confirmed non-convergent after 11-wave review; per-concern split chosen per `docs/architecture/design-principles.md` §Discipline at first call site.
 
 ## Implementation Phases (chain-wide)
 
@@ -326,7 +326,7 @@ Chain-wide deferred:
 
 ## Rationale (chain-wide)
 
-The monolithic RFC-0855p-d v1.2 (~1200 lines) combined creation + state + delegation + routing + aggregation + teardown + Layer-C substrate + test vectors + alternative considerations + implementation phases in one document. 11-wave 5-lens adversarial review loop (W1-W10 + W10.5) confirmed non-convergence: each fix batch surfaces fresh C-level audit surface from the new fixes themselves. Per `cipherocto-design-principles` §Discipline at first call site + §No parallel abstractions, the disciplined answer is to split per concern rather than continue generating fresh audit surface.
+The monolithic RFC-0855p-d v1.2 (~1200 lines) combined creation + state + delegation + routing + aggregation + teardown + Layer-C substrate + test vectors + alternative considerations + implementation phases in one document. 11-wave 5-lens adversarial review loop (W1-W10 + W10.5) confirmed non-convergence: each fix batch surfaces fresh C-level audit surface from the new fixes themselves. Per `docs/architecture/design-principles.md` §Discipline at first call site + §No parallel abstractions, the disciplined answer is to split per concern rather than continue generating fresh audit surface.
 
 Per-concern split (option B):
 

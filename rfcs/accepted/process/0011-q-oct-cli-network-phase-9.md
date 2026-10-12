@@ -88,7 +88,7 @@ impl AsRef<str> for HolderDid {
 /// Variant set is bounded by RFC-0011-d role taxonomy (matches
 /// existing role surface); future role additions land via RFC
 /// amendment to the role taxonomy, NOT via in-place enum
-/// expansion. This defends `cipherocto-design-principles`
+/// expansion. This defends `docs/architecture/design-principles.md`
 /// §Extension over enumeration by ensuring the enum surface
 /// does not become a central-edit chokepoint.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -245,7 +245,7 @@ Coverage split per Phase 5 RFC-0011-m precedent: CLI tests cover clap parsing + 
 
 ## Rationale
 
-RFC-0011-q closes the G11 deferred stub per "everything included, no deferral" directive. The substrate (`SpecializedNodeRecord`) lands FIRST per `no-phantom-mission-pointers` pairing invariant, then CLI dispatch atop it. The trait-based dispatch surface preserves the per-extension crate pattern (trait in Layer B; concrete impls in Layer D), enabling follow-on Layer D adapter missions without changing core CLI dispatch.
+RFC-0011-q closes the G11 deferred stub per "everything included, no deferral" directive. The substrate (`SpecializedNodeRecord`) lands FIRST per `docs/05-process/engineering-rules.md` §No phantom mission pointers pairing invariant, then CLI dispatch atop it. The trait-based dispatch surface preserves the per-extension crate pattern (trait in Layer B; concrete impls in Layer D), enabling follow-on Layer D adapter missions without changing core CLI dispatch.
 
 ## Version History
 

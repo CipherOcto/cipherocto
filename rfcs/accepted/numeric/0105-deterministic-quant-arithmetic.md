@@ -646,7 +646,7 @@ For hot paths in VM execution, canonicalization after every operation can be exp
 > **Section added in v2.0 (mission 0105-v).** Establishes the canonical
 > BLAKE3-256 derivation rule for role-token identity primitives. This
 > section lives in Layer A frozen substrate (per
-> `cipherocto-design-principles.md`) — semver-major changes to the
+> ``docs/architecture/design-principles.md`.md`) — semver-major changes to the
 > derivation rule, namespace, or role-token enumeration require an RFC
 > revision.
 

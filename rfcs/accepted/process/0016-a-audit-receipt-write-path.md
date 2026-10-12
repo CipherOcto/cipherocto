@@ -368,7 +368,7 @@ CLI-level test vectors live in RFC-0011 §Test Vectors (UNCHANGED at R2; expansi
 ## Alternatives Considered
 
 - **`SinkSpecific(String)` only at R2 KEEP** — already chosen; no alternative considered
-- **CLI-shape error variants as substrate-canonical** — rejected: parallel abstraction per cipherocto-design-principles; substrate remains 3-variant, CLI-shape variants land via RFC-0011 per-variant From conversions
+- **CLI-shape error variants as substrate-canonical** — rejected: parallel abstraction per `docs/architecture/design-principles.md`; substrate remains 3-variant, CLI-shape variants land via RFC-0011 per-variant From conversions
 - **`AppendOnlyAuditSink::append` as the public write function** — rejected: type-level `&mut self` requires explicit `append_audit_event(sink: &mut dyn AppendOnlyAuditSink, ...)` façade function for ergonomic substrate-faithful boundary
 - **Pre-RFC-0014 `ReceiptSummary` projection without substrate fields** — rejected: would force CLI to backfill field values, violating substrate-faithful principle
 
@@ -470,7 +470,7 @@ This section documents per-amendment substrate-faithful sweeps that reconcile RF
 
 | #   | Amendment                                                                | Substrate ground truth                                                                                                                                                                                                                                                                                      | Acceptance criterion                                                                                                                                        |
 | --- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 20  | §Implicit Assumptions item 6 `#[non_exhaustive]` set extended to 6 enums | Layer A frozen per RFC-0012 + RFC-0014-v2: `AuditError` (8-var) + `AuditEventKind` + `AuditChainError` + `ReceiptStatus` (4-var). Layer B façade per RFC-0015: `WalletError`. Layer C consumer-side per RFC-0011: `OctoCliError`. All 6 carry `#[non_exhaustive]` per CLAUDE.md §Extension over enumeration | §Implicit Assumptions item 6 documents the six-enum `#[non_exhaustive]` set with per-enum substrate anchors (without file:line per `no-line-refs-anywhere`) |
+| 20  | §Implicit Assumptions item 6 `#[non_exhaustive]` set extended to 6 enums | Layer A frozen per RFC-0012 + RFC-0014-v2: `AuditError` (8-var) + `AuditEventKind` + `AuditChainError` + `ReceiptStatus` (4-var). Layer B façade per RFC-0015: `WalletError`. Layer C consumer-side per RFC-0011: `OctoCliError`. All 6 carry `#[non_exhaustive]` per CLAUDE.md §Extension over enumeration | §Implicit Assumptions item 6 documents the six-enum `#[non_exhaustive]` set with per-enum substrate anchors (without file:line per `docs/05-process/engineering-rules.md` §No line references in documentation) |
 | 21  | §6.2 + §6.10: `AuditEventKind::AgentTransition` cfg-gate acknowledgment  | `crates/octo-audit-core/src/event.rs` `AgentTransition` variant under `#[cfg(feature = "octo-audit-internal")]` (paired-layer visibility via Layer B Cargo.toml); invisible in default builds.                                                                                                              | §6.2 + §6.10 acknowledge cfg-gate (canonical §6.10 invariant ownership statement unaffected)                                                                |
 | 22  | §IA #6: `#[non_exhaustive]` extension surface + cfg-gate acknowledgment  | §IA #6 cross-refs Trail v1.5 row 20; §IA #7 cross-refs Trail v1.5 row 21 (single source per R30.5b si simplification)                                                                                                                                                                                       | §IA #6 cites row 20; §IA #7 cites row 21 (per-item scope)                                                                                                   |
 
@@ -526,7 +526,7 @@ This section documents per-amendment substrate-faithful sweeps that reconcile RF
 
 ## Memory Anchors
 
-- `cipherocto-design-principles` — Layer model + extension-over-enumeration principle; §6.10 + §6.11 acceptance criteria follow substrate-faithful invariant enforcement
+- `docs/architecture/design-principles.md` — Layer model + extension-over-enumeration principle; §6.10 + §6.11 acceptance criteria follow substrate-faithful invariant enforcement
 
 ## Related Use Cases
 

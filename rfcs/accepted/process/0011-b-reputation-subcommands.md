@@ -524,7 +524,7 @@ The reputation read surface decomposes into one companion implementation mission
 
 **Mission status snapshot (draft cycle, 2026-08-31):**
 
-- **Status:** Open — implementation kickoff user-gated per `feedback_initiation_user_only` + `git-workflow` on RFC-0011-b acceptance.
+- **Status:** Open — implementation kickoff user-gated per `docs/05-process/engineering-rules.md` §Git workflow + `docs/05-process/engineering-rules.md` §Git workflow on RFC-0011-b acceptance.
 - **Owner:** `@unassigned` (claimant field in YAML frontmatter; RFC-0011-b Authorship Note placeholder per parent RFC-0011 authorship convention).
 - **Depends on:** `RFC-0011-b` (this RFC), `mission 0011-core-output-envelope-redaction`, `mission 0011-identity-commands`, `mission 0011-capability-commands`, `mission 0011-policy-commands` (parent RFC-0011 §Implementation Phases Phase 1 → 2 → 3 → 4 → reputation sequencing).
 - **Blocks:** none (read-only v1.0; follow-on amendments per RFC-0011 Status header chain land `reputation attest` / `reputation anchor` independently).

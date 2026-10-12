@@ -6,7 +6,7 @@
 **Date:** 2026-08-24
 [R15 fix F-R15-FD-2 TITLE-DRIFT: title v3.1 → v3.3 to match §5 Version History latest row. v3.1 (R10 retroactive trail) + v3.2 (R11 retroactive trail) + v3.3 (R12 fresh fix trail). v3.4 cross-RFC harmonization per long-horizon plan v1.6 §Cross-RFC Harmonization (2026-08-24).]
 **Layer:** B (RFC-driven, additive only; this amendment is **non-additive** = SEMVER-MAJOR per RFC-0206 additive-only rule)
-**Reviewers required:** 2+ maintainer approvals + 7-day minimum review window (per `feedback_initiation_user_only` + BLUEPRINT.md §RFC Process)
+**Reviewers required:** 2+ maintainer approvals + 7-day minimum review window (per `docs/05-process/engineering-rules.md` §Git workflow + BLUEPRINT.md §RFC Process)
 
 **Promotion trail:** v3.3 initial draft 2026-08-22 → Accepted 2026-08-22 per long-horizon plan v1.6 Phase 4 Tier 3 promotion sequence (RFC-0206 second in Tier 3 pair per research §20 decision #9, 2-Cycle Atomic with RFC-0205). v3.4 cross-RFC harmonization amendment 2026-08-24: byte-0 overwrite claim REMOVED (contradicted substrate per 3 RFC cite loops); `0x01 = Mainnet` label corrected to `0x01 = Rfc` per substrate `NamespaceVariant`; §4 cross-references updated to on-disk canonical RFC paths + version pins. create_vault return type + balance type + vault_id BLAKE3 freeze + membership_proof→proof rename + domain-separator prefix harmonization + 0x01 namespace byte disambiguation + Audit log all preserved. Cite pins stripped to bare RFC numbers per CLAUDE.md §RFC Reference Conventions.
 

@@ -28,7 +28,7 @@ Per CLAUDE.md §Architectural Principles + §Extension over enumeration, RFC-001
 
 **Accepted (2026-09-12)** — DRY CLOSED at R48 + R49 consecutive zero-finding rounds across all 5 lenses (correctness, security, layer-model, hygiene, spec-completeness). Paired atomic promotion with RFC-0014-v2 per §2-Cycle Atomic Promotion Tag.
 
-> **Mission decomposition note.** Per `no-phantom-mission-pointers` rule, no standalone mission file is required for the v2.0.0 amendment acceptance cycle. Phase 1 substrate-code amendment work is captured inline via DEFERRED markers throughout this RFC; the DEFERRED markers are the canonical forward-pointer form per CLAUDE.md §Mission Lifecycle.
+> **Mission decomposition note.** Per `docs/05-process/engineering-rules.md` §No phantom mission pointers rule, no standalone mission file is required for the v2.0.0 amendment acceptance cycle. Phase 1 substrate-code amendment work is captured inline via DEFERRED markers throughout this RFC; the DEFERRED markers are the canonical forward-pointer form per CLAUDE.md §Mission Lifecycle.
 
 ## Authors
 
@@ -819,7 +819,7 @@ RFC-0012-v2 explicitly pins this boundary. Substrate stays free of projection lo
 
 ### Appendix C: Layer Direction Note
 
-Per CLAUDE.md §Architectural Principles + `cipherocto-design-principles.md` Layer model, RFC-0012-v2 pins the canonical layer direction for audit substrate code:
+Per CLAUDE.md §Architectural Principles + ``docs/architecture/design-principles.md`.md` Layer model, RFC-0012-v2 pins the canonical layer direction for audit substrate code:
 
 | Layer                                             | Concrete location                          | Owns                                                                                                                                                                                               |
 | ------------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -480,7 +480,7 @@ The chosen approach (Finding 4 hybrid) satisfies all 12 principles in `CLAUDE.md
 
 - [ ] RFC-0012 reaches Accepted via standard BLUEPRINT.md §RFC Acceptance Process (≥2 approvals, no blocking objections, 7-day review minimum)
 - [ ] Substrate + façade missions transition Open → Claimed → Completed per §Mission Decomposition
-- [ ] Companion mission YAMLs in `missions/open/` per `no-phantom-mission-pointers`
+- [ ] Companion mission YAMLs in `missions/open/` per `docs/05-process/engineering-rules.md` §No phantom mission pointers
 
 ### Out of scope for this RFC
 

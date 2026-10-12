@@ -18,7 +18,7 @@ Accepted v3.1 (2026-09-14)
 
 ## Summary
 
-This RFC defines the `octo-audit` Layer B façade surface for the audit receipt API at R2 acceptance. The KEEP surface is read-only and substrate-faithful to RFC-0012 (Layer A `octo-audit-core`) and RFC-0014 (Layer A `octo-settlement-core`). See §6.1 §Pre-existing Substrate table for the canonical KEEP item list (4 items + 3 PRE-EXISTING re-exports) and §6.1 §Amendment Surface for items DEFERRED to RFC-0016-a per `deferred-vs-unspecified`.
+This RFC defines the `octo-audit` Layer B façade surface for the audit receipt API at R2 acceptance. The KEEP surface is read-only and substrate-faithful to RFC-0012 (Layer A `octo-audit-core`) and RFC-0014 (Layer A `octo-settlement-core`). See §6.1 §Pre-existing Substrate table for the canonical KEEP item list (4 items + 3 PRE-EXISTING re-exports) and §6.1 §Amendment Surface for items DEFERRED to RFC-0016-a per `docs/05-process/engineering-rules.md` §Deferred versus unspecified.
 
 ## Dependencies
 
@@ -29,7 +29,7 @@ This RFC defines the `octo-audit` Layer B façade surface for the audit receipt 
 ## Design Goals
 
 1. **Substrate-faithful** — every KEEP item matches an existing Layer A frozen type or a strict additive on Layer B façade
-2. **Read-only at acceptance** — write surface deferred per `cipherocto-design-principles` §Stable Abstractions Principle
+2. **Read-only at acceptance** — write surface deferred per `docs/architecture/design-principles.md` §Stable Abstractions Principle
 3. **Layer discipline** — canonical façade-to-substrate hops only: `octo-audit` (Layer B) → `octo-audit-core` (Layer A frozen, `AuditError` re-export) + `octo-audit` (Layer B) → `octo-settlement` (Layer B) → `octo-settlement-core` (Layer A frozen, `Receipt` re-export) + `octo-audit` (Layer B) → `octo-storage-core` (Layer A frozen, DOMAIN adapter substrate per RFC-0206). NO NEW non-canonical B→A edges at KEEP.
 4. **Canonical projection** — `list_receipts` returns `Vec<u64>` of canonical `Receipt::receipt_id` values (canonical projection at KEEP; the bare `u64` IS the canonical form per RFC-0012/0014 acceptance pattern). Forward-pointers to RFC-0016-a live in §6.7.
 
@@ -263,7 +263,7 @@ CLI-level test vectors live in RFC-0011-a §Test Vectors (UNCHANGED).
 ## Alternatives Considered
 
 - **CLI-side receipt storage** — CLI stores the receipt summaries locally; rejected: violates substrate-faithful principle; reads should always go through the canonical substrate store
-- **Custom `ReceiptId` typedef in CLI** — separate newtype from `SettlementStore::ReceiptId`; rejected: parallel abstraction per `cipherocto-design-principles`; bare `u64` is canonical at R2 KEEP (per `Receipt::receipt_id` field)
+- **Custom `ReceiptId` typedef in CLI** — separate newtype from `SettlementStore::ReceiptId`; rejected: parallel abstraction per `docs/architecture/design-principles.md`; bare `u64` is canonical at R2 KEEP (per `Receipt::receipt_id` field)
 - **GraphQL/REST API surface** — separate API exposes audit reads; rejected: substrate-faithful principle + RFC-0011 CLI is the canonical operator surface
 - **Streaming `list_receipts` (cursor-streaming)** — server streams rows back; rejected: complexity for no benefit at the 10000-row ceiling; cursor reserved for RFC-0016-a future work
 
@@ -327,7 +327,7 @@ No changes to Layer A crates (`octo-audit-core`, `octo-settlement-core`); no CLI
 - RFC-0011 — `octo` CLI Substrate (parent RFC; provides envelope + error + exit-code substrate)
 - RFC-0010 — Canonical DID Codec (DID parsing)
 - RFC-0008 — Deterministic AI Execution Boundary (execution class mapping)
-- `cipherocto-design-principles` — Layer model + substrate-faithful principle
+- `docs/architecture/design-principles.md` — Layer model + substrate-faithful principle
 
 ## Related Use Cases
 

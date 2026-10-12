@@ -26,7 +26,7 @@ RFC-0011-i lands the **first read-only observability slice** of RFC-0011-h §Imp
 | `octo network trust-graph render`         | `TrustGraph::render(format: GraphFormat)`                                                                                    | `crates/octo-network/src/mon/trust_graph.rs`         |
 | `octo network governance rotation status` | `GovernanceRotation::{has_quorum, migration_deadline, in_migration_window(current_epoch)}`                                   | `crates/octo-network/src/mon/governance_rotation.rs` |
 
-**Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per `cipherocto-design-principles`). CLI dispatch lands Layer C; substrate additions in THIS RFC = **none**; Phase 1 IMPLEMENTATION requires 1 companion substrate mission (`0011-h-s-a-local-gateway-identity-state`) to land BEFORE CLI dispatch for `identity show` (per R1.5 fix per F2).
+**Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per `docs/architecture/design-principles.md`). CLI dispatch lands Layer C; substrate additions in THIS RFC = **none**; Phase 1 IMPLEMENTATION requires 1 companion substrate mission (`0011-h-s-a-local-gateway-identity-state`) to land BEFORE CLI dispatch for `identity show` (per R1.5 fix per F2).
 
 ## Dependencies
 
@@ -43,7 +43,7 @@ RFC-0011-i lands the **first read-only observability slice** of RFC-0011-h §Imp
 ## Design Goals
 
 1. **Read-only surface first** — Phase 1 makes no state changes. All 5 subcommands are pure observers of Layer B state. Per RFC-0011-h §Implementation Phases ordering, Phase 1 lands observability before any write paths.
-2. **Substrate-faithfulness** — no parallel abstractions, no CLI-side substrate shadow. CLI translates substrate return values 1:1 to JSON envelopes per `cipherocto-design-principles` §No premature coupling.
+2. **Substrate-faithfulness** — no parallel abstractions, no CLI-side substrate shadow. CLI translates substrate return values 1:1 to JSON envelopes per `docs/architecture/design-principles.md` §No premature coupling.
 3. **Slot arithmetic preserved** — Phase 1 lands exactly 4 of the 10 RFC-0011-h-defined OctoCliError variants (slots 79, 83, 85, 86). The remaining 6 (slots 82, 84, 87, 88, 89, 90) + slot 91 pre-allocated land in subsequent phases per the `0011-h-multiphase-rollout-plan` plan.
 4. **Layer discipline preserved** — zero Layer A change; Layer B substrate already present for 4 of 5 subcommands (1 companion substrate mission `0011-h-s-a-local-gateway-identity-state` adds local identity state for `identity show` per R1.5 fix per F2); Layer C CLI dispatch is the net-new code for all 5 subcommands.
 5. **Test vector coverage** — 13 test vectors (7 for peers-identity, 4 for trust-graph, 2 for governance rotation) per RFC-0011-h §Implementation Phases Phase 1.
@@ -85,7 +85,7 @@ graph TD
     SUBSTRATE --> FROZEN
 ```
 
-Per `cipherocto-design-principles` §Stable Abstractions Principle, Layer A is unchanged. Per §No premature coupling, CLI does not reach into substrate internals — only into public substrate functions.
+Per `docs/architecture/design-principles.md` §Stable Abstractions Principle, Layer A is unchanged. Per §No premature coupling, CLI does not reach into substrate internals — only into public substrate functions.
 
 ### Binary Surface
 
@@ -247,7 +247,7 @@ Phase 1 lands exactly 4 of the 10 RFC-0011-h-defined `OctoCliError` variants:
 
 **Slot arithmetic preserved:** 4 new variants land in slots 79, 83, 85, 86. The remaining 6 RFC-0011-h-defined variants (82, 84, 87, 88, 89, 90) + slot 91 pre-allocation land in subsequent phases per the multiphase plan. Total: 10 defined + slot 91 pre-allocated + slots 80/81 RESERVED = unchanged from RFC-0011-h closure baseline.
 
-Additive under `#[non_exhaustive]` per `cipherocto-design-principles` §Extension over enumeration. Slot range 79-91 inherited from RFC-0011-h.
+Additive under `#[non_exhaustive]` per `docs/architecture/design-principles.md` §Extension over enumeration. Slot range 79-91 inherited from RFC-0011-h.
 
 ### Exit Codes
 
@@ -308,7 +308,7 @@ Patterns considered + rejected per RFC-0011-h §Adversarial Review:
 
 - **RFC-0011-h §Compatibility** preserved unchanged.
 - **No top-level `CHANGELOG.md`** — does not exist; closure audit lands at `docs/audits/2026-09-20-RFC-0011-i-dry-closure.md` per `docs-audits-scratchpad`.
-- **Layer A frozen contracts** preserved unchanged per `cipherocto-design-principles` §Stable Abstractions Principle.
+- **Layer A frozen contracts** preserved unchanged per `docs/architecture/design-principles.md` §Stable Abstractions Principle.
 - **Existing peer.rs + mesh.rs CLI surface** preserved; RFC-0011-i adds a parallel `network` arm without touching the existing `peer` arm.
 
 ## Test Vectors
@@ -383,10 +383,10 @@ Per RFC-0011-i scope:
 | `crates/octo-network/src/mon/local_gateway_identity.rs`              | **NEW** (companion substrate for `identity show` — Layer B substrate additions per F2; lands BEFORE Phase 1 CLI dispatch)                                              | B          |
 | `rfcs/draft/process/0011-i-oct-cli-network-phase-1.md`               | (this RFC; R1.5 fix-sweep applied per F1 + F2 + F3)                                                                                                                    | A (spec)   |
 | `rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md`        | NO CHANGE (RFC-0011-h stays Accepted; RFC-0011-i is subordinate)                                                                                                       | A (spec)   |
-| `missions/claimed/0011-h-s-a-local-gateway-identity-state.md`        | **NEW** (companion substrate mission; cited from this RFC per `no-phantom-mission-pointers`); CLAIMED → COMPLETED at companion mission closure                         | (planning) |
+| `missions/claimed/0011-h-s-a-local-gateway-identity-state.md`        | **NEW** (companion substrate mission; cited from this RFC per `docs/05-process/engineering-rules.md` §No phantom mission pointers); CLAIMED → COMPLETED at companion mission closure                         | (planning) |
 | `missions/archived/0011-h-network-peers-identity.md`                 | CLAIMED → COMPLETED transition at amendment closure (waits for companion substrate mission land first per substrate-first ordering)                                    | (planning) |
 | `missions/archived/0011-h-network-trust-graph.md`                    | CLAIMED → COMPLETED transition at amendment closure                                                                                                                    | (planning) |
-| `missions/archived/0011-h-network-governance.md`                     | CLAIMED (rotation sub-action) → archive per `no-phantom-mission-pointers`                                                                                              | (planning) |
+| `missions/archived/0011-h-network-governance.md`                     | CLAIMED (rotation sub-action) → archive per `docs/05-process/engineering-rules.md` §No phantom mission pointers                                                                                              | (planning) |
 | `docs/audits/2026-09-20-RFC-0011-i-dry-closure.md`                   | NEW closure audit (gitignored per `docs-audits-scratchpad`)                                                                                                            | (audit)    |
 | `~/.claude/projects/.../memory/2026-09-20-RFC-0011-i-dry-closure.md` | NEW memory card                                                                                                                                                        | (memory)   |
 | `MEMORY.md`                                                          | ADD 1-line index entry at top of session resume cards                                                                                                                  | (memory)   |
@@ -403,7 +403,7 @@ Per RFC-0011-i scope:
 
 Phase 1 is the **lowest-risk starting point** for the multiphase rollout: read-only observability on existing substrate, zero Layer A change, 1 companion mission gating (`0011-h-s-a-local-gateway-identity-state` for `identity show` only). The 4 error variants (slots 79, 83, 85, 86) land as pure CLI predicates, no substrate fault-class mapping required.
 
-The pattern follows RFC-0011-c (agent), RFC-0011-d (role), RFC-0011-g (governance) precedents: each amendment RFC combines scope + implementation for its phase, lands through 5-len DRY CLOSURE gate (2 consecutive zero-finding rounds), and updates the mission YAMLs from `Open` → `Claimed` → `Completed` → archived per `no-phantom-mission-pointers`.
+The pattern follows RFC-0011-c (agent), RFC-0011-d (role), RFC-0011-g (governance) precedents: each amendment RFC combines scope + implementation for its phase, lands through 5-len DRY CLOSURE gate (2 consecutive zero-finding rounds), and updates the mission YAMLs from `Open` → `Claimed` → `Completed` → archived per `docs/05-process/engineering-rules.md` §No phantom mission pointers.
 
 Per RFC-0011-h §Implementation Phases ordering, Phase 1 is highest priority because operators need observability before any write paths land. The 5 Phase 1 subcommands are the minimum viable observability surface.
 

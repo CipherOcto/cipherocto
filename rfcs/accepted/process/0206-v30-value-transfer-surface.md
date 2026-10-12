@@ -32,7 +32,7 @@ Splitting VaultStore (KV) from ValueTransfer (money) preserves:
 
 - RFC-0206 KV-shape discipline (no method-count drift on the substrate's primary KV surface)
 - Layer B additive-only rule (no method-shape change to existing traits)
-- Type-system no-enum principle (per `cipherocto-design-principles.md` §Extension over enumeration — primitive types in trait signatures, no Layer B context types)
+- Type-system no-enum principle (per ``docs/architecture/design-principles.md`.md` §Extension over enumeration — primitive types in trait signatures, no Layer B context types)
 
 ## 2. VaultStore Trait — UNCHANGED
 

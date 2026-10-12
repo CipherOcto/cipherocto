@@ -225,10 +225,10 @@ This extension is **additive on v1.2**: it does NOT amend `RawDid`, `WireDid`, `
 
 #### Layer discipline
 
-Per `cipherocto-design-principles` §Layer B additive-only rule (the codec crate is Layer B years-stable; the trait and in-memory impl ship in v1.3 because they are pure substrate):
+Per `docs/architecture/design-principles.md` §Layer B additive-only rule (the codec crate is Layer B years-stable; the trait and in-memory impl ship in v1.3 because they are pure substrate):
 
 - **`crates/octo-ident/src/registry.rs`** (NEW) — `DidRegistry` trait + `InMemoryDidRegistry` test/single-process impl. The codec crate gains ONE trait surface; no codec method signatures change.
-- **`crates/quota-router-storage/src/stoolap_did_registry.rs`** (NEW) — `StoolapDidRegistry` production impl backed by a stoolap table per `stoolap-general-purpose-db` (cipherocto-side migration, NOT stoolap fork). Schema lives at `crates/quota-router-storage/migrations/v008__create_did_registry.sql`.
+- **`crates/quota-router-storage/src/stoolap_did_registry.rs`** (NEW) — `StoolapDidRegistry` production impl backed by a stoolap table per `docs/architecture/stoolap-integration.md` (cipherocto-side migration, NOT stoolap fork). Schema lives at `crates/quota-router-storage/migrations/v008__create_did_registry.sql`.
 - **`crates/octo-identity-resolver-node/src/handlers/resolve.rs`** (consumer; future mission `0871b-storage-backend`) — swaps the placeholder `RawDid::hash` derivation for `DidRegistry::resolve(canonical_did)`.
 
 #### Data Structures
@@ -248,7 +248,7 @@ pub struct DidDocument {
 }
 
 /// Storage trait for canonical DIDs + their DID Documents. Layer B substrate
-/// (per `cipherocto-design-principles` §Layer B additive-only); reference
+/// (per `docs/architecture/design-principles.md` §Layer B additive-only); reference
 /// impls are `InMemoryDidRegistry` (test/single-process) and
 /// `StoolapDidRegistry` (production, `crates/quota-router-storage`).
 ///
@@ -335,7 +335,7 @@ pub struct InMemoryDidRegistry {
 
 #### `StoolapDidRegistry` (production, `crates/quota-router-storage`)
 
-Schema (cipherocto-side migration per `stoolap-general-purpose-db`):
+Schema (cipherocto-side migration per `docs/architecture/stoolap-integration.md`):
 
 ```sql
 -- migrations/v008__create_did_registry.sql
@@ -361,7 +361,7 @@ is the decoded 32-byte hash (`RawDid::hash`), NOT the wire form.
 
 #### Out of scope for v1.3 (deferred to future RFCs)
 
-Per `deferred-vs-unspecified` rule, v1.3 SPECIFIES the substrate
+Per `docs/05-process/engineering-rules.md` §Deferred versus unspecified rule, v1.3 SPECIFIES the substrate
 above and explicitly defers the following to future RFCs (each with
 its own owner + schedule per RFC-0871 §Future Work pattern):
 
@@ -427,7 +427,7 @@ on the raw-string path.
 pub struct ChainId(pub String);
 
 /// RFC-allocated namespace discriminant (per
-/// `cipherocto-design-principles` §Extension over enumeration —
+/// `docs/architecture/design-principles.md` §Extension over enumeration —
 /// 128-bit UUID discriminator + Raw escape pattern; this is the
 /// per-deployment analogue).
 ///
@@ -580,7 +580,7 @@ impl ChainNamespace {
 
 #### RFC-allocated namespace constants
 
-The tag table is RFC-allocated per `cipherocto-design-principles`
+The tag table is RFC-allocated per `docs/architecture/design-principles.md`
 §Extension over enumeration. The reserved `cipherocto-mainnet`
 namespace ships as the only initial entry; subsequent deployments
 allocate new entries via RFC amendment.
@@ -699,7 +699,7 @@ v1.5 makes all 7 fields `pub` and adds `VerificationMethod` enum.
 /// v1.3 ships the minimum surface; v1.5 extends with chain-rotation
 /// fields + W3C DID Core 1.0 verification relationships. Lives in
 /// `crates/octo-ident/src/registry.rs` (Layer B substrate; same
-/// module as the v1.3 minimal version per `cipherocto-design-principles`
+/// module as the v1.3 minimal version per `docs/architecture/design-principles.md`
 /// §Layer B additive-only rule).
 #[cfg_attr(feature = "borsh", derive(BorshSerialize, BorshDeserialize))]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -715,7 +715,7 @@ pub struct DidDocument {
     /// Predecessor DID's hash (v1 = `None`).
     pub chain_parent: Option<[u8; 32]>,
     /// W3C DID Core 1.0 §Verification Method. Per
-    /// `cipherocto-design-principles` §Extension over enumeration —
+    /// `docs/architecture/design-principles.md` §Extension over enumeration —
     /// 128-bit UUID discriminator + Raw escape; `Ed25519` / `Bls12381`
     /// are RFC-allocated variants; future PQC variants land via
     /// amendment without central-enum edits.

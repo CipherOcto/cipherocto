@@ -23,7 +23,7 @@ RFC-0011-p lands the **quota router node observability** slice of RFC-0011-h §I
 | `octo network router status`                   | Operator       | `QuotaRouterNode::status() -> RouterStatus` (MISSING)                     | `0011-h-s-a-quota-router-node` (G10) |
 | `octo network router peers <peer_node_id_hex>` | Operator       | `QuotaRouterNode::peer_capacity(peer_node_id: [u8; 32]) -> u64` (MISSING) | `0011-h-s-a-quota-router-node` (G10) |
 
-**Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per `cipherocto-design-principles`). CLI dispatch lands Layer C; substrate additions in this RFC = **1 companion mission (Layer B)**; 0 of 2 subcommands has substrate present today (both require companion mission G10 to land before CLI dispatch). Per-extension crate pattern preserved per `cipherocto-design-principles` §User extensibility — `QuotaRouterNode` struct in Layer B `octo-network`; concrete per-transport impl crates OUT OF SCOPE.
+**Layer discipline preserved:** zero Layer A change (Layer A frozen contracts per `docs/architecture/design-principles.md`). CLI dispatch lands Layer C; substrate additions in this RFC = **1 companion mission (Layer B)**; 0 of 2 subcommands has substrate present today (both require companion mission G10 to land before CLI dispatch). Per-extension crate pattern preserved per `docs/architecture/design-principles.md` §User extensibility — `QuotaRouterNode` struct in Layer B `octo-network`; concrete per-transport impl crates OUT OF SCOPE.
 
 ## Dependencies
 
@@ -44,11 +44,11 @@ RFC-0011-p lands the **quota router node observability** slice of RFC-0011-h §I
 
 ## Design Goals
 
-1. **Substrate-first ordering** — companion substrate mission G10 lands BEFORE CLI dispatch per `no-phantom-mission-pointers` pairing invariant. Pre-companion, CLI dispatch surfaces exit 89 `NetworkSubstrateUnavailable` (REUSED slot from Phase 2 RFC-0011-j); post-companion, dispatch routes to substrate.
-2. **Substrate-faithfulness** — no parallel abstractions, no CLI-side substrate shadow. CLI translates substrate return values 1:1 to JSON envelopes per `cipherocto-design-principles` §No premature coupling. CLI does NOT reach into `QuotaRouterNode` struct internals — only into public methods (`status`, `peer_capacity`).
-3. **Per-extension crate pattern preserved** — `QuotaRouterNode` struct in Layer B `octo-network` (`crates/octo-network/src/quota/router_node.rs`); concrete per-transport impl crates OUT OF SCOPE per `cipherocto-design-principles` §User extensibility. CLI consumes the struct via a runtime registry lookup, identical to RFC-0011-o Phase 7 `SlashBridge` pattern.
+1. **Substrate-first ordering** — companion substrate mission G10 lands BEFORE CLI dispatch per `docs/05-process/engineering-rules.md` §No phantom mission pointers pairing invariant. Pre-companion, CLI dispatch surfaces exit 89 `NetworkSubstrateUnavailable` (REUSED slot from Phase 2 RFC-0011-j); post-companion, dispatch routes to substrate.
+2. **Substrate-faithfulness** — no parallel abstractions, no CLI-side substrate shadow. CLI translates substrate return values 1:1 to JSON envelopes per `docs/architecture/design-principles.md` §No premature coupling. CLI does NOT reach into `QuotaRouterNode` struct internals — only into public methods (`status`, `peer_capacity`).
+3. **Per-extension crate pattern preserved** — `QuotaRouterNode` struct in Layer B `octo-network` (`crates/octo-network/src/quota/router_node.rs`); concrete per-transport impl crates OUT OF SCOPE per `docs/architecture/design-principles.md` §User extensibility. CLI consumes the struct via a runtime registry lookup, identical to RFC-0011-o Phase 7 `SlashBridge` pattern.
 4. **Slot arithmetic preserved (forward-looking, REUSE)** — Phase 8 lands 0 NEW OctoCliError variants; REUSES slot 89 (`NetworkSubstrateUnavailable`, FORWARD-LOOKING per RFC-0011-h §Error Handling row 89). No substrate error enum (read-only accessors).
-5. **Layer discipline preserved** — zero Layer A change; Layer B substrate = 1 companion mission (G10 `QuotaRouterNode` + `RouterStatus`); Layer C CLI dispatch = 2 subcommand arms. Companion mission lands in Layer B only per `cipherocto-design-principles` §Stable Abstractions Principle.
+5. **Layer discipline preserved** — zero Layer A change; Layer B substrate = 1 companion mission (G10 `QuotaRouterNode` + `RouterStatus`); Layer C CLI dispatch = 2 subcommand arms. Companion mission lands in Layer B only per `docs/architecture/design-principles.md` §Stable Abstractions Principle.
 6. **Test vector coverage** — 6 test vectors (3 for `router status` + 3 for `router peers`) per RFC-0011-h §Test Vectors Phase 8.
 
 ## Motivation
@@ -93,7 +93,7 @@ graph TD
     SUBSTRATE --> FROZEN
 ```
 
-Per `cipherocto-design-principles` §Stable Abstractions Principle, Layer A is unchanged. Per §No premature coupling, CLI does not reach into substrate internals — only into public methods. Per §User extensibility, per-extension crate pattern preserved: `QuotaRouterNode` struct in Layer B, concrete impl crates in Layer D.
+Per `docs/architecture/design-principles.md` §Stable Abstractions Principle, Layer A is unchanged. Per §No premature coupling, CLI does not reach into substrate internals — only into public methods. Per §User extensibility, per-extension crate pattern preserved: `QuotaRouterNode` struct in Layer B, concrete impl crates in Layer D.
 
 ### Binary Surface
 
@@ -201,7 +201,7 @@ Per RFC-0011-h §Test Vectors Phase 8 (6 vectors, 3 per subcommand):
 
 1. **Extend RFC-0870 with new `octo` subcommand surface** — rejected. RFC-0870 owns the substrate layer; CLI surface is owned by RFC-0011-h §Subcommand Taxonomy. Adding CLI surface in a different RFC would cross wire ownership boundaries.
 2. **Skip G10 entirely (already DEFERRED)** — rejected per `/goal` directive 2026-09-20 ("everything included, no deferral"). The user's directive mandates closure of all 8 RFC-0011-h §Substrate-Additions G-rows in Phases 7-14.
-3. **Add a NEW `QuotaRouterNode` in `octo-network` rather than a thin facade** — rejected. The substrate already exists in `crates/quota-router-*` per RFC-0870; adding a parallel implementation would violate `cipherocto-design-principles` §No parallel abstractions.
+3. **Add a NEW `QuotaRouterNode` in `octo-network` rather than a thin facade** — rejected. The substrate already exists in `crates/quota-router-*` per RFC-0870; adding a parallel implementation would violate `docs/architecture/design-principles.md` §No parallel abstractions.
 4. **Add a NEW OctoCliError variant for G10** — rejected per Phase 7 RFC-0011-o precedent + user decision. REUSE slot 89 unless substrate-faithfulness audit demands new variants.
 
 ## Substrate-Additions Companion Missions
@@ -210,7 +210,7 @@ Per RFC-0011-h §Test Vectors Phase 8 (6 vectors, 3 per subcommand):
 | ------------------------------ | ----- | --------------------------------------------------------------------------------------------------------------------- | ------- |
 | `0011-h-s-a-quota-router-node` | G10   | `QuotaRouterNode` + `RouterStatus` + `status()` + `peer_capacity()` in `crates/octo-network/src/quota/router_node.rs` | Layer B |
 
-The companion mission lands the Layer B substrate (G10) BEFORE CLI dispatch per `no-phantom-mission-pointers` pairing invariant.
+The companion mission lands the Layer B substrate (G10) BEFORE CLI dispatch per `docs/05-process/engineering-rules.md` §No phantom mission pointers pairing invariant.
 
 ## Implementation Phases
 
@@ -244,7 +244,7 @@ The companion mission lands the Layer B substrate (G10) BEFORE CLI dispatch per 
 
 ## Rationale
 
-The slash bridge observability (Phase 7 RFC-0011-o) + quota router observability (Phase 8 RFC-0011-p) close two of the eight DEFERRED stubs in RFC-0011-h §Substrate-Additions Companion Missions. The quota router substrate already exists in `crates/quota-router-*` per RFC-0870; Phase 8 adds a thin Layer B facade struct in `octo-network` (NOT a reimplementation) so the CLI can consume via the standard per-extension crate registry pattern. The facade exposes only the read-only accessors needed by the CLI subcommands (`status` + `peer_capacity`), with concrete per-transport impl crates OUT OF SCOPE per `cipherocto-design-principles` §User extensibility.
+The slash bridge observability (Phase 7 RFC-0011-o) + quota router observability (Phase 8 RFC-0011-p) close two of the eight DEFERRED stubs in RFC-0011-h §Substrate-Additions Companion Missions. The quota router substrate already exists in `crates/quota-router-*` per RFC-0870; Phase 8 adds a thin Layer B facade struct in `octo-network` (NOT a reimplementation) so the CLI can consume via the standard per-extension crate registry pattern. The facade exposes only the read-only accessors needed by the CLI subcommands (`status` + `peer_capacity`), with concrete per-transport impl crates OUT OF SCOPE per `docs/architecture/design-principles.md` §User extensibility.
 
 ## Version History
 
@@ -262,6 +262,6 @@ The slash bridge observability (Phase 7 RFC-0011-o) + quota router observability
 - RFC-0870 Distributed Quota Router Network
 - RFC-0863 General-Purpose Network Integration
 - RFC-0011-o — `OutputEnvelope::new` wrapping pattern + BTreeMap determinism + parse_32_byte_hex pastejacking defense pattern
-- `cipherocto-design-principles` §User extensibility (per-extension crate pattern) + §Stable Abstractions Principle + §No premature coupling
-- `no-phantom-mission-pointers` (substrate-first ordering invariant)
-- `no-line-refs-anywhere` (§section refs only)
+- `docs/architecture/design-principles.md` §User extensibility (per-extension crate pattern) + §Stable Abstractions Principle + §No premature coupling
+- `docs/05-process/engineering-rules.md` §No phantom mission pointers (substrate-first ordering invariant)
+- `docs/05-process/engineering-rules.md` §No line references in documentation (§section refs only)

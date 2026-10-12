@@ -1579,7 +1579,7 @@ Deliverables:
   fail-closed.
 - **Optional `crdt` feature flag** — disabled by default; opt-in for
   deployments needing partition-tolerance (CRDT LWW reconciliation).
-  Per `cipherocto-design-principles` §Open/Closed: feature flags
+  Per `docs/architecture/design-principles.md` §Open/Closed: feature flags
   ADD extension without central-edit on the core impl.
 
 ### Concrete Impl Extension (v1.4.0, additive on v1.3)
@@ -1607,7 +1607,7 @@ Production deployments need:
    `WriterElection::acquire_writer` if no current writer → commit
    to WAL (with HLC + nonce) → mark entry applied → return success.
    Reads (resolve) do NOT require the writer lock (per
-   `cipherocto-design-principles` §Stable Abstractions Principle
+   `docs/architecture/design-principles.md` §Stable Abstractions Principle
    reads are local-cache-fast; the trait's `resolve` is registry-side).
 3. **`octo-sync` workspace landing** — root `Cargo.toml` removes
    `"octo-sync"` from `exclude = [...]`. The crate's `Cargo.toml`
@@ -1879,7 +1879,7 @@ crdt = []
   Raft-like consensus; BFT (threshold-signature M-of-N + sealed trait
   - chain_id binding) lands in `octo-coordinator-bft` Layer A on a
     future amendment (RFC-0862 v2.0 per
-    `cipherocto-design-principles` §Layer A additive-only).
+    `docs/architecture/design-principles.md` §Layer A additive-only).
 - **Cross-shard drain atomicity**. Per v1.3 §Out-of-scope +
   R18 M1, `DrainCoordinator` handles single-shard drains only.
   Cross-shard atomic drain remains future work; tracked.
@@ -1979,7 +1979,7 @@ in §Future Work). Tracked here so cross-references from
   - chain_id binding (R12 M23) is the v1.3 baseline. Full
     Byzantine fault tolerance (BFT) consensus for coordinator
     cluster lands in `crates/octo-coordinator-bft/` (Layer A)
-    per `cipherocto-design-principles.md` once RFC-0862 v2.0
+    per ``docs/architecture/design-principles.md`.md` once RFC-0862 v2.0
     amendment is filed.**
 - `force_relinquish_writer` governance — mission `0871e-force-relinquish-governance`
   FILED (R14 H1).

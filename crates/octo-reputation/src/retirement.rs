@@ -23,15 +23,15 @@
 //!   caller filled in both. RFC-0968 requires this hash to be checked
 //!   against `GovernanceRegistry::lookup_at_snapshot`'s active-set digest,
 //!   which is a lookup against state this function never consults.
-//! - Asserts `snapshot.members.len() >= GOVERNANCE_QUORUM`. It counts
-//!   entries. It does not check the members are distinct, and it does not
-//!   verify anything about any of them, so repeating one 32-byte value
-//!   three times satisfies it.
+//! - Asserts `snapshot.meets_quorum()`, i.e. `snapshot.members` holds at
+//!   least `GOVERNANCE_QUORUM` **distinct** entries. It still verifies
+//!   nothing about any member — distinctness is not attestation.
+//!
 //! A caller who reaches this function alone can still satisfy every check
 //! here: a fresh `finalized_at_unix`, a set hash matching itself, and three
-//! members. That is why the store no longer treats this as sufficient — it
-//! verifies the signature too. The quorum and set-hash halves remain open,
-//! tracked in `missions/deferred/0968-c-governance-proof-verification.md`.
+//! distinct members. That is why the store no longer treats this as
+//! sufficient — it verifies the signature too. The set-hash half remains
+//! open, tracked in `missions/deferred/0968-c-governance-proof-verification.md`.
 //!
 //! The `signature.len() >= MIN_RETIREMENT_SIGNATURE_BYTES` check that used
 //! to sit here is **removed**. The constant documented itself as "3 × 32 =

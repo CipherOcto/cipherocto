@@ -152,13 +152,13 @@ dependencies, and whether CI runs it:
 | `live-matrix`              | 14    | _(none)_                               | No — needs a live Matrix homeserver       |
 | `real-tdlib`               | 12    | `tdlib-rs` + a TDLib download          | No — needs TDLib                          |
 | `live-whatsapp`            | 3     | `test-helpers`                         | No — needs a live session                 |
-| `octo-attach-key-rotation` | 7     | _(none)_                               | **No**                                    |
+| `octo-attach-key-rotation` | 7     | _(none)_                               | Yes — step added, delta 11                |
 | `crdt`                     | 2     | —                                      | No                                        |
-| `octo-audit-internal`      | 1     | _(none)_                               | **No**                                    |
+| `octo-audit-internal`      | 6     | _(none)_                               | Yes — step added, delta 6                 |
 | `testing` (octo-vault)     | 1     | _(none)_                               | **No**                                    |
 | `query`                    | 1     | `tantivy`, `candle`, `tokenizers`      | No — documented as a RAM-budget exclusion |
 | `otlp`                     | 1     | `opentelemetry` stack                  | No                                        |
-| `hex-ids`                  | 3     | _(none)_                               | **Yes** — dedicated step exists           |
+| `hex-ids`                  | 3     | _(none)_                               | Yes — pre-existing dedicated step         |
 
 Two things follow.
 
@@ -170,19 +170,36 @@ service. Nothing should change there.
 `octo-attach-key-rotation`, `octo-audit-internal` and `testing` have empty
 dependency lists, so there is no build-budget reason to exclude them — which
 is precisely the reasoning `ci.yml` already applies when it adds the
-`hex-ids` step. Three of the four have no step.
+`hex-ids` step. The three that had no step now have one; their measured
+all-target deltas are 11, 6 and 1.
 
-All three uncovered ones were run locally and pass:
+All three were run locally and pass, and the three CI steps run the exact
+commands verified here:
 
-| Command                                                                | Result               |
-| ---------------------------------------------------------------------- | -------------------- |
-| `cargo test -p octo-runtime --features octo-attach-key-rotation --lib` | 102 passed, 0 failed |
-| `cargo test -p octo-audit-core --features octo-audit-internal --lib`   | 6 passed, 0 failed   |
-| `cargo test -p octo-vault --features testing --lib`                    | 72 passed, 0 failed  |
+| Command                                                          | Default | With feature |
+| ---------------------------------------------------------------- | ------- | ------------ |
+| `cargo test -p octo-runtime --features octo-attach-key-rotation` | 91      | 102          |
+| `cargo test -p octo-audit --features octo-audit-internal`        | 125     | 131          |
+| `cargo test -p octo-vault --features testing`                    | 94      | 95           |
 
-So none of this is a defect. It is the same coverage gap as `stoolap`, three
-more instances of it, and every one of them is free to fix — an empty feature
-costs no extra dependencies to compile.
+None of this was a defect. It was the same coverage gap as `stoolap`, three
+more instances of it, and every one was free to fix — an empty feature costs
+no extra dependencies to compile. The `stoolap` case above is the one that
+remains, because it is the only one that pulls dependencies.
+
+### Two measurement corrections worth keeping
+
+`octo-audit-internal` was first measured against `octo-audit-core`, where it
+showed a delta of **zero** — that crate is not where the feature gates
+anything. The same feature name is declared in three crates and means
+different things in each: it gates test modules in `octo-audit`, production
+code in `octo-wallet`, and nothing test-visible in `octo-audit-core`. Had
+the measurement stopped there, the correct step would have been recorded as
+vacuous.
+
+The figures first written down were library-only, which understated two of
+the three once integration targets were counted. A measurement that is
+correct but scoped to the wrong target is still the wrong measurement.
 
 ## A near-miss worth recording
 

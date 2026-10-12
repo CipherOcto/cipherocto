@@ -1087,7 +1087,7 @@ mod tests {
     // --- Test helpers (avoid constructing full CapabilityToken inline) ---
 
     fn test_token(holder_did: &str, caveats: Vec<Caveat>) -> crate::token::CapabilityToken {
-        use crate::macaroon::{InMemoryCatalog, Macaroon};
+        use crate::macaroon::InMemoryCatalog;
         use crate::signer::CapabilitySigner;
         use ed25519_dalek::{Signer, SigningKey};
 
@@ -1118,38 +1118,26 @@ mod tests {
             key,
             pub_bytes: vk.to_bytes(),
         };
-        let mut macaroon = Macaroon::mint(&[0x42; 32]).unwrap();
+        // Mint through the production path. This fixture used to hand-roll the
+        // holder signing message as `u32(len) || compute_capability_id(...)`
+        // and stamp `governance_algorithm_id()` on the result. That message is
+        // not the one production signs: `CapabilityToken::holder_msg` commits
+        // to `algorithm_id || root_id || caveat wire forms`, and
+        // `verify_holder_sig` rejects anything else — so every discharge test
+        // below was exercising a token no production mint can produce, while
+        // asserting only about discharges. Going through `mint` +
+        // `attenuate_with_signer` makes divergence impossible rather than
+        // merely realigned, and keeps the catalog chain guard (`attenuate`
+        // applies it, mint's `extend_chain` does not).
         let catalog = InMemoryCatalog::default();
+        let mut token = super::super::CapabilityToken::mint(&[0x42; 32], &holder, holder_did, &[])
+            .expect("mint in test");
         for c in caveats {
-            macaroon = macaroon.attenuate(c, &catalog).unwrap();
+            token = token
+                .attenuate_with_signer(c, &holder, &catalog)
+                .expect("attenuate in test");
         }
-        let msg = {
-            use crate::macaroon::compute_capability_id;
-            let id = compute_capability_id(&macaroon);
-            let mut v = Vec::with_capacity(4 + id.len());
-            // u32 length prefix per RFC-0957 §3.7 (capability_id is a
-            // 32-byte BLAKE3 digest — fits trivially in u32). The cast
-            // is safe by construction; clippy `cast_possible_truncation`
-            // is silenced here because `id` is a `[u8; 32]`.
-            #[allow(clippy::cast_possible_truncation)]
-            let len_u32 = id.len() as u32;
-            v.extend_from_slice(&len_u32.to_be_bytes());
-            v.extend_from_slice(&id);
-            v
-        };
-        let sig = holder.sign(&msg).expect("holder sign in test");
-        super::super::CapabilityToken {
-            macaroon,
-            holder_pub: holder.public_key_bytes(),
-            holder_did: holder_did.to_owned(),
-            holder_sig: crate::token::HolderSignature::new(
-                crate::governance_signature::governance_algorithm_id(),
-                &sig,
-            )
-            .expect("64-byte signature"),
-            discharges: Vec::new(),
-            holder_sig_stale: false,
-        }
+        token
     }
 
     fn test_token_with_discharge(
@@ -1160,6 +1148,28 @@ mod tests {
         let mut token = test_token(holder_did, caveats);
         token.discharges.push(discharge);
         token
+    }
+
+    /// `test_token` must mint a token production would accept.
+    ///
+    /// The fixture hand-rolls the holder signing message. Production signs
+    /// `holder_msg` (see `CapabilityToken::holder_msg`). If the two ever
+    /// diverge, every discharge test below keeps passing while exercising a
+    /// token shape no production mint can produce — the assertion is about
+    /// discharges, so a broken holder signature is invisible to all of them.
+    #[test]
+    fn test_token_fixture_carries_a_production_verifiable_holder_signature() {
+        let did = octo_ident::test_helpers::sample_did(240);
+        let token = test_token(
+            &did,
+            vec![
+                Caveat::ThirdParty("escrow".to_owned()),
+                Caveat::Before(1_700_000_000),
+            ],
+        );
+        token
+            .verify_holder_sig()
+            .expect("fixture holder signature must verify under production holder_msg");
     }
 
     /// RFC-0958 §Algorithms step 4 has no subject in this codebase.

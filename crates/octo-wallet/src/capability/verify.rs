@@ -375,12 +375,21 @@ mod tests {
         assert!(matches!(result, Err(VerifyError::Wire(_))));
     }
 
+    /// Asserts the pipeline's *ordering*: a wire that will not parse fails at
+    /// step 1, before any registry lookup happens.
+    ///
+    /// This test was named `..._returns_holder_not_found_when_registry_empty`,
+    /// which is not what it asserted and is not what it could assert — a record
+    /// is inserted below, and the `HolderNotFound` path is covered by
+    /// `..._for_missing_cap_root_hash` next door. The body is kept; the name
+    /// now says what the body does.
     #[test]
-    fn verify_with_resolve_returns_holder_not_found_when_registry_empty() {
+    fn verify_with_resolve_rejects_unparseable_wire_before_any_lookup() {
         let clock = Arc::new(FixedClock::new(1_700_000_000_000));
         let reg = test_registry();
         let ctx = VerifyContext::with_registry(clock, reg);
-        // Build a token, register it, then drop the wire (use empty wire).
+        // Register a real record, so the test cannot pass merely because the
+        // registry is empty.
         let rec = HolderRecord::from_capability(
             &CapabilityTokenLike {
                 cap_root_hash: [0xAA; 32],
@@ -397,34 +406,35 @@ mod tests {
         assert!(matches!(result, Err(VerifyError::Wire(_))));
     }
 
+    /// The revoked-holder rejection at step 3 of `verify_with_resolve`.
+    ///
+    /// This test previously built a wire, discarded it with `let _ = wired;`,
+    /// and asserted nothing at all — it never called the function under test,
+    /// so a regression that let revoked holders through would not have made it
+    /// fail. The comment conceded as much ("wire path test deferred").
+    ///
+    /// Two things had to be fixed to make it real, not merely uncommented:
+    ///
+    /// 1. The record's `cap_root_hash` was hardcoded `[0xAA; 32]` while the
+    ///    wire's own hash derives from the minted macaroon. The lookup misses,
+    ///    so the call would return `HolderNotFound` and assert the wrong
+    ///    error. The hash is now taken from the wire itself.
+    /// 2. The holder signature is an all-zero placeholder that
+    ///    `verify_holder_sig` would reject at step 5. That does not matter
+    ///    here, and the reason is the point: revocation is checked at step 3,
+    ///    *before* the wire is deserialized or the signature verified. A
+    ///    revoked token is rejected on revocation alone and the placeholder is
+    ///    never reached. If that ordering ever changes, this test fails —
+    ///    which is the property worth pinning.
     #[test]
     fn verify_with_resolve_returns_holder_not_active_when_revoked() {
         let clock = Arc::new(FixedClock::new(1_700_000_000_000));
         let reg = test_registry();
         let ctx = VerifyContext::with_registry(clock, reg);
-        let rec = HolderRecord::from_capability(
-            &CapabilityTokenLike {
-                cap_root_hash: [0xAA; 32],
-                class: CapabilityClass::V1,
-            },
-            &[0xBB; 32],
-            &octo_ident::test_helpers::sample_did(31),
-            None,
-            1_700_000_000_000,
-        );
-        ctx.registry().insert(rec.clone()).unwrap();
-        // Revoke first.
-        ctx.registry()
-            .revoke(&rec.cap_root_hash, ctx.clock())
-            .unwrap();
-        // Now register a real wire that hashes to this cap_root_hash.
-        // For the test, we use the trait's HolderRegistry::lookup path: build
-        // a wire whose macaroon.root_id produces cap_root_hash = [0xAA; 32]
-        // by BLAKE3 hashing over the root_id. Use a private Macaroon::mint
-        // helper.
+
         let minted = crate::capability::macaroon::Macaroon::mint(&[0x33; 32]).unwrap();
         let wired = super::super::wire::serialize_wire(&crate::capability::CapabilityToken {
-            macaroon: minted.clone(),
+            macaroon: minted,
             holder_pub: vec![0xBB; 32],
             holder_did: octo_ident::test_helpers::sample_did(31),
             holder_sig: crate::capability::HolderSignature::new(
@@ -436,9 +446,28 @@ mod tests {
             holder_sig_stale: false,
         })
         .unwrap();
-        let _ = wired;
-        // Wire path test deferred: requires building a real mint pair; this
-        // test just verifies the revoke path is reachable from VerifyContext.
+
+        // The record must key on the wire's own cap_root_hash, or the lookup
+        // at step 2 misses and the call returns HolderNotFound instead.
+        let cap_root_hash = super::super::wire::compute_cap_root_hash_from_wire(&wired).unwrap();
+
+        let rec = HolderRecord::from_capability(
+            &CapabilityTokenLike {
+                cap_root_hash,
+                class: CapabilityClass::V1,
+            },
+            &[0xBB; 32],
+            &octo_ident::test_helpers::sample_did(31),
+            None,
+            1_700_000_000_000,
+        );
+        ctx.registry().insert(rec).unwrap();
+        ctx.registry().revoke(&cap_root_hash, ctx.clock()).unwrap();
+
+        assert!(matches!(
+            verify_with_resolve(&ctx, &wired),
+            Err(VerifyError::HolderNotActive)
+        ));
     }
 
     #[test]

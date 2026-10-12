@@ -8,7 +8,7 @@
 //! `CapabilityToken::attenuate(new_caveat, catalog)`. The placeholder
 //! `CIPHEROCTO_MINT_V1_ATTENUATED:<did>:+<N>bytes` wire form is gone.
 //!
-//! Attenuation contract (RFC-0957 §3.5): the existing caveats are
+//! Attenuation contract (RFC-0957 §Attenuation Invariant): the existing caveats are
 //! preserved (monotonic narrowing); the new caveat is appended; the
 //! HMAC chain is re-derived; and the holder signature is **re-derived
 //! with the wallet's holder key** so the result is a verifiable token.

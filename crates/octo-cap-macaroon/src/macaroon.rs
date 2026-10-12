@@ -297,7 +297,7 @@ impl Macaroon {
     }
 
     /// Append a caveat. Returns the new macaroon with the caveat added.
-    /// Monotonic: existing caveats are preserved (RFC-0957 §3.5).
+    /// Monotonic: existing caveats are preserved (RFC-0957 §Attenuation Invariant).
     ///
     /// **WrappedOnly chain guard (RFC-0965 §3.7):** pre- and post-append,
     /// the parent chain is walked via `catalog` to reject cycles and depth
@@ -492,7 +492,7 @@ impl Macaroon {
     /// Full verification: chain re-derivation + `WrappedOnly` chain check
     /// + attenuation subsumption against `expected_parent` (if provided).
     ///   * Use this in preference to `verify_signature` for any verification
-    ///   * path that needs to enforce RFC-0957 §3.5 attenuation monotonicity
+    ///   * path that needs to enforce RFC-0957 §Attenuation Invariant attenuation monotonicity
     ///   * AND RFC-0965 §3.7 wrapped-chain integrity.
     ///
     /// `expected_parent = None` skips the subsumption check (use for root
@@ -1021,7 +1021,7 @@ pub enum MacaroonError {
     UnknownRawName(String),
 
     /// `verify_full` detected that the macaroon's caveats are not a
-    /// subsumption of `expected_parent`'s caveats (RFC-0957 §3.5
+    /// subsumption of `expected_parent`'s caveats (RFC-0957 §Attenuation Invariant
     /// attenuation monotonicity was violated). Mission 0957-a R6 fix
     /// surfaces this at verify time, not just at attenuate time.
     #[error("attenuation violates monotonicity (child caveats not subsumed by parent)")]
@@ -1909,7 +1909,7 @@ mod tests {
         let m = m
             .attenuate(Caveat::Model("gpt-4".to_owned()), &catalog)
             .unwrap();
-        // Attenuating only appends (RFC-0957 §3.5).
+        // Attenuating only appends (RFC-0957 §Attenuation Invariant).
         assert_eq!(m.caveats.len(), 1);
     }
 

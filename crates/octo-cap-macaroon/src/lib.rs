@@ -45,7 +45,7 @@
 //! accessor (zero call sites). Removed the `quota-router-storage` dep.
 //! Holder registry lookups are wired directly by downstream crates.
 //!
-//! ## Attenuation invariant (RFC-0957 §3.5)
+//! ## Attenuation invariant (RFC-0957 §Attenuation Invariant)
 //!
 //! Attenuators MAY add caveats but MUST NOT remove caveats. The
 //! `Macaroon::attenuate` routine + `verify_full` enforce this. The

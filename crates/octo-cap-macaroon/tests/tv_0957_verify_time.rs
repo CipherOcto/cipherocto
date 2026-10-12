@@ -846,7 +846,7 @@ fn tv_0957_19_regression_wrapped_chain_has_no_vault() {
     );
 }
 
-/// Regression: attenuation monotonicity (RFC-0957 §3.5) — adding any
+/// Regression: attenuation monotonicity (RFC-0957 §Attenuation Invariant) — adding any
 /// new v2.1 variant MUST strictly preserve the parent's caveat set
 /// (attenuators may add, never remove). Pin: child macaroon carries
 /// BOTH the parent's `Vault(vault_id)` AND the new `AuditWindow`

@@ -90,18 +90,38 @@ impl PaidQueryVerifyHandler {
 
     /// Verify the paid-query request and produce a response envelope.
     ///
-    /// On `Proceed`, atomically drains `query_cost` from the spend
-    /// ledger entry keyed by `(holder_did, macaroon_id)`. The
-    /// `holder_did` is derived from the `caveat.audience` field if
-    /// present, else falls back to an empty `WireDid` (the ledger
-    /// returns `UnknownHolder` → the handler emits a no-drain
-    /// receipt with `Reject::BudgetExhausted`).
+    /// **This always refuses.** The `PAID_QUERY_VERIFY` envelope carries no
+    /// holder DID, so there is no holder to charge, and this boundary is
+    /// exactly where RFC-0862 puts canonical holder validation: _"canonical
+    /// validation lives at the wallet-node boundary"_ (RFC-0862 v2.0.7).
+    /// Substituting an empty DID here is not that validation.
+    ///
+    /// It used to substitute `WireDid::new(String::new())` and call
+    /// `try_deduct` with it. RFC-0862's substrate deliberately accepts an
+    /// empty `holder_did` as a valid, distinct key — TV-0862-14 pins exactly
+    /// that, seeding the empty string and asserting the row persists. So the
+    /// fallback did not reliably produce `UnknownHolder`; it produced **a
+    /// draw against a shared, holder-less pool**. Measured: with one row seeded
+    /// under the empty holder, this path returned `Proceed` and drained
+    /// `query_cost` against it. Anyone able to seed that row — `SpendLedger::
+    /// seed` is public and permits it — owned a budget every unauthenticated
+    /// paid query could spend, with no per-holder isolation at all.
+    ///
+    /// Paid queries over this payload are therefore non-functional as well as
+    /// unsafe. Closing that is a wire question: the payload needs to carry the
+    /// holder, or the caveat needs an audience field. Neither is this
+    /// handler's call, and both are RFC territory.
     ///
     /// # Errors
-    /// Returns `ProtocolError::AuthorizationFailed` if the JSON
-    /// response payload fails to serialize.
+    /// Always returns `ProtocolError::AuthorizationFailed`, naming the missing
+    /// holder.
     pub fn handle(&self, req: &PaidQueryVerifyRequest) -> Result<HandlerOutput, ProtocolError> {
-        self.handle_with_holder(req, None)
+        Err(ProtocolError::AuthorizationFailed(format!(
+            "PAID_QUERY_VERIFY carries no holder DID, so there is no ledger entry to charge; \
+             refusing rather than charging the empty-holder row. macaroon_id {:02x?}. The \
+             payload needs a holder field for this to work.",
+            req.macaroon_id
+        )))
     }
 
     /// Verify + drain variant that takes an explicit `holder_did`
@@ -124,14 +144,19 @@ impl PaidQueryVerifyHandler {
             req.now_unix_ms,
         );
 
-        // Resolve holder_did: hint → empty fallback. The
-        // `PaymentCaveat` does not currently carry an audience
-        // field; callers that have a holder_did MUST supply it via
-        // the hint (the wallet's mint path supplies it after
-        // seeding the ledger).
-        let holder_did = holder_did_hint
-            .cloned()
-            .unwrap_or_else(|| WireDid::new(String::new()));
+        // Resolve holder_did from the hint. There is no fallback.
+        //
+        // RFC-0862 places canonical holder validation at this boundary, and
+        // RFC-0862 TV-0862-14 pins that the substrate treats an empty holder
+        // as a valid distinct key. Substituting an empty DID here therefore
+        // charges a real, poolable row rather than producing `UnknownHolder`.
+        let holder_did = holder_did_hint.cloned().ok_or_else(|| {
+            ProtocolError::AuthorizationFailed(
+                "no holder DID supplied: PAID_QUERY_VERIFY carries none, and the empty \
+                     holder is a valid ledger key rather than a miss"
+                    .to_owned(),
+            )
+        })?;
 
         // Atomic drain on Proceed; otherwise no mutation. Failures
         // surface as a `Reject::BudgetExhausted` decision with a
@@ -362,7 +387,12 @@ mod tests {
             query_model: "gpt-4".to_string(),
             now_unix_ms: 500,
         };
-        let out = PaidQueryVerifyHandler::new().handle(&req).unwrap();
+        // Routed through the holder-supplied variant. `handle()` now refuses —
+        // see its docs — so this exercises expiry on the path that can still
+        // reach a decision, rather than through a route that no longer exists.
+        let out = PaidQueryVerifyHandler::new()
+            .handle_with_holder(&req, Some(&sample_holder()))
+            .expect("holder supplied");
         let payload = out.response_payload.expect("response_payload set");
         let response = PaidQueryResponse::from_borsh(&payload).unwrap();
         assert!(matches!(
@@ -381,10 +411,91 @@ mod tests {
             query_model: "gpt-4".to_string(),
             now_unix_ms: 0,
         };
-        let out = PaidQueryVerifyHandler::new().handle(&req).unwrap();
+        let out = PaidQueryVerifyHandler::new()
+            .handle_with_holder(&req, Some(&sample_holder()))
+            .expect("holder supplied");
         assert_eq!(
             out.response_payload_kind,
             Some(octo_paid_query::PAID_QUERY_VERIFY)
+        );
+    }
+
+    fn paid_caveat(budget: i64) -> PaidQueryCaveat {
+        PaidQueryCaveat::new(
+            octo_cap_macaroon::caveat::payment::octo_w_asset_id(),
+            dqa(budget),
+            "gpt-4",
+            u64::MAX,
+            octo_cap_macaroon::Epoch::new(0),
+            octo_cap_macaroon::Nonce([0x01; 32]),
+        )
+    }
+
+    /// The envelope path has no holder, so it refuses instead of charging one.
+    #[test]
+    fn handle_refuses_because_the_payload_carries_no_holder() {
+        let req = PaidQueryRequest {
+            macaroon_id: sample_macaroon_id(),
+            caveat: paid_caveat(1_000),
+            query_cost: dqa(10),
+            query_model: "gpt-4".to_string(),
+            now_unix_ms: 0,
+        };
+        let err = PaidQueryVerifyHandler::new()
+            .handle(&req)
+            .expect_err("no holder, so no charge");
+        let ProtocolError::AuthorizationFailed(message) = &err else {
+            panic!("expected an authorization failure, got {err:?}");
+        };
+        assert!(
+            message.contains("holder"),
+            "the refusal must name the missing holder, got: {message}"
+        );
+    }
+
+    /// The planted violation. RFC-0862 TV-0862-14 pins that the ledger accepts
+    /// an empty `holder_did` as a valid distinct key, so the old fallback did
+    /// not reliably produce `UnknownHolder` — it charged whatever row sat under
+    /// the empty holder. Seeding that row and confirming it is still refused is
+    /// what makes this a check rather than a description of the refusal path.
+    ///
+    /// With the old code this returned `Proceed` and drained `query_cost`
+    /// against the seeded row.
+    #[test]
+    fn a_seeded_empty_holder_row_is_still_refused_rather_than_drained() {
+        use octo_paid_query::SpendLedger;
+        let ledger = Arc::new(octo_paid_query::InMemorySpendLedger::new());
+        let macaroon_id = sample_macaroon_id();
+        ledger
+            .seed(&WireDid::new(String::new()), &macaroon_id, dqa(5_000_000))
+            .expect("RFC-0862 permits seeding the empty holder");
+        assert_eq!(
+            ledger
+                .balance(&WireDid::new(String::new()), &macaroon_id)
+                .expect("balance"),
+            Some(dqa(5_000_000)),
+            "the empty-holder row exists and has budget to spend"
+        );
+
+        let handler = PaidQueryVerifyHandler::with_ledger(ledger.clone());
+        let req = PaidQueryRequest {
+            macaroon_id,
+            caveat: paid_caveat(5_000_000),
+            query_cost: dqa(1_000),
+            query_model: "gpt-4".to_string(),
+            now_unix_ms: 0,
+        };
+        handler
+            .handle(&req)
+            .expect_err("a spendable empty-holder row must still not be charged");
+
+        // And nothing was taken from it.
+        assert_eq!(
+            ledger
+                .balance(&WireDid::new(String::new()), &macaroon_id)
+                .expect("balance"),
+            Some(dqa(5_000_000)),
+            "no drain may occur on the refused path"
         );
     }
 }

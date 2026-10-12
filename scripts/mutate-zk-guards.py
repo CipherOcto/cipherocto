@@ -292,6 +292,29 @@ MUTATIONS = [
         ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
          "missions_claiming_named_vectors_have_those_names_in_the_tree", "--", "--exact"],
     ),
+    (
+        # A second copy of the unverified decoder, outside the one crate allowed
+        # to hold it. This is the highest-consequence guard in the suite: a
+        # caller reaching a decoder that skips verification is the failure the
+        # whole capability chain is built to prevent, so the mutation plants a
+        # real duplicate rather than a token-shaped string.
+        #
+        # It compiles standalone, which is what makes it usable here — reaching
+        # the real symbol from another crate would need an import and would put
+        # octo-wallet inside the rebuild this harness is trying to avoid.
+        "G-E: a second copy of the unverified decoder reappears",
+        "crates/octo-adapter-irc/src/lib.rs",
+        '            "key 20 should be the remaining entry"\n        );\n    }\n}\n',
+        '            "key 20 should be the remaining entry"\n        );\n    }\n}\n'
+        "\n/// A private second copy of the unverified decoder, outside the one home the\n"
+        "/// guard permits. Exactly the shape that must never reach a caller.\n"
+        "#[allow(dead_code)]\n"
+        "pub fn unverified_decode_bearer(token: &str) -> String {\n"
+        "    token.to_string()\n"
+        "}\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "no_production_code_calls_a_placeholder_decoder", "--", "--exact"],
+    ),
 ]
 
 # NOT MUTATED, deliberately: `OpenOptionsExt::mode(0o600)` at creation inside

@@ -3718,3 +3718,107 @@ fn no_source_or_doc_file_cites_a_private_working_note() {
          this number deliberately — do not let it creep."
     );
 }
+
+/// The exact set of files that mention `HolderRecord::from_capability`.
+///
+/// Four today. **Every one of them is test-only**: the production region
+/// of each file — everything before its `#[cfg(test)]` / `mod tests`
+/// marker — contains zero calls.
+///
+/// Two layers, because neither alone is honest:
+///
+/// - The file set is pinned, so a brand-new call site in a new file is
+///   caught outright.
+/// - Each file's production region is counted separately, so a call added
+///   *above* the test marker in an existing file is caught too. That is the
+///   case that matters most, because `holder_record.rs` is exactly where a
+///   production constructor would be written.
+///
+/// A single text scan cannot do better than the first layer on its own —
+/// that is the same limitation recorded on
+/// [`VERIFIERS_WITHOUT_PRODUCTION_IMPL`] — and it is why this is two checks
+/// rather than one.
+///
+/// Files under a `tests/` directory are skipped entirely. They are test code
+/// by location, and they carry no `mod tests` marker for the second layer to
+/// find, so without this they read as production.
+const HOLDER_RECORD_CONSTRUCTION_FILES: &[&str] = &[
+    "crates/octo-cap-macaroon/src/holder_record.rs",
+    "crates/octo-ident-storage/src/holder_registry.rs",
+    "crates/octo-wallet/src/capability/verify.rs",
+    "crates/quota-router-core/src/ingress/capability_verifier.rs",
+];
+
+/// Byte offset where a file's test-only region begins, if it has one.
+fn test_region_start(text: &str) -> Option<usize> {
+    text.find("#[cfg(test)]")
+        .into_iter()
+        .chain(text.find("mod tests"))
+        .min()
+}
+
+/// No production code constructs a `HolderRecord`.
+///
+/// Turns red when a file outside
+/// [`HOLDER_RECORD_CONSTRUCTION_FILES`] calls it, and when any known file
+/// gains a call in its production region.
+#[test]
+fn holder_records_are_never_constructed_in_production() {
+    let mut new_files: Vec<String> = Vec::new();
+    let mut production_calls: Vec<String> = Vec::new();
+
+    for path in walk_rs(&workspace_root().join("crates")) {
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        let rel = path
+            .strip_prefix(workspace_root())
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        // A file under a `tests/` directory is test code by location, not by
+        // marker — an integration test has no `mod tests` and no
+        // `#[cfg(test)]`, so the marker heuristic would read its whole body as
+        // production. Path is a reliable signal precisely here.
+        if rel.contains("/tests/") {
+            continue;
+        }
+
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if !text.contains("HolderRecord::from_capability") {
+            continue;
+        }
+
+        let production_region = match test_region_start(&text) {
+            Some(at) => &text[..at],
+            None => &text[..],
+        };
+        if production_region.contains("HolderRecord::from_capability") {
+            production_calls.push(rel.clone());
+        }
+
+        if !HOLDER_RECORD_CONSTRUCTION_FILES.contains(&rel.as_str()) {
+            new_files.push(rel);
+        }
+    }
+
+    assert!(
+        new_files.is_empty(),
+        "a file not recorded in HOLDER_RECORD_CONSTRUCTION_FILES calls \
+         HolderRecord::from_capability: {new_files:?}. If it is a real production \
+         mint path, add it to the list and record what registers a holder — an \
+         empty registry means every real capability is refused with \
+         CapError::HolderUnknown."
+    );
+    assert!(
+        production_calls.is_empty(),
+        "these files call HolderRecord::from_capability ABOVE their test module, \
+         which makes it production code: {production_calls:?}. Nothing registers a \
+         HolderRecord in production, so the registry is permanently empty and \
+         ProductionCapabilityVerifier refuses every real capability with \
+         CapError::HolderUnknown before the ask is ever read."
+    );
+}

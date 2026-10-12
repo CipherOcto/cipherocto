@@ -539,16 +539,85 @@ fn c4_every_reputation_store_verifies_the_governance_signature() {
         for (method, record) in [
             ("async fn verify_governance_suspension", "SuspensionAuth"),
             ("async fn slash_recorder", "GovernanceProof"),
+            ("async fn declare_retirement_eligible", "GovernanceProof"),
         ] {
             let body = fn_body(&src, method);
             assert!(
                 body.contains("verify_signature(") || body.contains("verify_governance_signature("),
                 "C-4: {store} {method} does not verify the governance \
-                 signature. A {record} would suspend or slash an arbitrary \
-                 recorder with no key material."
+                 signature. A {record} would suspend, slash or retire an \
+                 arbitrary recorder with no key material."
             );
         }
     }
+
+    // The list above is hand-written, and a hand-written list is only as good
+    // as its worst entry. `REPUTATION_STORES` states its own rule — every
+    // file under `src/store` that defines `verify_governance_suspension` and
+    // is not a pure delegation — but nothing checked that the list still
+    // matches the rule. A fourth store backend would have gone unscanned with
+    // this test reporting green, which is the same blind spot it was extended
+    // to close.
+    //
+    // A file is accounted for if it is in the list, or if its body only
+    // forwards. Pure delegation cannot bypass anything: it has no
+    // implementation to omit a check from.
+    let store_dir = workspace_root().join("crates/octo-reputation/src/store");
+    let mut unaccounted: Vec<String> = Vec::new();
+    let mut walked = 0usize;
+    let mut stack = vec![store_dir];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            let Ok(rel) = path.strip_prefix(workspace_root()) else {
+                continue;
+            };
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            let src = strip_comments(&std::fs::read_to_string(&path).unwrap_or_default());
+            // An implementation, not the trait declaration. `store/mod.rs`
+            // declares the method with no body, and it owns no verification
+            // logic that could omit a check.
+            let anchor = src.find("async fn verify_governance_suspension");
+            let implements = anchor.is_some_and(|i| {
+                let tail = &src[i..];
+                let stop = tail.find(';').unwrap_or(usize::MAX);
+                tail[..stop.min(tail.len())].contains('{')
+            });
+            if !implements {
+                continue;
+            }
+            walked += 1;
+            if REPUTATION_STORES.contains(&rel.as_str()) {
+                continue;
+            }
+            let body = fn_body(&src, "async fn verify_governance_suspension");
+            let delegates = body.contains(".verify_governance_suspension(");
+            if !delegates {
+                unaccounted.push(rel);
+            }
+        }
+    }
+    assert!(
+        walked > 0,
+        "no store source under src/store defines verify_governance_suspension, \
+         so this completeness check is reading nothing and reporting green"
+    );
+    assert!(
+        unaccounted.is_empty(),
+        "C-4: these files implement verify_governance_suspension and are not \
+         in REPUTATION_STORES and do not purely delegate: {unaccounted:?}. Add \
+         them to the list or the governance paths they own go unscanned."
+    );
 }
 
 #[test]

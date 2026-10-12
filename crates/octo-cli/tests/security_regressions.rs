@@ -3721,7 +3721,7 @@ fn no_source_or_doc_file_cites_a_private_working_note() {
 
 /// The exact set of files that mention `HolderRecord::from_capability`.
 ///
-/// Four today. **Every one of them is test-only**: the production region
+/// Five today. **Every one of them is test-only**: the production region
 /// of each file — everything before its `#[cfg(test)]` / `mod tests`
 /// marker — contains zero calls.
 ///
@@ -3739,11 +3739,18 @@ fn no_source_or_doc_file_cites_a_private_working_note() {
 /// [`VERIFIERS_WITHOUT_PRODUCTION_IMPL`] — and it is why this is two checks
 /// rather than one.
 ///
+/// `macaroon.rs` is the newest entry and the guard caught it the day it
+/// was written — the accessor test builds a `HolderRecord` to prove the new
+/// `CapabilityCatalog::holder_registry()` reaches one. Recording it is the
+/// guard doing its job rather than being worked around, and it is the second
+/// time this census has caught a change in this arc.
+///
 /// Files under a `tests/` directory are skipped entirely. They are test code
 /// by location, and they carry no `mod tests` marker for the second layer to
 /// find, so without this they read as production.
 const HOLDER_RECORD_CONSTRUCTION_FILES: &[&str] = &[
     "crates/octo-cap-macaroon/src/holder_record.rs",
+    "crates/octo-cap-macaroon/src/macaroon.rs",
     "crates/octo-ident-storage/src/holder_registry.rs",
     "crates/octo-wallet/src/capability/verify.rs",
     "crates/quota-router-core/src/ingress/capability_verifier.rs",

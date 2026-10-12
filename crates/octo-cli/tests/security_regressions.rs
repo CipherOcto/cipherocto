@@ -4734,6 +4734,27 @@ fn missions_claiming_named_vectors_have_those_names_in_the_tree() {
          mission. A ticked criterion and a green vector are different claims; this \
          guard is what keeps them the same one. Scanned {checked} mission(s)."
     );
+    // The counter is reported in the failure message above, which makes it easy
+    // to assume something bounds it. Nothing does. If every qualifying mission
+    // stops matching — the section retitled, the phrasing changed, the files
+    // moved out of both directories — this guard reports green while reading
+    // nothing at all, and the only evidence is a number nobody sees on a
+    // passing test. That is the reads-nothing-and-reports-green shape that
+    // `every_dispatched_payload_kind_is_driven_through_an_envelope_in_tests`
+    // defends against with an explicit assertion, so it is defended against here
+    // too rather than left to chance.
+    //
+    // 4 missions qualify today. The floor sits below that deliberately: missions
+    // are archived rather than deleted, so the count should grow, and pinning it
+    // at the measured value would turn ordinary churn into a red build. An
+    // invented higher number would demand coverage that does not exist.
+    assert!(
+        checked >= 2,
+        "only {checked} mission(s) matched the claim-and-section pattern this guard \
+         reads. Either every qualifying mission was retitled or moved out of both \
+         directories, or the scan stopped reaching them. Measured 4 when this \
+         floor was written."
+    );
 }
 
 /// Crates that serve node payload kinds and therefore hold a `HandlerOutput`.

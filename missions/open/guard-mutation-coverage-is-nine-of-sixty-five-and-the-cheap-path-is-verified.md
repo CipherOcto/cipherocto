@@ -15,7 +15,7 @@ metadata:
 ## Status
 
 Largely resolved. The path-dependency guard's blind spot is **fixed** — see §A
-blind spot below — and mutation coverage has moved from 9 of 65 guards to **31 of 65**, a figure the harness now derives from its own
+blind spot below — and mutation coverage has moved from 9 of 65 guards to **37 of 65**, a figure the harness now derives from its own
 table rather than one maintained by hand — see §Coverage counted twice, and the
 count that was wrong. Adding one of them exposed a false pass in the harness
 itself, now fixed — see §A false pass found below.
@@ -308,7 +308,7 @@ now produced by reading the harness table and collecting the distinct
 
 ```
 $ python3 scripts/mutate-zk-guards.py --list | tail -1
-  42 entries -> 31 distinct guards in security_regressions.rs  (+7 entries targeting other crates' suites)
+  48 entries -> 37 distinct guards in security_regressions.rs  (+7 entries targeting other crates' suites)
 ```
 
 That line is printed by the harness itself, derived by reading its own table. It
@@ -316,7 +316,7 @@ did not exist when the count was first wrong, and putting it there is the fix:
 the number can no longer drift from the thing it counts, because it is recomputed
 every time anyone asks.
 
-**42 entries cover 31 guards, and the two numbers must not be conflated.** Seven
+**48 entries cover 37 guards, and the two numbers must not be conflated.** Seven
 entries do not target `security_regressions.rs` at all — three run
 `zk-vendor`'s `library_path` suite, two run `zk-verifier`, two run
 `cipherocto-fs-perms`. They are real mutations against real guards, but those
@@ -329,6 +329,50 @@ is exactly why neither was visible.
 
 Nothing about the harness changed to produce this — the same figure is derivable
 from the committed file at any time, and it was not before.
+
+## A VACUOUS verdict that was the mutation's fault, three times
+
+Six entries in one wave came back, and three of them came back **VACUOUS**.
+Every one of the three was a broken mutation rather than a broken guard, and
+each failed for a different reason worth keeping — which is the argument for
+scoring them rather than eyeballing them.
+
+**A shell case arm cannot be loosened by adding to it.** `G-Y` originally
+_added_ a newline arm to the `--name` pattern:
+
+```sh
+case "$NAME" in
+    ''|*[!a-zA-Z0-9._-]*|*$'\n'*)
+```
+
+and the guard stayed green. That reads like a guard that cannot see an injected
+newline. It cannot: a newline is a character _outside_ `a-zA-Z0-9._-`, so
+`*[!a-zA-Z0-9._-]*` already refuses it, and any further arm can only match names
+the first arm already rejected. Adding to a `case` pattern moves validation
+strictly tighter, never looser. The mutation has to remove the class check.
+Checked against the shell directly before rewriting:
+
+```
+REJECTED by the existing pattern
+```
+
+**A guard's needle is a prefix, and rewriting the rest of the line leaves it
+standing.** `G-aa` changed the right-hand side of `if let Some(pk) = …` to
+fall back to a default key. The guard looks for `if let Some(pk)` — which the
+mutation left in place. Moving the key inside the block is what removes the
+opt-in shape the guard exists to notice.
+
+**A definition count counts one name.** `G-bb` added a second private writer
+called `write_private_file_local`, and the guard stayed green. It counts
+`pub fn write_private_file(`, and the local variant does not match. That is a
+real limit of the guard, not a broken mutation, so it is recorded on the entry
+rather than treated as a pass: **the guard catches a duplicate, not a
+reimplementation.** The H-7 entries have the same shape for `create_private`.
+Closing the gap means looking for the mode constant beside the open rather than
+for a name — a different check, and not one this entry claims to have made.
+
+The third mistake would have been the expensive one: reading three VACUOUS
+verdicts as three broken guards and "fixing" them into agreement.
 
 ## A guard whose race assertion could never fire — FIXED
 
@@ -413,9 +457,15 @@ recorded rather than assumed absent elsewhere.
       `m13_cdp_trace_is_private_and_defaults_outside_tmp`,
       `m12_no_chrome_launcher_disables_the_renderer_sandbox`,
       `c6_systemd_script_rejects_non_absolute_or_bracket_paths`,
-      `h10_quic_accept_loop_consults_the_replay_cache` and
-      `l5_health_server_does_not_trust_client_forwarded_for`),
-      taking coverage from 9 of 65 to **31 of 65**
+      `h10_quic_accept_loop_consults_the_replay_cache`,
+      `l5_health_server_does_not_trust_client_forwarded_for`,
+      `c6_systemd_heredoc_quotes_the_interpolated_execstart_arguments`,
+      `c6_systemd_script_rejects_names_that_can_inject_a_unit_directive`,
+      `m10_persist_contacts_rejects_non_integer_limit_and_offset`,
+      `m15_the_telegram_adapter_is_a_documented_opt_out`,
+      `h6_the_private_writer_is_shared_not_duplicated` and
+      `h10_quic_replay_cache_is_reachable_from_the_accept_loop`),
+      taking coverage from 9 of 65 to **37 of 65**
 - [x] Any harness using the prebuilt-binary path refuses to run when the binary
       is older than the guard source — **satisfied a different way**: the
       committed harness runs through cargo, which rebuilds by construction, so
@@ -450,7 +500,7 @@ green as it applies to a guard's.
 ## Why the rest is filed rather than fixed
 
 The blind-spot fix is done and needs no defence. What remains is the coverage
-gap, and that is not urgent: thirty-four unbacked guards is a large number that
+gap, and that is not urgent: twenty-eight unbacked guards is a large number that
 reads as alarming and is not. These guards were written by adversarial review
 and several were mutation-checked by hand during that work. What is missing is
 the _re-runnable record_, which is what this harness would supply — and the

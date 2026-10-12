@@ -619,6 +619,111 @@ MUTATIONS = [
         ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
          "l5_health_server_does_not_trust_client_forwarded_for", "--", "--exact"],
     ),
+    (
+        # Defence in depth behind the `--name` validation: even a value that
+        # slips through must not be word-split by systemd, which reads
+        # ExecStart its own way. Validation catches known-hostile names; this
+        # catches whatever else arrives.
+        "G-X: the generated ExecStart drops its quotes",
+        "scripts/run-octo-whatsapp.sh",
+        "ExecStart=$BIN --socket '$SOCKET' --name '$NAME' daemon",
+        "ExecStart=$BIN --socket $SOCKET --name $NAME daemon",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "c6_systemd_heredoc_quotes_the_interpolated_execstart_arguments", "--", "--exact"],
+    ),
+    (
+        # The `--name` shape check is what refuses a newline, which is the
+        # working injection into the unit-file heredoc.
+        #
+        # The first version of this entry *added* a newline arm to the case
+        # pattern and the guard stayed green, which looked like a broken guard
+        # and was not. `*[!a-zA-Z0-9._-]*` already rejects a newline, because a
+        # newline is a character outside the class — so a further arm can only
+        # match names the first arm already refused, and validation gets
+        # strictly tighter. The mutation has to remove the class check, which is
+        # the direction the shell semantics actually move in.
+        "G-Y: the systemd launcher stops checking a name's shape",
+        "scripts/run-octo-whatsapp.sh",
+        "    ''|*[!a-zA-Z0-9._-]*)\n",
+        "    '')\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "c6_systemd_script_rejects_names_that_can_inject_a_unit_directive", "--", "--exact"],
+    ),
+    (
+        # LIMIT and OFFSET are interpolated straight into SQL text, and SQLite
+        # accepts the two-argument `LIMIT offset, count` form, so `1,(SELECT sql
+        # FROM sqlite_master)` is a working injection that reaches the events
+        # database. The script validated its SOURCE table and not these two,
+        # which is the shape a partial validation takes.
+        "G-Z: the contacts script stops validating LIMIT and OFFSET",
+        "scripts/persist-contacts-bulk.sh",
+        """    if ! [[ "${!numeric}" =~ ^[0-9]+$ ]]; then
+        echo "invalid $numeric: must be a non-negative integer (got: ${!numeric})" >&2
+        exit 3
+    fi
+""",
+        "",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "m10_persist_contacts_rejects_non_integer_limit_and_offset", "--", "--exact"],
+    ),
+    (
+        # `canonicalize` here verifies only when a key is configured, so the
+        # guard's job is to notice that shape changing rather than to bless it.
+        # Making the check unconditional is the change it asks a reader to make
+        # deliberately — the recorded state is opt-in and nobody should arrive
+        # there by editing one `if`.
+        #
+        # The first version rewrote only the right-hand side of the binding and
+        # stayed green, because the guard's needle is the `if let Some(pk)`
+        # prefix and the mutation left that prefix standing. Moving the key
+        # inside the block is what actually removes the opt-in shape.
+        "G-aa: telegram verification becomes unconditional",
+        "crates/octo-adapter-telegram/src/adapter.rs",
+        "        if let Some(pk) = &self.verifying_key {\n",
+        "        if true {\n            let pk = &self.verifying_key;\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "m15_the_telegram_adapter_is_a_documented_opt_out", "--", "--exact"],
+    ),
+    (
+        # Six binaries writing the same private-write rule six ways is how this
+        # regressed in the first place. The guard counts definitions of two
+        # specific names rather than checking behaviour, so the mutation is a
+        # second definition of the same name — which is what the assertion
+        # claims to prevent.
+        #
+        # **Known limit, stated rather than papered over.** A parallel helper
+        # under a *different* name does not match either count and passes. A
+        # first attempt at this entry named its probe
+        # `write_private_file_local` and was green for exactly that reason. So
+        # the guard catches a duplicate, not a reimplementation. The H-7 entries
+        # have the same shape for `create_private`. Closing it means looking for
+        # the mode constant alongside the open, not for a name, which is a
+        # different check and not one this entry claims to have made.
+        "G-bb: the private writer is defined twice",
+        "crates/whatsapp_chrome_session_extract/src/lib.rs",
+        "pub fn write_private_file(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {",
+        "/// A second, private copy of the rule.\n"
+        "pub fn write_private_file(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {\n"
+        "    std::fs::write(path, contents)\n"
+        "}\n\n"
+        "pub fn write_private_file(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "h6_the_private_writer_is_shared_not_duplicated", "--", "--exact"],
+    ),
+    (
+        # The accept loop is spawned without `self`, so the cache must be shared
+        # to be reachable from it at all. The guard documents a failure mode that
+        # is a compile error rather than a behavioural one, so the mutation is
+        # the field type: this is the one entry where the mutation need not even
+        # be well-formed Rust, and the guard's value is that it says so in text
+        # rather than leaving the next reader to re-derive it.
+        "G-cc: the quic replay cache stops being shared",
+        "crates/octo-adapter-quic/src/lib.rs",
+        "    replay_cache: Arc<Mutex<ReplayCache>>,\n",
+        "    replay_cache: Mutex<ReplayCache>,\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "h10_quic_replay_cache_is_reachable_from_the_accept_loop", "--", "--exact"],
+    ),
 ]
 
 # NOT MUTATED, deliberately: `OpenOptionsExt::mode(0o600)` at creation inside

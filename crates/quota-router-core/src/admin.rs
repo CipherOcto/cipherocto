@@ -293,6 +293,16 @@ where
             return handle_create_team(storage, req);
         }
 
+        // GET /team/list must precede the /team/:team_id prefix arm below.
+        // Match arms are tried in order, so with the prefix arm first every
+        // "/team/list" request was routed to handle_get_team with team_id
+        // "list", which then panicked in the UUID parse. The arm was
+        // unreachable dead code.
+        // GET /team/list - list all teams
+        ("GET", "/team/list") => {
+            return handle_list_teams(storage);
+        }
+
         // GET /team/:team_id - get team info
         ("GET", p) if p.starts_with("/team/") => {
             let team_id = p.trim_start_matches("/team/");
@@ -404,10 +414,6 @@ where
                 .header("content-type", "application/json")
                 .body(serde_json::json!({"key_id": key_id, "updated": true}).to_string())
                 .unwrap();
-        }
-        // GET /team/list - list all teams
-        ("GET", "/team/list") => {
-            return handle_list_teams(storage);
         }
         // POST /team/member_add - add team member (assigns key to team)
         ("POST", "/team/member_add") => {
@@ -1991,6 +1997,13 @@ fn handle_oauth2_callback(provider_id: &str, uri: &Uri) -> Response<String> {
         .unwrap()
 }
 
+/// **STUB. Not an OAuth2 implementation.** See mission 0949-d.
+///
+/// This is reached from the production router and returns HTTP 200, but it
+/// performs no exchange: no client authentication, no authorization-code
+/// verification, no PKCE. The RFC-0949 implementation that does all of that
+/// lives in `crate::auth::sso::oauth2` and is not called from here.
+///
 fn handle_token_exchange(body: &[u8]) -> Response<String> {
     let json: serde_json::Value = match serde_json::from_slice(body) {
         Ok(v) => v,
@@ -2041,6 +2054,13 @@ fn handle_token_exchange(body: &[u8]) -> Response<String> {
     }
 }
 
+/// **STUB. Not an OAuth2 implementation.** See mission 0949-d.
+///
+/// This is reached from the production router and returns HTTP 200, but it
+/// performs no exchange: no client authentication, no authorization-code
+/// verification, no PKCE. The RFC-0949 implementation that does all of that
+/// lives in `crate::auth::sso::oauth2` and is not called from here.
+///
 fn handle_token_refresh(body: &[u8]) -> Response<String> {
     let json: serde_json::Value = match serde_json::from_slice(body) {
         Ok(v) => v,
@@ -2070,6 +2090,13 @@ fn handle_token_refresh(body: &[u8]) -> Response<String> {
         .unwrap()
 }
 
+/// **STUB. Not an OAuth2 implementation.** See mission 0949-d.
+///
+/// This is reached from the production router and returns HTTP 200, but it
+/// performs no exchange: no client authentication, no authorization-code
+/// verification, no PKCE. The RFC-0949 implementation that does all of that
+/// lives in `crate::auth::sso::oauth2` and is not called from here.
+///
 fn handle_token_revoke(body: &[u8]) -> Response<String> {
     let json: serde_json::Value = match serde_json::from_slice(body) {
         Ok(v) => v,
@@ -2089,6 +2116,12 @@ fn handle_token_revoke(body: &[u8]) -> Response<String> {
         .unwrap()
 }
 
+/// **STUB. Reports any token as active.** See mission 0949-d.
+///
+/// Reached from the production router. `active` is derived from the shape of
+/// the supplied string, not from any token store, so any non-empty value that
+/// does not start with `revoked_` introspects as a live bearer credential.
+/// RFC-7662 requires `active: false` for an unrecognised token.
 fn handle_token_introspect(body: &[u8]) -> Response<String> {
     let json: serde_json::Value = match serde_json::from_slice(body) {
         Ok(v) => v,
@@ -2126,6 +2159,10 @@ fn handle_oidc_discovery() -> Response<String> {
         .unwrap()
 }
 
+/// **STUB. Publishes an empty key set.** See mission 0949-d.
+///
+/// Reached from the production router. A resource server validating tokens
+/// against this finds no keys, so it can validate nothing.
 fn handle_jwks() -> Response<String> {
     Response::builder()
         .status(StatusCode::OK)
@@ -2609,10 +2646,25 @@ mod tests {
 
     #[tokio::test]
     async fn test_route_get_team_list() {
-        // Note: /team/list route has a bug - the /team/:id pattern matches first
-        // and tries to parse "list" as UUID, causing a panic. Skipping this test.
-        // In production, the route should be ordered before the /team/:id pattern.
-        // The actual team list functionality is tested via handle_list_teams directly.
+        let resp = do_request("GET", "/team/list", None).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body();
+        assert!(
+            body.contains("\"object\":\"list\""),
+            "expected a JSON list envelope, got: {body}"
+        );
+    }
+
+    /// A non-UUID path segment is attacker-controlled input and must not
+    /// reach an `expect`.
+    #[tokio::test]
+    async fn test_route_get_team_with_non_uuid_id_does_not_panic() {
+        let resp = do_request("GET", "/team/not-a-uuid", None).await;
+        assert!(
+            resp.status().is_client_error() || resp.status().is_server_error(),
+            "expected a 4xx/5xx for a malformed team id, got {}",
+            resp.status()
+        );
     }
 
     #[tokio::test]
@@ -2776,8 +2828,10 @@ mod tests {
             "code": "test-code"
         });
         let resp = do_request("POST", "/auth/token", Some(body.to_string())).await;
-        // Token exchange may fail without proper OAuth2 setup, but shouldn't panic
-        let _status = resp.status();
+        // ROUTING ONLY. The body of this response is an unverified stub, not a
+        // credential produced by an OAuth2 exchange -- see mission 0949-d.
+        // This asserts the route dispatches; it does not bless the payload.
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]
@@ -2787,7 +2841,10 @@ mod tests {
             "refresh_token": "test-refresh"
         });
         let resp = do_request("POST", "/auth/token/refresh", Some(body.to_string())).await;
-        let _status = resp.status();
+        // ROUTING ONLY. The body of this response is an unverified stub, not a
+        // credential produced by an OAuth2 exchange -- see mission 0949-d.
+        // This asserts the route dispatches; it does not bless the payload.
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]
@@ -2796,7 +2853,10 @@ mod tests {
             "token": "test-token"
         });
         let resp = do_request("POST", "/auth/token/revoke", Some(body.to_string())).await;
-        let _status = resp.status();
+        // ROUTING ONLY. The body of this response is an unverified stub, not a
+        // credential produced by an OAuth2 exchange -- see mission 0949-d.
+        // This asserts the route dispatches; it does not bless the payload.
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]
@@ -2805,7 +2865,10 @@ mod tests {
             "token": "test-token"
         });
         let resp = do_request("POST", "/auth/token/introspect", Some(body.to_string())).await;
-        let _status = resp.status();
+        // ROUTING ONLY. The body of this response is an unverified stub, not a
+        // credential produced by an OAuth2 exchange -- see mission 0949-d.
+        // This asserts the route dispatches; it does not bless the payload.
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]
@@ -2823,19 +2886,25 @@ mod tests {
     #[tokio::test]
     async fn test_route_get_auth_userinfo() {
         let resp = do_request("GET", "/auth/userinfo", None).await;
-        let _status = resp.status();
+        // An unauthenticated request must be refused. This one is asserted on
+        // both status and body because the 401 is correct today and must stay
+        // correct independently of how mission 0949-d resolves.
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(resp.into_body(), r#"{"error":"missing_token"}"#);
     }
 
     #[tokio::test]
     async fn test_route_get_auth_userinfo_claims() {
         let resp = do_request("GET", "/auth/userinfo/claims", None).await;
-        let _status = resp.status();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(resp.into_body(), r#"{"error":"missing_token"}"#);
     }
 
     #[tokio::test]
     async fn test_route_post_auth_logout() {
         let resp = do_request("POST", "/auth/logout", None).await;
-        let _status = resp.status();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.into_body(), r#"{"logged_out":true}"#);
     }
 
     #[tokio::test]
@@ -2851,7 +2920,8 @@ mod tests {
             "type": "oidc"
         });
         let resp = do_request("POST", "/auth/providers", Some(body.to_string())).await;
-        let _status = resp.status();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        assert_eq!(resp.into_body(), r#"{"created":true,"id":"new-provider"}"#);
     }
 
     #[tokio::test]
@@ -2865,13 +2935,15 @@ mod tests {
             Some(body.to_string()),
         )
         .await;
-        let _status = resp.status();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.into_body(), r#"{"id":"test-provider","updated":true}"#);
     }
 
     #[tokio::test]
     async fn test_route_delete_auth_provider() {
         let resp = do_request("DELETE", "/auth/providers/test-provider", None).await;
-        let _status = resp.status();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.into_body(), r#"{"deleted":true,"id":"test-provider"}"#);
     }
 
     #[tokio::test]

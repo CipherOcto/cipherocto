@@ -1,6 +1,7 @@
 use crate::keys::{
-    blob_16_to_uuid, cost_u64_to_i64, hex_to_blob_32, tokenizer_version_to_id, uuid_to_blob_16,
-    ApiKey, KeyError, KeySpend, KeyType, KeyUpdates, SpendEvent, Team, TokenSource,
+    blob_16_to_uuid, cost_u64_to_i64, hex_to_blob_32, parse_uuid, tokenizer_version_to_id,
+    uuid_to_blob_16, ApiKey, KeyError, KeySpend, KeyType, KeyUpdates, SpendEvent, Team,
+    TokenSource,
 };
 use sha2::{Digest, Sha256};
 
@@ -289,8 +290,7 @@ impl KeyStorage for StoolapKeyStorage {
         };
 
         // Convert key_id and team_id to BLOB(16) for storage per RFC-0903-C1
-        let key_id_blob =
-            uuid_to_blob_16(&uuid::Uuid::parse_str(&key.key_id).expect("valid key_id UUID"));
+        let key_id_blob = uuid_to_blob_16(&parse_uuid(&key.key_id, "key_id")?);
         let team_id_blob: Option<Vec<u8>> =
             key.team_id.as_ref().map(|t| uuid_to_blob_16(t).to_vec());
 
@@ -413,8 +413,7 @@ impl KeyStorage for StoolapKeyStorage {
         }
 
         // key_id is BLOB(16) per RFC-0903-C1
-        let key_id_blob =
-            uuid_to_blob_16(&uuid::Uuid::parse_str(key_id).expect("valid key_id UUID"));
+        let key_id_blob = uuid_to_blob_16(&parse_uuid(key_id, "key_id")?);
 
         // Note: updating key_id itself changes the primary key - this is allowed
         set_clauses.push(format!("key_id = ${}", params.len() + 1));
@@ -438,8 +437,7 @@ impl KeyStorage for StoolapKeyStorage {
     fn list_keys(&self, team_id: Option<&str>) -> Result<Vec<ApiKey>, KeyError> {
         let rows = if let Some(tid) = team_id {
             // Convert team_id to BLOB(16) per RFC-0903-C1
-            let team_id_blob =
-                uuid_to_blob_16(&uuid::Uuid::parse_str(tid).expect("valid team_id UUID"));
+            let team_id_blob = uuid_to_blob_16(&parse_uuid(tid, "team_id")?);
             let params: Vec<octo_storage_core::stoolap::Value> =
                 vec![octo_storage_core::stoolap::Value::blob(
                     team_id_blob.to_vec(),
@@ -464,8 +462,7 @@ impl KeyStorage for StoolapKeyStorage {
 
     fn count_keys_for_team(&self, team_id: &str) -> Result<i64, KeyError> {
         // Convert team_id to BLOB(16) per RFC-0903-C1
-        let team_id_blob =
-            uuid_to_blob_16(&uuid::Uuid::parse_str(team_id).expect("valid team_id UUID"));
+        let team_id_blob = uuid_to_blob_16(&parse_uuid(team_id, "team_id")?);
         let mut rows = self
             .db
             .query(
@@ -487,8 +484,7 @@ impl KeyStorage for StoolapKeyStorage {
 
     fn create_team(&self, team: &Team) -> Result<(), KeyError> {
         // Convert team_id to BLOB(16) for storage per RFC-0903-C1
-        let team_id_blob =
-            uuid_to_blob_16(&uuid::Uuid::parse_str(&team.team_id).expect("valid team_id UUID"));
+        let team_id_blob = uuid_to_blob_16(&parse_uuid(&team.team_id, "team_id")?);
         self.db
             .execute(
                 "INSERT INTO teams (team_id, name, budget_limit, created_at) VALUES ($1, $2, $3, $4)",
@@ -505,8 +501,7 @@ impl KeyStorage for StoolapKeyStorage {
 
     fn get_team(&self, team_id: &str) -> Result<Option<Team>, KeyError> {
         // Convert team_id to BLOB(16) per RFC-0903-C1
-        let team_id_blob =
-            uuid_to_blob_16(&uuid::Uuid::parse_str(team_id).expect("valid team_id UUID"));
+        let team_id_blob = uuid_to_blob_16(&parse_uuid(team_id, "team_id")?);
         let rows = self
             .db
             .query(
@@ -546,8 +541,7 @@ impl KeyStorage for StoolapKeyStorage {
 
     fn update_team(&self, team_id: &str, name: &str, budget_limit: i64) -> Result<(), KeyError> {
         // Convert team_id to BLOB(16) per RFC-0903-C1
-        let team_id_blob =
-            uuid_to_blob_16(&uuid::Uuid::parse_str(team_id).expect("valid team_id UUID"));
+        let team_id_blob = uuid_to_blob_16(&parse_uuid(team_id, "team_id")?);
         self.db
             .execute(
                 "UPDATE teams SET name = $1, budget_limit = $2 WHERE team_id = $3",
@@ -600,8 +594,7 @@ impl KeyStorage for StoolapKeyStorage {
         }
 
         // Convert team_id to BLOB(16) for storage per RFC-0903-C1
-        let team_id_blob =
-            uuid_to_blob_16(&uuid::Uuid::parse_str(team_id).expect("valid team_id UUID"));
+        let team_id_blob = uuid_to_blob_16(&parse_uuid(team_id, "team_id")?);
         self.db
             .execute(
                 "DELETE FROM teams WHERE team_id = $1",

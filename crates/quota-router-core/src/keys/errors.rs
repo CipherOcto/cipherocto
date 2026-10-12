@@ -31,6 +31,14 @@ pub enum KeyError {
     #[error("Invalid key format")]
     InvalidFormat,
 
+    /// A caller-supplied identifier was not a well-formed UUID.
+    ///
+    /// Reached from request paths, so the value is attacker-controlled and
+    /// must never reach an `expect`. `kind` names the field for diagnostics
+    /// (`key_id`, `team_id`).
+    #[error("Invalid {kind} UUID: {value}")]
+    InvalidUuid { kind: &'static str, value: String },
+
     #[error("Key already exists")]
     AlreadyExists,
 

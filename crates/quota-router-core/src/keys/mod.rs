@@ -84,6 +84,23 @@ pub fn uuid_to_blob_16(uuid: &uuid::Uuid) -> [u8; 16] {
     *uuid.as_bytes()
 }
 
+/// Parse a caller-supplied `key_id` / `team_id` string into a `Uuid`.
+///
+/// These identifiers arrive from HTTP route paths, so they are
+/// attacker-controlled. A malformed value must surface as
+/// [`KeyError::InvalidUuid`] rather than an `expect` panic: a panic inside a
+/// request handler is a denial-of-service primitive, reachable by anyone who
+/// can send `GET /team/<anything>`.
+///
+/// `kind` names the field so the error message points at the offending input.
+#[inline]
+pub fn parse_uuid(value: &str, kind: &'static str) -> Result<uuid::Uuid, KeyError> {
+    uuid::Uuid::parse_str(value).map_err(|_| KeyError::InvalidUuid {
+        kind,
+        value: value.to_owned(),
+    })
+}
+
 /// Convert 16 raw bytes from key_id/team_id BLOB(16) retrieval to a Uuid.
 ///
 /// **Important:** `uuid::Uuid::from_bytes` silently accepts any 16-byte sequence

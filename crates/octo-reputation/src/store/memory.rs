@@ -686,6 +686,153 @@ mod tests {
     // stark-schnorr key could be put on the record at all, so this test is not
     // writable against the old type.
 
+    /// A suspension auth nobody signed is refused.
+    ///
+    /// The suspension path has always verified its signature, so this is not a
+    /// regression guard for a fixed bug — it is the property the two paths fixed
+    /// this session are now held to by the same standard. Before slash and
+    /// retirement were corrected, this suite could not tell a verifying store
+    /// from one that accepted a stub, so the check existed without anything
+    /// proving it fired.
+    #[tokio::test]
+    async fn suspension_refuses_an_unsigned_auth() {
+        octo_algo_ed25519::install().expect("install ed25519");
+        let store = InMemoryReputationStore::new();
+        let now = crate::migrations::now_unix();
+        let snapshot = GovernanceSnapshot {
+            finalized_at_unix: now,
+            governance_set_hash: [7u8; 32],
+            members: vec![[1u8; 32], [2u8; 32], [3u8; 32]],
+        };
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let recorder_id = RecorderId::from_u64(42);
+        let reason_hash = [0xABu8; 32];
+        let pubkey = sk.verifying_key().to_bytes().to_vec();
+        let digest =
+            crate::auth::governance_suspension_digest(&recorder_id, &reason_hash, &pubkey, now);
+
+        let mut auth = SuspensionAuth {
+            governance_algorithm_id: crate::auth::default_governance_algorithm_id(),
+            governance_pubkey: pubkey,
+            recorder_id,
+            reason_hash,
+            // A genuine signature first, so the only thing that changes below is
+            // the signature bytes themselves.
+            signature: ed25519_dalek::Signer::sign(&sk, &digest)
+                .to_bytes()
+                .to_vec(),
+            snapshot: snapshot.clone(),
+            governance_set_hash: [7u8; 32],
+        };
+        store
+            .verify_governance_suspension(&auth, &snapshot, now)
+            .await
+            .expect("the control must verify before the negative case means anything");
+
+        auth.signature = vec![0u8; 64];
+        let err = store
+            .verify_governance_suspension(&auth, &snapshot, now)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.discriminant(),
+            0x11,
+            "an unsigned suspension auth must be refused as an invalid signature"
+        );
+    }
+
+    /// A suspension auth signed by a key other than the one it names.
+    #[tokio::test]
+    async fn suspension_refuses_an_auth_signed_by_another_key() {
+        octo_algo_ed25519::install().expect("install ed25519");
+        let store = InMemoryReputationStore::new();
+        let now = crate::migrations::now_unix();
+        let snapshot = GovernanceSnapshot {
+            finalized_at_unix: now,
+            governance_set_hash: [7u8; 32],
+            members: vec![[1u8; 32], [2u8; 32], [3u8; 32]],
+        };
+        let named = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let other = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32]);
+        let recorder_id = RecorderId::from_u64(42);
+        let reason_hash = [0xABu8; 32];
+        // The record names `named`; the signature comes from `other`.
+        let pubkey = named.verifying_key().to_bytes().to_vec();
+        let digest =
+            crate::auth::governance_suspension_digest(&recorder_id, &reason_hash, &pubkey, now);
+        let auth = SuspensionAuth {
+            governance_algorithm_id: crate::auth::default_governance_algorithm_id(),
+            governance_pubkey: pubkey,
+            recorder_id,
+            reason_hash,
+            signature: ed25519_dalek::Signer::sign(&other, &digest)
+                .to_bytes()
+                .to_vec(),
+            snapshot: snapshot.clone(),
+            governance_set_hash: [7u8; 32],
+        };
+        assert!(
+            store
+                .verify_governance_suspension(&auth, &snapshot, now)
+                .await
+                .is_err(),
+            "a signature from a key other than the named one must not verify"
+        );
+    }
+
+    /// Repeated members do not meet quorum on the suspension path either.
+    #[tokio::test]
+    async fn suspension_refuses_a_quorum_of_repeated_members() {
+        octo_algo_ed25519::install().expect("install ed25519");
+        let store = InMemoryReputationStore::new();
+        let now = crate::migrations::now_unix();
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let recorder_id = RecorderId::from_u64(42);
+        let reason_hash = [0xABu8; 32];
+        let pubkey = sk.verifying_key().to_bytes().to_vec();
+        let digest =
+            crate::auth::governance_suspension_digest(&recorder_id, &reason_hash, &pubkey, now);
+        let signature = ed25519_dalek::Signer::sign(&sk, &digest)
+            .to_bytes()
+            .to_vec();
+
+        // Genuine signature, distinct members — the only thing changed below is
+        // the member set.
+        let mut snapshot = GovernanceSnapshot {
+            finalized_at_unix: now,
+            governance_set_hash: [7u8; 32],
+            members: vec![[1u8; 32], [2u8; 32], [3u8; 32]],
+        };
+        let auth = SuspensionAuth {
+            governance_algorithm_id: crate::auth::default_governance_algorithm_id(),
+            governance_pubkey: pubkey,
+            recorder_id,
+            reason_hash,
+            signature,
+            snapshot: snapshot.clone(),
+            governance_set_hash: [7u8; 32],
+        };
+        store
+            .verify_governance_suspension(&auth, &snapshot, now)
+            .await
+            .expect("the control must verify before the negative case means anything");
+
+        snapshot.members = vec![[0xAB; 32]; 3];
+        let degenerate = SuspensionAuth {
+            snapshot: snapshot.clone(),
+            ..auth
+        };
+        let err = store
+            .verify_governance_suspension(&degenerate, &snapshot, now)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.discriminant(),
+            0x12,
+            "three copies of one member must not satisfy a 3-of-3 quorum"
+        );
+    }
+
     #[tokio::test]
     async fn a_suspension_auth_record_verifies_under_stark_schnorr() {
         use octo_algo_stark_schnorr::{public_key, sign, Felt};

@@ -88,7 +88,7 @@ RFC-0957-A1 §HolderRegistry).
 ### Test vectors (per RFC-0010 v1.3 §Storage Extension §Compatibility)
 
 - [ ] `register_resolve_round_trip` — register `(canonical_did,
-  DidDocument{public_key, revoked:false})` → resolve returns
+DidDocument{public_key, revoked:false})` → resolve returns
       `Some(DidDocument)` with same `public_key`
 - [ ] `register_upsert_overwrites_existing` — register twice, second
       registration overwrites `DidDocument` (upsert semantics)

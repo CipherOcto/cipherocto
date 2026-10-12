@@ -37,8 +37,8 @@ Create `crates/octo-vault/src/cache_subscriber.rs` — a per-process subscriber 
    Production impl at `octo-vault-stoolap` Layer D (Stoolap NOTIFY/LISTEN adapter).
 
 2. **Subscriber task spawner** — `pub fn spawn_cache_subscriber(
-    cache: Arc<Mutex<VaultBalanceCache>>,
-    subscriber: Arc<dyn VaultProjectionInvalidationSubscriber>,
+ cache: Arc<Mutex<VaultBalanceCache>>,
+ subscriber: Arc<dyn VaultProjectionInvalidationSubscriber>,
 ) -> JoinHandle<()>`
    The task loop: `while let Some(env) = subscriber.recv() { cache.lock().unwrap_or_else(PoisonError::into_inner).invalidate_all(); }` (whole-cache invalidation per RFC-0960 §2.4; per-key invalidation reserved for Cycle 2).
 

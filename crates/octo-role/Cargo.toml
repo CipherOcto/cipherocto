@@ -12,7 +12,6 @@ path = "src/lib.rs"
 
 [dependencies]
 # Layer A/B crypto substrate
-cipherocto-encoding = { path = "../cipherocto-encoding" }
 # Layer B identity substrate (Did type)
 octo-ident = { path = "../octo-ident", version = "0.1.0" }
 # Layer B capability substrate (CapabilitySigner trait per RFC-0957)

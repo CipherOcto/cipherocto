@@ -156,6 +156,20 @@ def resolves(name: str, known: set[str]) -> bool:
     longest = candidates(name)[-1]
     if longest and any(k.startswith(longest + " ") for k in known):
         return True
+    # The other direction: the anchor may carry a qualifier the heading does
+    # not. This corpus writes `§Implementation Phases Phase 1` against a
+    # `## Implementation Phases` heading, and `§Adversarial Review Process Dry
+    # Run` against `## Adversarial Review Process`, far more often than it
+    # writes the heading verbatim. Without this, two thirds of everything the
+    # lint reported was an anchor that named a real section with extra prose
+    # glued on.
+    #
+    # Only word-prefixes of two or more words are tried, so this cannot resolve
+    # an anchor down to a single common word.
+    words = longest.split()
+    for cut in range(len(words) - 1, 1, -1):
+        if " ".join(words[:cut]) in known:
+            return True
     return False
 
 

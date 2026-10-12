@@ -353,7 +353,8 @@ What it needs first is a decision this mission should not make alone:
 - [x] `CapabilityVerification` can represent an ask-unbound capability, or the RFC states what a verifier reports for one and `evaluate_linkage` cannot compare it into a false link. **Done by refusal** — see §What landed part 4. The verifier never constructs a `CapabilityVerification` for an ask-unbound token, so no unbound `ask_id` exists to compare. The field itself is unchanged and still cannot represent absence; the route taken removes the need for it to.
 - [x] `CapabilityToken` exposes the RFC's ask-binding accessor, or RFC-0969 §Algorithms is amended to name the caveat-based accessor that replaces it. **Done** — `ask_binding()` reads `Caveat::AskBinding` from the macaroon, since `CapabilityToken` carries no `ask_id` field.
 - [x] Dispatch semantics are settled. **The RFC already answered this one** — v1.2's 4-way table is unambiguous and `BothSchemesUnsupported` / `NoAuth` are its names. The remaining question is only whether the implementation adopts it or the RFC is reopened, and adopting it is the default unless there is a recorded reason not to. **Adopted** — `authenticate_v12` + `routing_decision_v12`, additively; `authenticate` keeps pre-v1.2 semantics.
-- [ ] A production mint path attaches a `Caveat::AskBinding`, so a capability that is ask-bound can exist. **Still open, but no longer a substrate gap — the shape now exists and only needs to be used.** A capability can carry an ask binding today: attenuating `Caveat::AskBinding` through the wallet's attenuation handler attaches it, and the result verifies and reads back through `ask_binding()`. What is missing is a caller that does so on the market path. Owned by RFC-0959 §Phase 3, where the item is already an unchecked box — this is not new work, it is work that RFC already tracks and nobody has ticked.
+- [ ] A production caller persists the `HolderRecord` that mint deliberately does not. **Now known to be the first blocker, ahead of the ask binding below.** RFC-0957-A1 assigns persistence to the caller and nothing does it, so the registry is permanently empty and every real capability is refused with `HolderUnknown` before the ask is ever read. `WalletNode` has no storage layer at all, so this is an absent layer rather than a missing call — see §What closing the first blocker actually requires. Pinned by `holder_records_are_never_constructed_in_production`.
+- [ ] A production mint path attaches a `Caveat::AskBinding`, so a capability that is ask-bound can exist. **Open, and no longer a substrate gap — the shape now exists and only needs to be used.** A capability can carry an ask binding today: attenuating `Caveat::AskBinding` through the wallet's attenuation handler attaches it, and the result verifies and reads back through `ask_binding()`. What is missing is a caller that does so on the market path, and it is gated behind the blocker above: attaching an ask to a token nobody can verify is not progress. Owned by RFC-0959 §Phase 3, where the item is already an unchecked box.
 - [ ] `CapabilityVerification.ask_id` can represent "unbound", matching the `Option` RFC-0970 already assumes `ask_binding()` returns. A bare `[u8; 32]` cannot, and that value flows into `AuthenticatedRequest.ask_id` and on into settlement. **Deliberately not done.** Refusing unbound is strictly safer than a representable absent, and is reversible; widening the field is neither. Revisit only if the market path needs unbound capabilities at the gateway, which RFC-0959 §Phase 3 would have to argue for.
 - [x] A production `impl CapabilityVerifier` exists that calls real verification and is reachable from `GatewayAuthenticator::new` outside tests. **Done** — `quota_router_core::ingress::capability_verifier::ProductionCapabilityVerifier`, injected as `Arc<dyn CapabilityVerifier>`, so `GatewayAuthenticator::new` needed no change.
 - [x] Its failure modes are fail-closed per cause, not collapsed into one variant — `VerifyError` has seven variants and `CapError` has three. **Done** — `CapError` gains `Malformed`, `HolderUnknown`, `HolderNotActive`, `RegistryUnavailable`, `InvalidSignature`, `AttestationRefused`, `AskUnbound`, `AskBindingAmbiguous`. One variant per cause; none carries a message across.
@@ -414,6 +415,37 @@ recorded here was the second.
 
 The first is now pinned by `holder_records_are_never_constructed_in_production`,
 so closing it turns that guard red.
+
+## What closing the first blocker actually requires
+
+Not a missing call — **an absent layer**.
+
+RFC-0957-A1 §`CapabilityToken::mint` signature makes this explicit: mint is
+**persistence-free by design**, four arguments, no catalog, and
+_"Persistence is handled by the caller via `insert_holder_record`."_ So mint
+returning without a record is **correct**, and the gap is that no production
+caller does the persistence the RFC assigns to it.
+
+Checking whether that is a small fix: it is not.
+
+- `WalletNode` holds `config`, a dispatcher, and a `started` flag. **No
+  storage handle, no registry, no catalog.**
+- `MintHandler` holds an `IdentityKey` and an optional spend ledger. No
+  registry either.
+- Threading a registry through is 12 call sites across two files, and it means
+  introducing persistence into a node that currently has none.
+
+RFC-0870 G5 requires that a capability minted by node A be verifiable by node
+B after sync, which puts persistence on the minting node. What the RFCs do
+**not** say is whether `octo-wallet-node` is that node's persistence boundary,
+or whether a caller outside the node is. That is an architecture question, and
+the answer changes where the registry lives and which component owns the
+lifecycle.
+
+This is recorded rather than guessed. It is the same shape as the earlier
+`BearerCapsule` blocker — a named dependency that turns out not to be the
+constraint — and the standing rule holds: forward-engineering cost is never an
+argument against doing the work, but _guessing the boundary_ is.
 
 ## What this unblocked: ask binding is now attachable
 

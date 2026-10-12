@@ -613,7 +613,6 @@ mod tests {
             ctx(DispatchSet {
                 bearer: None,
                 capability: None,
-                identity_linkage: LinkageResult::Indeterminate,
             }),
             RoutingDecision::NoAuth,
             "the neither row is reserved but specified"

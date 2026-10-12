@@ -4225,3 +4225,61 @@ fn exactly_one_handler_output_type_is_defined() {
         );
     }
 }
+
+/// Production code paths that parse auth headers.
+const AUTH_HEADER_PARSE_SITES: &[&str] = &["crates/octo-wallet/src/capability/dispatch.rs"];
+
+/// A parsed auth-header set must carry no identity verdict.
+///
+/// `DispatchSet` used to have an `identity_linkage` field, computed by running
+/// both tokens through `unverified_decode_bearer` and
+/// `unverified_decode_capability` — decoders that derive a placeholder
+/// `subject_did` and `ask_id` from the first bytes of the token string. Two
+/// identical token strings produced `LinkageResult::Linked`.
+///
+/// No production caller read it; `authenticate()` calls `evaluate_linkage` on
+/// the verified structs its injected verifiers return. So it was a landmine,
+/// not a live bypass — and three tests asserted on it, which is what made it
+/// look exercised. A public type carrying a field named like an authentication
+/// decision, derived from unverified bytes, is the shape that turns into a real
+/// bypass the moment someone reads it.
+#[test]
+fn a_parsed_auth_header_set_carries_no_identity_verdict() {
+    let root = workspace_root();
+    let mut findings: Vec<String> = Vec::new();
+
+    for rel in AUTH_HEADER_PARSE_SITES {
+        let path = root.join(rel);
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        // Only the production region. The test module legitimately constructs
+        // verified structs to exercise `evaluate_linkage` directly.
+        let production = text.split("#[cfg(test)]").next().unwrap_or(&text);
+
+        // The field must not exist on the type.
+        let struct_start = production.find("pub struct DispatchSet").unwrap_or(0);
+        let struct_end = production[struct_start..]
+            .find("\n}")
+            .map(|i| struct_start + i)
+            .unwrap_or(production.len());
+        if production[struct_start..struct_end].contains("identity_linkage") {
+            findings.push(format!(
+                "{rel}: DispatchSet declares an identity_linkage field"
+            ));
+        }
+        // And the parse function must not derive one from unverified decodes.
+        if production.contains("unverified_decode_bearer(b)")
+            || production.contains("unverified_decode_capability(c)")
+        {
+            findings.push(format!(
+                "{rel}: header parsing calls an unverified decoder; an identity verdict \
+                 derived from unverified bytes is not a verdict"
+            ));
+        }
+    }
+
+    assert!(
+        findings.is_empty(),
+        "a parsed auth-header set must not carry an identity verdict: {findings:?}. \
+         Linkage belongs to `evaluate_linkage` over verified structs."
+    );
+}

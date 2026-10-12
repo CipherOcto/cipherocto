@@ -301,12 +301,29 @@ pub fn unverified_decode_capability(token: &str) -> CapabilityVerification {
     CapabilityVerification { holder_did, ask_id }
 }
 
-/// DispatchSet: parsed headers + identity linkage.
+/// DispatchSet: the auth headers this request presented, parsed.
+///
+/// **It deliberately carries no identity verdict.** It used to carry an
+/// `identity_linkage` field computed by running both tokens through
+/// `unverified_decode_bearer` / `unverified_decode_capability`, which derive a
+/// placeholder `subject_did` and `ask_id` from the first bytes of the token
+/// string. That produced `LinkageResult::Linked` whenever the bearer token and
+/// the capability token shared 32 bytes — which any caller controls.
+///
+/// Nothing in production read it: `authenticate()` calls
+/// `evaluate_linkage` on the *verified* structs its injected verifiers return.
+/// So it was not a live bypass, and it was still a landmine: a public type
+/// carried a field whose name reads as an authentication decision, three tests
+/// asserted on it, and any future caller reaching for `dispatch.identity_linkage`
+/// would have had an authentication bypass with no compiler signal and no failing
+/// test.
+///
+/// Parsing headers is not the job of deciding who the caller is. A caller that
+/// wants linkage calls [`evaluate_linkage`] with verified structs.
 #[derive(Clone, Debug)]
 pub struct DispatchSet {
     pub bearer: Option<AuthHeader>,
     pub capability: Option<AuthHeader>,
-    pub identity_linkage: LinkageResult,
 }
 
 /// Parse `Authorization` + `X-Capability-Token` headers from a request map.
@@ -363,35 +380,10 @@ pub fn parse_auth_headers(headers: &[(String, String)]) -> Result<DispatchSet, P
     if bearer.is_none() && capability.is_none() {
         return Err(ParseError::NoAuthHeader);
     }
-    // Identity linkage evaluation (AC-A2 + AC-B2.1.b): dual-pipeline case only.
-    // Stub decode functions extract placeholder `subject_did` / `holder_did`
-    // from token bytes; real signature verification lands in AC-B1.
-    let identity_linkage = match (&bearer, &capability) {
-        (Some(AuthHeader::Bearer(b)), Some(AuthHeader::CipherOctoCap(c))) => {
-            let bv = unverified_decode_bearer(b);
-            let cv = unverified_decode_capability(c);
-            if bv.subject_did == cv.holder_did && bv.ask_id == cv.ask_id {
-                LinkageResult::Linked {
-                    subject_did: bv.subject_did,
-                    ask_id: bv.ask_id,
-                }
-            } else if bv.subject_did == cv.holder_did {
-                // Subject matches but ask differs — mission 0969-a3 AC-B2.1.b.
-                LinkageResult::AskBindingMismatch {
-                    bearer_ask: bv.ask_id,
-                    cap_ask: cv.ask_id,
-                }
-            } else {
-                LinkageResult::Mismatched
-            }
-        }
-        _ => LinkageResult::Indeterminate,
-    };
-    Ok(DispatchSet {
-        bearer,
-        capability,
-        identity_linkage,
-    })
+    // No identity verdict here. Deciding linkage from these bytes would mean
+    // deriving an identity from an unverified token, which is the placeholder
+    // decoder's job and nothing else's. See `DispatchSet`.
+    Ok(DispatchSet { bearer, capability })
 }
 
 /// Identity linkage evaluation (RFC-0969 §Phase 1 + AC-A2 + mission 0969-a3
@@ -602,7 +594,6 @@ mod tests {
         .unwrap();
         assert!(set.bearer.is_some());
         assert!(set.capability.is_some());
-        assert!(matches!(set.identity_linkage, LinkageResult::Linked { .. }));
     }
 
     #[test]
@@ -742,37 +733,79 @@ mod tests {
 
     // --- AC-A2: identity linkage evaluation logic ---
 
+    /// Parsing headers produces no identity verdict, and the reason is
+    /// specific rather than incidental.
+    ///
+    /// `parse_auth_headers` used to carry an `identity_linkage` field computed
+    /// from `unverified_decode_bearer` / `unverified_decode_capability`, which
+    /// derive a placeholder `subject_did` and `ask_id` from the token bytes.
+    /// Two identical token strings therefore produced `Linked`. No production
+    /// caller read it — `authenticate()` uses `evaluate_linkage` on verified
+    /// structs — so it was a landmine rather than a live bypass, and a field
+    /// named like an authentication decision is exactly the kind of thing a
+    /// future caller reaches for without thinking.
+    ///
+    /// These three tests used to assert the fabricated outcomes. They are gone
+    /// rather than rewritten, because `linkage_matched_when_tokens_identical`
+    /// *was* the bypass: "two identical token strings are linked" is the
+    /// property that must not hold on unverified bytes.
     #[test]
-    fn linkage_matched_when_tokens_identical() {
-        // Two identical token strings → decode stubs produce identical
-        // (subject_did, holder_did, ask_id) → Linked.
+    fn parsing_headers_produces_no_identity_verdict() {
+        // Identical tokens — the case that used to yield `Linked`.
         let set = parse_auth_headers(&[
             ("Authorization".into(), "Bearer abc123".into()),
             ("X-Capability-Token".into(), "abc123".into()),
         ])
-        .unwrap();
-        assert!(matches!(set.identity_linkage, LinkageResult::Linked { .. }));
-    }
+        .expect("both headers parse");
+        assert!(set.bearer.is_some() && set.capability.is_some());
 
-    #[test]
-    fn linkage_mismatched_when_tokens_differ() {
+        // Differing tokens, and one-header-only: all parse, none decide.
         let set = parse_auth_headers(&[
             ("Authorization".into(), "Bearer abc123".into()),
             ("X-Capability-Token".into(), "xyz789".into()),
         ])
-        .unwrap();
-        assert_eq!(set.identity_linkage, LinkageResult::Mismatched);
+        .expect("both headers parse");
+        assert!(set.bearer.is_some() && set.capability.is_some());
+
+        let set = parse_auth_headers(&[("Authorization".into(), "Bearer abc".into())])
+            .expect("one header");
+        assert!(set.bearer.is_some());
+        assert!(set.capability.is_none());
+
+        // The type offers nothing else to read: no verdict field exists.
+        let set = parse_auth_headers(&[("Authorization".into(), "Bearer abc".into())]).unwrap();
+        assert_eq!(
+            format!("{set:?}").matches("Linked").count(),
+            0,
+            "a parsed header set must not carry a linkage verdict"
+        );
     }
 
+    /// Linkage is decided from verified data, and that path still works.
     #[test]
-    fn linkage_indeterminate_when_only_one_present() {
-        // Bearer only
-        let set = parse_auth_headers(&[("Authorization".into(), "Bearer abc".into())]).unwrap();
-        assert_eq!(set.identity_linkage, LinkageResult::Indeterminate);
-        // Capability only
-        let set =
-            parse_auth_headers(&[("Authorization".into(), "CipherOcto-Cap abc".into())]).unwrap();
-        assert_eq!(set.identity_linkage, LinkageResult::Indeterminate);
+    fn linkage_is_decided_from_verified_structs() {
+        let b = BearerVerification {
+            subject_did: "did:octo:abc".into(),
+            ask_id: [0xAA; 32],
+        };
+        let c = CapabilityVerification {
+            holder_did: "did:octo:abc".into(),
+            ask_id: [0xAA; 32],
+        };
+        assert!(matches!(
+            evaluate_linkage(Some(&b), Some(&c)),
+            LinkageResult::Linked { .. }
+        ));
+
+        // Same holder, different ask — the 4-arm distinction still resolves.
+        let c_other_ask = CapabilityVerification {
+            holder_did: "did:octo:abc".into(),
+            ask_id: [0xBB; 32],
+        };
+        assert!(matches!(
+            evaluate_linkage(Some(&b), Some(&c_other_ask)),
+            LinkageResult::AskBindingMismatch { .. }
+        ));
     }
 
     // --- 0969-a3 AC-B2.1.b: AskBindingMismatch distinguished from Mismatched ---

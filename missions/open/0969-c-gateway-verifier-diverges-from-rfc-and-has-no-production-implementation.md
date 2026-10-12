@@ -478,6 +478,17 @@ More importantly the _store_ has to come from somewhere: the only production
 `HolderRegistry` implementation is `StoolapHolderRegistry`, which needs a Stoolap
 handle, and `WalletNode` has none.
 
+`CompositeCapabilityCatalog` now forwards the accessor to its storage
+backend. It already delegated `lookup`, `is_raw_name_registered`,
+`root_secret_for_ask` and `settlement_chain_tip`, and inheriting the `None`
+default for a fifth would have **hidden a real store behind the production
+composition point** — indistinguishable from a deployment that simply has no
+registry. That is not theoretical: `TransportDeliveryCatalog` documents that
+_"production wallets compose a `CompositeCapabilityCatalog` that delegates
+`lookup` to the underlying storage catalog and `gossip_to_buyer` to this
+struct."_ The other non-test implementation, `TransportDeliveryCatalog`
+itself, owns gossip only and correctly has no registry.
+
 The test registry used for the accessor proof stays **test-local on purpose**. A
 production in-memory `HolderRegistry` would be a new component needing its own
 decision, and RFC-0957-A1 §4 names `StoolapHolderRegistry` as the reference

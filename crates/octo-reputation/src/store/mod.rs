@@ -131,8 +131,17 @@ pub trait ReputationStore: Send + Sync {
     ) -> StoreResult<()>;
 
     /// Slash a recorder. Validates `slash_destination / slash_amount /
-    /// slash_asset` field consistency before any chain tx.
-    async fn slash_recorder(&self, proof: GovernanceProof) -> StoreResult<()>;
+    /// slash_asset` field consistency, then **verifies the proof signature**
+    /// against `slash_signature_preimage(now_unix)`.
+    ///
+    /// `now_unix` is a parameter for the same reason
+    /// [`ReputationStore::verify_governance_suspension`] takes one: the slash
+    /// preimage signs
+    /// the timestamp, so the verifier must use the timestamp the signer used.
+    /// A store that read its own clock here could not verify any proof —
+    /// the caller cannot predict it. The caller owns the reference clock,
+    /// consistent with every other method on this trait.
+    async fn slash_recorder(&self, proof: GovernanceProof, now_unix: u64) -> StoreResult<()>;
 
     /// Declare a recorder eligible for retirement.
     ///

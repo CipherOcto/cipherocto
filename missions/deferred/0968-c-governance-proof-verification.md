@@ -195,6 +195,37 @@ The doc is corrected as part of this filing. This is noted rather than filed
 separately because it is the same missing verification, reached from a
 different direction, and splitting it would give the same finding two homes.
 
+## Slashing did not verify at all — now fixed
+
+An earlier version of this filing stated that signature verification was
+"real on suspension and slash". **That was wrong for slash**, and the error is
+worth recording because the reasoning behind it was plausible.
+
+`verify_governance_suspension` takes a `SuspensionAuth` and calls
+`verify_governance_signature`. `slash_recorder` takes a **`GovernanceProof`** —
+a different record — and verified nothing. Both stores then ran
+`UPDATE reputation_recorders SET slashed = 1`. Measured, not inferred: the
+fixture that demonstrated it built a proof with `governance_pubkey:
+vec![1u8; 32]` and `signature: vec![0u8; 96]`, the latter commented "stub for
+integration test", and the test asserting that the slash persisted **passed**.
+
+So a caller holding no key could slash any registered recorder. Everything
+checked ahead of the `UPDATE` — freshness, the set-hash equality, the member
+count, three slash fields — describes caller-supplied data.
+
+Guard C-4 was supposed to prevent exactly this. It scanned only
+`verify_governance_suspension` while its own failure message claimed to stop
+"a caller slashing an arbitrary recorder". Verifying one governance entry
+point and assuming the other is the drift that guard exists to prevent, and
+it now scans both.
+
+`GovernanceProof` gained `governance_algorithm_id` so it can be dispatched at
+all, `slash_recorder` takes `now_unix` like every other method on the trait
+(the slash preimage signs the timestamp, so a store reading its own clock
+could not verify anything), and both stores verify before touching the row.
+Three negative tests cover it, mutation-verified: deleting the check turns
+all three red.
+
 ## What still has to be decided
 
 1. **Where the active governance set comes from.** RFC-0968 assumes
@@ -232,13 +263,15 @@ different direction, and splitting it would give the same finding two homes.
 
 ## Acceptance Criteria
 
-- [ ] Retirement carries the algorithm it will be verified under — either
-      `GovernanceProof` gains `governance_algorithm_id`, or retirement moves to
-      `SuspensionAuth`. **Unblocked by nothing; this is the first decision.**
+- [ ] Retirement carries the algorithm it will be verified under.
 - [ ] `declare_retirement_eligible` verifies the proof signature through
-      `verify_governance_signature` on both store implementations.
+      `verify_governance_signature` on both store implementations. **Blocked
+      on the same record-shape question**, now narrowed: the field and the
+      `verify_signature` method it needs both exist, so this is the remaining
+      wiring rather than a design question.
 - [ ] A proof signed by the wrong key is refused, mutation-checked against the
-      length-only check it replaces.
+      length-only check it replaces. **Satisfied for `slash_recorder`** (three
+      tests, mutation-verified) and still open for retirement.
 - [ ] The active governance set is resolved from a trust anchor rather than
       from the proof.
 - [ ] Quorum counts distinct, verified signers.

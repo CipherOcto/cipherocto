@@ -370,14 +370,14 @@ impl ReputationStore for InMemoryReputationStore {
         Err(ReputationError::RecorderNotRegistered(recorder_id.to_u64()))
     }
 
-    async fn slash_recorder(&self, proof: GovernanceProof) -> StoreResult<()> {
+    async fn slash_recorder(&self, proof: GovernanceProof, now_unix: u64) -> StoreResult<()> {
         let snap = proof.snapshot.clone();
         // R13 review (CRITICAL): `is_fresh(0)` / `age_secs(0)` always
         // returns true / 0 because `saturating_sub` of any
-        // finalized_at_unix >= 0 from 0 is 0. Pass the real clock so
-        // stale governance snapshots are rejected. Mirrors the
-        // stoolap backend's use of `crate::migrations::now_unix()`.
-        let now_unix = crate::migrations::now_unix();
+        // finalized_at_unix >= 0 from 0 is 0. This used to read the clock
+        // internally; it now takes the caller's reference timestamp, which is
+        // the same value the signature is verified against, so freshness and
+        // authenticity cannot disagree about what "now" was.
         if !snap.is_fresh(now_unix) {
             return Err(ReputationError::GovernanceSnapshotStale {
                 age_secs: snap.age_secs(now_unix),
@@ -399,6 +399,12 @@ impl ReputationStore for InMemoryReputationStore {
                 expected: 0,
                 actual: 0,
             })?;
+        // The signature check. Without it every check above is a statement
+        // about caller-supplied data, so a caller holding no key could slash
+        // any recorder. `slash_signature_preimage`'s own doc names the attack
+        // this prevents: field-byte-equality without the on-wire signature
+        // check leaves a suppress-destination-on-chain hole.
+        proof.verify_signature(now_unix)?;
         if proof.slash_asset == crate::auth::AssetTag::None {
             return Err(ReputationError::ChainRefInvalid("slash_asset"));
         }
@@ -830,6 +836,7 @@ mod tests {
             members: vec![[1u8; 32]; 3],
         };
         let proof = GovernanceProof {
+            governance_algorithm_id: crate::auth::default_governance_algorithm_id(),
             governance_pubkey: vec![1u8; 32],
             recorder_id: RecorderId::from_u64(0),
             reason_hash: [0u8; 32],
@@ -840,8 +847,48 @@ mod tests {
             slash_amount: 100,
             slash_asset: AssetTag::Octo,
         };
-        let err = store.slash_recorder(proof).await.unwrap_err();
+        let err = store.slash_recorder(proof, now).await.unwrap_err();
         assert_eq!(err.discriminant(), 0x16);
+    }
+
+    /// A slash proof signed by a real key over its own slash preimage.
+    ///
+    /// The fixtures around this used a fabricated 32-byte pubkey and an empty
+    /// signature, and passed — because `slash_recorder` never verified. With
+    /// verification in place a fixture that does not sign is refused, so the
+    /// signing lives here and every caller gets a proof that would survive a
+    /// real verifier.
+    fn signed_slash_proof(
+        recorder_id: RecorderId,
+        destination: SlashDestination,
+        amount: u64,
+        asset: AssetTag,
+        now: u64,
+    ) -> GovernanceProof {
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let mut proof = GovernanceProof {
+            governance_algorithm_id: crate::auth::default_governance_algorithm_id(),
+            governance_pubkey: sk.verifying_key().to_bytes().to_vec(),
+            recorder_id,
+            reason_hash: [0xAB; 32],
+            signature: Vec::new(),
+            snapshot: GovernanceSnapshot {
+                finalized_at_unix: now,
+                governance_set_hash: [0u8; 32],
+                members: vec![[1u8; 32]; 3],
+            },
+            governance_set_hash: [0u8; 32],
+            slash_destination: Some(destination),
+            slash_amount: amount,
+            slash_asset: asset,
+        };
+        let digest = proof
+            .slash_signature_digest(now)
+            .expect("slash destination is set");
+        proof.signature = ed25519_dalek::Signer::sign(&sk, &digest)
+            .to_bytes()
+            .to_vec();
+        proof
     }
 
     #[tokio::test]
@@ -850,23 +897,64 @@ mod tests {
         // R13 review: use a fresh snapshot so the is_fresh gate
         // passes (post-fix the gate reads the real clock).
         let now = crate::migrations::now_unix();
-        let snap = GovernanceSnapshot {
-            finalized_at_unix: now,
-            governance_set_hash: [0u8; 32],
-            members: vec![[1u8; 32]; 3],
-        };
-        let proof = GovernanceProof {
-            governance_pubkey: vec![1u8; 32],
-            recorder_id: RecorderId::from_u64(0),
-            reason_hash: [0u8; 32],
-            signature: vec![],
-            snapshot: snap,
-            governance_set_hash: [0u8; 32],
-            slash_destination: Some(SlashDestination::Treasury),
-            slash_amount: 100,
-            slash_asset: AssetTag::Octo,
-        };
-        store.slash_recorder(proof).await.unwrap();
+        let proof = signed_slash_proof(
+            RecorderId::from_u64(0),
+            SlashDestination::Treasury,
+            100,
+            AssetTag::Octo,
+            now,
+        );
+        store.slash_recorder(proof, now).await.unwrap();
+    }
+
+    /// The bypass this store had, pinned.
+    ///
+    /// Every other check on this path — freshness, the set-hash equality, the
+    /// member count, the three slash fields — describes caller-supplied data,
+    /// so all of them pass for a proof nobody signed. This one must not.
+    #[tokio::test]
+    async fn slash_recorder_refuses_a_proof_nobody_signed() {
+        let store = InMemoryReputationStore::new();
+        let now = crate::migrations::now_unix();
+        let mut proof = signed_slash_proof(
+            RecorderId::from_u64(0),
+            SlashDestination::Treasury,
+            100,
+            AssetTag::Octo,
+            now,
+        );
+        // Same shape, same fields, signature replaced with bytes no key
+        // produced. This is the exact input the pre-fix store accepted.
+        proof.signature = vec![0u8; 64];
+        let err = store.slash_recorder(proof, now).await.unwrap_err();
+        assert_eq!(
+            err.discriminant(),
+            0x11,
+            "an unsigned slash proof must be refused as an invalid signature"
+        );
+    }
+
+    /// A proof signed by a different key than the one it names.
+    #[tokio::test]
+    async fn slash_recorder_refuses_a_proof_signed_by_another_key() {
+        let store = InMemoryReputationStore::new();
+        let now = crate::migrations::now_unix();
+        let mut proof = signed_slash_proof(
+            RecorderId::from_u64(0),
+            SlashDestination::Treasury,
+            100,
+            AssetTag::Octo,
+            now,
+        );
+        let other = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32]);
+        let digest = proof.slash_signature_digest(now).unwrap();
+        proof.signature = ed25519_dalek::Signer::sign(&other, &digest)
+            .to_bytes()
+            .to_vec();
+        assert!(
+            store.slash_recorder(proof, now).await.is_err(),
+            "a signature from a key other than the named one must not authorize a slash"
+        );
     }
 
     /// R13 review (CRITICAL): stale governance snapshots MUST be
@@ -887,6 +975,7 @@ mod tests {
             members: vec![[1u8; 32]; 3],
         };
         let proof = GovernanceProof {
+            governance_algorithm_id: crate::auth::default_governance_algorithm_id(),
             governance_pubkey: vec![1u8; 32],
             recorder_id: RecorderId::from_u64(0),
             reason_hash: [0u8; 32],
@@ -897,7 +986,10 @@ mod tests {
             slash_amount: 100,
             slash_asset: AssetTag::Octo,
         };
-        let err = store.slash_recorder(proof).await.unwrap_err();
+        let err = store
+            .slash_recorder(proof, crate::migrations::now_unix())
+            .await
+            .unwrap_err();
         match err {
             ReputationError::GovernanceSnapshotStale { age_secs, .. } => {
                 assert!(age_secs > 0, "stale snapshot must report positive age");
@@ -997,6 +1089,7 @@ mod tests {
             members: vec![[1u8; 32], [2u8; 32], [3u8; 32]],
         };
         let proof = GovernanceProof {
+            governance_algorithm_id: crate::auth::default_governance_algorithm_id(),
             governance_pubkey: vec![1u8; 32],
             recorder_id: RecorderId::from_u64(0),
             reason_hash: [0u8; 32],

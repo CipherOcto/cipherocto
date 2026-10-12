@@ -166,8 +166,8 @@ impl<S: ReputationStore, L: LegacyReputationStore> ReputationStore for Reputatio
             .await
     }
 
-    async fn slash_recorder(&self, proof: GovernanceProof) -> StoreResult<()> {
-        self.inner.slash_recorder(proof).await
+    async fn slash_recorder(&self, proof: GovernanceProof, now_unix: u64) -> StoreResult<()> {
+        self.inner.slash_recorder(proof, now_unix).await
     }
 
     async fn declare_retirement_eligible(

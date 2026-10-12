@@ -182,7 +182,7 @@ where
 
     // Delegate to the canonical store. The trait impl validates
     // freshness + governance quorum + non-zero amount/asset.
-    store.slash_recorder(proof).await
+    store.slash_recorder(proof, now_unix).await
 }
 
 #[cfg(test)]
@@ -229,11 +229,20 @@ mod tests {
         asset: AssetTag,
         now_unix: u64,
     ) -> GovernanceProof {
-        GovernanceProof {
-            governance_pubkey: vec![1u8; 32],
+        // Signed over the proof's own slash preimage.
+        //
+        // This helper used to emit `governance_pubkey: vec![1u8; 32]` with
+        // `signature: vec![0u8; 96]` labelled "stub for integration test",
+        // and the tests below passed — because nothing verified either. The
+        // stub bytes were the reason those tests could not distinguish a
+        // working governance path from a bypass.
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let mut proof = GovernanceProof {
+            governance_algorithm_id: crate::auth::default_governance_algorithm_id(),
+            governance_pubkey: sk.verifying_key().to_bytes().to_vec(),
             recorder_id,
             reason_hash: [0u8; 32],
-            signature: vec![0u8; 96],
+            signature: Vec::new(),
             snapshot: GovernanceSnapshot {
                 finalized_at_unix: now_unix,
                 governance_set_hash: [0u8; 32],
@@ -243,7 +252,13 @@ mod tests {
             slash_destination: destination,
             slash_amount: amount,
             slash_asset: asset,
+        };
+        if let Some(digest) = proof.slash_signature_digest(now_unix) {
+            proof.signature = ed25519_dalek::Signer::sign(&sk, &digest)
+                .to_bytes()
+                .to_vec();
         }
+        proof
     }
 
     fn store() -> InMemoryReputationStore {
@@ -434,11 +449,16 @@ mod tests {
             asset: AssetTag,
             now_unix: u64,
         ) -> GovernanceProof {
-            GovernanceProof {
-                governance_pubkey: vec![1u8; 32],
+            // Signed over the proof's own slash preimage — see the sibling
+            // `build_proof` in the outer test module for why the stub bytes
+            // this used to carry are no longer possible.
+            let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+            let mut proof = GovernanceProof {
+                governance_algorithm_id: crate::auth::default_governance_algorithm_id(),
+                governance_pubkey: sk.verifying_key().to_bytes().to_vec(),
                 recorder_id,
                 reason_hash: [0u8; 32],
-                signature: vec![0u8; 96], // stub for integration test
+                signature: Vec::new(),
                 snapshot: GovernanceSnapshot {
                     finalized_at_unix: now_unix,
                     governance_set_hash: [0u8; 32],
@@ -448,7 +468,13 @@ mod tests {
                 slash_destination: Some(destination),
                 slash_amount: amount,
                 slash_asset: asset,
+            };
+            if let Some(digest) = proof.slash_signature_digest(now_unix) {
+                proof.signature = ed25519_dalek::Signer::sign(&sk, &digest)
+                    .to_bytes()
+                    .to_vec();
             }
+            proof
         }
 
         /// AC item 7, direction 1 — the witness substrate's 2/3 YES
@@ -559,38 +585,105 @@ mod tests {
                 now,
             )
             .await;
-            // Whether the slash issuance path itself records a
-            // separate Slash event for the recorder_did subject
-            // depends on the store's `slash_recorder` semantics
-            // — what the test pins is the property that the
-            // canonical path RAN (returned Ok) and did NOT
-            // short-circuit on the byte-equality gate.
-            // The pre-call vs post-call behavior observed by
-            // `replay_for_audit` (which counts substrate-level
-            // events) does not double-count because
-            // `slash_recorder` operates at a different table
-            // (`reputation_slashes`, not `reputation_events`).
-            // We keep the assertion at the level of "canonical
-            // path returns Ok / Err reproducibly".
-            match r {
-                Ok(()) | Err(_) => {
-                    // Both Ok and Err are valid outcomes —
-                    // what's not valid is the path having
-                    // silently bypassed the byte-equality gate.
-                    // Replay must remain at the substrate count.
-                    let after_count = store
-                        .replay_for_audit(&did, 0, u64::MAX)
-                        .await
-                        .unwrap()
-                        .iter()
-                        .filter(|e| e.signal_kind == SignalKind::Slash)
-                        .count();
-                    assert_eq!(
-                        after_count, before_count,
-                        "governance path must not duplicate substrate slash into events table"
-                    );
-                }
-            }
+            // A correctly signed proof clears every governance gate and reaches the
+            // database, where it stops because this test never registered
+            // recorder 0x55.
+            //
+            // This was `match r { Ok(()) | Err(_) => ... }` — both branches
+            // accepted, so the assertion could not fail, and the `Ok` arm was
+            // never exercised. The premise "the canonical path returns Ok"
+            // was false for the whole time it was written: the recorder does
+            // not exist in this fixture. What the test actually establishes is
+            // that the path runs to the store rather than short-circuiting on
+            // the byte-equality gate, so that is what is now asserted.
+            assert!(
+                r.is_err(),
+                "recorder 0x55 is never registered in this fixture, so the \
+                 canonical path cannot report success: {r:?}"
+            );
+            assert_eq!(
+                r.as_ref().unwrap_err().discriminant(),
+                0x06,
+                "the canonical path must reach the store, not stop at a \
+                 governance gate (0x17 = byte-equality, 0x11 = signature)"
+            );
+            // Replay must remain at the substrate count: `slash_recorder`
+            // operates at a different table (`reputation_recorders`), so it
+            // does not double-count into the events table.
+            let after_count = store
+                .replay_for_audit(&did, 0, u64::MAX)
+                .await
+                .unwrap()
+                .iter()
+                .filter(|e| e.signal_kind == SignalKind::Slash)
+                .count();
+            assert_eq!(
+                after_count, before_count,
+                "governance path must not duplicate substrate slash into events table"
+            );
+        }
+
+        /// The bypass this backend had, pinned.
+        ///
+        /// `stoolap::slash_recorder` runs `UPDATE reputation_recorders SET
+        /// slashed = 1`. Before the signature check, every gate ahead of that
+        /// UPDATE described caller-supplied data — freshness, a set hash
+        /// compared against itself, a member count, three field checks — so a
+        /// caller holding no key could flip any recorder row. This is the
+        /// same shape `build_proof` produces, with the signature replaced.
+        #[tokio::test]
+        async fn forged_governance_proof_does_not_persist_a_slash() {
+            let store = StoolapReputationStore::open_in_memory().await.unwrap();
+            let did = recorder_did(0x0A);
+            let now = 1_700_000_000;
+            store
+                .record_signal(seed_slash_event(101, did))
+                .await
+                .unwrap();
+            let before = store
+                .replay_for_audit(&did, 0, u64::MAX)
+                .await
+                .unwrap()
+                .iter()
+                .filter(|e| e.signal_kind == SignalKind::Slash)
+                .count();
+
+            let mut proof = build_proof(
+                RecorderId::from_u64(0x66),
+                SlashDestination::Treasury,
+                1_000,
+                AssetTag::Octo,
+                now,
+            );
+            // Bytes no key produced. Everything else about the proof is
+            // well-formed and passes every pre-existing check.
+            proof.signature = vec![0u8; 64];
+
+            let r = issue_governance_slash(
+                &store,
+                RecorderId::from_u64(0x66),
+                SlashDestination::Treasury,
+                1_000,
+                AssetTag::Octo,
+                proof,
+                now,
+            )
+            .await;
+            let err = r.expect_err("a proof nobody signed must not authorize a slash");
+            // The discriminant is the assertion. `0x11` is
+            // GovernanceSignatureInvalid; `0x06` is RecorderNotRegistered,
+            // which is where an unchecked proof lands in this fixture because
+            // recorder 0x66 was never registered. Asserting only `is_err()`
+            // would pass either way, which is the whole point: with the
+            // signature check deleted this returns 0x06 and the test still
+            // passes. It is the *order* that matters — the signature must be
+            // checked before the row is touched.
+            assert_eq!(
+                err.discriminant(),
+                0x11,
+                "the signature gate must fire before the store reaches the \
+                 database; got {err:?}"
+            );
         }
     }
 }

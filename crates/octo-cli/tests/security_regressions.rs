@@ -527,13 +527,27 @@ fn c4_every_reputation_store_verifies_the_governance_signature() {
     // check caught.
     for store in REPUTATION_STORES {
         let src = strip_comments(&read(store));
-        let body = fn_body(&src, "async fn verify_governance_suspension");
-        assert!(
-            body.contains("verify_governance_signature("),
-            "C-4: {store} does not verify the governance signature. A governance \
-             proof would suspend or slash an arbitrary recorder with no key \
-             material."
-        );
+        // Both governance entry points, not one.
+        //
+        // This scanned only `verify_governance_suspension` while its own
+        // failure message claimed to stop a caller slashing an arbitrary
+        // recorder. It never looked at `slash_recorder`, which is a different
+        // method taking a different record (`GovernanceProof`, not
+        // `SuspensionAuth`) and which ran an `UPDATE ... SET slashed = 1`
+        // with no signature check at all. Verifying one entry point and
+        // assuming the other is exactly the drift this test exists to stop.
+        for (method, record) in [
+            ("async fn verify_governance_suspension", "SuspensionAuth"),
+            ("async fn slash_recorder", "GovernanceProof"),
+        ] {
+            let body = fn_body(&src, method);
+            assert!(
+                body.contains("verify_signature(") || body.contains("verify_governance_signature("),
+                "C-4: {store} {method} does not verify the governance \
+                 signature. A {record} would suspend or slash an arbitrary \
+                 recorder with no key material."
+            );
+        }
     }
 }
 

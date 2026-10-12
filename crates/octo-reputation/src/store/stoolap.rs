@@ -980,11 +980,11 @@ mod real {
             Ok(())
         }
 
-        async fn slash_recorder(&self, proof: GovernanceProof) -> StoreResult<()> {
+        async fn slash_recorder(&self, proof: GovernanceProof, now_unix: u64) -> StoreResult<()> {
             let snap = proof.snapshot.clone();
-            if !snap.is_fresh(crate::migrations::now_unix()) {
+            if !snap.is_fresh(now_unix) {
                 return Err(ReputationError::GovernanceSnapshotStale {
-                    age_secs: snap.age_secs(crate::migrations::now_unix()),
+                    age_secs: snap.age_secs(now_unix),
                     max: crate::constants::MAX_GOVERNANCE_SNAPSHOT_AGE_SECS,
                 });
             }
@@ -1003,6 +1003,11 @@ mod real {
                     actual: 0,
                 });
             }
+            // The signature check, and it must precede the UPDATE below:
+            // everything checked so far describes caller-supplied data, so
+            // without it a caller holding no key could flip `slashed = 1` on
+            // any recorder row.
+            proof.verify_signature(now_unix)?;
             if matches!(proof.slash_asset, AssetTag::None) {
                 return Err(ReputationError::ChainRefInvalid("slash_asset"));
             }
@@ -1979,7 +1984,7 @@ mod stub {
         ) -> StoreResult<()> {
             stub("suspend_recorder")
         }
-        async fn slash_recorder(&self, _: GovernanceProof) -> StoreResult<()> {
+        async fn slash_recorder(&self, _: GovernanceProof, _: u64) -> StoreResult<()> {
             stub("slash_recorder")
         }
         async fn declare_retirement_eligible(

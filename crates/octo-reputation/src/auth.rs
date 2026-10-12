@@ -129,6 +129,14 @@ impl AssetTag {
 /// subsystem. The shape, freshness, and quorum checks are.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GovernanceProof {
+    /// The algorithm `signature` is verified under.
+    ///
+    /// Carried on the record, as on [`SuspensionAuth`], so a verifier cannot
+    /// assume Ed25519 for a proof that names something else. The
+    /// `governance_pubkey` doc below has always claimed this record names its
+    /// algorithm; until this field existed it did not, and the claim described
+    /// a field that was absent.
+    pub governance_algorithm_id: octo_ident::AlgorithmId,
     /// Public key of the primary signer.
     ///
     /// A `Vec<u8>`, not `[u8; 32]`. This record names the algorithm it is
@@ -355,8 +363,59 @@ pub fn verify_governance_signature(
     // safely because the implementation checks length before converting.
     let message =
         governance_suspension_digest(recorder_id, reason_hash, governance_pubkey, now_unix);
-    octo_algo_ed25519::verify_dispatch(algorithm_id, governance_pubkey, &message, signature)
+    dispatch_governance_check(algorithm_id, governance_pubkey, &message, signature)
+}
+
+/// The single `AlgorithmRegistry` dispatch site for governance signatures.
+///
+/// Both `verify_governance_signature` and `GovernanceProof::verify_signature`
+/// route through here. A second `verify_dispatch` call would be a second
+/// place for the algorithm choice to drift, which is what guard C-4 asserts
+/// against.
+fn dispatch_governance_check(
+    algorithm_id: &octo_ident::AlgorithmId,
+    governance_pubkey: &[u8],
+    message: &[u8],
+    signature: &[u8],
+) -> Result<(), ReputationError> {
+    octo_algo_ed25519::verify_dispatch(algorithm_id, governance_pubkey, message, signature)
         .map_err(|_| ReputationError::GovernanceSignatureInvalid)
+}
+
+impl GovernanceProof {
+    /// Verify this proof's signature against the preimage its own shape selects.
+    ///
+    /// A proof carrying `slash_destination` is signed over
+    /// [`GovernanceProof::slash_signature_preimage`], which binds the
+    /// destination, amount and
+    /// asset too. A proof without one is a suspension and is signed over
+    /// [`governance_suspension_digest`]. Choosing by the record's own shape is
+    /// what stops a caller signing the cheap preimage and presenting a slash
+    /// against the expensive one.
+    ///
+    /// `slash_signature_digest` returns `None` only when
+    /// `slash_destination` is `None`, which is exactly the suspension case, so
+    /// the fallback arm cannot fail to produce a digest.
+    pub fn verify_signature(&self, now_unix: u64) -> Result<(), ReputationError> {
+        let message = match self.slash_signature_digest(now_unix) {
+            Some(digest) => digest.to_vec(),
+            None => self.suspension_signature_digest(now_unix).to_vec(),
+        };
+        // The zero-key sentinel, matching `verify_governance_signature`. A
+        // check written against a fixed-size literal would never fire for an
+        // algorithm whose keys are a different size.
+        if self.governance_pubkey.iter().all(|b| *b == 0) {
+            return Err(ReputationError::GovernanceSignatureInvalid);
+        }
+        // No length pre-filter, for the reason the free function gives: the
+        // registered algorithm reports `BadSignatureLength` itself.
+        dispatch_governance_check(
+            &self.governance_algorithm_id,
+            &self.governance_pubkey,
+            &message,
+            &self.signature,
+        )
+    }
 }
 
 /// The algorithm a freshly built [`SuspensionAuth`] is stamped with.
@@ -894,6 +953,7 @@ mod tests {
     fn dummy_proof() -> GovernanceProof {
         let now: u64 = 1_700_000_000;
         GovernanceProof {
+            governance_algorithm_id: crate::auth::default_governance_algorithm_id(),
             governance_pubkey: vec![7u8; 32],
             recorder_id: RecorderId::from_u64(42),
             reason_hash: [0xAB; 32],
@@ -1164,6 +1224,7 @@ mod tests {
         let digest = governance_suspension_digest(&recorder_id, &reason_hash, &pk, now);
         let signature = sk.sign(&digest).to_bytes().to_vec();
         let proof = GovernanceProof {
+            governance_algorithm_id: crate::auth::default_governance_algorithm_id(),
             governance_pubkey: pk.to_vec(),
             recorder_id,
             reason_hash,
@@ -1326,8 +1387,14 @@ mod tests {
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(store),
             )
             .unwrap_or_else(|e| panic!("read {store}: {e}"));
+            // Production region only. A test fixture that *constructs* a
+            // record legitimately stamps it with the mint-time default —
+            // that is what the default is for. What must never happen is
+            // production code substituting the default for the algorithm the
+            // record names, which is what this asserts.
+            let production = src.split("#[cfg(test)]").next().unwrap_or(&src);
             assert!(
-                !src.contains("default_governance_algorithm_id()"),
+                !production.contains("default_governance_algorithm_id()"),
                 "{label} store assumes the governance algorithm instead of \
                  reading it from SuspensionAuth. A record naming an \
                  unregistered algorithm would then be verified as Ed25519."

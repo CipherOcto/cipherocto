@@ -73,6 +73,29 @@ is half-fixed by counting the files its walk already reads.
 So all three exposed scans are floored, and the remaining four were cleared by
 reading each one rather than by pattern-matching it.
 
+## Where the remaining coverage risk actually sits
+
+The gap is not spread evenly, and that matters more than the headline number.
+Every mutation added so far targets a file outside octo-cli's dependency closure,
+because that is what keeps it build-free. The guards whose failures would hurt
+most are the opposite case.
+
+`no_verification_site_hardcodes_an_algorithm` is the clearest example. It is
+also the best-defended guard in the file — it asserts every listed directory
+exists, floors `scanned_dirs > 0`, and floors `scanned_total >= 250` as what it
+calls the stronger half of the same floor. A faithful mutation for it has to put
+a hardcoded algorithm into a verification site in one of the crates it scans, and
+**all nine of those crates are inside octo-cli's closure**, as is the tenth it
+picks up separately. Any honest mutation therefore forces a rebuild of octo-cli
+and its graph.
+
+So the cheap recipe cannot reach the expensive guards, which is worth stating
+plainly rather than discovering later. Reaching them needs either disk headroom
+or a split harness: the file-scanning entries are cheap enough to run anywhere,
+the code-mutating ones belong somewhere with room to compile. Until one of those
+exists, expect coverage to stall at exactly the guards where a vacuous pass would
+be most expensive.
+
 ## Which harness entries are actually proven
 
 Eleven of the harness's twenty-three entries have now been executed and

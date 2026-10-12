@@ -4963,3 +4963,90 @@ fn no_production_code_calls_a_placeholder_decoder() {
          BearerVerification from these functions is indistinguishable from a verified one."
     );
 }
+
+/// No `#[test]` function may have an empty body.
+///
+/// An empty body cannot fail, so the test's name is a promise that nothing
+/// keeps. Two instances were found by a wider sweep of every test in the
+/// tree: one carried a comment describing a live panic in the code it was
+/// supposed to cover, and one conceded in prose that the API "is verified by
+/// the existence of both methods". Both were green forever.
+///
+/// This is deliberately narrower than "a test with no assertion token".
+/// A body that delegates its assertion to a helper, or that relies on a
+/// `#[should_panic]` attribute, is perfectly good and must not be reported.
+/// Only a body with nothing in it — after comments are removed — is a
+/// defect, because that case has no reading under which it tests anything.
+#[test]
+fn no_test_has_an_empty_body() {
+    let root = workspace_root();
+    let files = tracked_docs(&root);
+    let rs_files: Vec<&String> = files.iter().filter(|f| f.ends_with(".rs")).collect();
+    assert!(
+        rs_files.len() > 500,
+        "only {} tracked .rs files were found — this guard is not looking at \
+         enough of the tree to mean anything",
+        rs_files.len()
+    );
+
+    let mut findings: Vec<String> = Vec::new();
+    let mut tests_seen = 0usize;
+
+    for rel in &rs_files {
+        let Ok(src) = std::fs::read_to_string(root.join(rel)) else {
+            continue;
+        };
+        let lines: Vec<&str> = src.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            let t = line.trim();
+            if t != "#[test]" && t != "#[tokio::test]" {
+                continue;
+            }
+            // The declaration is the next line naming a fn; skip any
+            // attribute that sits between the two.
+            let Some(decl) = lines
+                .iter()
+                .enumerate()
+                .skip(i + 1)
+                .find(|(_, l)| {
+                    let lt = l.trim();
+                    lt.starts_with("fn ") || lt.starts_with("async fn ")
+                })
+                .map(|(idx, _)| idx)
+            else {
+                continue;
+            };
+            tests_seen += 1;
+
+            let name_start = lines[decl].find("fn ").map(|p| p + 3).unwrap_or(0);
+            let name_end = lines[decl][name_start..]
+                .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .map(|p| name_start + p)
+                .unwrap_or(lines[decl].len());
+            let name = &lines[decl][name_start..name_end];
+
+            // `fn foo() {}` puts both braces on the declaration line.
+            if lines[decl].contains("{}") {
+                findings.push(format!("{rel}: `fn {name}` has an empty body"));
+                continue;
+            }
+
+            let from: usize = lines[..decl].iter().map(|l| l.len() + 1).sum();
+            let body = fn_body_from(&src[from..], 0);
+            if strip_comments(body).trim().is_empty() {
+                findings.push(format!("{rel}: `fn {name}` has an empty body"));
+            }
+        }
+    }
+
+    assert!(
+        tests_seen > 5000,
+        "only {tests_seen} test functions were inspected — this guard is not \
+         looking at enough of the tree to mean anything"
+    );
+    assert!(
+        findings.is_empty(),
+        "an empty test body cannot fail, so the name promises something nothing \
+         checks: {findings:?}"
+    );
+}

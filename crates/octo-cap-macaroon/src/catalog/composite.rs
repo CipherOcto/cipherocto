@@ -73,6 +73,18 @@ impl CapabilityCatalog for CompositeCapabilityCatalog {
         self.storage.settlement_chain_tip()
     }
 
+    /// Delegates to the storage backend, like every other storage method here.
+    ///
+    /// Without this the composite would inherit the trait default of `None`
+    /// even when the catalog it wraps has a registry — and the composite is
+    /// the production composition point, so wrapping a store-backed catalog
+    /// would silently hide the one thing a mint caller needs. A composite
+    /// that forwards four of five storage methods and drops the fifth is a
+    /// bug that reads as configuration.
+    fn holder_registry(&self) -> Option<&dyn crate::holder_registry::HolderRegistry> {
+        self.storage.holder_registry()
+    }
+
     fn gossip_to_buyer_sync(
         &self,
         _buyer_did: &str,
@@ -115,6 +127,10 @@ impl CapabilityGossip for CompositeGossip {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clock::Clock;
+    use crate::holder_kind::HolderKind;
+    use crate::holder_record::HolderRecord;
+    use crate::holder_registry::{HolderRegistry, RegistryError};
 
     /// Storage mock that returns a fixed `Macaroon` for one id.
     struct FixedStorage {
@@ -260,5 +276,100 @@ mod tests {
         let composite = CompositeCapabilityCatalog::new(storage, gossip);
         assert_eq!(composite.root_secret_for_ask(&[0; 32]), Some([0xab; 32]));
         assert_eq!(composite.settlement_chain_tip(), Some([0xcd; 32]));
+    }
+
+    /// Storage backend that *has* a holder registry, so the delegation can be
+    /// told apart from the trait default returning `None`.
+    struct StorageWithRegistry {
+        inner: FixedStorage,
+    }
+
+    /// Empty registry. Nothing needs to round-trip through it here — the
+    /// property under test is reachability, not storage.
+    struct TinyRegistry;
+
+    impl HolderRegistry for TinyRegistry {
+        fn lookup(&self, _: &[u8; 32]) -> Result<Option<HolderRecord>, RegistryError> {
+            Ok(None)
+        }
+        fn lookup_by_ask(
+            &self,
+            _: &[u8; 32],
+            _: HolderKind,
+        ) -> Result<Option<HolderRecord>, RegistryError> {
+            Ok(None)
+        }
+        fn lookup_active(
+            &self,
+            _: &[u8; 32],
+            _: &dyn Clock,
+        ) -> Result<Option<HolderRecord>, RegistryError> {
+            Ok(None)
+        }
+        fn insert(&self, _: HolderRecord) -> Result<(), RegistryError> {
+            Ok(())
+        }
+        fn revoke(&self, _: &[u8; 32], _: &dyn Clock) -> Result<(), RegistryError> {
+            Ok(())
+        }
+        fn sync_peers(&self) -> Result<(), RegistryError> {
+            Ok(())
+        }
+    }
+
+    impl CapabilityCatalog for StorageWithRegistry {
+        fn lookup(&self, id: &[u8; 32]) -> Option<Macaroon> {
+            self.inner.lookup(id)
+        }
+        fn holder_registry(&self) -> Option<&dyn HolderRegistry> {
+            Some(&TINY_REGISTRY)
+        }
+    }
+
+    static TINY_REGISTRY: TinyRegistry = TinyRegistry;
+
+    /// The composite forwards the accessor instead of swallowing it.
+    ///
+    /// This is the regression the delegation prevents. The composite already
+    /// delegates `lookup`, `is_raw_name_registered`, `root_secret_for_ask` and
+    /// `settlement_chain_tip` to its storage backend; inheriting the `None`
+    /// default for a fifth would hide a real store behind the production
+    /// composition point. It would be indistinguishable from a deployment that
+    /// simply has no registry, which is the failure this whole chain is about.
+    #[test]
+    fn the_composite_forwards_the_holder_registry_accessor() {
+        let composite = CompositeCapabilityCatalog::new(
+            Arc::new(StorageWithRegistry {
+                inner: FixedStorage {
+                    id: [0x07; 32],
+                    macaroon: sample_macaroon(),
+                    raw_name: "test-raw".into(),
+                },
+            }),
+            Arc::new(RecordingGossip {
+                calls: std::sync::Mutex::new(Vec::new()),
+            }),
+        );
+        assert!(
+            composite.holder_registry().is_some(),
+            "a composite wrapping a store-backed catalog must not hide the registry"
+        );
+    }
+
+    /// A composite over a registry-less catalog still reports `None`, rather
+    /// than inventing one.
+    #[test]
+    fn the_composite_over_a_registry_less_catalog_reports_none() {
+        let composite = CompositeCapabilityCatalog::new(
+            Arc::new(FixedStorage {
+                id: [0x07; 32],
+                macaroon: sample_macaroon(),
+                raw_name: "test-raw".into(),
+            }),
+            Arc::new(RecordingGossip {
+                calls: std::sync::Mutex::new(Vec::new()),
+            }),
+        );
+        assert!(composite.holder_registry().is_none());
     }
 }

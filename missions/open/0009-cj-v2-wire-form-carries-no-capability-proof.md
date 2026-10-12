@@ -184,6 +184,16 @@ the v1 macaroon wire is the direction the measurement supports; whether the V2
 bundle survives as a scoped descriptor is the maintainers' call, and it is
 written up as draft RFC-0009-A1 rather than decided here.
 
+**Routed, not finished.** The amendment is at
+`rfcs/draft/process/0009-a1-v2-bundle-is-not-a-credential.md` and the
+implementation that would follow it is at
+`missions/deferred/0009-cj1-restore-the-v1-wire-as-the-mint-response-payload.md`,
+deferred because an RFC pending is one of the three named triggers for that state
+in `docs/BLUEPRINT.md` §Mission Lifecycle. Writing the mission now is useful and
+implementing it early would not be: RFC-0009-A1 §Alternatives Considered has a
+second legitimate reading of this same defect, and picking between them without
+review is the mistake the process exists to prevent.
+
 ## Root cause: the RFC specified typed fields, and the implementation byte-ified them
 
 This is the part that makes the finding fixable rather than merely real.

@@ -14,9 +14,12 @@ metadata:
 
 ## Status
 
-Partly resolved. The path-dependency guard's blind spot is **fixed** — see §A
-blind spot below. The mutation coverage gap is untouched: no mutation campaign
-has been run and no guard has been added to the harness.
+Substantially resolved. The path-dependency guard's blind spot is **fixed** —
+see §A blind spot below — and two mutations have landed, taking mutation
+coverage from 9 of 65 guards to **11 of 65**. Adding the second of those exposed
+a false pass in the harness itself, now fixed — see §A false pass found below.
+The remaining 54 guards still have no mutation, and no full campaign has been
+run.
 
 ## The finding
 
@@ -130,14 +133,40 @@ pushed off indefinitely.
       hazard the current skip exists to avoid
 - [x] That change is verified in both directions: a planted unused
       section-form dependency goes red, and the four real ones stay green
-- [ ] A mutation is added for each guard that reads files at runtime, starting
-      with the ones whose names promise the most
-- [ ] Any harness using the prebuilt-binary path refuses to run when the binary
-      is older than the guard source, rather than reporting a result that
-      proves nothing
+- [x] A mutation is added for each guard that reads files at runtime, starting
+      with the ones whose names promise the most — **two landed**
+      (`no_test_has_an_empty_body`, `no_path_dependency_is_declared_and_never_referenced`),
+      taking coverage from 9 of 65 to **11 of 65**
+- [x] Any harness using the prebuilt-binary path refuses to run when the binary
+      is older than the guard source — **satisfied a different way**: the
+      committed harness runs through cargo, which rebuilds by construction, so
+      the staleness hazard cannot arise there
 - [ ] The guard count and the covered count are re-measured when this mission
       closes, and recorded the way the archived cite sweep recorded its own
       re-count requirement
+
+## A false pass found in the harness while doing this
+
+The first version of the second mutation named an invented crate. Cargo refused
+to resolve it, and the harness reported **RED ok** with exit 0 — a pass it had
+not earned, because the guard never ran. Its rule only excluded
+`could not compile`, so any other cargo failure counted as a red guard.
+
+This is the same failure class as a guard that reports for the wrong reason, in
+the tooling whose entire purpose is to detect that class. It was caught only
+because the entry printed `(no test-result line)` instead of a result line, and
+that was noticed.
+
+The outcome rule now requires evidence: a genuine red always prints a
+test-result line, so its absence is classified as a bad mutation with cargo's
+own error quoted. Verified both ways — the corrected entry reports RED ok with a
+real result line, and re-introducing the invented name is reported BAD-MUTATION
+with exit 1, where it previously exited 0.
+
+Two lessons worth carrying: a mutation must name something that exists, because
+a dependency key has to match the package it points at unless renamed with
+`package =`; and a verification harness needs the same scepticism about its own
+green as it applies to a guard's.
 
 ## Why the rest is filed rather than fixed
 

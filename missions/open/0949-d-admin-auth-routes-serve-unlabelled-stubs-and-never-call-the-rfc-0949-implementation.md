@@ -146,6 +146,34 @@ keep the compiler quiet without checking it. This is why the divergence was
 never caught: the tests could not fail, and they were in the file where a
 reviewer would look first.
 
+## What "wire it" would actually cost
+
+Measured, because the two options are not symmetric and the mission should
+not imply they are.
+
+**Nothing in the repository consumes these routes.** A search for the paths
+returns two source files and no client. `admin_rate_limit.rs` keys rate
+limiting on them, and `oauth2.rs` mentions `/oauth/token` for unrelated
+reasons. No caller, no SDK, no test outside `admin.rs` itself.
+
+**The two implementations do not agree on the URL.** The RFC-0949 discovery
+document builds `token_endpoint` as `{issuer}/oauth/token`, the standard OIDC
+form. The admin router serves `/auth/token`. So wiring is not a matter of
+swapping one call for another — the path convention itself has to be
+reconciled, in the router and in the rate limiter, which keys on the same
+strings.
+
+**The signature does not carry what the real implementation needs.**
+`handle_request` takes `storage` and `registry`. The RFC-0949 token path
+wants a session store and a revocation blacklist. Neither is a parameter
+today, so this is a signature change through the whole admin router.
+
+That does not make deletion the right answer — the RFC-0949 implementation is
+real, tested, and was built for this. It does mean the two options are not
+"fix a bug" and "leave it", but "build the wiring, which touches the router
+signature, the path convention and the rate limiter" versus "return 404
+until someone does". That is a scoping decision, and it is the maintainer's.
+
 ## Why this is filed rather than fixed
 
 Three questions are not the agent's to answer:

@@ -15,7 +15,7 @@ metadata:
 ## Status
 
 Largely resolved. The path-dependency guard's blind spot is **fixed** — see §A
-blind spot below — and mutation coverage has moved from 9 of 65 guards to **51 of 65**, a figure the harness now derives from its own
+blind spot below — and mutation coverage has moved from 9 of 65 guards to **56 of 65**, a figure the harness now derives from its own
 table rather than one maintained by hand — see §Coverage counted twice, and the
 count that was wrong. Adding one of them exposed a false pass in the harness
 itself, now fixed — see §A false pass found below.
@@ -308,7 +308,7 @@ now produced by reading the harness table and collecting the distinct
 
 ```
 $ python3 scripts/mutate-zk-guards.py --list | tail -1
-  65 entries -> 51 distinct guards in security_regressions.rs  (+7 entries targeting other crates' suites)
+  70 entries -> 56 distinct guards in security_regressions.rs  (+7 entries targeting other crates' suites)
 ```
 
 That line is printed by the harness itself, derived by reading its own table. It
@@ -316,7 +316,7 @@ did not exist when the count was first wrong, and putting it there is the fix:
 the number can no longer drift from the thing it counts, because it is recomputed
 every time anyone asks.
 
-**65 entries cover 51 guards, and the two numbers must not be conflated.** Seven
+**70 entries cover 56 guards, and the two numbers must not be conflated.** Seven
 entries do not target `security_regressions.rs` at all — three run
 `zk-vendor`'s `library_path` suite, two run `zk-verifier`, two run
 `cipherocto-fs-perms`. They are real mutations against real guards, but those
@@ -379,7 +379,7 @@ holds, and the harness classifies it correctly.
 
 ## Where coverage stops, and what is left
 
-**51 of 65.** The remaining fourteen are not all equally reachable, and
+**56 of 65.** The remaining fourteen are not all equally reachable, and
 pretending otherwise would make the number decorative. Grouped by why:
 
 **Structurally unreachable — a mutation cannot be built (4).**
@@ -406,19 +406,68 @@ guard's and has not been written.
 properties of the test harness itself, so a mutation has to be planted in a
 `#[cfg(test)]` module of another crate and stay compiling.
 
-**Simply not reached yet (5).** `m4_ffi_calls_are_serialized`,
-`no_capability_token_api_names_ed25519_dalek`,
-`c4_the_signature_verifier_is_a_single_shared_choke_point`,
-`every_governance_signature_verification_also_verifies_its_snapshot`,
-`the_alias_helpers_find_the_indirection_they_exist_for` and
-`only_the_issuing_nodes_build_a_holder_record_in_production` are ordinary
-cases with straightforward mutations that have not been written. That is the
-honest state: not hard, just not done.
+**The "one token, many occurrences" class grew to five.** `m4_ffi_calls_are_serialized`
+and `c4_the_signature_verifier_is_a_single_shared_choke_point` join
+`ac11_the_ed25519_registration_itself_is_where_keys_get_built`: each asserts on a
+token that occurs several times in a **compiled** crate. Renaming it breaks
+every call site; replacing one occurrence leaves the rest and the guard stays
+green. The harness replaces one contiguous span and has no replace-all, so all
+three are unreachable here. That is a **harness limitation, not a property of
+the guards** — adding a replace-all mode would convert all three at once, and it
+is the highest-value single change left in the tool.
+
+**Remaining without a mutation (10).** `m10_persist_contacts_still_accepts_a_valid_pagination_pair`,
+`the_production_split_survives_an_item_level_test_marker`,
+`every_dispatched_payload_kind_is_driven_through_an_envelope_in_tests`,
+`every_verifier_trait_has_a_production_implementation_or_is_accounted_for`,
+`ac11_pending_table_is_complete_for_every_crate_it_covers`,
+`ac11_every_allowlist_entry_still_exists_and_still_has_a_reason` and the
+five above.
 
 The point of the grouping is that **"fourteen unbacked guards" reads very
 differently from "fourteen unbacked guards, of which six cannot be backed, two
 would need a mutation that proves the test rather than the guard, and six are
 ordinary work"** — and only the second sentence is actionable.
+
+## A replace-all would convert five guards at once
+
+Five guards are unreachable **because of the harness**, not because of anything
+about the guards themselves. Each asserts on a token that appears several times
+in a crate that has to compile:
+
+- `ac11_the_ed25519_registration_itself_is_where_keys_get_built` —
+  `VerifyingKey::from_bytes`, several call sites
+- `m4_ffi_calls_are_serialized` — `call_lock`, five occurrences
+- `c4_the_signature_verifier_is_a_single_shared_choke_point` —
+  `verify_governance_signature`, twelve occurrences in one file
+
+The harness performs `original.replace(old, new, 1)`. Renaming the token breaks
+every call site; replacing one occurrence leaves the others and the `contains`
+assertion still passes. There is no third option.
+
+**The flag was added, and it unlocked exactly one guard.** `m4_ffi_calls_are_serialized`
+asserts `call_lock`, which occurs five times in a compiled crate; renaming it
+breaks the build and replacing one occurrence leaves four. With replace-all it
+renames cleanly and the guard goes red.
+
+It was worth doing and it did **not** do what the estimate said. Three guards
+were named as beneficiaries; one converted. The other two fail for reasons
+replace-all does not touch:
+
+- `ac11_the_ed25519_registration…` — the constructor occurs exactly **once**, so
+  replace-all was never the obstacle. The obstacle is that deleting the only
+  construction path does not compile. A cosmetic mutation (spacing the `::`)
+  would make the guard's text assertion fail while the crate still constructs
+  keys perfectly well, which is the wrong answer and would have been dishonest
+  to record.
+- `c4_the_signature_verifier_is_a_single_shared_choke_point` — the rename has to
+  span `auth.rs` **and** `store/memory.rs`, and the harness mutates one file per
+  entry. That needs a multi-file entry, not a bigger count.
+
+**The estimate was written before the measurement and the measurement said no.**
+That is the third time this arc, and the correction is why the section is here
+rather than a sentence in a commit message: the next person to size a tool
+change should not assume the estimate transfers.
 
 ## Two checks that cannot be reached, and why that is worth knowing
 
@@ -649,7 +698,7 @@ recorded rather than assumed absent elsewhere.
       `c5_the_integrity_only_verifier_no_longer_claims_authenticity`,
       `h4_redemption_evaluates_time_caveats_before_anything_else` and
       `h4_every_time_bearing_caveat_variant_is_covered`),
-      taking coverage from 9 of 65 to **51 of 65**
+      taking coverage from 9 of 65 to **56 of 65**
 - [x] Any harness using the prebuilt-binary path refuses to run when the binary
       is older than the guard source — **satisfied a different way**: the
       committed harness runs through cargo, which rebuilds by construction, so
@@ -684,7 +733,7 @@ green as it applies to a guard's.
 ## Why the rest is filed rather than fixed
 
 The blind-spot fix is done and needs no defence. What remains is the coverage
-gap, and that is not urgent: fourteen unbacked guards is a large number that
+gap, and that is not urgent: nine unbacked guards is a large number that
 reads as alarming and is not. These guards were written by adversarial review
 and several were mutation-checked by hand during that work. What is missing is
 the _re-runnable record_, which is what this harness would supply — and the

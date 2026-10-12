@@ -1171,8 +1171,86 @@ fn probe_unverified_linkage(b: &str, c: &str) -> LinkageResult {
         ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
          "h4_every_time_bearing_caveat_variant_is_covered", "--", "--exact"],
     ),
+    (
+        # A token API typed as an Ed25519 signature asserts the algorithm in the
+        # type itself, and no amount of dispatch elsewhere makes a non-Ed25519
+        # holder signature expressible. The field has to carry bytes plus the
+        # algorithm, or the registry has nothing to dispatch on.
+        "G-yy: the capability token API names an ed25519 signature type",
+        "crates/octo-cap-macaroon/src/token.rs",
+        "        let other_vk = ed25519_dalek::SigningKey::from_bytes(&other_key)",
+        "        let _probe_sig: ed25519_dalek::Signature =\n            ed25519_dalek::Signature::from_bytes(&[0u8; 64]);\n        let other_vk = ed25519_dalek::SigningKey::from_bytes(&other_key)",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "no_capability_token_api_names_ed25519_dalek", "--", "--exact"],
+    ),
+    (
+        # A signature verified against a snapshot nobody checked is a signature
+        # over a claim the verifier never saw. Freshness and quorum are read
+        # from the snapshot, so verifying the signature while skipping the
+        # snapshot leaves both unchecked.
+        "G-aaa: a governance verification site stops checking its snapshot",
+        "crates/octo-reputation/src/store/memory.rs",
+        "        crate::auth::verify_governance_snapshot(snapshot, &auth.governance_set_hash, now_unix)?;\n",
+        "",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "every_governance_signature_verification_also_verifies_its_snapshot", "--", "--exact"],
+    ),
+    (
+        # `pub type Ed25519PublicKey = [u8; 32]` pins a key exactly as hard as a
+        # literal annotation, one indirection away from any scan looking for the
+        # literal. The key-taking function below takes a slice; re-pinning it to
+        # the alias is the regression this guard was written for.
+        "G-bbb: the ask verifier re-pins its key to the alias",
+        "crates/quota-router-storage/src/ask.rs",
+        """    pub fn verify(
+        &self,
+        algorithm_id: &octo_ident::AlgorithmId,
+        asker_public_key: &[u8],
+    ) -> Result<(), AskSignedError> {""",
+        """    pub fn verify(
+        &self,
+        algorithm_id: &octo_ident::AlgorithmId,
+        asker_public_key: &Ed25519PublicKey,
+    ) -> Result<(), AskSignedError> {""",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "the_alias_helpers_find_the_indirection_they_exist_for", "--", "--exact"],
+    ),
+    (
+        # A holder record written by a node that is not the issuer is a record
+        # nobody asked for, and the list of construction sites is exactly two
+        # files. Adding a third call is the drift the recorded list exists to
+        # catch — and it is invisible to any guard that only asks whether the
+        # records are correct.
+        "G-ccc: a non-issuing node starts building holder records",
+        "crates/octo-wallet/src/vault.rs",
+        "fn base64_decode(s: &str) -> Result<Vec<u8>, WalletError> {",
+        "/// Probe: an unrecorded holder-record construction site.\n#[allow(dead_code)]\nfn probe_holder_record() {\n    let _ = quota_router_storage::HolderRecord::from_capability;\n}\n\nfn base64_decode(s: &str) -> Result<Vec<u8>, WalletError> {",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "only_the_issuing_nodes_build_a_holder_record_in_production", "--", "--exact"],
+    ),
+    (
+        # The vendor's FFI entry points are not thread-safe, so every call goes
+        # through one lock. Without it two threads can be inside the C library
+        # at once, and the failure is a corrupt proof rather than a crash.
+        # Five occurrences of the lock, so this needs the replace-all too.
+        "G-eee: the FFI calls stop being serialised",
+        "crates/zk-vendor/src/lib.rs",
+        "call_lock",
+        "serial_probe",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "m4_ffi_calls_are_serialized", "--", "--exact"],
+        99,
+    ),
 ]
-# Two entries were written and withdrawn rather than parked in the table.
+# Seven entries were written and withdrawn rather than parked in the table,
+# because an entry that can never go red is worse than no entry at all.
+#
+# The class: a guard asserts on a token, and the mutation that removes the
+# token does not compile. `ac11_the_ed25519_registration…` needs the key
+# constructor gone and the only construction path is the call being deleted;
+# `c4_the_signature_verifier_is_a_single_shared_choke_point` needs a rename
+# that spans `auth.rs` and `store/memory.rs`, and the harness mutates one file
+# per entry.
 #
 # G-vv would have removed `VerifyingKey::from_bytes` from the Ed25519
 # registration so `ac11_the_ed25519_registration_itself_is_where_keys_get_built`
@@ -1316,7 +1394,8 @@ def print_coverage():
     """
     guards = set()
     elsewhere = 0
-    for _label, _rel, _old, _new, cmd in MUTATIONS:
+    for entry in MUTATIONS:
+        cmd = entry[4]
         if "security_regressions" in cmd:
             guard = cmd[cmd.index("security_regressions") + 1]
             if guard != "--":
@@ -1363,7 +1442,18 @@ def main():
             release_lock()
             return 2
     vacuous, bad_mutation, bad_anchor = [], [], []
-    for label, rel, old, new, cmd in selected:
+    # An entry is (label, file, old, new, cmd) or (…, cmd, count). `count`
+    # defaults to 1 — one contiguous replacement, which is right for nearly
+    # every entry and is what made a replace-all look unnecessary.
+    #
+    # It is needed for a specific shape: a guard asserting on a token that
+    # occurs several times in a crate that must compile. Renaming the token
+    # breaks every call site, and replacing one occurrence leaves the rest, so
+    # the `contains` assertion still holds and the entry would be a permanent
+    # false pass. Three guards are unreachable without this.
+    for entry in selected:
+        label, rel, old, new, cmd = entry[:5]
+        count = entry[5] if len(entry) > 5 else 1
         path = ROOT / rel
         original = path.read_text()
         if old not in original:
@@ -1376,7 +1466,11 @@ def main():
         backup.close()
 
         try:
-            path.write_text(original.replace(old, new, 1))
+            # `count` 1 is one contiguous replacement, which is right for
+            # nearly every entry. Anything higher means replace-all, and it
+            # needs no count check beyond the `in` above: the point is to clear
+            # every occurrence of a token a `contains` assertion matches on.
+            path.write_text(original.replace(old, new) if count > 1 else original.replace(old, new, 1))
             res = run(cmd)
             output = res.stdout + res.stderr
             # A mutation that does not compile makes cargo exit non-zero for a

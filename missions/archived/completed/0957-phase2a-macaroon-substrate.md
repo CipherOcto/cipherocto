@@ -21,7 +21,7 @@ emission is stubbed.
 1. Add `octo-cap-macaroon = { path = "../octo-cap-macaroon" }` to
    `crates/octo-wallet-node/Cargo.toml` dependencies. Wire-form
    substrate lives in the Layer 4 extension crate (per-extension
-   pattern; see `cipherocto-design-principles`).
+   pattern; see `docs/architecture/design-principles.md`).
 2. Edit `crates/octo-wallet-node/src/handlers/mint.rs`:
    - Import `octo_cap_macaroon::wire::{serialize_wire, WireError}`.
    - Replace the `format!("CIPHEROCTO_MINT_V1:{}", token.holder_did).into_bytes()`
@@ -82,7 +82,7 @@ TV5's negative path; the four positive-path TV are additive.
 
 ## Validation
 
-- `cargo fmt --check` (per `cargo-fmt-workflow`)
+- `cargo fmt --check` (per `docs/05-process/engineering-rules.md` §Format before commit)
 - `cargo clippy --all-targets --all-features -- -D warnings`
   (per `feedback_clippy_zero_warnings`)
 - `cargo test --lib -p octo-wallet-node` (per
@@ -92,7 +92,7 @@ TV5's negative path; the four positive-path TV are additive.
 ## Cross-references
 
 - `0957-phase2-unblocker-map` — master unblocker
-- `cipherocto-design-principles` — per-extension crate model
+- `docs/architecture/design-principles.md` — per-extension crate model
 - `mission-gap-closure-priorities-2026-08-10` — Wave 1 plan
 - `mission-0957-ext-macaroon-phase2b-status` — predecessor substrate
-- `no-line-refs-anywhere` — §section refs only
+- `docs/05-process/engineering-rules.md` §No line references in documentation — §section refs only

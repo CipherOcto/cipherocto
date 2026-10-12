@@ -10,7 +10,7 @@ Closed (2026-08-09). Claimed + implemented. Sub-mission of `missions/claimed/000
 **DEFERRED (out of l2 pushable-unit scope):**
 
 - `HolderRecord` rotation columns (`rotation_started_at_millis_unix` + `deprecated: bool`) — separate migration mission
-- Revocation event gossip fan-out via `octo_transport::NodeTransport` — couples Layer B → Layer D (forbidden per `cipherocto-design-principles`); track in `0959-c3` or new mission
+- Revocation event gossip fan-out via `octo_transport::NodeTransport` — couples Layer B → Layer D (forbidden per `docs/architecture/design-principles.md`); track in `0959-c3` or new mission
 - `IdentityRotated` + `IdentityRotationAborted` event structs — split to follow-on mission; l2 closures produce the proof signature but don't emit events yet (events depend on observability layer wiring)
 
 **Cross-crate compat:** `cargo test -p octo-wallet --lib` 229/229 pass (7 new rotation tests + 222 from l1); `cargo clippy -p octo-wallet --lib --tests -- -D warnings` clean; `cargo fmt --check` clean.
@@ -273,7 +273,7 @@ Sub-mission `l2` covers rotation + successor linkage + grace + revocation gossip
 
 ## Pull Request
 
-(unset — local commit per `feedback_initiation_user_only`; push awaits user instruction)
+(unset — local commit per `docs/05-process/engineering-rules.md` §Git workflow; push awaits user instruction)
 
 ## Closure Notes (2026-08-09)
 

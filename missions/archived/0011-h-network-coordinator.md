@@ -10,7 +10,7 @@ RFC-0011-h §Implementation Phases Phase 3
 
 ## Summary
 
-CLI surface for `coordinator show` (read-only) + `coordinator admin` (write; 3-flag confirmation). Substrate-faithful boundary: every call crosses typed façade per `cipherocto-design-principles` §Stable Abstractions Principle.
+CLI surface for `coordinator show` (read-only) + `coordinator admin` (write; 3-flag confirmation). Substrate-faithful boundary: every call crosses typed façade per `docs/architecture/design-principles.md` §Stable Abstractions Principle.
 
 ### Subcommands
 
@@ -29,12 +29,12 @@ CLI surface for `coordinator show` (read-only) + `coordinator admin` (write; 3-f
 - [x] `cargo clippy -p octo-cli --all-targets -- -D warnings` clean
 - [x] `cargo test -p octo-cli --lib` green (368/368, +6 above Phase 2 baseline)
 - [x] Layer discipline preserved (CLI Layer C only; zero Layer A change)
-- [x] Substrate-faithful boundary: every call crosses typed façade per `cipherocto-design-principles` §Stable Abstractions Principle
+- [x] Substrate-faithful boundary: every call crosses typed façade per `docs/architecture/design-principles.md` §Stable Abstractions Principle
 
 ## Dependencies
 
 - Hard sequencing: RFC-0011-h must be Accepted before this mission lands.
-- Pairing invariant: substrate missions G12 + G12b `0011-h-s-a-coordinator-record-loader` + `0011-h-s-a-coordinator-admin-trait` must land BEFORE this CLI mission's CLI dispatch slice per `no-phantom-mission-pointers`
+- Pairing invariant: substrate missions G12 + G12b `0011-h-s-a-coordinator-record-loader` + `0011-h-s-a-coordinator-admin-trait` must land BEFORE this CLI mission's CLI dispatch slice per `docs/05-process/engineering-rules.md` §No phantom mission pointers
 
 ## Out of Scope
 

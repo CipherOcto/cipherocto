@@ -47,4 +47,4 @@ After wave 2 commits (`ebdbf4cd` + `0a5570bb`), 4 specialized nodes (wallet-node
 - `wave-3-gaps-2026-08-10` — gap surface context
 - `mission-0871e-phase5c-status` — sibling sub-mission (introduced the RouterAnnouncePayload extension)
 - `mission-0009-a-impl-status` — HSM substrate
-- `cipherocto-design-principles` — Layer C + HSM routing rule
+- `docs/architecture/design-principles.md` — Layer C + HSM routing rule

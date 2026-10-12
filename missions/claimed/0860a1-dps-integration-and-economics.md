@@ -2,7 +2,7 @@
 
 ## Status
 
-Closed (Band A — 2026-08-07; audit-closure rolled up 2026-08-07). Implementation landed in 1 commit; 13/14 ACs GREEN (DPS aggregation backend wiring + monthly earnings split + 4 TVs + 7 cross-crate compat items). 1/14 AC deferred (`tests/fixtures/porelay/monthly_earnings_goldens.json` not shipped — TV2 happy-path pins values directly so fixture is optional for Band A scope). Deferral now explicit per `deferred-vs-unspecified` named-owner rule: owner = @cipherocto, target = 2026-09-15.
+Closed (Band A — 2026-08-07; audit-closure rolled up 2026-08-07). Implementation landed in 1 commit; 13/14 ACs GREEN (DPS aggregation backend wiring + monthly earnings split + 4 TVs + 7 cross-crate compat items). 1/14 AC deferred (`tests/fixtures/porelay/monthly_earnings_goldens.json` not shipped — TV2 happy-path pins values directly so fixture is optional for Band A scope). Deferral now explicit per `docs/05-process/engineering-rules.md` §Deferred versus unspecified named-owner rule: owner = @cipherocto, target = 2026-09-15.
 
 **Sub-mission of:** `missions/claimed/0860a-porelay-registry-anti-sybil.md` (Band A closed 2026-08-06).
 
@@ -49,7 +49,7 @@ The `0860a` Band A closure deferred this work because (a) the DPS module is owne
 
 ### Deferred (out-of-scope for this mission)
 
-- [ ] `tests/fixtures/porelay/monthly_earnings_goldens.json` — fixture file path referenced in mission text but not shipped; future mission can add golden-value pinning for multi-gateway tabular comparison (TV2 already covers the canonical happy-path via direct assertion). **Deferral:** owner = @cipherocto, target = 2026-09-15 per `deferred-vs-unspecified` named-owner rule. Fixture scope = multi-row tabular regression (e.g., 4-8 gateway profiles with distinct bandwidth/uptime/peer combos asserting `compute_monthly_earnings` produces byte-stable outputs); distinct from TV2 single-row happy-path assertion. Tracked as hygiene follow-up; AC-13/AC-14/AC-15/AC-16 (TV1-TV4 + clippy/fmt) green today.
+- [ ] `tests/fixtures/porelay/monthly_earnings_goldens.json` — fixture file path referenced in mission text but not shipped; future mission can add golden-value pinning for multi-gateway tabular comparison (TV2 already covers the canonical happy-path via direct assertion). **Deferral:** owner = @cipherocto, target = 2026-09-15 per `docs/05-process/engineering-rules.md` §Deferred versus unspecified named-owner rule. Fixture scope = multi-row tabular regression (e.g., 4-8 gateway profiles with distinct bandwidth/uptime/peer combos asserting `compute_monthly_earnings` produces byte-stable outputs); distinct from TV2 single-row happy-path assertion. Tracked as hygiene follow-up; AC-13/AC-14/AC-15/AC-16 (TV1-TV4 + clippy/fmt) green today.
 
 ## Dependencies
 

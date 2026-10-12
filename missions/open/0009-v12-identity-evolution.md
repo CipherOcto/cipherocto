@@ -105,7 +105,7 @@ the vectors and let the two drift apart.
   - `threshold_key_share_loss_tolerated` — lose 1 of N shares,
     signing continues (within threshold)
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-wallet` (Layer B) — `derive_capability_key` extension +
   `ThresholdSigner` supertrait + impls
@@ -136,7 +136,7 @@ cargo test --workspace --lib
 
 - `rfc-0010-v13-storage-extension` — sister storage trait extension
 - `mission-0957-f-future-work` — F4 V2 bundling requirement
-- `cipherocto-design-principles` — Layer A additive-only rule
+- `docs/architecture/design-principles.md` — Layer A additive-only rule
 - `mission-gap-closure-priorities-2026-08-10` — memory context
 - `missions/claimed/0009-b-algorithm-registry`, `0009-c-verification-dispatch`,
   `0009-d-stark-schnorr-algorithm`, `0009-e-signable-domain-separation` — the

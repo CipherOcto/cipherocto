@@ -61,7 +61,7 @@ single-instance deployments may legitimately leave the slot `None`
 
 ### Layer discipline
 
-Per `cipherocto-design-principles` §Layer discipline:
+Per `docs/architecture/design-principles.md` §Layer discipline:
 
 - `octo-ident` (Layer B) — `DidWriteCoordinator` trait + `ChainId` (LANDED via substrate)
 - `octo-identity-resolver-node` (Layer C) — coordinator mediator (THIS MISSION)
@@ -131,7 +131,7 @@ backed coordinator impl + multi-instance test harness.
 - `rfc-0010-v13-storage-extension` — v1.3 `DidRegistry` substrate
 - `mission-0871e-f7-cross-instance-did-coordination` — substrate mission
 - `mission-0871b-storage-backend` — sibling mission
-- `cipherocto-design-principles` — Layer A additive-only rule
+- `docs/architecture/design-principles.md` — Layer A additive-only rule
 - `rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md` — RFC-0862 v1.3 (Accepted 2026-08-11)
 
 ## Follow-on

@@ -615,7 +615,7 @@ The last two are the ones that matter, and `octo-ident` alone is not an
 acceptance condition for this mission — see §The gate must compile the crates
 that actually sign and verify.
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 **Name the crate and the function, or this section does not do anything.** An
 earlier draft called the prefix construction "Layer A — pure canonical encoding,

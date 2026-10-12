@@ -26,7 +26,7 @@ review_dry_closed: 2026-08-28
 
 # 0011-capability-commands — Capability subcommands (capability list/mint/attenuate)
 
-**Status:** Completed 2026-08-28 (@mmacedoeu). RFC-0011 spec cycle DRY-closed 2026-08-28. Implementation review loop R1-R32 closed 2026-08-28. User owns push/PR/promotion per `feedback_initiation_user_only` + `git-workflow`.
+**Status:** Completed 2026-08-28 (@mmacedoeu). RFC-0011 spec cycle DRY-closed 2026-08-28. Implementation review loop R1-R32 closed 2026-08-28. User owns push/PR/promotion per `docs/05-process/engineering-rules.md` §Git workflow + `docs/05-process/engineering-rules.md` §Git workflow.
 **Landing commit:** `db857895 feat(octo-cli): M3 capability commands — list/mint/attenuate (RFC-0011)` (2 files, +1232 lines; 19 test vectors TV-CAP1..CAP19)
 **Substrate:** RFC-0011 §Subcommand Taxonomy (CapabilityAction), RFC-0957 Macaroon, RFC-0965 Caveat Envelope, RFC-0960 Caveat Catalog
 **Parent:** RFC-0011
@@ -59,7 +59,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: mission 1 → 2 
 - [x] Filter parsing implemented + unit-tested (TV-CAP16 pass)
 - [x] Dry-run + confirm gates implemented + unit-tested (TV-CAP17, TV-CAP18, TV-CAP19 pass)
 - [x] Cross-mission AC: capability commands integrate with core mission's envelope + identity mission's `RedactedHex` wrapper
-- [x] Layer direction verified (no reverse deps per `cipherocto-design-principles`)
+- [x] Layer direction verified (no reverse deps per `docs/architecture/design-principles.md`)
 - [x] Cargo clippy -p octo-cli --all-targets -- -D warnings clean
 - [x] Cargo test -p octo-cli --lib --tests green
 - [x] No new INVALID cites introduced (Guard 2 cite validator 84/84 PASS)
@@ -79,7 +79,7 @@ See `docs/07-developers/octo-cli-implementation-guide.md` §Capability Subcomman
 
 ## Pull Request
 
-# (PR opened by user per `feedback_initiation_user_only` + `git-workflow`)
+# (PR opened by user per `docs/05-process/engineering-rules.md` §Git workflow + `docs/05-process/engineering-rules.md` §Git workflow)
 
 ## Notes
 
@@ -93,7 +93,7 @@ Land 3 capability subcommands per RFC-0011 §Subcommand Taxonomy (full scope per
 
 19 TV (TV-CAP1..TV-CAP19) — all passing per `cargo test -p octo-cli --test capability`.
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-cli` (Layer C/D) — new `CapabilityAction` dispatch + 3 output structs
   - caveat parsing helpers (using existing `Caveat::canonical_ser` until
@@ -126,7 +126,7 @@ cargo test -p octo-cli --lib --tests  # green
 - RFC-0957 — Macaroon substrate
 - RFC-0965 — Caveat envelope canonical form
 - RFC-0960 — Caveat catalog root
-- `cipherocto-design-principles` — Layer B stability contract
+- `docs/architecture/design-principles.md` — Layer B stability contract
 - `rfc-0011-loop-dry-gate-closure` — review loop closure
 
 ## Claimant

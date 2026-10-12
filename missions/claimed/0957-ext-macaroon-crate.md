@@ -86,8 +86,8 @@ Per-extension crate extraction is multi-file (1 NEW crate + multiple source migr
 
 ## Pull Request
 
-Phase 1: `f123fe1b` (local; push + remote writes await user instruction per `git-workflow`)
-Phase 2: `9d28ddc8` (local; push + remote writes await user instruction per `git-workflow`)
+Phase 1: `f123fe1b` (local; push + remote writes await user instruction per `docs/05-process/engineering-rules.md` §Git workflow)
+Phase 2: `9d28ddc8` (local; push + remote writes await user instruction per `docs/05-process/engineering-rules.md` §Git workflow)
 
 ## Closure Summary
 
@@ -118,8 +118,8 @@ Phase 2: `9d28ddc8` (local; push + remote writes await user instruction per `git
 
 - This mission is the FIRST per-extension crate extraction (the macaroon v1 reference impl). Future extractions (`0957-ext-zk`, `0957-ext-federation`, etc.) follow the same pattern.
 - Coordinate with parallel mission `0957-ext-zk-crate.md` (both touch `crates/octo-wallet/src/capability/zk_mint.rs`).
-- Per `stoolap-general-purpose-db` red line: this is workspace-side extraction (NOT a fork PR); per-extension crates live in cipherocto workspace.
-- Per `cargo-fmt-workflow` + `feedback_clippy_zero_warnings`: `cargo fmt` + `cargo clippy -D warnings` green before commit.
+- Per `docs/architecture/stoolap-integration.md` red line: this is workspace-side extraction (NOT a fork PR); per-extension crates live in cipherocto workspace.
+- Per `docs/05-process/engineering-rules.md` §Format before commit + `feedback_clippy_zero_warnings`: `cargo fmt` + `cargo clippy -D warnings` green before commit.
 
 **Version History:**
 

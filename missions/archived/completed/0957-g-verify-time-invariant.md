@@ -58,7 +58,7 @@ v3.0 if perf data demands.
 ### Why primitive-typed `VaultRowSnapshot` (no `octo_vault::VaultState` import)
 
 `octo-cap-macaroon` is a Layer B extension crate (per
-`cipherocto-design-principles.md`). Per **Stable Abstractions
+``docs/architecture/design-principles.md`.md`). Per **Stable Abstractions
 Principle** + **Dependency Inversion**: trait lives in
 `octo-cap-macaroon` (consumer), impl lives in the substrate owner
 crate. Importing `octo_vault::VaultState` enum here would create

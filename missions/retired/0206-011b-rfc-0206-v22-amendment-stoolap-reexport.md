@@ -109,7 +109,7 @@ cargo fmt --all -- --check
 
 - New typed query DSL (Phase 2 typed-query expansion per RFC-0206 v2.1 §Implementation Phases 2.1)
 - Wholesale rewrite of crate-internal `stoolap::Rows` decoding code (single-line import substitution per crate)
-- Push to remote — push + remote writes await user instruction per `feedback_initiation_user_only`
+- Push to remote — push + remote writes await user instruction per `docs/05-process/engineering-rules.md` §Git workflow
 
 ## Termination conditions
 
@@ -121,7 +121,7 @@ cargo fmt --all -- --check
 - Clippy + fmt clean
 - Memory cards for 0206-011b + 0206-001 v3.0b + 0206-008b + MEMORY.md updated
 - Mission files `git mv` to `missions/claimed/` via chore(missions) commits
-- NO push performed — push + remote writes await user instruction per `feedback_initiation_user_only`
+- NO push performed — push + remote writes await user instruction per `docs/05-process/engineering-rules.md` §Git workflow
 
 ## Version History
 

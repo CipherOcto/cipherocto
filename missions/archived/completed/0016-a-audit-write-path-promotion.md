@@ -94,7 +94,7 @@ Per parent trio promotion precedent (2026-09-14 commit `bac77cfd`):
 3. Update Version History table with promotion entry
 4. Grep for `rfcs/draft/process/0016-a` stale references + update to
    `rfcs/accepted/process/0016-a` (post-promotion self-ref path update)
-5. Commit (NO PUSH per the user-initiation-only mandate + `git-workflow`)
+5. Commit (NO PUSH per the user-initiation-only mandate + `docs/05-process/engineering-rules.md` §Git workflow)
 6. User owns: `git push origin next` + `gh pr create next:main`
 
 ## Acceptance Criteria
@@ -141,7 +141,7 @@ These verifications gate the DRY review spawn.
 - RFC-0015-a (Accepted 2026-09-14) — write-path surface contract
 - `docs/audits/2026-09-14-rfc-0015-0016-plateau-declaration.md` — substrate defect context
 - `no-phantom-mission-pointer` — paired RFC + implementation mission must both be valid
-- the user-initiation-only mandate + `git-workflow` — push + remote writes user-owned
+- the user-initiation-only mandate + `docs/05-process/engineering-rules.md` §Git workflow — push + remote writes user-owned
 
 ## Why gate
 

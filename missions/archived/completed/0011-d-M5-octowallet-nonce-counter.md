@@ -83,7 +83,7 @@ Nonce counter helper + `binding_nonce` field only. NO substrate-authoritative ro
 - TV-WAL-3: pre-existing race condition on `did:octo:0xff` documented (deferred to Phase 2)
 - TV-WAL-4..9: cached projection persistence vectors DEFERRED (per substrate-truth deviation above; `OctoRoleBinding` cached projection not landed in M5)
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-wallet` (Layer B; per RFC-0009) — owns identity + nonce counter helper
 - `octo-role` (Layer B; per RFC-0011-d) — owns authoritative role_binding slash-ledger row (M4)
@@ -100,7 +100,7 @@ Additive: new helper function + new `binding_nonce` field on `RoleBinding`. NO e
 - F-NEW-3 substrate-truth split (substrate-authoritative vs wallet cached projection)
 - RFC-0900 §Slash Ledger Substrate (monotonic counter pattern)
 - RFC-0009 (octo-wallet substrate baseline)
-- `cipherocto-design-principles` — Layer B stability contract
+- `docs/architecture/design-principles.md` — Layer B stability contract
 
 ## Notes
 

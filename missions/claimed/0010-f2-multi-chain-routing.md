@@ -144,7 +144,7 @@ for existing callers. The new payload kind is purely additive.
 ## Layer discipline
 
 - `octo-protocol` (Layer A) — payload kind UUID allocation only.
-  Per `cipherocto-design-principles` §Stable Abstractions, the
+  Per `docs/architecture/design-principles.md` §Stable Abstractions, the
   payload kind table is additive; existing UUIDs unchanged.
 - `octo-identity-resolver-node` (Layer C) — new handler +
   dispatch arm. Existing 4 arms unchanged.

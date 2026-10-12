@@ -102,7 +102,7 @@ RFC contents:
 - `scripts/stoolap_recert.sh` monthly checklist — Phase 1 Task 4
 - Merge-to-upstream sub-mission — Phase 2 Task 5 (deferred to
   follow-on RFC-XXXX per §Future Work)
-- Push to remote — user-initiated per `feedback_initiation_user_only`
+- Push to remote — user-initiated per `docs/05-process/engineering-rules.md` §Git workflow
 
 ## Termination
 
@@ -111,4 +111,4 @@ RFC contents:
 - 269 lines, 32 sections, prettier formatted
 - 8 ACs PASS (per Acceptance Criteria above)
 - Mission file `git mv` to `missions/claimed/` via chore(missions) commit
-- NO push performed — push awaits user instruction per `feedback_initiation_user_only`
+- NO push performed — push awaits user instruction per `docs/05-process/engineering-rules.md` §Git workflow

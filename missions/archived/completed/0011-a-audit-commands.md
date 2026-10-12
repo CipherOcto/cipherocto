@@ -26,7 +26,7 @@ amendment: "RFC-0011-a v1.5 layer-model note: canonical `AuditEvent` lives in `o
 
 # 0011-a-audit-commands — Implement `octo audit {list,show}` per RFC-0011-a
 
-**Status:** Open — DOC-ONLY amendment (single coherent substrate wiring per RFC-0011-a §Implementation Phases). Implementation kickoff user-gated per `feedback_initiation_user_only` + `git-workflow` once the parent RFC-0011 lands per RFC-0011-a §Compatibility No `schema_version` bump required (additive per parent §Compatibility).
+**Status:** Open — DOC-ONLY amendment (single coherent substrate wiring per RFC-0011-a §Implementation Phases). Implementation kickoff user-gated per `docs/05-process/engineering-rules.md` §Git workflow + `docs/05-process/engineering-rules.md` §Git workflow once the parent RFC-0011 lands per RFC-0011-a §Compatibility No `schema_version` bump required (additive per parent §Compatibility).
 **Substrate:** RFC-0011-a §Specification (`octo audit` Subcommands)
 **Parent:** RFC-0011-a
 **Depends on:**
@@ -106,7 +106,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing per parent RFC-00
 - [ ] CI regression: G1 (no INSERT/UPDATE SQL hit the receipt store during `octo audit {list,show}` invocation per RFC-0011-a §Design Goals)
 - [ ] CI regression: G5 (byte-equivalent output across `auditor` / `ci` / `dev` / `human` modes for same canonical fixture per RFC-0011-a §Design Goals)
 - [ ] Substrate `[ADD]` surface landed via substrate-side RFC (filed separately per RFC-0011-a §Key Files to Modify — SUBSTRATE; out of scope for this RFC cycle but mission cannot Claim without substrate amendment acceptance)
-- [ ] Layer direction verified (octo-audit is Layer B façade depending on Layer A octo-audit-core substrate per RFC-0012 §Module Layout; the peer dependency on Layer B octo-settlement is B→B, NOT C→B; no reverse deps per `cipherocto-design-principles`)
+- [ ] Layer direction verified (octo-audit is Layer B façade depending on Layer A octo-audit-core substrate per RFC-0012 §Module Layout; the peer dependency on Layer B octo-settlement is B→B, NOT C→B; no reverse deps per `docs/architecture/design-principles.md`)
 - [ ] `cargo fmt --all -- --check` clean
 - [ ] `cargo clippy -p octo-cli --all-targets --all-features -- -D warnings` zero warnings
 - [ ] `cargo test -p octo-cli --all-features` green
@@ -135,7 +135,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing per parent RFC-00
 | `[ADD] octo_audit::AuditError` enum                            | Sub-step 2 (substrate wiring) | Layer C (substrate-side RFC; OUT OF SCOPE)                                                                           |
 | `[ADD] octo_audit::ReceiptId` newtype                          | Sub-step 2 (substrate wiring) | Layer C (substrate-side RFC; OUT OF SCOPE)                                                                           |
 | `[ADD] octo_audit::audit_home()` discovery helper              | Sub-step 2 (substrate wiring) | Layer C (substrate-side RFC; OUT OF SCOPE; diagnostic / substrate-internal testing only)                             |
-| `Commands::Audit { List, Show }` clap variants                 | Sub-step 4 (clap wiring)      | Layer C/D; appends to parent `Commands` enum (no reverse deps per `cipherocto-design-principles`)                    |
+| `Commands::Audit { List, Show }` clap variants                 | Sub-step 4 (clap wiring)      | Layer C/D; appends to parent `Commands` enum (no reverse deps per `docs/architecture/design-principles.md`)                    |
 
 ### Implementation Guide
 
@@ -286,7 +286,7 @@ alone.
 
 Canonical fixture: `docs/07-developers/octo-cli-implementation-guide.md` §Audit Subcommand Fixtures.
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-cli` (Layer C/D) — appends `Commands::Audit { List, Show }` clap variants; NEW dispatch module `commands/audit.rs`; extends `OctoCliError` with 4 audit-specific variants (per RFC-0011-a §Error Handling); NO new Layer A or Layer B types
 - `octo-audit` (Layer B façade, depending on Layer A `octo-audit-core` per RFC-0012 §Module Layout; NOT NEW per RFC-0011-a §Substrate `[ADD]` which is the Layer B read-path extension) — thin read-only projection layer over `octo-settlement`; exposes `list_receipts`, `get_receipt`, `AuditFilter`, `AuditError`, `ReceiptId`, `audit_home`; owns NO persistence
@@ -329,7 +329,7 @@ This mission lands ADDITIVELY across every contract boundary per RFC-0011-a §Co
 - RFC-0010 — Canonical DID Codec (DID rendering in audit output per parent §Hex32 + `octo_wallet::Did` newtype)
 - RFC-0008 — Deterministic AI Execution Boundary (execution class mapping for the new operations per RFC-0011-a §RFC-0008 Execution Class Mapping)
 - RFC-0917 — HTTP Proxy + Python SDK (programmatic counterpart to this CLI amendment; out of scope but related per RFC-0011-a §Related RFCs)
-- `cipherocto-design-principles` — Layer C/D per-RFC evolution; extension over central enum (per RFC-0011-a §Rationale — Why extension over central enum)
+- `docs/architecture/design-principles.md` — Layer C/D per-RFC evolution; extension over central enum (per RFC-0011-a §Rationale — Why extension over central enum)
 
 ## Why 1 release cycle gate
 

@@ -18,7 +18,7 @@ status: Completed
 
 # 0011-d-M11-phase2-domain-coordinator-platform-binding — Phase 2 substrate `bind_domain_coordinator` per RFC-0011-d §Mission Decomposition M11
 
-**Status:** Completed — Phase 2 substrate for `bind_domain_coordinator` per RFC-0011-d §Mission Decomposition M11. Substrate prereqs cleared (RFC-0855p-c Accepted 2026-08-31; RFC-0850p-c Accepted 2025-Q3). Gate CLEARED 2026-08-31. No release-cycle gate. Implementation kickoff user-gated per `feedback_initiation_user_only` + `git-workflow` + `implementation-workflow-hook`. v1.3 drift-fix per `docs/audits/2026-09-03-m10-m11-substrate-truth-reconciliation.md` + RFC-0011-d v1.7.1 amendment: substrate home corrected to `crates/octo-network/src/dc/admin_attest.rs` (REAL, contains `PlatformAdminAttestError`); signature uses canonical Layer C types (`RoleBinding`, `GroupBinding`, `BindingError`); fictional `DomainCoordinatorRecord` + `DomainCoordinatorError` removed per RFC-0855p-c drift-fix B/C.
+**Status:** Completed — Phase 2 substrate for `bind_domain_coordinator` per RFC-0011-d §Mission Decomposition M11. Substrate prereqs cleared (RFC-0855p-c Accepted 2026-08-31; RFC-0850p-c Accepted 2025-Q3). Gate CLEARED 2026-08-31. No release-cycle gate. Implementation kickoff user-gated per `docs/05-process/engineering-rules.md` §Git workflow + `docs/05-process/engineering-rules.md` §Git workflow + `implementation-workflow-hook`. v1.3 drift-fix per `docs/audits/2026-09-03-m10-m11-substrate-truth-reconciliation.md` + RFC-0011-d v1.7.1 amendment: substrate home corrected to `crates/octo-network/src/dc/admin_attest.rs` (REAL, contains `PlatformAdminAttestError`); signature uses canonical Layer C types (`RoleBinding`, `GroupBinding`, `BindingError`); fictional `DomainCoordinatorRecord` + `DomainCoordinatorError` removed per RFC-0855p-c drift-fix B/C.
 **Substrate:** RFC-0011-d §Mission Decomposition M11 row; §7.4 Substrate `[ADD]`; RFC-0850p-c binding ceremony + RFC-0855p-c §5a `PlatformEvent::AdminTransfer` envelope
 **Parent:** RFC-0011-d
 **Depends on:** RFC-0855p-c Accepted (gate CLEARED 2026-08-31); RFC-0850p-c Accepted (binding ceremony substrate); `0011-d-M4-octorole-select-with-stoolap-tx` (substrate precedent: BEGIN IMMEDIATE + signed envelope + Stoolap pattern)
@@ -82,7 +82,7 @@ RFC-0011-d §Mission Decomposition M11 row; §7.4 Substrate `[ADD]` signatures; 
 
 ## Depends on (GATE)
 
-**HARD GATE** _(gate CLEARED 2026-08-31 per RFC-0855p-c + RFC-0850p-c Acceptance; retained as documentation per `cipherocto-design-principles` §Discipline at first call site)_: RFC-0855p-c + RFC-0850p-c MUST reach Accepted status. Per `deferred-vs-unspecified` + BLUEPRINT §Mission Lifecycle.
+**HARD GATE** _(gate CLEARED 2026-08-31 per RFC-0855p-c + RFC-0850p-c Acceptance; retained as documentation per `docs/architecture/design-principles.md` §Discipline at first call site)_: RFC-0855p-c + RFC-0850p-c MUST reach Accepted status. Per `docs/05-process/engineering-rules.md` §Deferred versus unspecified + BLUEPRINT §Mission Lifecycle.
 
 - `RFC-0855p-c` (Domain Coordinator role; `PlatformAdminAttestError` substrate; §5a `PlatformEvent::AdminTransfer` envelope; gate)
 - `RFC-0850p-c` (binding ceremony substrate; `GroupBinding` + `BindingError` + `GroupRegistry::register_binding`; gate)
@@ -90,7 +90,7 @@ RFC-0011-d §Mission Decomposition M11 row; §7.4 Substrate `[ADD]` signatures; 
 
 ## Acceptance Criteria
 
-- [ ] Extend `crates/octo-network/src/dc/admin_attest.rs` (REAL substrate home; Layer C specialized node; co-located with `PlatformAdminAttestError` per RFC-0855p-c; NOT new file per `cipherocto-design-principles` §No parallel abstractions)
+- [ ] Extend `crates/octo-network/src/dc/admin_attest.rs` (REAL substrate home; Layer C specialized node; co-located with `PlatformAdminAttestError` per RFC-0855p-c; NOT new file per `docs/architecture/design-principles.md` §No parallel abstractions)
 - [ ] Add `pub struct PlatformAdminProof` typed envelope in `crates/octo-network/src/dc/admin_attest.rs` (extends existing module):
   - `pub platform: Platform` (canonical RFC-0855p-c enum)
   - `pub platform_admin_id: String` (canonical `participant_id` per RFC-0850p-c §Appendix A)
@@ -143,7 +143,7 @@ Single substrate entrypoint per RFC §Mission Decomp M11 row + `PlatformAdminPro
 - TV-DC-SUB-4: `bind_domain_coordinator(...)` with already-used proof `nonce` → returns `BindingError::NonceReplay { nonce }`; `GroupBinding` unchanged
 - TV-DC-SUB-5: `PlatformAdminProof` round-trip serialization (canonical bytes per RFC-0104 DFP) — same inputs → same bytes
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-network/src/dc/admin_attest` (Layer C specialized node; RFC-0855p-c substrate) — `bind_domain_coordinator` + `PlatformAdminProof` + `PlatformEvent::AdminTransfer` emission
 - `octo-network/src/dot/binding` (Layer C specialized node; RFC-0850p-c substrate) — `GroupBinding` + `BindingError` + `GroupRegistry::register_binding` (called by `bind_domain_coordinator`)
@@ -166,7 +166,7 @@ Additive: 1 new public fn + 1 new struct + reuse existing error types on existin
 ## Notes
 
 - Phase 2 mission — gated
-- Per `deferred-vs-unspecified`: deferred (not unspecified)
+- Per `docs/05-process/engineering-rules.md` §Deferred versus unspecified: deferred (not unspecified)
 - Substrate-first ordering: M11 must land BEFORE M10 (M10 calls M11 substrate)
 - Sub-step 1 = gate check; if unmet, mission pauses
 - v1.3 drift-fix supersedes v1.2 substrate-home reconciliation: `crates/octo-network/src/mon/domain_coordinator.rs` (file never existed) → `crates/octo-network/src/dc/admin_attest.rs` (REAL; contains `PlatformAdminAttestError`)
@@ -179,7 +179,7 @@ Additive: 1 new public fn + 1 new struct + reuse existing error types on existin
 - RFC-0855p-c (`PlatformAdminAttestError` substrate home; §5a `PlatformEvent::AdminTransfer` envelope; gate; drift-fix B/C closed at commit `205f1434`)
 - RFC-0850p-c (binding ceremony substrate; `GroupBinding` + `BindingError` + `GroupRegistry`; gate)
 - M10 (substrate-first ordering: M10 calls M11)
-- `deferred-vs-unspecified` — gated release
+- `docs/05-process/engineering-rules.md` §Deferred versus unspecified — gated release
 - `docs/audits/2026-09-03-m10-m11-substrate-truth-reconciliation.md` — drift-fix verdict + audit closure
 - `memory/rfc-0011-d-m10-m11-substrate-impl-2026-09-03.md` — implementation closure card
 

@@ -31,7 +31,7 @@ status: Closed
 
 ## Status
 
-Closed (2026-09-02) per RFC-0855p-d1 promotion to Accepted at commit `0e915618` + substrate LANDED at `74c9ea9f` + R1.5 review-loop fix `851ef015` (BLAKE3 derive_key defect + cite hygiene). DRY closure at `7c0f764f` per `docs/audits/2026-09-02-rfc-0855p-de-substrate-review-dry.md` (5-lens loop: R1 → R1.5 → R2 → R2.5 → R3 → R4 → 2 consecutive zero-finding rounds). 1407/1407 octo-network tests pass; clippy zero; fmt clean. User owns push + PR per `feedback_initiation_user_only` + `git-workflow`.
+Closed (2026-09-02) per RFC-0855p-d1 promotion to Accepted at commit `0e915618` + substrate LANDED at `74c9ea9f` + R1.5 review-loop fix `851ef015` (BLAKE3 derive_key defect + cite hygiene). DRY closure at `7c0f764f` per `docs/audits/2026-09-02-rfc-0855p-de-substrate-review-dry.md` (5-lens loop: R1 → R1.5 → R2 → R2.5 → R3 → R4 → 2 consecutive zero-finding rounds). 1407/1407 octo-network tests pass; clippy zero; fmt clean. User owns push + PR per `docs/05-process/engineering-rules.md` §Git workflow + `docs/05-process/engineering-rules.md` §Git workflow.
 
 ## Substrate (RFC-0855p-d1)
 
@@ -69,7 +69,7 @@ See YAML frontmatter `depends_on` block. Hard sequencing: this mission lands fir
 - [ ] State machine transition test: `PendingBind → Bound → Dissolving → Dissolved`
 - [ ] Cross-node reconciliation: divergent `PendingBind` epochs collapse to `Dissolving` after `MAX_BIND_AWAIT_EPOCHS` elapses
 - [ ] `pub use` re-exports for cross-RFC constants: `MAX_BIND_AWAIT_EPOCHS`, `MAX_BIND_RETRY_COUNT`, `RACE_EPOCHS`, `MAX_FSKEW_EPOCHS` per RFC-0855p-d1 §Layer placement
-- [ ] Layer direction verified (Layer A→B→C/D; no upward dependency per `cipherocto-design-principles`)
+- [ ] Layer direction verified (Layer A→B→C/D; no upward dependency per `docs/architecture/design-principles.md`)
 - [ ] Pre-existing `sub_group.rs` substrate (`CreateSubGroupEnvelope` + `SubGroupExtension` + `SubGroupError` + `SUBGROUP_TAG` + `MAX_SUB_LABEL_LEN`) reconciled to canonical home in `subgroup_state.rs` (per RFC-0855p-d1 §Implementation Notes F-12)
 - [ ] `sub_group.rs` deprecated via `#[deprecated]` + `pub use` re-export pointer to `subgroup_state.rs` (no break for downstream consumers)
 - [ ] `MAX_ROOT_DEPTH = 1` test vector present (TV-SG-5a; rejection on depth-cap at root depth > 1)
@@ -99,7 +99,7 @@ See YAML frontmatter `depends_on` block. Hard sequencing: this mission lands fir
 - TV-SG-5: parent-binding verification failure → reject
 - TV-SG-5a: root-depth exceeded (`MAX_ROOT_DEPTH = 1`) → reject (depth 0 only; no grandparent sub-group)
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `subgroup_state.rs` (Layer C) — state machine + query + creation logic
 - `CreateSubGroupEnvelope` / `SubGroupExtension` (Layer B) — wire format + canonical encoding
@@ -119,7 +119,7 @@ Pre-existing `sub_group.rs` (CGSB substrate; `CreateSubGroupEnvelope` + `SubGrou
 
 ## Notes
 
-- Per `cipherocto-design-principles` §Extension over enumeration, `SubGroupState` carries `#[non_exhaustive]`; substrate implementations MUST NOT use exhaustive match.
+- Per `docs/architecture/design-principles.md` §Extension over enumeration, `SubGroupState` carries `#[non_exhaustive]`; substrate implementations MUST NOT use exhaustive match.
 - Per RFC-0855p-d1 §Implementation Notes F-12, substrate migration from legacy plain-`blake3::hash` to canonical `BLAKE3 keyed_hash` is a follow-on implementation mission; this mission is the canonical-home creation.
 - RFC-0855p-d (slim INDEX) owns no substrate; this mission is the substrate anchor for the d1 RFC.
 

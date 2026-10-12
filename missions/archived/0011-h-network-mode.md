@@ -35,7 +35,7 @@ CLI dispatch landed 2026-09-20 at `next 8649ca4d`:
 - [x] `cargo clippy -p octo-cli --all-targets -- -D warnings` clean
 - [x] `cargo test -p octo-cli --lib` green (360/360)
 - [x] Layer discipline preserved (CLI Layer C only; zero Layer A change)
-- [x] Substrate-faithful boundary: every call crosses typed façade per `cipherocto-design-principles` §Stable Abstractions Principle
+- [x] Substrate-faithful boundary: every call crosses typed façade per `docs/architecture/design-principles.md` §Stable Abstractions Principle
 
 ## Dependencies
 

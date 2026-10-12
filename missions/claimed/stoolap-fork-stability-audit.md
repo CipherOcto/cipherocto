@@ -17,7 +17,7 @@ lib tests pass.
 - Parent: new RFC (`stoolap-fork-stability`) — Draft → Accepted per
   `docs/BLUEPRINT.md` §RFC Process; filed in session S7 per
   `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md` §2 A.2.
-- Related: `cipherocto-design-principles.md` Layer A row (RFC-frozen,
+- Related: ``docs/architecture/design-principles.md`.md` Layer A row (RFC-frozen,
   semver-major only, years-stable).
 - Source review: `docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md`
   §8.1.7 (Stoolap fork stability audit).
@@ -42,7 +42,7 @@ produces docs + checklist (no CipherOcto code change required).
    state: commit hash, last sync with upstream Stoolap, fork delta
    (commits ahead / behind), divergent feature set.
 2. **Layer-A stability criteria.** Apply criteria from
-   `cipherocto-design-principles.md` Layer A: RFC-frozen, semver-major
+   ``docs/architecture/design-principles.md`.md` Layer A: RFC-frozen, semver-major
    only, years-stable. Doc must enumerate what this means for the fork
    (e.g., no upstream feature adoption without RFC amendment; no silent
    bug-fix rebase that changes semantics).
@@ -89,7 +89,7 @@ produces docs + checklist (no CipherOcto code change required).
       during class-B memory cleanup).
 - [x] Cross-ref to `docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md`
       §8.1.7 (audit citation).
-- [x] Cross-ref to `cipherocto-design-principles.md` Layer A row.
+- [x] Cross-ref to ``docs/architecture/design-principles.md`.md` Layer A row.
 - [x] Recommended next-action recorded: **HOLD** (pin current; no advance).
 - [ ] RFC `stoolap-fork-stability` body drafted (target: `rfcs/draft/`
       in S7 per plan §2 A.2). **NOT in S1 scope; deferred to S7.**
@@ -142,7 +142,7 @@ fork commits. Estimated 4-6 hours wall-clock.
 
 ## Reference
 
-- `cipherocto-design-principles.md` Layer A row (RFC-frozen,
+- ``docs/architecture/design-principles.md`.md` Layer A row (RFC-frozen,
   semver-major only, years-stable).
 - Informal convention ("CipherOcto fork of Stoolap at
   `CipherOcto/stoolap` branch `feat/blockchain-sql`, pinned in

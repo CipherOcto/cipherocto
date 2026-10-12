@@ -36,7 +36,7 @@ status: Closed
 
 ## Status
 
-Closed (2026-09-02) per RFC-0855p-d3 promotion to Accepted at commit `0e915618` + substrate LANDED at `59e37d9d` + R1.5 fix `851ef015`. DRY closure at `7c0f764f` per `docs/audits/2026-09-02-rfc-0855p-de-substrate-review-dry.md`. 1407/1407 octo-network tests pass; clippy zero. User owns push + PR per `feedback_initiation_user_only` + `git-workflow`.
+Closed (2026-09-02) per RFC-0855p-d3 promotion to Accepted at commit `0e915618` + substrate LANDED at `59e37d9d` + R1.5 fix `851ef015`. DRY closure at `7c0f764f` per `docs/audits/2026-09-02-rfc-0855p-de-substrate-review-dry.md`. 1407/1407 octo-network tests pass; clippy zero. User owns push + PR per `docs/05-process/engineering-rules.md` §Git workflow + `docs/05-process/engineering-rules.md` §Git workflow.
 
 ## Substrate (RFC-0855p-d3)
 
@@ -122,7 +122,7 @@ See YAML frontmatter `depends_on` block. Hard sequencing:
 - TV-SG-9b: bitmap-vs-quorum coverage — `count_ones < hodn_quorum` → reject
 - TV-SG-9c: ordering enforcement — `mesh_aggregated_signature` verify failure → reject before bitmap-vs-quorum check
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `subgroup_routing.rs` (Layer C) — routing + aggregation logic
 - `subgroup_teardown.rs` (Layer C) — teardown + state transition logic

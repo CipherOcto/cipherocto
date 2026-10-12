@@ -416,7 +416,7 @@ Verified by the §Test Vectors list.
 - `octo_network_does_not_reach_into_ed25519_dalek` — no `from_bytes` outside the
   Ed25519 registration.
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 `octo-network` is Layer C. **C depends on B is permitted**, so adding
 `octo-ident` is directionally correct. But per the current architecture it is a

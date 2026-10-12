@@ -16,7 +16,7 @@ metadata:
     - mission 0013-governance-substrate-extraction
     - mission 0013-governance-network-migration
   release_gate:
-    require: "user-gated per `feedback_initiation_user_only`; implementation kickoff awaits explicit user instruction"
+    require: "user-gated per `docs/05-process/engineering-rules.md` §Git workflow; implementation kickoff awaits explicit user instruction"
     gates_cleared_at: 2026-09-17
     gates_cleared:
       - "RFC-0855p-d (Accepted; rfcs/accepted/networking/0855p-d-subgroup-nesting.md + d1/d2/d3 amendments)"
@@ -43,7 +43,7 @@ landed with GovernanceSession + Arc dyn Clock + CapabilityToken +
 CapabilitySigner. Legacy vote + attest preserved via `#[deprecated]`
 for transitional callers per RFC §7.4 RFC-frozen wire compatibility.
 Mission is ready for promotion to Completed after one more 5-len DRY
-round on the substrate (R3). Per `feedback_initiation_user_only`,
+round on the substrate (R3). Per `docs/05-process/engineering-rules.md` §Git workflow,
 the closure gate remains user-gated.
 **Substrate:** RFC-0011-g §Substrate `[ADD]` — `octo_governance::attest` +
 `octo_governance::attest_v2` + `octo_governance::vote` +
@@ -78,7 +78,7 @@ Phases Phase 2, the `OctoCliError::PrereqNotAccepted { rfc_ref }` exit
 38 surface is the canonical Draft→Accepted transition gate (still
 gating during the window). Mission is ready for promotion to Completed
 after one more 5-len DRY round on the substrate (R3) per
-`feedback_initiation_user_only`.
+`docs/05-process/engineering-rules.md` §Git workflow.
 
 ## RFC
 
@@ -110,7 +110,7 @@ clause. Hard sequencing per RFC-0011-g §Implementation Phases:
 - [x] Prereq-gate cross-cutting tests pass (TV-GOV-PG13, TV-GOV-PG14)
 - [x] `--attestation-kind <kind_ref>` passes through to substrate
       registry verbatim (TypedDiscriminator pattern per
-      RFC-0011-g §Attestation Kind Resolution / `cipherocto-design-principles.md` §Extension
+      RFC-0011-g §Attestation Kind Resolution / ``docs/architecture/design-principles.md`.md` §Extension
       over enumeration)
 - [x] `--evidence <path>` parses against kind-specific schema substrate-side
 - [x] `--evidence-hash <hex32>` skipped re-hash path substrate-verified
@@ -129,7 +129,7 @@ clause. Hard sequencing per RFC-0011-g §Implementation Phases:
       DID + capability mission's macaroon substrate + role-provisioning
       mission's `vote` capability mint
 - [x] Layer direction verified (no reverse deps per
-      `cipherocto-design-principles`)
+      `docs/architecture/design-principles.md`)
 - [x] Cargo clippy -p octo-cli --all-targets --features full -- -D warnings
       clean
 - [x] Cargo test -p octo-cli --lib --tests green
@@ -317,7 +317,7 @@ At least 10 test vectors covering the attest subcommand + vote subcommand
 Phase 1 + Phase 2 total = 6 + 10 = 16 test vectors (RFC minimum: ≥12
 per RFC-0011-g §Test Vectors).
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-cli` (Layer C/D) — new `GovernanceAction::{Attest, Vote}`
   dispatch + 4 output structs (`AttestationReceipt`, `AttestOutput`,
@@ -383,7 +383,7 @@ octo governance attest <subgroup_did> route-quality:uptime-30d --confirm --confi
 - RFC-0011-d — Role Provisioning (vote capability issuance)
 - RFC-0957 — Macaroon Substrate (`Audience(proposal_id)` caveat)
 - RFC-0900 — Economic Substrate (informational; dual-stake model)
-- `cipherocto-design-principles` — Layer A/B/C/D/E stability contract
+- `docs/architecture/design-principles.md` — Layer A/B/C/D/E stability contract
 
 ## Why 1 release cycle gate (Phase 2 multi-prereq)
 
@@ -418,7 +418,7 @@ acceptance).
 
 Phase 2 substrate landed in 5 sequential commits on `next` post the
 release-gate clear. Per standing kickoff direction and the §Substrate
-Gap standing pattern (see `no-phantom-mission-pointers` + closure
+Gap standing pattern (see `docs/05-process/engineering-rules.md` §No phantom mission pointers + closure
 audit chain), this section enumerates the substrate-vs-mission gap so
 the next review cycle can target the residuals rather than re-discover
 them.

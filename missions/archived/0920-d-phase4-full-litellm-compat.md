@@ -8,7 +8,7 @@ COMPLETE — all acceptance criteria met (2026-05-12)
 
 RFC-0920: Unified Python SDK — Dual-Mode LiteLLM/any-llm Compatibility
 
-**Note:** Phase 4 was removed from RFC-0920 in v1.66 (2026-05-09) per deferred-vs-unspecified rule. All items previously in Phase 4 are either:
+**Note:** Phase 4 was removed from RFC-0920 in v1.66 (2026-05-09) per `docs/05-process/engineering-rules.md` §Deferred versus unspecified rule. All items previously in Phase 4 are either:
 
 - Moved to Phase 3 (if specced)
 - Removed as unspecced (if no spec existed)

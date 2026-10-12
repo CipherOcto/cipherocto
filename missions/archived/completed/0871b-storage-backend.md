@@ -22,7 +22,7 @@ ships the production storage wiring:
 3. **`crates/quota-router-storage/src/stoolap_did_registry.rs`** (NEW)
    — `StoolapDidRegistry` impl per RFC-0010 v1.3 §Storage Extension
    §StoolapDidRegistry. Cipherocto-side migration v008 per
-   `stoolap-general-purpose-db`.
+   `docs/architecture/stoolap-integration.md`.
 4. **`crates/quota-router-storage/migrations/v008__create_did_registry.sql`**
    (NEW) — `did_registry` table + `did_registry_updated_at` index per
    RFC-0010 v1.3 §Storage Extension §StoolapDidRegistry.
@@ -43,7 +43,7 @@ B-adjacent storage), mirror to `StoolapSpendLedger` pattern (mission
 DID Documents explicitly OUT of scope per RFC-0010 v1.3 §Storage
 Extension §Out of scope.
 
-### Layer direction (per `cipherocto-design-principles`)
+### Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-ident` (Layer B) — `DidRegistry` trait + `InMemoryDidRegistry`
 - `quota-router-storage` (Layer B-adjacent) — `StoolapDidRegistry`
@@ -240,8 +240,8 @@ compiles ~150 test files = 2+ min).
   this mission + RFC-0871 §Future Work)
 - `wave-3-plan-correction-2026-08-10` — drift context (RFC-0010
   v1.3 unblocking this mission)
-- `cipherocto-design-principles` — Layer B additive-only rule
-- `stoolap-general-purpose-db` — cipherocto-side migration convention
+- `docs/architecture/design-principles.md` — Layer B additive-only rule
+- `docs/architecture/stoolap-integration.md` — cipherocto-side migration convention
 - `feedback_clippy_zero_warnings` — clippy invariant
 - `feedback_stoolap_test_performance` — `--lib` test convention
 

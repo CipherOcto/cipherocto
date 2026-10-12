@@ -151,7 +151,7 @@ Per RFC-0871 §Implementation Phases Phase 3 + RFC-0968 §5. Storage Schema + RF
 
 ## Pull Request
 
-# (local commit; push + remote writes await user instruction per `git-workflow`)
+# (local commit; push + remote writes await user instruction per `docs/05-process/engineering-rules.md` §Git workflow)
 
 ## Closure Summary
 

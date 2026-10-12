@@ -323,7 +323,7 @@ weakened to match the list.
 
 Gate: `cargo test -p octo-ident -p octo-ident-storage`
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-ident` (Layer B) — trait, registry, discriminators, `VerificationMethod`
 - `octo-ident-storage` (Layer B) — decode migration only

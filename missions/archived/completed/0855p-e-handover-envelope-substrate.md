@@ -36,7 +36,7 @@ status: Closed
 
 Closed (2026-09-02) per RFC-0855p-e promotion to Accepted at commit `0e915618` + substrate LANDED at `b0f14119` (v1.3 reconciliation of pre-existing 1045-line handover.rs) + R1.5 + R2.5 review-loop fixes. DRY closure at `7c0f764f` per `docs/audits/2026-09-02-rfc-0855p-de-substrate-review-dry.md`. 1407/1407 octo-network tests pass; clippy zero.
 
-**Open deviation (NOT blocking DRY):** `compute_ack_hash` field set per RFC v1.1 §BLAKE3 Construction Conventions is `handover_request_hash || witness_id_be || witness_epoch_be || (attests_to_predecessor_state as u8_be) || attested_epoch_be`; substrate hashes nonce (R17 R1-CRITICAL-1 fix). Domain prefix added in R2.5 (`HASH_DOMAIN_ACK` = `"DOT/1/HANDOVER/ack"`); field-set reconcile requires separate mission. User owns push + PR + reconcile mission kickoff per `feedback_initiation_user_only` + `git-workflow`.
+**Open deviation (NOT blocking DRY):** `compute_ack_hash` field set per RFC v1.1 §BLAKE3 Construction Conventions is `handover_request_hash || witness_id_be || witness_epoch_be || (attests_to_predecessor_state as u8_be) || attested_epoch_be`; substrate hashes nonce (R17 R1-CRITICAL-1 fix). Domain prefix added in R2.5 (`HASH_DOMAIN_ACK` = `"DOT/1/HANDOVER/ack"`); field-set reconcile requires separate mission. User owns push + PR + reconcile mission kickoff per `docs/05-process/engineering-rules.md` §Git workflow + `docs/05-process/engineering-rules.md` §Git workflow.
 
 ## Substrate (RFC-0855p-e)
 
@@ -128,7 +128,7 @@ See YAML frontmatter `depends_on` block. Hard dependencies:
 - TV-HO-8: slash tally carry-over — `slash_tally_hash` reference at `current_epoch`
 - TV-HO-9: second-witness quorum gate — sender_state_snapshot_ordinal != Active; witness_set_size=3; horq_quorum(3)=2; 1 second-witness HOAK → reject; 2 distinct second-witness HOAKs → gate passes
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `handover.rs` (Layer C) — envelope dispatch + quorum + state machine
 - `HandoverEnvelope` / `HandoverPayload` (Layer B) — wire format + canonical encoding

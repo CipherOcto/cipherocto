@@ -328,7 +328,7 @@ not discovered when two branches collide:
 | `revoked_identity_replay_rejected`                    | `0958-a`         | the identity gate is RFC-0958's                                                                              |
 | `compromised_key_revoked_without_identity_revocation` | **not this set** | needs a circuit change, settled in RFC-0009 A14 — see §Per-key revocation                                    |
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-ident` (Layer B) — owns the registry; consumers dispatch through it and
   MUST NOT reach into `ed25519_dalek` for a verification decision

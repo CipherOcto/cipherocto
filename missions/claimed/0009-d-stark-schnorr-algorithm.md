@@ -254,7 +254,7 @@ explicit stack size, so `cargo test -p stwo-sys` is safe. A new proving entry
 point added here MUST do the same rather than relying on `RUST_MIN_STACK` in
 the environment.
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 The new crate is a user extension: it registers into the Layer B registry and
 depends on nothing in it. If this crate needs to reach into `octo-ident`

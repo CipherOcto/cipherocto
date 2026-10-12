@@ -143,5 +143,5 @@ The following §6 surface landed in `missions/archived/completed/0015-b-substrat
 - RFC-0015-a — write-path surface contract
 - RFC-0012-v2 — substrate amendment for audit chain
 - RFC-0014-v2 — paired settlement-receipt newtype (§S3 paired-acceptance gate for §6.4)
-- `feedback_initiation_user_only` + `git-workflow` — push + remote writes user-owned
+- `docs/05-process/engineering-rules.md` §Git workflow + `docs/05-process/engineering-rules.md` §Git workflow — push + remote writes user-owned
 - `memory-is-never-status-ground-truth` — status language describes CURRENT state at write-time

@@ -8,9 +8,9 @@
 2 to 0959-b1-mdelivery-types-drift [this mission], others to follow-up missions).
 Substrate work landed at commit `eec6fb51` (per `git log --oneline -- crates/octo-wallet/src/capability/market_delivery.rs`). Owner: @cipherocto.
 
-Per `git-workflow` push awaits user instruction. Per `no-line-refs-anywhere`
+Per `docs/05-process/engineering-rules.md` §Git workflow push awaits user instruction. Per `docs/05-process/engineering-rules.md` §No line references in documentation
 all references use §symbol-name form. Per `rfc-referencing-convention` RFCs
-referenced by number only. Per `no-phantom-mission-pointers` all `depends_on`
+referenced by number only. Per `docs/05-process/engineering-rules.md` §No phantom mission pointers all `depends_on`
 cites real missions or RFC substrate.
 
 ## RFC

@@ -2,7 +2,7 @@
 
 ## Status
 
-Closed (Band A — 2026-08-06). Claimed 2026-08-04 by @mmacedoeu; implementation landed (commit `56143def`-prior): `crates/octo-wallet/src/capability/dual_issuance.rs` (128 lines) ships `mint_dual(ask_id: [u8; 32], ask_ttl_unix: u64) -> Result<(BearerCapsule, CapabilityToken), MintError>` stub returning `Err(MintError::RootSecretMissing)` by design (full crypto deferred per substrate probe), `MintError` enum with 4 variants (`AskExpired`, `RootSecretMissing`, `HolderKeyInvalid`, `DualInsertFailed`) + manual redacting Debug impl. 3/3 unit tests pass (`mint_dual_returns_root_secret_missing_stub`, `mint_error_debug_redacts_ask_id`, `mint_error_variants_present`). 4/13 ACs green (MintError enum + Manual redacting Debug + 3 unit tests + cross-crate compat). 9/13 ACs explicit deferrals with named owner per `deferred-vs-unspecified`: `mint_dual` algorithm body (Ask caveat construction + 4-arg `CapabilityToken::mint` call + `BearerCapsule` crypto + `txn.insert_dual` wiring) + TV9 happy path + atomicity failure path + `ask_ttl_unix` plumbing → `0969-b1-mint-dual-impl`.
+Closed (Band A — 2026-08-06). Claimed 2026-08-04 by @mmacedoeu; implementation landed (commit `56143def`-prior): `crates/octo-wallet/src/capability/dual_issuance.rs` (128 lines) ships `mint_dual(ask_id: [u8; 32], ask_ttl_unix: u64) -> Result<(BearerCapsule, CapabilityToken), MintError>` stub returning `Err(MintError::RootSecretMissing)` by design (full crypto deferred per substrate probe), `MintError` enum with 4 variants (`AskExpired`, `RootSecretMissing`, `HolderKeyInvalid`, `DualInsertFailed`) + manual redacting Debug impl. 3/3 unit tests pass (`mint_dual_returns_root_secret_missing_stub`, `mint_error_debug_redacts_ask_id`, `mint_error_variants_present`). 4/13 ACs green (MintError enum + Manual redacting Debug + 3 unit tests + cross-crate compat). 9/13 ACs explicit deferrals with named owner per `docs/05-process/engineering-rules.md` §Deferred versus unspecified: `mint_dual` algorithm body (Ask caveat construction + 4-arg `CapabilityToken::mint` call + `BearerCapsule` crypto + `txn.insert_dual` wiring) + TV9 happy path + atomicity failure path + `ask_ttl_unix` plumbing → `0969-b1-mint-dual-impl`.
 
 ## RFC
 
@@ -20,9 +20,9 @@ Phantom type `IdentityKey::from_public_bytes` call site is at `mint_dual` (buyer
 
 ### Mint algorithm
 
-- [ ] `crates/octo-wallet/src/capability/dual_issuance.rs` (NEW) — `mint_dual(ask: &Ask, seller_key: &Ed25519Keypair, buyer_pub: &IdentityKey, holder: &IdentityKey, ask_ttl_unix: u64, txn: &mut Transaction) -> Result<(BearerCapsule, CapabilityToken), MintError>`. → **DEFERRED to `0969-b1-mint-dual-impl` per `deferred-vs-unspecified`** (signature drift: actual stub signature uses `(ask_id: [u8; 32], ask_ttl_unix: u64) -> Result<(BearerCapsule, CapabilityToken), MintError>` — minimal stub; full impl with `&Ask` + `&Ed25519Keypair` + `&IdentityKey` + `&mut Transaction` params deferred; substrate co-locates with capability module so `BearerCapsule` + `CapabilityToken` types are accessible without cross-crate wiring).
-- [ ] Steps: build capability caveats (AskBinding + AmountMax from ask + ask_ttl_unix expiry); call `CapabilityToken::mint(root_secret, holder, holder_did, &caveats)` (RFC-0957-A1 4-arg persistence-free); build `BearerCapsule` (typed per RFC-0959-A1 §Out of Scope); `txn.insert_dual(bearer_record, capability_record)` atomic; return both. → **DEFERRED to `0969-b1-mint-dual-impl` per `deferred-vs-unspecified`** (full crypto impl deferred).
-- [ ] Phantom call site: `IdentityKey::from_public_bytes(&buyer_pub_bytes)` — uses working stub from top-level mission 0957-a1 (`crates/octo-wallet/src/capability/identity_stub.rs`). → **DEFERRED to `0969-b1-mint-dual-impl` per `deferred-vs-unspecified`** (phantom promotion to RFC-0009-B1 / RFC-0957-A2).
+- [ ] `crates/octo-wallet/src/capability/dual_issuance.rs` (NEW) — `mint_dual(ask: &Ask, seller_key: &Ed25519Keypair, buyer_pub: &IdentityKey, holder: &IdentityKey, ask_ttl_unix: u64, txn: &mut Transaction) -> Result<(BearerCapsule, CapabilityToken), MintError>`. → **DEFERRED to `0969-b1-mint-dual-impl` per `docs/05-process/engineering-rules.md` §Deferred versus unspecified** (signature drift: actual stub signature uses `(ask_id: [u8; 32], ask_ttl_unix: u64) -> Result<(BearerCapsule, CapabilityToken), MintError>` — minimal stub; full impl with `&Ask` + `&Ed25519Keypair` + `&IdentityKey` + `&mut Transaction` params deferred; substrate co-locates with capability module so `BearerCapsule` + `CapabilityToken` types are accessible without cross-crate wiring).
+- [ ] Steps: build capability caveats (AskBinding + AmountMax from ask + ask_ttl_unix expiry); call `CapabilityToken::mint(root_secret, holder, holder_did, &caveats)` (RFC-0957-A1 4-arg persistence-free); build `BearerCapsule` (typed per RFC-0959-A1 §Out of Scope); `txn.insert_dual(bearer_record, capability_record)` atomic; return both. → **DEFERRED to `0969-b1-mint-dual-impl` per `docs/05-process/engineering-rules.md` §Deferred versus unspecified** (full crypto impl deferred).
+- [ ] Phantom call site: `IdentityKey::from_public_bytes(&buyer_pub_bytes)` — uses working stub from top-level mission 0957-a1 (`crates/octo-wallet/src/capability/identity_stub.rs`). → **DEFERRED to `0969-b1-mint-dual-impl` per `docs/05-process/engineering-rules.md` §Deferred versus unspecified** (phantom promotion to RFC-0009-B1 / RFC-0957-A2).
 
 ### Error type
 
@@ -30,9 +30,9 @@ Phantom type `IdentityKey::from_public_bytes` call site is at `mint_dual` (buyer
 
 ### Test vectors (RFC-0969 §Test Vectors, this sub-mission owns TV9)
 
-- [ ] TV9: Dual-Issuance Atomicity — `mint_dual` happy path; both records persisted; `lookup_by_ask(ask_id, HolderKind::Bearer)` returns bearer record; `lookup_by_ask(ask_id, HolderKind::V1)` (or appropriate kind) returns capability record. → **DEFERRED to `0969-b1-mint-dual-impl` per `deferred-vs-unspecified`** (full happy-path impl deferred).
-- [ ] Atomicity failure path: forced failure on capability insert → bearer record MUST NOT persist (cross-mission with 0957-e TV11). → **DEFERRED to `0969-b1-mint-dual-impl` per `deferred-vs-unspecified`** (cross-mission co-author contract: test lives in 0957-e per `Transaction::insert_dual` ownership).
-- [ ] `ask_ttl_unix` plumbed through: capability's `ttl_millis_unix` field reflects `ask_ttl_unix` value; expired `ask` returns `MintError::AskExpired`. → **DEFERRED to `0969-b1-mint-dual-impl` per `deferred-vs-unspecified`** (`ask_ttl_unix` plumbing deferred; substrate stub accepts the param but does not yet construct caveats).
+- [ ] TV9: Dual-Issuance Atomicity — `mint_dual` happy path; both records persisted; `lookup_by_ask(ask_id, HolderKind::Bearer)` returns bearer record; `lookup_by_ask(ask_id, HolderKind::V1)` (or appropriate kind) returns capability record. → **DEFERRED to `0969-b1-mint-dual-impl` per `docs/05-process/engineering-rules.md` §Deferred versus unspecified** (full happy-path impl deferred).
+- [ ] Atomicity failure path: forced failure on capability insert → bearer record MUST NOT persist (cross-mission with 0957-e TV11). → **DEFERRED to `0969-b1-mint-dual-impl` per `docs/05-process/engineering-rules.md` §Deferred versus unspecified** (cross-mission co-author contract: test lives in 0957-e per `Transaction::insert_dual` ownership).
+- [ ] `ask_ttl_unix` plumbed through: capability's `ttl_millis_unix` field reflects `ask_ttl_unix` value; expired `ask` returns `MintError::AskExpired`. → **DEFERRED to `0969-b1-mint-dual-impl` per `docs/05-process/engineering-rules.md` §Deferred versus unspecified** (`ask_ttl_unix` plumbing deferred; substrate stub accepts the param but does not yet construct caveats).
 
 ### Cross-crate compat
 
@@ -85,7 +85,7 @@ This sub-mission implements (per top-level Type Coverage table):
 
 ## Pull Request
 
-(unset; awaiting user push instruction per `git-workflow`)
+(unset; awaiting user push instruction per `docs/05-process/engineering-rules.md` §Git workflow)
 
 ## Closure
 

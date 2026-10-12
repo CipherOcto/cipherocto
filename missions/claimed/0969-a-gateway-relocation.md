@@ -92,7 +92,7 @@ integration are explicitly deferred (separate missions).
 - **`octo-wallet` dep direction moved.** quota-router-core was a
   dev-dependency consumer of octo-wallet; the relocation makes it a
   runtime dependency. Layer B → Layer B is permissible per
-  `cipherocto-design-principles`; quota-router-core and octo-wallet
+  `docs/architecture/design-principles.md`; quota-router-core and octo-wallet
   are both Layer B substrates.
 - **`include_str!("authenticator.rs")`** in the brace-balance smoke
   test changed from the old `gateway_authenticator.rs` path. The
@@ -200,7 +200,7 @@ RFC-0969 relocation is multi-file (`octo-wallet` removal + `quota-router-core::i
 
 ## Claimant
 
-@unassigned (per `feedback_initiation_user_only` — user initiates the claim)
+@unassigned (per `docs/05-process/engineering-rules.md` §Git workflow — user initiates the claim)
 
 ## Pull Request
 

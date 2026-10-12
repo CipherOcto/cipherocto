@@ -67,7 +67,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: Phase A/B/C Atta
 
 | RFC-0011-c type           | Sub-step             | Notes                                                                                                                                                        |
 | ------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `pub trait AgentRegistry` | Sub-step 1 (trait)   | Layer A; object-safe (`&self` methods only); mirrors `RevocationStore` pattern per per-extension-crate + registry pattern per `cipherocto-design-principles` |
+| `pub trait AgentRegistry` | Sub-step 1 (trait)   | Layer A; object-safe (`&self` methods only); mirrors `RevocationStore` pattern per per-extension-crate + registry pattern per `docs/architecture/design-principles.md` |
 | `InMemoryAgentRegistry`   | Sub-step 2 (impl)    | Layer A; single canonical impl; zero behavior change vs free-fn path                                                                                         |
 | `pub fn transition_agent` | Sub-step 3 (free fn) | Layer A; promoted to public surface; `caller_did: &Did` + `agent_id: Uuid` + `target_state: AgentState` + `now_unix: u64`                                    |
 | 3 unit tests              | Sub-step 4 (TV)      | Layer A; `Arc<dyn AgentRegistry>` dispatch + Send/Sync + kind identity                                                                                       |
@@ -78,11 +78,11 @@ See `docs/07-developers/octo-wallet-implementation-guide.md` §AgentRegistry Fa�
 
 ## Pull Request
 
-# (PR opened by user per `feedback_initiation_user_only` + `git-workflow`)
+# (PR opened by user per `docs/05-process/engineering-rules.md` §Git workflow + `docs/05-process/engineering-rules.md` §Git workflow)
 
 ## Notes
 
-The trait is `Send + Sync + std::fmt::Debug` to mirror `RevocationStore` (per `cipherocto-design-principles` §Per-extension crates + registry pattern). All methods are `&self` (no `&mut self`, no `Self: Sized`, no generics) for object-safety proven via the `Arc<dyn AgentRegistry>` dispatch test.
+The trait is `Send + Sync + std::fmt::Debug` to mirror `RevocationStore` (per `docs/architecture/design-principles.md` §Per-extension crates + registry pattern). All methods are `&self` (no `&mut self`, no `Self: Sized`, no generics) for object-safety proven via the `Arc<dyn AgentRegistry>` dispatch test.
 
 `transition_agent` cite: §6.5 is the canonical cfg-gate paired-acceptance bridge location per RFC-0015-a. §6.4 is the Substrate-faithful state-machine table (different surface). Cross-verified via grep on the RFC source during R4.5 cite correction.
 
@@ -130,7 +130,7 @@ No new external crates required; `AgentRegistry` is defined in `octo-wallet` (La
 | TV-AGT-D1b | `agent_registry_dispatches_through_free_fn_surface` — trait fn → free fn round-trip |
 | TV-AGT-D1c | `agent_registry_send_sync_via_arc` — Send + Sync compile-time assertion             |
 
-## Layer direction (RFC-0011-c §9.1 Architecture + per `cipherocto-design-principles`)
+## Layer direction (RFC-0011-c §9.1 Architecture + per `docs/architecture/design-principles.md`)
 
 - `octo-wallet` (Layer A) — `AgentRegistry` trait + `InMemoryAgentRegistry` impl + `pub fn transition_agent` promotion + 3 tests
 - NO new Layer B/C/D/E types introduced
@@ -156,7 +156,7 @@ cargo test -p octo-wallet --lib  # 256/256 PASS
 - RFC-0015-a §6.4 — Substrate-faithful state-machine table (free fn behavior source)
 - RFC-0015-a §6.5 — Layer A Paired-Acceptance Bridge (cfg-gate cite for trait facade Preconditions)
 - RFC-0015-a Appendix A — public surface for `transition_agent`
-- `cipherocto-design-principles` — Layer A stability contract + per-extension-crate + registry pattern
+- `docs/architecture/design-principles.md` — Layer A stability contract + per-extension-crate + registry pattern
 - `0011-c-attachhandle-followon-phase-a` — Phase A prose-only closure (RFC-0011-c §9.8 variant arithmetic)
 - `0011-c-transport-extension-phase-b-dry-closure-2026-09-17` — Phase B Layer D extension crates
 - `0011-c-phase-c-cross-process-revocation-dry-closure` — Phase C cross-process revocation propagation

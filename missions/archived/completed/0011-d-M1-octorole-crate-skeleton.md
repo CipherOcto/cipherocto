@@ -75,7 +75,7 @@ Scaffold only. NO type definitions (M2), NO substrate entrypoints (M3, M4), NO C
 
 N/A — skeleton mission. Type/entrypoint tests land in M2/M3/M4/M8.
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-role` (Layer B; NEW per RFC-0011-d §7.4) — foundation crate for role substrate. No consumers yet (M3-M8 add consumers in substrate + CLI).
 - `octo-slash-ledger` (Layer B; per RFC-0900) — pre-existing crate; `octo-role` depends on it (slash ledger substrate for `select` envelope per M4) — **deviation noted**: dependency not materialized in Cargo.toml (slashing handled at governance layer)
@@ -92,7 +92,7 @@ Additive: new crate, no existing crates modified. No RFC migration etiquette tri
 - RFC-0900 §Slash Ledger Substrate
 - RFC-0855 §Mission Overlay Networks (role namespace)
 - RFC-0011 — `octo` CLI substrate (parent of RFC-0011-d)
-- `cipherocto-design-principles` — Layer B stability contract; no central enum
+- `docs/architecture/design-principles.md` — Layer B stability contract; no central enum
 
 ## Notes
 

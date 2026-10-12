@@ -67,7 +67,7 @@ Prepend `BODY_HASH_DOMAIN` to the `buf` accumulator in BOTH functions, before an
 - TV-BH-6: `Vec::with_capacity` reflects `BODY_HASH_DOMAIN.len()` (no re-allocation triggered on domain prepend)
 - TV-BH-7: Hard-coded expected-hash detection grep returns 0 matches OR all matches are regenerated with the new domain-prefixed value
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-policy` (Layer C — burn event substrate) — `compute_body_hash` rewrite
 - `quota-router-sm-engine` (Layer C — settlement event substrate) — `compute_settlement_body_hash` rewrite
@@ -95,9 +95,9 @@ grep -rn "expected.*body_hash\|expected_body_hash" crates/octo-policy/src/burn_e
 
 ## Backward compat
 
-- **Wire form:** `body_hash` field values CHANGE for all existing events (prepend changes blake3 input). Justified per `cipherocto-design-principles` §No premature coupling + the substrate was unfinished (constant reserved but unused).
+- **Wire form:** `body_hash` field values CHANGE for all existing events (prepend changes blake3 input). Justified per `docs/architecture/design-principles.md` §No premature coupling + the substrate was unfinished (constant reserved but unused).
 - **Persisted body_hashes:** If any, regeneration migration required (sub-step 5). If absent, no impact.
-- **Signature verification:** Existing signatures over old body_hash values are INVALIDATED by this change. Audit batch replay path (per `cipherocto-design-principles` §Attenuation invariants cross boundaries — replay must re-run against the new domain-prefixed function) MUST be re-executed post-migration. **Risk callout:** if any on-chain body_hash exists at landing time, the migration is HIGH-RISK and MUST be gated behind a feature flag (`legacy_body_hash_v1` / `body_hash_v2`) for one release cycle, mirroring the 3-cycle deprecation pattern described within RFC-0960 §5 (Single Timeline). The sub-step 6 pre-landing audit gate enforces this. **Hard guard (mirrors `cache-bus-auth.md` `accept-unauthenticated`):** the back-compat `legacy_body_hash_v1` path is gated behind `#[cfg(debug_assertions)]` so `cargo build --release` physically cannot link it. Without this guard, the 1-cycle window becomes a permanent production default (CVSS-relevant — pre-domain hash collision forge). Documented in `Cargo.toml` feature description. The flag is a debug-only escape hatch, NOT a release-grade toggle.
+- **Signature verification:** Existing signatures over old body_hash values are INVALIDATED by this change. Audit batch replay path (per `docs/architecture/design-principles.md` §Attenuation invariants cross boundaries — replay must re-run against the new domain-prefixed function) MUST be re-executed post-migration. **Risk callout:** if any on-chain body_hash exists at landing time, the migration is HIGH-RISK and MUST be gated behind a feature flag (`legacy_body_hash_v1` / `body_hash_v2`) for one release cycle, mirroring the 3-cycle deprecation pattern described within RFC-0960 §5 (Single Timeline). The sub-step 6 pre-landing audit gate enforces this. **Hard guard (mirrors `cache-bus-auth.md` `accept-unauthenticated`):** the back-compat `legacy_body_hash_v1` path is gated behind `#[cfg(debug_assertions)]` so `cargo build --release` physically cannot link it. Without this guard, the 1-cycle window becomes a permanent production default (CVSS-relevant — pre-domain hash collision forge). Documented in `Cargo.toml` feature description. The flag is a debug-only escape hatch, NOT a release-grade toggle.
 
 ## Risk
 
@@ -109,11 +109,11 @@ grep -rn "expected.*body_hash\|expected_body_hash" crates/octo-policy/src/burn_e
 
 - RFC-0960-v36 §2.2 — BurnEventRef body_hash specification (`compute_body_hash` helper) (Mission F)
 - RFC-0959 §2.2 — SettlementEvent body_hash specification (hosts `compute_settlement_body_hash` within the scale-resolution-invariant code block) (Mission G)
-- `cipherocto-design-principles` §Attenuation invariants cross boundaries — audit-batch replay must re-run against the new domain-prefixed function (re-run required post-migration)
+- `docs/architecture/design-principles.md` §Attenuation invariants cross boundaries — audit-batch replay must re-run against the new domain-prefixed function (re-run required post-migration)
 - RFC-0960 §5 (Single Timeline — the 3-cycle deprecation pattern described within) — template for HIGH-RISK migration gating
 - Mission F (`0960-v36-burn-event-dqa-migration-substrate.md`)
 - Mission G (`0959-v28-settlement-cost-dqa-migration-substrate.md`)
-- `cipherocto-design-principles` §No premature coupling
+- `docs/architecture/design-principles.md` §No premature coupling
 
 ## Claimant
 

@@ -106,9 +106,9 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-e-vault-su
 - [x] `ZERO_VAULT_ID` sentinel exclusion applied to SUM projection (per RFC-0960-v37 §2.2)
 - [x] `max_occurred_at_unix(chain_id, vault_id)` monotonic per `(chain_id, vault_id)` (per RFC-0960-v37 §2.2)
 - [x] Nonce allocation per `last_nonce(vault_id) + 1` under the transfer-event write lock (strictly-incrementing per-vault counter, NOT `max_occurred_at_unix`-derived) for transfer replay protection (per RFC-0011-e §Security: Transfer Replay; regression vectors TV-14 + TV-15)
-- [x] HSM signing via `octo-wallet::sign_envelope` (no parallel signing abstraction; per `cipherocto-design-principles` no-parallel-abstractions principle)
+- [x] HSM signing via `octo-wallet::sign_envelope` (no parallel signing abstraction; per `docs/architecture/design-principles.md` `docs/architecture/design-principles.md` §No parallel abstractions principle)
 - [x] Substrate compatibility: all `[ADD]` entries are additive — no existing function signature changes (per RFC-0011-e §Substrate Compatibility)
-- [x] Layer direction verified (no reverse deps per `cipherocto-design-principles`)
+- [x] Layer direction verified (no reverse deps per `docs/architecture/design-principles.md`)
 - [x] Cargo clippy -p octo-vault --all-targets --features full -- -D warnings clean
 - [x] Cargo test -p octo-vault --lib green
 - [x] No new INVALID cites introduced (Guard 2 cite validator green)
@@ -132,11 +132,11 @@ See `docs/07-developers/octo-cli-implementation-guide.md` §Vault Subcommands fo
 
 ## Pull Request
 
-# (PR opened by user per `feedback_initiation_user_only` + `git-workflow`)
+# (PR opened by user per `docs/05-process/engineering-rules.md` §Git workflow + `docs/05-process/engineering-rules.md` §Git workflow)
 
 ## Notes
 
-This is the **Layer B [ADD] mission** for RFC-0011-e — the substrate crate `octo-vault` gains three new function signatures and supporting types. CLI missions consume these substrate declarations; the CLI does not redefine or shadow substrate types (per `cipherocto-design-principles` no-parallel-abstractions principle).
+This is the **Layer B [ADD] mission** for RFC-0011-e — the substrate crate `octo-vault` gains three new function signatures and supporting types. CLI missions consume these substrate declarations; the CLI does not redefine or shadow substrate types (per `docs/architecture/design-principles.md` `docs/architecture/design-principles.md` §No parallel abstractions principle).
 
 Per RFC-0011-e §No central enums for vault kinds: vault kinds are an extension surface (Layer E); new vault types are added via a `VaultKind` registry, NOT a central enum. This mission exposes the canonical `VaultSummary` shape but does not introduce a central vault-kind enum.
 
@@ -164,7 +164,7 @@ Land the three `[ADD]` substrate API declarations per RFC-0011-e §Substrate Add
 
 5. **`project_vault_balance` fn** — same file (Layer B; per RFC-0011-e §Substrate Additions + RFC-0960-v37 §2.2). Canonical 7-param substrate signature: `(chain_id: &ChainId, vault_id: &VaultId, registry: &dyn AssetRegistry, asset_resolver: &dyn VaultAssetResolver, log: &impl TransferEventLog, current_registry_epoch: u64, current_unix_seconds: i64) -> Result<VaultBalanceProjection, ProjectionError>`. Canonical SUM projection: `SUM(in) - SUM(out)` filtered by `ZERO_VAULT_ID` sentinel exclusion. Routes through `VaultBalanceCache` (LRU + TTL); falls back to `transfer_events` (RFC-0960 v014 schema) on cache miss. `asset_id` derived from `vault_id` via `VaultAssetResolver::resolve_asset_for`. Enforces `max_occurred_at_unix` monotonicity per `(chain_id, vault_id)` (substrate returns `Option<i64>` per RFC-0960-v37).
 
-6. **`initiate_transfer` fn** — same file (Layer B; per RFC-0011-e §Substrate Additions). Builds the transfer envelope; allocates nonce as `last_nonce(vault_id) + 1` under the SAME write lock that appends the transfer event (strictly-incrementing per-vault counter, replay protection per RFC-0011-e §Security: Transfer Replay — NOT `max_occurred_at_unix`-derived); calls `octo-wallet::sign_envelope` (HSM-bound; no parallel signing abstraction per `cipherocto-design-principles`); broadcasts to chain adapter. Returns `Result<TransferHandle, VaultError>`.
+6. **`initiate_transfer` fn** — same file (Layer B; per RFC-0011-e §Substrate Additions). Builds the transfer envelope; allocates nonce as `last_nonce(vault_id) + 1` under the SAME write lock that appends the transfer event (strictly-incrementing per-vault counter, replay protection per RFC-0011-e §Security: Transfer Replay — NOT `max_occurred_at_unix`-derived); calls `octo-wallet::sign_envelope` (HSM-bound; no parallel signing abstraction per `docs/architecture/design-principles.md`); broadcasts to chain adapter. Returns `Result<TransferHandle, VaultError>`.
 
 7. **`VaultBalanceCache` wiring verification** — `crates/octo-vault/src/cache.rs` (Layer B; per RFC-0960-v37 §2.3). Verify `VaultBalanceCache` is wired and exercised by `project_vault_balance`. Bounded LRU + unix-seconds TTL. TTL bounded per RFC-0960-v37 §2.3.
 
@@ -189,7 +189,7 @@ No new external crates required; substrate types (`Hex32`, `ChainId`, `Did`, `As
 
 The remaining 12 test vectors (TV-VLT1..TV-VLT8 + TV-XFER1..TV-XFER4) live in the companion CLI missions (`0011-e-vault-subcommands-readonly`, `0011-e-vault-subcommands-transfer`) where the substrate calls are exercised end-to-end through the CLI surface.
 
-## Layer direction (RFC-0011-e §Roles and Authorities + per `cipherocto-design-principles`)
+## Layer direction (RFC-0011-e §Roles and Authorities + per `docs/architecture/design-principles.md`)
 
 - `octo-vault` (Layer B) — three `[ADD]` fn signatures (`list_owned`, `project_vault_balance`, `initiate_transfer`) + four new types (`VaultSummary`, `VaultBalanceProjection`, `ProjectionSource`, `TransferHandle`, `TransferStatus`). `VaultBalanceCache` wired and verified. **Nonce allocation is substrate-authoritative** (`last_nonce + 1` under the event write lock per RFC-0011-e §Transfer Replay); CLI does not generate, rotate, or validate nonces (defense in depth).
 - `octo-wallet` (Layer B) — `sign_envelope` invoked by `initiate_transfer`; HSM-bound signing path.
@@ -222,7 +222,7 @@ cargo test -p octo-vault --lib  # green
 - RFC-0010 §2 ledger_chain_registry Table DID Codec (chain identifier namespace; `ChainId` canonical form)
 - RFC-0957 §Macaroon Substrate (capability witness format for RFC-0011-d role provisioning; consumed indirectly via `initiate_transfer`)
 - RFC-0011 §Specification (`OutputEnvelope<T>`, `OctoCliError`, `OctoCliRedactor`) — consumed by companion CLI missions
-- `cipherocto-design-principles` — Layer B stability contract + no-parallel-abstractions principle + HSM mandatory rule
+- `docs/architecture/design-principles.md` — Layer B stability contract + `docs/architecture/design-principles.md` §No parallel abstractions principle + HSM mandatory rule
 - `rfc-0011-loop-dry-gate-closure` — review loop closure pattern from parent chain
 
 ## Claimant

@@ -69,7 +69,7 @@ depends_on:
 ## Notes
 
 - The one-way sync→network dep direction is the load-bearing constraint: `octo-sync` MUST NOT import `octo-network`. The bridge lives in `octo-network/src/dc/` because `octo-network` already depends on `octo-sync` for sync-engine integration. Cross-crate direction is verified by `git grep "use octo_sync" crates/octo-sync/src/` returning empty.
-- The integration test uses a mock sync session (not a real WAL stream) per `stoolap-general-purpose-db` red line: cipherocto consumer schema stays cipherocto-side; the test does not require the stoolap fork.
+- The integration test uses a mock sync session (not a real WAL stream) per `docs/architecture/stoolap-integration.md` red line: cipherocto consumer schema stays cipherocto-side; the test does not require the stoolap fork.
 
 ## Closure (2026-08-06)
 

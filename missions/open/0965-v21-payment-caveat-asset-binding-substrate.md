@@ -246,7 +246,7 @@ Replay }`
   new_asset_id) carries `#[deprecated]` warning; bridge for 2-arg
   callers during 6-week migration window
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-cap-macaroon` (Layer B frozen substrate) — `PaymentCaveat` field
   additions = **additive, semver-minor** (existing struct extended; no
@@ -314,7 +314,7 @@ cargo test -p octo-paid-query --lib  # PaymentRejectionReason consumer tests
   shares tri-invariant pair
 - Mission A (`0960-v37-a-vault-balance-projection-substrate.md`) —
   `PaymentEventProducer` (Mission B) consumes Mission E substrate
-- `cipherocto-design-principles` — Layer B additive-only rule
+- `docs/architecture/design-principles.md` — Layer B additive-only rule
 
 ## Claimant
 

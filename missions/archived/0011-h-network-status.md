@@ -2,7 +2,7 @@
 
 ## Status
 
-Completed (2026-09-20) — CLI dispatch slice LANDED at `next 2ba4273b`. Paired substrate missions G26 + G18 + G20 LANDED at `next cb5e0d3a` + `next a58f2103` + `next a6627e53`. Substrate-first ordering preserved per `no-phantom-mission-pointers`: all 3 substrates landed BEFORE CLI dispatch. CLI dispatch slice atop the substrates adds: `StatusArgs` struct + `NetworkAction::Status(StatusArgs)` clap variant + `NetworkStatusOutput` envelope (aggregates bootstrap mode + authority + peers count + writer-election ballot/stake/voter count + network-sender count + drift flags per RFC-0011-n §Output Envelope Phase 6 rows) + dispatch arm + `network_status` handler. 3 Phase 6 test vectors (`tv_net6_4` through `tv_net6_6`) added. 402/402 octo-cli tests pass (was 396). Closes the DEFERRED gap from `0011-deprecation-stub-removal` 2026-09-17.
+Completed (2026-09-20) — CLI dispatch slice LANDED at `next 2ba4273b`. Paired substrate missions G26 + G18 + G20 LANDED at `next cb5e0d3a` + `next a58f2103` + `next a6627e53`. Substrate-first ordering preserved per `docs/05-process/engineering-rules.md` §No phantom mission pointers: all 3 substrates landed BEFORE CLI dispatch. CLI dispatch slice atop the substrates adds: `StatusArgs` struct + `NetworkAction::Status(StatusArgs)` clap variant + `NetworkStatusOutput` envelope (aggregates bootstrap mode + authority + peers count + writer-election ballot/stake/voter count + network-sender count + drift flags per RFC-0011-n §Output Envelope Phase 6 rows) + dispatch arm + `network_status` handler. 3 Phase 6 test vectors (`tv_net6_4` through `tv_net6_6`) added. 402/402 octo-cli tests pass (was 396). Closes the DEFERRED gap from `0011-deprecation-stub-removal` 2026-09-17.
 
 ## RFC
 
@@ -18,7 +18,7 @@ CLI surface for `octo network status` orchestrator. Aggregates state across boot
 
 ## Blocked substrate-additions companions (must close BEFORE CLI dispatch slice)
 
-- `0011-h-s-a-bootstrap-orchestrator-v2` (G26 NEW Phase 6) — must close before this CLI mission's CLI dispatch slice per `no-phantom-mission-pointers` pairing invariant. NOT Phase 2 G1 (`0011-h-s-a-bootstrap-orchestrator`) which is parser/saver only per RFC-0011-n R1 substrate-faithfulness finding.
+- `0011-h-s-a-bootstrap-orchestrator-v2` (G26 NEW Phase 6) — must close before this CLI mission's CLI dispatch slice per `docs/05-process/engineering-rules.md` §No phantom mission pointers pairing invariant. NOT Phase 2 G1 (`0011-h-s-a-bootstrap-orchestrator`) which is parser/saver only per RFC-0011-n R1 substrate-faithfulness finding.
 - `0011-h-s-a-writer-election-struct` (G18 NEW Phase 6) — must close before this CLI mission's CLI dispatch slice (writer-election state aggregation).
 - `0011-h-s-a-network-sender` (G20 NEW Phase 6) — must close before this CLI mission's CLI dispatch slice (network sender state aggregation).
 - `0011-h-drift-0851p-a-seed-health-check` (drift-closure) — must close before this CLI mission's CLI dispatch slice (drift flag surface in envelope).
@@ -31,13 +31,13 @@ CLI surface for `octo network status` orchestrator. Aggregates state across boot
 - [x] `cargo clippy -p octo-cli --all-targets -- -D warnings` clean (next 2ba4273b)
 - [x] `cargo test -p octo-cli --lib` green (402/402, was 396 before Phase 6 vectors) (next 2ba4273b)
 - [x] Layer discipline preserved (CLI Layer C only; zero Layer A change; zero Layer B change beyond the 3 paired substrate slices) (next 2ba4273b)
-- [x] Substrate-faithful boundary: every call crosses typed façade per `cipherocto-design-principles` §Stable Abstractions Principle (next 2ba4273b)
+- [x] Substrate-faithful boundary: every call crosses typed façade per `docs/architecture/design-principles.md` §Stable Abstractions Principle (next 2ba4273b)
 
 ## Dependencies
 
 - Hard sequencing: RFC-0011-h must be Accepted before this mission lands
 - Hard sequencing: RFC-0011-n must be Accepted (Draft v0.2, DRY CLOSED)
-- Pairing invariant: substrate missions G26 + G18 + G20 + drift-closure `0011-h-s-a-*` must land BEFORE this CLI mission's CLI dispatch slice per `no-phantom-mission-pointers`
+- Pairing invariant: substrate missions G26 + G18 + G20 + drift-closure `0011-h-s-a-*` must land BEFORE this CLI mission's CLI dispatch slice per `docs/05-process/engineering-rules.md` §No phantom mission pointers
 
 ## Out of Scope
 

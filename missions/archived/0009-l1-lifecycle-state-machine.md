@@ -248,7 +248,7 @@ Single sub-mission (l1) covers ONLY the state machine + activate + revoke half. 
 
 ## Pull Request
 
-(unset — local commit per `feedback_initiation_user_only`; push awaits user instruction)
+(unset — local commit per `docs/05-process/engineering-rules.md` §Git workflow; push awaits user instruction)
 
 ## Closure Notes (2026-08-09)
 

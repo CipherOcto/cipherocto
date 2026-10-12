@@ -134,7 +134,7 @@ Per RFC-0871 §Implementation Phases Phase 2:
 
 ## Pull Request
 
-5cf67956 (local; push + remote writes await user instruction per `git-workflow`)
+5cf67956 (local; push + remote writes await user instruction per `docs/05-process/engineering-rules.md` §Git workflow)
 
 ## Closure Summary
 

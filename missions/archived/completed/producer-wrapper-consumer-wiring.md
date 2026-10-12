@@ -41,7 +41,7 @@ Wire `produce_burn` / `produce_payment` / `produce_settlement` at their respecti
    - `crates/quota-router-sm-engine/src/main.rs` (if exists; else `lib.rs::start_server`) — spawn cache subscriber
    - `crates/octo-policy/src/main.rs` (if exists; else `lib.rs::start_server`) — spawn cache subscriber
 
-5. **Layer C trait plumbing** — `MintHandler`, `SettlementEventRepository`, and `BurnEventRef` consumers must each gain access to `TransferEventLog`, `VaultProjectionInvalidationEmitter`, `AssetRegistry`, `VaultAssetResolver`, `NonceRegistry`. Plumbing strategy: add these as fields on each consumer struct OR pass via builder. Builder pattern preferred (avoids god-object; matches `cipherocto-design-principles` §No god-objects).
+5. **Layer C trait plumbing** — `MintHandler`, `SettlementEventRepository`, and `BurnEventRef` consumers must each gain access to `TransferEventLog`, `VaultProjectionInvalidationEmitter`, `AssetRegistry`, `VaultAssetResolver`, `NonceRegistry`. Plumbing strategy: add these as fields on each consumer struct OR pass via builder. Builder pattern preferred (avoids god-object; matches `docs/architecture/design-principles.md` §No god-objects).
 
 6. **Test fixture bootstrap** — each consumer-site test (`crates/octo-wallet-node/tests/`, `crates/quota-router-storage/tests/`, `crates/octo-policy/src/burn_event.rs`) gains a `StubTransferEventLog` / `StubEmitter` fixture set. Reusable fixtures land at `crates/octo-vault/src/testing.rs` (NEW) per §Composition over inheritance.
 
@@ -65,7 +65,7 @@ Wire `produce_burn` / `produce_payment` / `produce_settlement` at their respecti
 - TV-PW-9: NO site uses the reverted-order pattern (gate: `grep -rnE '(^|[^_])consume\([^{]*\)\s*;\s*produce_burn' crates/ agents/ use-cases/` returns 0 matches; `grep -rn 'produce_burn' crates/octo-policy/src/burn_event.rs | wc -l` ≥ number of `consume(` call sites + 1 for the inlined-at-start-of-consume instance; the only legal ordering is `produce_*` first, then canonical write/commit)
 - TV-PW-10: `producer_sequence: &AtomicU64` is captured pre-sign and incremented post-sign via `fetch_add(1, Relaxed)` at every wire-up site (TV-PW-8's 3 sites all show `producer_sequence.fetch_add(1, Relaxed)` in the surrounding block)
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-wallet-node` (Layer C) — `MintHandler` wire-up
 - `quota-router-storage` (Layer C) — `SettlementEventRepository::insert` wire-up
@@ -123,7 +123,7 @@ cargo test --workspace --lib projection_end_to_end
 - Mission `caveat-central-enum-non-exhaustive.md` — Caveat::Payment discriminant (parallel)
 - Mission `cache-bus-auth.md` — `producer_did` + `producer_sequence` params on `produce(...)` (parallel, mandatory dep)
 - Mission `l4-parallel-transfer-event-log-elimination.md` — reduces `produce_burn` to 7 params (parallel; affects this mission's signature planning)
-- `cipherocto-design-principles` §No god-objects — builder pattern preferred
+- `docs/architecture/design-principles.md` §No god-objects — builder pattern preferred
 
 ## Claimant
 

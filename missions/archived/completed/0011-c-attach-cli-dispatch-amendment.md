@@ -121,7 +121,7 @@ Out of scope (deferred to follow-on amendment cycles per §F.6.5):
    (Layer: spec). Append §F.6 CLI Dispatch Wiring section (5 sub-sections:
    §F.6.1 emit side, §F.6.2 consume side, §F.6.3 OctoCliError mirror, §F.6.4
    pairing invariant, §F.6.5 out-of-scope). Pair-commit with this mission YAML
-   per `no-phantom-mission-pointers`.
+   per `docs/05-process/engineering-rules.md` §No phantom mission pointers.
 
 2. **CLI clap arg: `Run.token_file`** — `crates/octo-cli/src/commands/agent.rs`
    (Layer C/D). Extend `AgentAction::Run` variant with
@@ -192,7 +192,7 @@ attached_at_unix, event_cursor: Some(cursor), session_id_hex }`
    - `~/.claude/projects/.../memory/MEMORY.md` — APPEND closure card line
      (replaces the AttachHandle substrate closure card line per established
      convention)
-   - Commit (NO PUSH per `feedback_initiation_user_only` + `git-workflow`)
+   - Commit (NO PUSH per `docs/05-process/engineering-rules.md` §Git workflow + `docs/05-process/engineering-rules.md` §Git workflow)
 
 ## Cargo deps
 
@@ -222,7 +222,7 @@ Token round-trip via in-process `mint_attach_handle` + `encode_token` + `fs::wri
   verify the substrate-faithful signature verify + revocation set check pipelines
   that are already wired in the substrate cycle (no substrate gaps blocking these).
 
-## Layer direction (RFC-0011-c §9.1 Architecture + `cipherocto-design-principles`)
+## Layer direction (RFC-0011-c §9.1 Architecture + `docs/architecture/design-principles.md`)
 
 - `octo-cli` (Layer C/D) — new `--token-file` clap args on `Run` + `Attach`;
   dispatch body extensions; 4 new CLI test vectors
@@ -279,10 +279,10 @@ npx prettier --check <modified .md files>        # clean (RFC §F.6 + 3 mission 
 - RFC-0011 §Output Envelope, §Redaction Layer, §Error Handling — substrate sections
 - RFC-0015-a Appendix A (operative `IdentityKey::sign` semantics)
 - RFC-0002 §Agent State Machine (canonical state machine substrate)
-- `cipherocto-design-principles` — Layer B stability contract + no-parallel-abstractions principle
+- `docs/architecture/design-principles.md` — Layer B stability contract + `docs/architecture/design-principles.md` §No parallel abstractions principle
 - `rfc-0011-loop-dry-gate-closure` — review loop closure pattern from parent chain
 - `memory-is-never-status-ground-truth` — provenance rule
-- `no-phantom-mission-pointers` — paired-commit convention for RFC + mission YAML
+- `docs/05-process/engineering-rules.md` §No phantom mission pointers — paired-commit convention for RFC + mission YAML
 - `docs-audits-scratchpad` — closure audit location
 - `0011-c-attachhandle-dry-closure-2026-09-16` — predecessor substrate closure state
 

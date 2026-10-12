@@ -102,7 +102,7 @@ Per RFC-0011-d §11:
 - TV-RS-3: `show("nonexistent-role")` returns `RoleError::RoleNotFound` (surfaces as exit 31 per M7)
 - TV-RL-3: `list(filter.kind = nonexistent)` returns empty Vec (NOT error)
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-role` (Layer B; per RFC-0011-d §7.4) — reads from in-memory registry.
 - Stoolap (Layer D adapter; per RFC-0010) — used by M4 substrate (slash-ledger persistence); NOT used by M3 read path per substrate-truth deviation.
@@ -117,7 +117,7 @@ Additive: new public functions. No existing substrate crates modified. No `schem
 - RFC-0011-d §7.4 Substrate `[ADD]` signatures (list + show)
 - RFC-0011-d §7.5 Role Summary canonical mapping (7 Phase 1 role slugs)
 - RFC-0010 (stoolap substrate; consumed by M4)
-- `cipherocto-design-principles` — Layer B stability contract
+- `docs/architecture/design-principles.md` — Layer B stability contract
 
 ## Notes
 

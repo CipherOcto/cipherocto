@@ -52,7 +52,7 @@ RFC-0011-d §7.4 (substrate types section); §7.5 (Role Summary canonical mappin
 - [x] `RoleError` enum added (typed substrate error; 4 variants per RFC §Mission Decomp M7 row + RFC-0011-d §Security 2 last-writer-wins — NO RoleBindingConflict variant per substrate-truth)
 - [x] `RoleAction` enum added (CLI-side dispatch; variants: List, Show, Select); `#[non_exhaustive]` attribute applied per F-14
 - [x] All types derive Serialize + Deserialize + Debug + Clone (CLI surfaces JSON-serializable; schemars export deferred to RFC-0011-e vault CLI work per Phase 1+ roadmap)
-- [x] `RoleSummary.role_kind_uuid: [u8; 16]` field present (RFC-0855-namespaced UUIDv5 typed discriminator; NOT central enum per `cipherocto-design-principles`)
+- [x] `RoleSummary.role_kind_uuid: [u8; 16]` field present (RFC-0855-namespaced UUIDv5 typed discriminator; NOT central enum per `docs/architecture/design-principles.md`)
 - [x] `RoleBinding.signature_proof: RedactedHex` (CLI redaction boundary; substrate owns the bytes)
 - [x] `RoleBinding.role_binding_hash: Hex32` (public material; BLAKE3-256 digest)
 - [x] `RoleAction::Select` round-trip test passes
@@ -79,10 +79,10 @@ Type scaffolding only. NO entrypoint implementations (M3, M4). NO wallet persist
 
 N/A — type scaffolding mission. Type-level tests (TV-RX-1, TV-RX-2, TV-RX-3, TV-RX-4) land in M8 with full CLI integration.
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-role` (Layer B; per RFC-0011-d §7.4) — owns the types. No reverse deps.
-- Typed discriminator (`role_kind_uuid: [u8; 16]`) prevents central enum — extension-friendly per `cipherocto-design-principles`.
+- Typed discriminator (`role_kind_uuid: [u8; 16]`) prevents central enum — extension-friendly per `docs/architecture/design-principles.md`.
 
 ## Backward compat
 
@@ -94,14 +94,14 @@ Additive: new types. No existing crates modified. No `schema_version` bumps. No 
 - RFC-0011-d §7.5 (Role Summary canonical mapping)
 - RFC-0900 §Slashing Model (SlashingRule field schema)
 - RFC-0855 §Mission Overlay Networks (UUIDv5 namespace)
-- `cipherocto-design-principles` — no central enum for extension-bearing types
+- `docs/architecture/design-principles.md` — no central enum for extension-bearing types
 
 ## Notes
 
 - Type scaffolding mission — NO entrypoint impls (those land in M3 + M4)
-- `RoleAction` enum is substrate ACTION VOCABULARY (CLI-side dispatch), NOT a role taxonomy; role taxonomy uses typed UUID discriminator per `cipherocto-design-principles` no-central-enum
+- `RoleAction` enum is substrate ACTION VOCABULARY (CLI-side dispatch), NOT a role taxonomy; role taxonomy uses typed UUID discriminator per `docs/architecture/design-principles.md` no-central-enum
 - `#[non_exhaustive]` on `RoleAction` per F-14 preserves upgrade path
-- `RoleError` substrate errors map to `OctoCliError` in M7 (unidirectional mapping per `cipherocto-design-principles` no-premature-coupling)
+- `RoleError` substrate errors map to `OctoCliError` in M7 (unidirectional mapping per `docs/architecture/design-principles.md` no-premature-coupling)
 - Per audit 2026-09-01: mission YAML bookkeeping lag (file not moved + ACs not flipped) addressed at mission close-out via this revision
 
 ## Claimant

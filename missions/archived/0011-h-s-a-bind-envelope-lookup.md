@@ -43,12 +43,12 @@ CLI dispatch wired 2026-09-20 at `next 0df7e579`:
 - [x] Substrate additions land in `crates/octo-network/src/mon/bind_envelope.rs` per RFC-0011-h §Substrate-Additions row G22 (next edcdc47a)
 - [x] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
 - [x] `cargo test -p octo-network --lib` green (1433/1433, +2 above Phase 3 baseline)
-- [x] Layer discipline preserved (Layer B helper on existing substrate struct; zero Layer A change per `cipherocto-design-principles` §Stable Abstractions Principle)
+- [x] Layer discipline preserved (Layer B helper on existing substrate struct; zero Layer A change per `docs/architecture/design-principles.md` §Stable Abstractions Principle)
 - [x] ≥3 unit tests + ≥1 integration test (2 substrate unit tests added; integration test deferred to Phase 6 persistence adapter follow-on)
 
 ## Dependencies
 
-Hard sequencing: RFC-0011-h must be Accepted before this mission lands. Substrate-first ordering per `no-phantom-mission-pointers`: G22 substrate slice (this mission) lands BEFORE Phase 4 CLI dispatch slice.
+Hard sequencing: RFC-0011-h must be Accepted before this mission lands. Substrate-first ordering per `docs/05-process/engineering-rules.md` §No phantom mission pointers: G22 substrate slice (this mission) lands BEFORE Phase 4 CLI dispatch slice.
 
 ## Out of Scope
 

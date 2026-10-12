@@ -2,7 +2,7 @@
 
 ## Status
 
-Closed (Band A — 2026-08-07). Claimed 2026-08-05; implementation landed across 14 commits (`b91a3771` AC-1 BLAKE3 source-drop → `d431db72` AC-2 Ed25519 partial → `c218dbce`–`d8bef105` AC-2 partial-recovery sweeps → `cba3bcc5` AC-4 Stage-2 split → `04936f60` AC-4 R19 Poseidon descope → `1329e911` AC-6 closure → `59ee889b` R19/R20 phantom-test purge + post-R19 descope mapping). 25/25 AC checkboxes flipped (AC-1..AC-5 + the AC-6 5 already-flipped); 5/5 ACs closed (AC-1, AC-2, AC-3, AC-4, AC-5); 18/18 zk_vectors pass; 57/57 `scarb cairo-test` pass (BLAKE3 + Ed25519 intrinsics exercised via `#[cfg(test)] mod`); `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo fmt --all` clean. Multi-round adversarial review closed at R23 convergence (159 unique F-IDs; R23 = 0 NEW findings per §Version History v1.16 row). See `## Closure` section for commit list + test evidence. Per `git-workflow` push awaits user instruction; per `no-line-refs-anywhere` all references use §symbol-name form.
+Closed (Band A — 2026-08-07). Claimed 2026-08-05; implementation landed across 14 commits (`b91a3771` AC-1 BLAKE3 source-drop → `d431db72` AC-2 Ed25519 partial → `c218dbce`–`d8bef105` AC-2 partial-recovery sweeps → `cba3bcc5` AC-4 Stage-2 split → `04936f60` AC-4 R19 Poseidon descope → `1329e911` AC-6 closure → `59ee889b` R19/R20 phantom-test purge + post-R19 descope mapping). 25/25 AC checkboxes flipped (AC-1..AC-5 + the AC-6 5 already-flipped); 5/5 ACs closed (AC-1, AC-2, AC-3, AC-4, AC-5); 18/18 zk_vectors pass; 57/57 `scarb cairo-test` pass (BLAKE3 + Ed25519 intrinsics exercised via `#[cfg(test)] mod`); `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo fmt --all` clean. Multi-round adversarial review closed at R23 convergence (159 unique F-IDs; R23 = 0 NEW findings per §Version History v1.16 row). See `## Closure` section for commit list + test evidence. Per `docs/05-process/engineering-rules.md` §Git workflow push awaits user instruction; per `docs/05-process/engineering-rules.md` §No line references in documentation all references use §symbol-name form.
 
 Submitter (Round 1 fix F-16): @cipherocto (BLUEPRINT mission-lifecycle implies claimant identity for `claimed/` transition; this mission is Open with explicit submitter for traceability).
 
@@ -132,7 +132,7 @@ _(Round 5 fix F-65 + Round 6 fix F-76 + F-77: §Risks row 5 (Corelib pin duplica
 
 ## Acceptance Deviations (per-AC subsections, per Round 1 fix F-17 + F-26)
 
-Each entry follows `deferred-vs-unspecified` form. **Active deviations:** unfulfilled AC + concrete plan to close + owner + target date. **Empty/no-deviation ACs** (per F-59 + F-70 alignment): use the explicit `[no open deviations] at this AC` marker — no plan/owner/target fields required.
+Each entry follows `docs/05-process/engineering-rules.md` §Deferred versus unspecified form. **Active deviations:** unfulfilled AC + concrete plan to close + owner + target date. **Empty/no-deviation ACs** (per F-59 + F-70 alignment): use the explicit `[no open deviations] at this AC` marker — no plan/owner/target fields required.
 
 ### AC-1 Deviations (HMAC-BLAKE3 chain re-derivation)
 
@@ -181,7 +181,7 @@ Replace the 0958-c pure-Cairo BLAKE3 source-drop with `core::blake3` only after 
 
 **Submission Date:** 2026-08-05T00:00:00Z
 **Last Updated:** 2026-08-07T00:00:00Z
-**Version:** 1.17 (Closed; Band A 2026-08-07; 25/25 AC checkboxes flipped across 5 ACs; 159 unique reviewed findings across R1–R23; R23 convergence = 0 NEW findings; 18/18 zk_vectors pass + 57/57 scarb cairo-test pass + clippy + fmt all green; per `git-workflow` push awaits user instruction)
+**Version:** 1.17 (Closed; Band A 2026-08-07; 25/25 AC checkboxes flipped across 5 ACs; 159 unique reviewed findings across R1–R23; R23 convergence = 0 NEW findings; 18/18 zk_vectors pass + 57/57 scarb cairo-test pass + clippy + fmt all green; per `docs/05-process/engineering-rules.md` §Git workflow push awaits user instruction)
 
 ## Closure (2026-08-07)
 

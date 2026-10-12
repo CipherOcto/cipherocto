@@ -93,7 +93,7 @@ pub use octo_coordinator_types::state::{
 };
 ```
 
-Honors the RFC §Key Files promise at Layer C while keeping the canonical home at Layer B per `cipherocto-design-principles` §Stable Abstractions.
+Honors the RFC §Key Files promise at Layer C while keeping the canonical home at Layer B per `docs/architecture/design-principles.md` §Stable Abstractions.
 
 ### Step 4 — Canonical-blob test vectors
 
@@ -140,7 +140,7 @@ Inline `#[cfg(test)]` in `state.rs`:
 - **Layer B (canonical)** — `octo-coordinator-types/src/state.rs` (pure types + canonical encoding + transition validity + Class A determinism). Years-stable; consensus-critical.
 - **Layer C (re-export shim)** — `octo-network/src/mon/coordinator.rs` (`pub use octo_coordinator_types::state::*;`). Ergonomic consumer-side call paths; honors RFC §Key Files verbatim.
 
-Per `cipherocto-design-principles` §Stable Abstractions: state machine survives 10-year migrations; specialization (DomainCoordinator per RFC-0855p-c §F1, mission-bound overrides per future RFC amendments) layers on top via composition, not duplication.
+Per `docs/architecture/design-principles.md` §Stable Abstractions: state machine survives 10-year migrations; specialization (DomainCoordinator per RFC-0855p-c §F1, mission-bound overrides per future RFC amendments) layers on top via composition, not duplication.
 
 ## Out of scope
 

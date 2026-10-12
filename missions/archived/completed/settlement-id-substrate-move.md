@@ -1,7 +1,7 @@
 # settlement-id-substrate-move — promote `SettlementId` to octo-cap-macaroon Layer A substrate
 
 **Status:** claimed (2026-08-27)
-**Substrate:** RFC-0959 (settlement event) + `cipherocto-design-principles` §Canonical home rule (newtypes in Layer A)
+**Substrate:** RFC-0959 (settlement event) + `docs/architecture/design-principles.md` §Canonical home rule (newtypes in Layer A)
 **Parent:** R3 review follow-on (substrate-hosting finding — `SettlementId` currently in Layer C, should be in Layer A)
 **Depends on:**
 
@@ -10,7 +10,7 @@
 
 ## Motivation
 
-`pub struct SettlementId(pub [u8; 32]);` is declared at `crates/quota-router-sm-engine/src/settlement_event.rs` (Layer C — quota-router-sm-engine). Per `cipherocto-design-principles` §Canonical home rule, identity-bearing newtypes belong in Layer A (`octo-cap-macaroon`) so all downstream crates (Layer B / C / D / E) can consume a single canonical type. Currently, the `SettlementProducerInput.settlement_id: [u8; 32]` field uses raw bytes (not the newtype), confirming the newtype is not yet universally adopted.
+`pub struct SettlementId(pub [u8; 32]);` is declared at `crates/quota-router-sm-engine/src/settlement_event.rs` (Layer C — quota-router-sm-engine). Per `docs/architecture/design-principles.md` §Canonical home rule, identity-bearing newtypes belong in Layer A (`octo-cap-macaroon`) so all downstream crates (Layer B / C / D / E) can consume a single canonical type. Currently, the `SettlementProducerInput.settlement_id: [u8; 32]` field uses raw bytes (not the newtype), confirming the newtype is not yet universally adopted.
 
 Layer A hosting also unlocks Layer A-frozen semantics: PQC migration, Borsh canonical encoding, and cross-protocol signature verification are easier when the newtype lives alongside `ChainId`, `VaultId`, `AssetId` in Layer A.
 
@@ -49,7 +49,7 @@ Move `pub struct SettlementId(pub [u8; 32]);` from `crates/quota-router-sm-engin
 - TV-SI-6: Layer A hosting — `octo-policy` can `use octo_cap_macaroon::SettlementId;` without depending on `quota-router-sm-engine` (Layer A → Layer C inversion risk avoided)
 - TV-SI-7: `cargo doc --no-deps --workspace` shows `SettlementId` listed under `octo_cap_macaroon` docs
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-cap-macaroon` (Layer A, RFC-frozen) — `SettlementId` decl + canonical derives
 - `quota-router-sm-engine` (Layer C) — re-export `pub use octo_cap_macaroon::SettlementId;` (Cycle 1); remove re-export at Cycle 2
@@ -82,22 +82,22 @@ cargo build --workspace --all-targets --features full
 ## Backward compat
 
 - **Cycle 1:** Source-compatible (re-export retained). Substrate move is transparent to consumers.
-- **Cycle 2:** Source-breaking for consumers that use `crate::settlement_event::SettlementId` directly (re-export removed). Justified per `cipherocto-design-principles` §Canonical home rule.
+- **Cycle 2:** Source-breaking for consumers that use `crate::settlement_event::SettlementId` directly (re-export removed). Justified per `docs/architecture/design-principles.md` §Canonical home rule.
 - **Wire form (Borsh):** UNCHANGED. The newtype wrapper is transparent to Borsh (single field, fixed size).
 
 **Semver impact:** Layer A semver-MAJOR per §Layer stability (a new public type in Layer A is a new public API surface, even though the wire form is unchanged).
 
 ## Risk
 
-- HIGH: Cycle 2 re-export-removal blast radius — when `pub use octo_cap_macaroon::SettlementId` is dropped from `quota-router-sm-engine::settlement_event`, every consumer crate still using `crate::settlement_event::SettlementId` fails to compile; workspace-wide build failure spans every Layer B / C / D / E consumer. Mitigation: pre-landing grep gate verifying `pub use octo_cap_macaroon::SettlementId` is the only `SettlementId` export path in every consumer crate; cross-crate review per `cipherocto-design-principles` §Layer stability; 1-cycle deprecation window between Cycle 1 (decl + re-export) and Cycle 2 (re-export removal).
+- HIGH: Cycle 2 re-export-removal blast radius — when `pub use octo_cap_macaroon::SettlementId` is dropped from `quota-router-sm-engine::settlement_event`, every consumer crate still using `crate::settlement_event::SettlementId` fails to compile; workspace-wide build failure spans every Layer B / C / D / E consumer. Mitigation: pre-landing grep gate verifying `pub use octo_cap_macaroon::SettlementId` is the only `SettlementId` export path in every consumer crate; cross-crate review per `docs/architecture/design-principles.md` §Layer stability; 1-cycle deprecation window between Cycle 1 (decl + re-export) and Cycle 2 (re-export removal).
 - LOW: migration is mechanical — re-export + sed-style consumer rewrite
 - MEDIUM: cross-crate `cargo` cache invalidation — every consumer crate's fingerprint changes because the type's module path changes. First build after the move is slow (recompiles affected crates cold).
 - LOW: signature verification cross-protocol — verify Borsh-derive is identical to the Layer A pattern (see canonical derives on `ChainId` / `VaultId`).
 
 ## Cross-references
 
-- `cipherocto-design-principles` §Canonical home rule (newtypes in Layer A)
-- `cipherocto-design-principles` §Layer stability table — Layer A semver-major
+- `docs/architecture/design-principles.md` §Canonical home rule (newtypes in Layer A)
+- `docs/architecture/design-principles.md` §Layer stability table — Layer A semver-major
 - RFC-0959 §2.1 — SettlementEvent substrate (Mission G)
 - RFC-0959 §2.3 — audit invariant (verify_settlement_against_payment_caveat)
 - RFC-0105 §3.12 — verify_governance_signature canonical home (relies on inner bytes)

@@ -19,14 +19,14 @@ status: Completed
 
 # 0011-d-M10-phase2-coordinator-domain-coordinator — Phase 2 `octo role select coordinator` + `domain-coordinator` per RFC-0011-d §Mission Decomposition M10
 
-**Status:** Completed — **GATE CLEARED (2026-09-02)**. Both RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) + RFC-0855p-e reached Accepted at commit `0e915618` on `next`. Files at `rfcs/accepted/networking/0855p-d{,-*}-subgroup-*.md` + `rfcs/accepted/networking/0855p-d{1,2,3}-*.md` + `rfcs/accepted/networking/0855p-e-*.md`. Per `cipherocto-design-principles` §Discipline at first call site + `no-line-refs-anywhere`, the gate-clearance was reached via per-concern RFC split (d INDEX + d1 + d2 + d3) + 5-lens adversarial review loop + DRY closure (W12+W12.6 = 2 consecutive zero-finding rounds) per `docs/audits/2026-09-02-rfc-0855p-de-review-dry.md`. Implementation kickoff user-gated per `feedback_initiation_user_only` + `git-workflow`. M11 must land FIRST per substrate-first pattern (Sub-step 2 of mission sub-steps). v1.3 drift-fix per `docs/audits/2026-09-03-m10-m11-substrate-truth-reconciliation.md` + RFC-0011-d v1.7.1 amendment: substrate signatures corrected to canonical Layer C types (`RoleBinding`, `GroupBinding`, `BindingError`); fictional `DomainCoordinatorRecord` + `DomainCoordinatorError` removed.
+**Status:** Completed — **GATE CLEARED (2026-09-02)**. Both RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) + RFC-0855p-e reached Accepted at commit `0e915618` on `next`. Files at `rfcs/accepted/networking/0855p-d{,-*}-subgroup-*.md` + `rfcs/accepted/networking/0855p-d{1,2,3}-*.md` + `rfcs/accepted/networking/0855p-e-*.md`. Per `docs/architecture/design-principles.md` §Discipline at first call site + `docs/05-process/engineering-rules.md` §No line references in documentation, the gate-clearance was reached via per-concern RFC split (d INDEX + d1 + d2 + d3) + 5-lens adversarial review loop + DRY closure (W12+W12.6 = 2 consecutive zero-finding rounds) per `docs/audits/2026-09-02-rfc-0855p-de-review-dry.md`. Implementation kickoff user-gated per `docs/05-process/engineering-rules.md` §Git workflow + `docs/05-process/engineering-rules.md` §Git workflow. M11 must land FIRST per substrate-first pattern (Sub-step 2 of mission sub-steps). v1.3 drift-fix per `docs/audits/2026-09-03-m10-m11-substrate-truth-reconciliation.md` + RFC-0011-d v1.7.1 amendment: substrate signatures corrected to canonical Layer C types (`RoleBinding`, `GroupBinding`, `BindingError`); fictional `DomainCoordinatorRecord` + `DomainCoordinatorError` removed.
 **Substrate:** RFC-0011-d §Mission Decomposition M10 row; §Phase 2; §Compatibility partial-prereq caveat
 **Parent:** RFC-0011-d
 **Depends on:** RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) Accepted + RFC-0855p-e Accepted (gate); `0011-d-M6-octocli-role-commands` (Phase 1 surface); `0011-d-M11-phase2-domain-coordinator-platform-binding` (M11 must land FIRST per substrate-first pattern)
 
 ## Status
 
-Claimed (2026-09-02) by @mmacedoeu — **GATE CLEARED (2026-09-02) at commit `0e915618`**. RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) + RFC-0855p-e reached Accepted on `next`. Tenth of 11 atomic missions (9 Phase 1 + 2 Phase 2). Implementation kickoff user-gated per `feedback_initiation_user_only` + `git-workflow`; M11 (`0011-d-M11-phase2-domain-coordinator-platform-binding`) must land FIRST per substrate-first pattern (Sub-step 2). v1.3 drift-fix per `docs/audits/2026-09-03-m10-m11-substrate-truth-reconciliation.md` + RFC-0011-d v1.7.1 amendment.
+Claimed (2026-09-02) by @mmacedoeu — **GATE CLEARED (2026-09-02) at commit `0e915618`**. RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) + RFC-0855p-e reached Accepted on `next`. Tenth of 11 atomic missions (9 Phase 1 + 2 Phase 2). Implementation kickoff user-gated per `docs/05-process/engineering-rules.md` §Git workflow + `docs/05-process/engineering-rules.md` §Git workflow; M11 (`0011-d-M11-phase2-domain-coordinator-platform-binding`) must land FIRST per substrate-first pattern (Sub-step 2). v1.3 drift-fix per `docs/audits/2026-09-03-m10-m11-substrate-truth-reconciliation.md` + RFC-0011-d v1.7.1 amendment.
 
 ## Substrate (RFC-0011-d)
 
@@ -90,7 +90,7 @@ RFC-0011-d §Mission Decomposition M10 row; §Phase 2; §Compatibility partial-p
 
 ## Depends on (GATE)
 
-**HARD GATE** _(gate CLEARED 2026-09-02 per commit `0e915618` on `next`; retained as documentation per `cipherocto-design-principles` §Discipline at first call site)_: RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) + RFC-0855p-e MUST reach Accepted status before this mission claims. Per `deferred-vs-unspecified` + BLUEPRINT §Mission Lifecycle.
+**HARD GATE** _(gate CLEARED 2026-09-02 per commit `0e915618` on `next`; retained as documentation per `docs/architecture/design-principles.md` §Discipline at first call site)_: RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) + RFC-0855p-e MUST reach Accepted status before this mission claims. Per `docs/05-process/engineering-rules.md` §Deferred versus unspecified + BLUEPRINT §Mission Lifecycle.
 
 **SUBSTRATE-FIRST GATE**: M11 (`0011-d-M11-phase2-domain-coordinator-platform-binding`) MUST land before this mission begins implementation. Per RFC-0011-d §Mission Decomposition M10 row Prereq RFCs column addition (v1.7 substrate-truth reconciliation).
 
@@ -101,7 +101,7 @@ RFC-0011-d §Mission Decomposition M10 row; §Phase 2; §Compatibility partial-p
 
 ## Acceptance Criteria
 
-- [x] Extend `crates/octo-role/src/lib.rs` with 3 new public exports: `select_coordinator` + `select_domain_coordinator` + `build_handover_request` (drift-fix: `build_handover_request` added as separate public helper per `cipherocto-design-principles` §Interface Segregation)
+- [x] Extend `crates/octo-role/src/lib.rs` with 3 new public exports: `select_coordinator` + `select_domain_coordinator` + `build_handover_request` (drift-fix: `build_handover_request` added as separate public helper per `docs/architecture/design-principles.md` §Interface Segregation)
 - [x] Extend `crates/octo-role/src/select.rs` with 2 new substrate entrypoints per drift-fixed signatures above:
   - `pub fn select_coordinator(role_id, operator_did, signer, chain_id, store, mission_id, current_epoch) -> Result<RoleBinding, RoleError>` — calls Phase 1 `select()` for role binding + emits `HandoverRequestEnvelope` per RFC-0855p-e (Layer D side-effect; post-commit)
   - `pub fn select_domain_coordinator(role_id, operator_did, signer, chain_id, store, group_binding, platform_admin_proof, current_epoch) -> Result<(RoleBinding, GroupBinding), RoleError>` — atomic with M11 `bind_domain_coordinator` (single Stoolap BEGIN IMMEDIATE tx)
@@ -170,7 +170,7 @@ Per RFC-0011-d §Test Vectors Phase 2:
 - TV-RDC-1: `octo role select domain-coordinator --confirm --group-jid X --platform whatsapp --platform-admin-proof proof.json` success path (post-0855p-d + 0855p-e Accept); atomic role binding + GroupBinding update + PlatformEvent::AdminTransfer emitted
 - TV-RDC-2: `octo role select domain-coordinator --confirm` with mismatched `platform_admin_proof` → `RoleError::SigningFailed { reason: "M11 proof verification failed: ..." }`; role binding NOT persisted (atomic rollback per M11 `BindingError::SignatureInvalid`)
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-cli` (Layer C) — thin CLI wrapper extending existing `Role::Select` (no new top-level `coordinator` group per RFC §Mission Decomp M10 row)
 - `octo-role` (Layer C specialized node; per RFC-0011-d §7.4 v1.7 layer label fix) — Phase 2 substrate entrypoints `select_coordinator` + `select_domain_coordinator`
@@ -193,7 +193,7 @@ Additive: 2 new role_id args + 2 new substrate entrypoints + 3 new CLI flags (`-
 ## Notes
 
 - Phase 2 mission — gated
-- Per `deferred-vs-unspecified`: deferred (not unspecified); gate enforced
+- Per `docs/05-process/engineering-rules.md` §Deferred versus unspecified: deferred (not unspecified); gate enforced
 - Sub-step 1 = gate check; Sub-step 2 = M11 substrate-first check
 - Extends existing `octo role select` (NOT new top-level `coordinator` group per RFC §Mission Decomp M10 row)
 - v1.3 drift-fix supersedes v1.2 substrate-home reconciliation: `octo_network::mon::domain_coordinator::bind_domain_coordinator` (file never existed) → `octo_network::dc::admin_attest::bind_domain_coordinator` (REAL drift-fixed substrate home; provides `PlatformAdminProof` typed envelope)
@@ -210,7 +210,7 @@ Additive: 2 new role_id args + 2 new substrate entrypoints + 3 new CLI flags (`-
 - RFC-0855p-c (`PlatformAdminAttestError` substrate; §5a `PlatformEvent::AdminTransfer` envelope; drift-fix B/C closed at commit `205f1434`)
 - RFC-0850p-c (binding ceremony substrate; `GroupBinding` + `BindingError`)
 - M11 (substrate-first ordering: M10 wraps M11 `bind_domain_coordinator` atomically)
-- `deferred-vs-unspecified` — gated release
+- `docs/05-process/engineering-rules.md` §Deferred versus unspecified — gated release
 - `docs/audits/2026-09-03-m10-m11-substrate-truth-reconciliation.md` — drift-fix verdict + audit closure
 - `memory/rfc-0011-d-m10-m11-substrate-impl-2026-09-03.md` — implementation closure card
 

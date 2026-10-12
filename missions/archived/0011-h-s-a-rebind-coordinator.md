@@ -58,12 +58,12 @@ CLI dispatch wired 2026-09-20 at `next 0df7e579`:
 - [x] Substrate additions land in `crates/octo-network/src/mon/rebind_arm.rs (NEW)` per RFC-0011-h §Substrate-Additions row G21 (next 3794e4a8)
 - [x] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
 - [x] `cargo test -p octo-network --lib` green (1438/1438, +5 above Phase 3 baseline)
-- [x] Layer discipline preserved (Layer B helper module on existing substrate; zero Layer A change per `cipherocto-design-principles` §Stable Abstractions Principle)
+- [x] Layer discipline preserved (Layer B helper module on existing substrate; zero Layer A change per `docs/architecture/design-principles.md` §Stable Abstractions Principle)
 - [x] ≥3 unit tests + ≥1 integration test (5 substrate unit tests added; integration test deferred to Phase 6 persistence adapter follow-on)
 
 ## Dependencies
 
-Hard sequencing: RFC-0011-h must be Accepted before this mission lands. Substrate-first ordering per `no-phantom-mission-pointers`: G21 substrate slice (this mission) lands BEFORE Phase 4 CLI dispatch slice.
+Hard sequencing: RFC-0011-h must be Accepted before this mission lands. Substrate-first ordering per `docs/05-process/engineering-rules.md` §No phantom mission pointers: G21 substrate slice (this mission) lands BEFORE Phase 4 CLI dispatch slice.
 
 ## Out of Scope
 

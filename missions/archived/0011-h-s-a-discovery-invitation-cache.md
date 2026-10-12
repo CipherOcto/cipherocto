@@ -76,12 +76,12 @@ Layer B substrate additions land in `crates/octo-network/src/mon/discovery.rs` (
 - [x] `len()` + `is_empty()` observability helpers land
 - [x] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
 - [x] `cargo test -p octo-network --lib` green (1451/1451, +7 above Phase 4 baseline of 1438, paired with G23's 6 unit tests)
-- [x] Layer discipline preserved (Layer B only; zero Layer A change per `cipherocto-design-principles` §Stable Abstractions Principle)
+- [x] Layer discipline preserved (Layer B only; zero Layer A change per `docs/architecture/design-principles.md` §Stable Abstractions Principle)
 - [x] ≥3 unit tests + ≥1 integration test (7 MissionInvitationCache unit tests pin get-miss + get-hit + iter-empty + iter-non-empty + insert-idempotent + BLAKE3 signing-bytes deterministic key derivation + BTreeMap deterministic ordering + len/is_empty observability helpers; integration test deferred to Phase 6 persistence adapter follow-on)
 
 ## Dependencies
 
-Hard sequencing: RFC-0011-h must be Accepted before this mission lands. Substrate-first ordering per `no-phantom-mission-pointers`: G24 substrate slice (this mission) lands BEFORE Phase 5 CLI dispatch slice.
+Hard sequencing: RFC-0011-h must be Accepted before this mission lands. Substrate-first ordering per `docs/05-process/engineering-rules.md` §No phantom mission pointers: G24 substrate slice (this mission) lands BEFORE Phase 5 CLI dispatch slice.
 
 ## Out of Scope
 
@@ -93,4 +93,4 @@ Hard sequencing: RFC-0011-h must be Accepted before this mission lands. Substrat
 
 ## Notes
 
-Stub fill-in 2026-09-20 per RFC-0011-m closure card at `next 8e7c5cec`. Substrate slice landed 2026-09-20 at `next 24bfec96`. CLI dispatch slice landed 2026-09-20 at `next 346f10cc`. The substrate-faithful `Option<&MissionInvitation>` translation surfaces as typed exit 89 `NetworkSubstrateUnavailable { companion: "G24" }` in the CLI dispatch slice. The `BTreeMap` choice honors the deterministic ordering contract per RFC-0855 §8.2 + RFC-0011-h §Output Envelope order determinism. The invitation key is the BLAKE3-256 hash of `to_signing_bytes()` — substrate-faithful mapping from RFC-0855 §8.2 "invitation-key = blake3(to_signing_bytes())" so the same invitation can be looked up regardless of which gateway produced it. The `iter()` method returns owned `[u8; 32]` keys so the iterator lifetime is decoupled from the cache lifetime (substrate-faithful boundary per `cipherocto-design-principles` §No premature coupling).
+Stub fill-in 2026-09-20 per RFC-0011-m closure card at `next 8e7c5cec`. Substrate slice landed 2026-09-20 at `next 24bfec96`. CLI dispatch slice landed 2026-09-20 at `next 346f10cc`. The substrate-faithful `Option<&MissionInvitation>` translation surfaces as typed exit 89 `NetworkSubstrateUnavailable { companion: "G24" }` in the CLI dispatch slice. The `BTreeMap` choice honors the deterministic ordering contract per RFC-0855 §8.2 + RFC-0011-h §Output Envelope order determinism. The invitation key is the BLAKE3-256 hash of `to_signing_bytes()` — substrate-faithful mapping from RFC-0855 §8.2 "invitation-key = blake3(to_signing_bytes())" so the same invitation can be looked up regardless of which gateway produced it. The `iter()` method returns owned `[u8; 32]` keys so the iterator lifetime is decoupled from the cache lifetime (substrate-faithful boundary per `docs/architecture/design-principles.md` §No premature coupling).

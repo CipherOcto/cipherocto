@@ -7,9 +7,9 @@
 GREEN). Substrate work landed at commit `2ec21e01`. Total: 2/2 ACs GREEN.
 Owner: @cipherocto.
 
-Per `git-workflow` push awaits user instruction. Per `no-line-refs-anywhere`
+Per `docs/05-process/engineering-rules.md` §Git workflow push awaits user instruction. Per `docs/05-process/engineering-rules.md` §No line references in documentation
 all references use §symbol-name form. Per `rfc-referencing-convention` RFCs
-referenced by number only. Per `no-phantom-mission-pointers` all `depends_on`
+referenced by number only. Per `docs/05-process/engineering-rules.md` §No phantom mission pointers all `depends_on`
 cites real missions or RFC substrate.
 
 ## RFC

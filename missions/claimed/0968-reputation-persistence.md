@@ -458,7 +458,7 @@ Phase 1 AC → substrate mapping (31 ACs):
 4. Verify `recorder.rs` admits per-recorder lock before `last_signal_at_unix` read (AC-29)
 5. Verify `Did::parse` rejects 32-byte raw AND `did:octo:z...` legacy form (AC-14)
 
-Per `no-phantom-mission-pointers` + `deferred-vs-unspecified`, Phase 1 AC flips are deferred to a future audit pass that mechanically rewrites AC text per the §Path Reconciliation tables.
+Per `docs/05-process/engineering-rules.md` §No phantom mission pointers + `docs/05-process/engineering-rules.md` §Deferred versus unspecified, Phase 1 AC flips are deferred to a future audit pass that mechanically rewrites AC text per the §Path Reconciliation tables.
 
 **Verification (2026-08-07):**
 

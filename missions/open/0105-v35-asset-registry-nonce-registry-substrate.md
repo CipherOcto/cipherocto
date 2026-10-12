@@ -93,7 +93,7 @@ AssetError::BoundedCacheMiss)` on cache miss (Round 1 DoS mitigation;
    (NEW). Per §2.4. 5 variants:
    `Mainnet` / `Testnet` / `Devnet` / `Sidechain` / `Other`. NO parallel
    abstraction with existing `pub enum ChainNamespace { Rfc, User }` at
-   `crates/octo-policy/src/policy_kinds.rs` (no-parallel-abstractions
+   `crates/octo-policy/src/policy_kinds.rs` (`docs/architecture/design-principles.md` §No parallel abstractions
    principle per RFC-0105 v3.5 §2.4).
 
 9. **`NonceRegistry` trait + `NonceError` enum** — `crates/octo-vault/src/nonce_registry.rs`
@@ -254,7 +254,7 @@ AuditError::UnobserveFailed(e) }` per R6 finding.
     `octo-cap-macaroon` itself stays Layer B-additive.
     Alternative: place `verify_governance_signature` + `blake3_hash` at a
     NEW Layer A crate (e.g., `octo-canonical-primitives`) to isolate blast
-    radius (Stable Abstractions Principle per `cipherocto-design-principles`).
+    radius (Stable Abstractions Principle per `docs/architecture/design-principles.md`).
 
 14. **`sovereign_nonce_namespace` helper** — `crates/octo-vault/src/bridge_chain_namespace.rs`
     OR NEW `crates/octo-vault/src/sovereign_nonce.rs`. Per RFC-0965 v2.1
@@ -369,7 +369,7 @@ Per RFC-0105 v3.5 §3.1+§3.4+§3.5+§3.6+§3.11+§3.12 spec blocks. Selectors:
 - TV-CP2: `blake3_hash(data)` returns canonical 32-byte form
   (NOT `blake3::hash(data).as_bytes()`)
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-vault` (Layer B) — `asset_registry` + `bridge_identity_registry` +
   `nonce_registry` + `bridge_chain_namespace` + `newtypes` + sovereign
@@ -396,7 +396,7 @@ cargo test -p octo-vault --lib nonce_registry  # InMemoryNonceRegistry (test-onl
 
 **Cargo dep audit:** verify `bls12_381` is sourced from a pinned substrate
 version per `feedback_stoolap_persistence` (CipherOcto fork pin). If
-non-substrate: BLOCK landing, surface to user per `feedback_initiation_user_only`.
+non-substrate: BLOCK landing, surface to user per `docs/05-process/engineering-rules.md` §Git workflow.
 
 ## Backward compat
 
@@ -436,7 +436,7 @@ non-substrate: BLOCK landing, surface to user per `feedback_initiation_user_only
 - RFC-0960 v3.6 §2.1 — BurnEventRef imports from Mission D substrate
 - RFC-0959 v2.8 §2.1 — SettlementEvent imports from Mission D substrate
 - RFC-0960 v3.7 — VaultBalanceProjection consumes AssetRegistry + newtypes
-- `cipherocto-design-principles` — Layer B additive-only rule
+- `docs/architecture/design-principles.md` — Layer B additive-only rule
 - `feedback_stoolap_persistence` — CipherOcto fork pin
 - Mission A (`0960-v37-a-vault-balance-projection-substrate.md`) — depends on Mission D for AssetRegistry/MAX_SCALE/newtypes imports
 - Mission B (`0960-v37-b-event-log-producer-wiring.md`) — depends on Mission D for producer boundary types

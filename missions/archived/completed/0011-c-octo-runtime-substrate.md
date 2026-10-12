@@ -103,7 +103,7 @@ crates/octo-runtime/
 
 ## Pull Request
 
-# (PR opened by user per `feedback_initiation_user_only` + `git-workflow`)
+# (PR opened by user per `docs/05-process/engineering-rules.md` §Git workflow + `docs/05-process/engineering-rules.md` §Git workflow)
 
 ## Notes
 
@@ -153,7 +153,7 @@ chrono = { version = "0.4", features = ["serde"] }   # Timestamps (RFC-0011)
 All deps are Layer B/D substrate (RFC-0011 §Dependencies). No Layer A
 deps introduced.
 
-## Layer direction (RFC-0011-c §9.1 Architecture + per `cipherocto-design-principles`)
+## Layer direction (RFC-0011-c §9.1 Architecture + per `docs/architecture/design-principles.md`)
 
 - `octo-runtime` (Layer B) — substrate crate; substrate-authoritative for spawn/attach.
 - `octo-wallet` (Layer B) — shared state machine substrate (RFC-0002 §Agent State Machine).
@@ -181,8 +181,8 @@ deps introduced.
 - RFC-0002 §Capability Validation — 6-step pipeline substrate
 - RFC-0002 §Implementation Phases Phase 3 — `octo-runtime` delivery phase
 - RFC-0011 §Dependencies — Layer B/D substrate deps (tokio, async-trait, libp2p)
-- `cipherocto-design-principles` — Layer B stability contract
-- `no-line-refs-anywhere` — §section refs only
+- `docs/architecture/design-principles.md` — Layer B stability contract
+- `docs/05-process/engineering-rules.md` §No line references in documentation — §section refs only
 - `rfc-0011-loop-dry-gate-closure` — review loop closure pattern
 
 ## Why gate

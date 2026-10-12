@@ -10,7 +10,7 @@ RFC-0011-h §Substrate-Additions Companion Missions row G20 + RFC-0863 General-P
 
 ## Summary
 
-Adds the `NetworkSender` trait + `SendContext` struct per RFC-0863 General-Purpose Network Integration. Per-extension crate pattern: trait in Layer B, per-transport impl crates in Layer D, registry lookup at runtime per `cipherocto-design-principles` §User extensibility. Pre-requisite for `octo network status` (Phase 6 G20 substrate companion) so the CLI can query network-sender state via the per-extension registry.
+Adds the `NetworkSender` trait + `SendContext` struct per RFC-0863 General-Purpose Network Integration. Per-extension crate pattern: trait in Layer B, per-transport impl crates in Layer D, registry lookup at runtime per `docs/architecture/design-principles.md` §User extensibility. Pre-requisite for `octo network status` (Phase 6 G20 substrate companion) so the CLI can query network-sender state via the per-extension registry.
 
 ### Substrate additions target
 
@@ -81,7 +81,7 @@ pub enum NetworkSendError {
 
 /// In-process registry of `NetworkSender` impls indexed by
 /// transport tag. Substrate-faithful to the per-extension
-/// registry pattern per `cipherocto-design-principles` §User
+/// registry pattern per `docs/architecture/design-principles.md` §User
 /// extensibility.
 #[derive(Default)]
 pub struct NetworkSenderRegistry {
@@ -112,7 +112,7 @@ Layer B substrate additions land in a NEW directory `crates/octo-network/src/sen
 - [x] `NetworkSenderRegistry` struct + register/get/iter/len/is_empty methods land at same path
 - [x] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
 - [x] `cargo test -p octo-network --lib` green (1472/1472, +11 above Phase 5 baseline of 1461)
-- [x] Layer discipline preserved (Layer B only, zero Layer A change per `cipherocto-design-principles` §Stable Abstractions Principle)
+- [x] Layer discipline preserved (Layer B only, zero Layer A change per `docs/architecture/design-principles.md` §Stable Abstractions Principle)
 - [x] ≥3 unit tests + ≥1 integration test (11 substrate unit tests pin: trait object round-trip + registry register + registry get-hit + registry get-miss + registry iter-deterministic-order + registry idempotent-register-overwrite + SendContext Clone + WireFormat PartialEq + SendSummary Serialize/Deserialize round-trip + NetworkSendError Display)
 - [x] Per-extension crate pattern preserved: trait in Layer B (`octo-network`); per-transport impls (BLE, USB, TCP, QUIC, HID) land in separate Layer D crates, NOT in `octo-network`
 
@@ -131,4 +131,4 @@ Layer B substrate additions land in a NEW directory `crates/octo-network/src/sen
 
 ## Notes
 
-Stub fill-in 2026-09-20 per RFC-0011-n closure card at `next` (DRY CLOSED v0.2). Substrate slice pending per directive sequencing (substrate coding is LAST). The `NetworkSender` trait deliberately mirrors the RFC-0863 trait anchor + `SendContext` struct anchor — the trait does NOT add fields beyond what RFC-0863 specifies per `cipherocto-design-principles` §Stable Abstractions Principle. The registry pattern preserves the per-extension crate pattern: each transport ships its own Layer D crate implementing `NetworkSender`; the registry is the only place that knows about every transport.
+Stub fill-in 2026-09-20 per RFC-0011-n closure card at `next` (DRY CLOSED v0.2). Substrate slice pending per directive sequencing (substrate coding is LAST). The `NetworkSender` trait deliberately mirrors the RFC-0863 trait anchor + `SendContext` struct anchor — the trait does NOT add fields beyond what RFC-0863 specifies per `docs/architecture/design-principles.md` §Stable Abstractions Principle. The registry pattern preserves the per-extension crate pattern: each transport ships its own Layer D crate implementing `NetworkSender`; the registry is the only place that knows about every transport.

@@ -21,7 +21,7 @@ real per-dependency health probes.
 ## Deferred work (explicit, not unspecified)
 
 The 0905-c checklist flagged "reserved for future real dependency checks" without
-naming an owner. This mission files the follow-up per `deferred-vs-unspecified`.
+naming an owner. This mission files the follow-up per `docs/05-process/engineering-rules.md` §Deferred versus unspecified.
 
 ## Scope
 

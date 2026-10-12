@@ -2,9 +2,9 @@
 
 ## Status
 
-Closed (Band A — 2026-08-07). Claimed 2026-08-07; substrate landed in commit `4e3e5f60` (pre-existing in `quota-router/` legacy top-level crate). 11/11 ACs GREEN as of 2026-08-07 audit-closure roll-up. 12/12 property tests pass with 1000 cases (`ProptestConfig::with_cases(1000)`); 16/16 adversarial tests pass. `cargo clippy -- -D warnings` + `cargo fmt --check` clean. Per `git-workflow` push awaits user instruction.
+Closed (Band A — 2026-08-07). Claimed 2026-08-07; substrate landed in commit `4e3e5f60` (pre-existing in `quota-router/` legacy top-level crate). 11/11 ACs GREEN as of 2026-08-07 audit-closure roll-up. 12/12 property tests pass with 1000 cases (`ProptestConfig::with_cases(1000)`); 16/16 adversarial tests pass. `cargo clippy -- -D warnings` + `cargo fmt --check` clean. Per `docs/05-process/engineering-rules.md` §Git workflow push awaits user instruction.
 
-Per `deferred-vs-unspecified` named-owner rule: count discrepancy documented (spec said 8 new adversarial tests T6–T13, actual 11 new T6–T16; total spec said 19, actual 16). macOS arm64 NOT verified in this environment (Linux x86_64 only).
+Per `docs/05-process/engineering-rules.md` §Deferred versus unspecified named-owner rule: count discrepancy documented (spec said 8 new adversarial tests T6–T13, actual 11 new T6–T16; total spec said 19, actual 16). macOS arm64 NOT verified in this environment (Linux x86_64 only).
 
 ## RFC
 

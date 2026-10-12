@@ -39,7 +39,7 @@ Closed (2026-09-01). Substrate delivered: `Role { List, Show, Select }` clap sub
 - `octo role show <role_id> [--json]`
 - `octo role select <role_id> [--confirm] [--dry-run] [--json]`
 
-§Key Files row "Command dispatch" (MUST be thin wrapper per `cipherocto-design-principles` no-god-object).
+§Key Files row "Command dispatch" (MUST be thin wrapper per `docs/architecture/design-principles.md` no-god-object).
 
 ## Depends on
 
@@ -85,7 +85,7 @@ CLI binding only. NO new error variants (M7 — landed in same commit per combin
 
 N/A — CLI integration tests land in M8 (TV-RX-1 through TV-SEL-8 with full CLI invocation).
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-cli` (Layer C; per RFC-0011) — orchestrator
 - `octo-role` (Layer B; per RFC-0011-d) — substrate entrypoint
@@ -101,11 +101,11 @@ Additive: new subcommand. NO existing CLI commands modified. NO `schema_version`
 
 - RFC-0011-d §7.4 (CLI subcommand surface; substrate types)
 - RFC-0011 (parent CLI substrate)
-- `cipherocto-design-principles` — thin wrapper rule (Layer C → Layer B)
+- `docs/architecture/design-principles.md` — thin wrapper rule (Layer C → Layer B)
 
 ## Notes
 
-- Thin wrapper — no business logic in CLI per `cipherocto-design-principles`
+- Thin wrapper — no business logic in CLI per `docs/architecture/design-principles.md`
 - Output envelope shape: `{ schema_version, generated_at, data, exit_code }` per RFC-0011 §Output Envelope
 - TTY detection: inherited from RFC-0011 §Output Envelope — pretty when TTY, JSON when `--json` or non-TTY
 - Substrate-truth note: M6 + M7 landed in single combined commit `63ffdf94` (per substrate cycle); M7 error variants wired in same PR

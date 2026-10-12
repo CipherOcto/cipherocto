@@ -76,7 +76,7 @@ vault_id, asset_id }`. Reused by RFC-0960 v3.6 BurnEventRef gate 3
    (Mission F). Single-source-of-truth: this enum lives at the bridge
    boundary; consumers import via `use octo_quota_router_sm_engine::settlement_event::VaultRegistryError;`
    OR the canonical home is chosen at Mission F+G landing time (decision
-   surfaced to user per `feedback_initiation_user_only`).
+   surfaced to user per `docs/05-process/engineering-rules.md` §Git workflow).
 
 6. **`SettlementEventError` enum** — same file. Per §2.2. **9**
    variants: `AssetUnknown` / `ScaleMismatch { cost_scale, vault_scale }`
@@ -326,7 +326,7 @@ Per RFC-0959 v2.8 §8 (Pending, concrete test vectors).
   sovereign assets or meta.governance_pubkey for managed assets);
   second call returns `Err(SettlementEventError::Replay)`
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `quota-router-sm-engine` (Layer C specialized node role) —
   `settlement_event.rs` = **Layer B additive type hosted in Layer C node
@@ -336,7 +336,7 @@ Per RFC-0959 v2.8 §8 (Pending, concrete test vectors).
   (canonical substrate variant name per §0; no rename history)
 - `VaultRegistryError` enum — single-source-of-truth decision needed
   (this Mission G site OR shared `octo-vault` home); surfaced to user
-  per `feedback_initiation_user_only`
+  per `docs/05-process/engineering-rules.md` §Git workflow
 - No cross-layer inversion; all new types additive (semver-minor)
 
 ## Validation
@@ -389,7 +389,7 @@ cargo test -p quota-router-sm-engine --lib settlement_event
   `SettlementEventRepository::insert` per RFC-0960 v3.7 §2.5)
 - Mission A (`0960-v37-a-vault-balance-projection-substrate.md`) —
   cache table consumer (cache invalidation envelope source)
-- `cipherocto-design-principles` — Layer B additive-only rule
+- `docs/architecture/design-principles.md` — Layer B additive-only rule
 
 ## Claimant
 

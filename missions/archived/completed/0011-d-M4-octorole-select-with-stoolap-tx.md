@@ -104,7 +104,7 @@ Per RFC-0011-d §11:
 - TV-RX-8: `role_binding_hash` deterministic for same input
 - TV-RX-9: `signature_proof` field redacted in return value
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-role` (Layer B; per RFC-0011-d §7.4) — owns the write-path substrate + slash-ledger row creation
 - `octo-cap-macaroon` (Layer B; per RFC-0957) — owns `CapabilitySigner` trait

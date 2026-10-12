@@ -209,7 +209,7 @@ Verified by the §Test Vectors list.
   is the check mission `0009-c` could not write, because it would have
   failed on arrival.
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 `octo-cap-macaroon` is Layer E consuming the Layer B registry. No new
 upward edge: the algorithm arrives from `octo-ident` on the token.

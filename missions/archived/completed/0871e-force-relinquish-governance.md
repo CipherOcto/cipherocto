@@ -35,7 +35,7 @@ operator role separation (RFC-0853 §F3 substrate).
       unauthorized signer) rejected.
 - [ ] Cross-crate dep audit: no B/E/L-D violation (force_relinquish
       substrate = Layer B; governance ceremony operator = governance
-      layer per `cipherocto-design-principles.md`).
+      layer per ``docs/architecture/design-principles.md`.md`).
 - [ ] **Snapshot+replay field (per R16 H1):** coordinator state
       recovery via persistent snapshot + WAL replay. Schema:
       `Snapshot { elected_at_hlc: HlcTimestamp, term: u64,

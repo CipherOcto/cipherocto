@@ -105,7 +105,7 @@ Per-extension crate pattern preserved: trait is in `octo-network` Layer B; concr
 - [x] `pub mod specialized;` insertion in `crates/octo-network/src/lib.rs` + `pub mod node_record;` insertion in NEW `crates/octo-network/src/specialized/mod.rs`
 - [x] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
 - [x] `cargo test -p octo-network --lib` green (≥5 unit tests added above Phase 8 baseline of 1477)
-- [x] Layer discipline preserved (Layer B only; zero Layer A change per `cipherocto-design-principles` §Stable Abstractions Principle)
+- [x] Layer discipline preserved (Layer B only; zero Layer A change per `docs/architecture/design-principles.md` §Stable Abstractions Principle)
 - [x] ≥5 unit tests + ≥1 integration test (substrate-faithful boundary tests pin load-miss + load-hit + bind-success + bind-already-bound + bind-not-found + BTreeMap deterministic ordering)
 
 ## Dependencies
@@ -124,4 +124,4 @@ Per-extension crate pattern preserved: trait is in `octo-network` Layer B; concr
 
 ## Notes
 
-Stub originally filed 2026-09-18 per `no-phantom-mission-pointers`. Full AC + scope land in Phase 9 stub fill-in commit at `next PENDING` per the Phase 4 paired-substrate completion pattern. Phase 9 follows the Phase 5 RFC-0011-m 5-commit pattern (stub fill-in → substrate slice → YAML Claimed → CLI dispatch → YAMLs Completed) verified at `next 8e7c5cec`, `24bfec96`, `fcb58331`, `346f10cc`, `97955c00`. Slot 89 `NetworkSubstrateUnavailable` REUSE per Phase 6 precedent (0 NEW OctoCliError variants). BTreeMap determinism per RFC-0011-h §Output Envelope order determinism. pastejacking defense via `parse_32_byte_hex` shared helper per RFC-0011-h §Pastejacking Defense pattern.
+Stub originally filed 2026-09-18 per `docs/05-process/engineering-rules.md` §No phantom mission pointers. Full AC + scope land in Phase 9 stub fill-in commit at `next PENDING` per the Phase 4 paired-substrate completion pattern. Phase 9 follows the Phase 5 RFC-0011-m 5-commit pattern (stub fill-in → substrate slice → YAML Claimed → CLI dispatch → YAMLs Completed) verified at `next 8e7c5cec`, `24bfec96`, `fcb58331`, `346f10cc`, `97955c00`. Slot 89 `NetworkSubstrateUnavailable` REUSE per Phase 6 precedent (0 NEW OctoCliError variants). BTreeMap determinism per RFC-0011-h §Output Envelope order determinism. pastejacking defense via `parse_32_byte_hex` shared helper per RFC-0011-h §Pastejacking Defense pattern.

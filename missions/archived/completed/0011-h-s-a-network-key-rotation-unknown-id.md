@@ -143,7 +143,7 @@ octo-attach-key-rotation = ["octo-runtime/octo-attach-key-rotation"]
 
 (The `octo-runtime` dep in `crates/octo-cli/Cargo.toml` is declared as a REQUIRED dependency (no `optional = true` field), so Cargo's `dep:` feature syntax (which requires the dep to be `optional = true`) is INAPPLICABLE here. The correct syntax is the plain `octo-runtime/octo-attach-key-rotation` clause, which activates the substrate feature on the existing required dep without re-declaring it as optional per `substrate-faithfulness-verification` R3.A HIGH-1 finding.)
 
-(Stub: full type signatures + ACs land in Phase X of this mission's own RFC/DRY cycle per `no-phantom-mission-pointers`.)
+(Stub: full type signatures + ACs land in Phase X of this mission's own RFC/DRY cycle per `docs/05-process/engineering-rules.md` §No phantom mission pointers.)
 
 ## Acceptance Criteria
 
@@ -165,7 +165,7 @@ octo-attach-key-rotation = ["octo-runtime/octo-attach-key-rotation"]
 - [ ] `cargo test -p octo-cli --lib` green (1 Rust vector tv_w_1 + zero regressions; feature OFF build, default octo-cli)
 - [ ] Shell grep `tv_w_3` (4 per-edit greps per RFC-0011-w §Test Vectors `tv_w_3` row) verifies all 4 G4 cross-RFC reference updates landed at their target locations (feature OFF build, runs against parent RFC file directly)
 - [ ] `cargo build --workspace --all-targets` clean (no downstream breakage)
-- [ ] Layer discipline preserved (Layer C CLI substrate additions only; zero Layer A change per `cipherocto-design-principles` §Stable Abstractions Principle)
+- [ ] Layer discipline preserved (Layer C CLI substrate additions only; zero Layer A change per `docs/architecture/design-principles.md` §Stable Abstractions Principle)
 - [ ] Layer A frozen check passes: `git diff crates/octo-governance-core crates/octo-audit-core crates/octo-settlement-core` returns 0 hits after mission commit (real Layer A crates in scope per RFC-0011-v R2.5 lesson; no phantom `octo-vault-core` or `octo-wallet-core` cites)
 - [ ] RFC-0011-h cross-reference updates land per RFC-0011-w §Detailed Design §Cross-RFC reference updates:
   - §Error Handling summary paragraph: "All 10 defined ... + slot 91 pre-allocated" → "All 11 defined ... (slot 91 activated per RFC-0011-w)"
@@ -178,28 +178,28 @@ octo-attach-key-rotation = ["octo-runtime/octo-attach-key-rotation"]
 
 Hard sequencing:
 
-1. **RFC-0011-w must be Draft** before this mission's substrate additions land (mission YAML cites real RFC per `no-phantom-mission-pointers`)
+1. **RFC-0011-w must be Draft** before this mission's substrate additions land (mission YAML cites real RFC per `docs/05-process/engineering-rules.md` §No phantom mission pointers)
 2. **RFC-0011-h must be Accepted** before RFC-0011-w Drafts (parent pre-allocation contract lives in RFC-0011-h §Error Handling row 91 + §Exit Codes row 91 + §Substrate-Additions G21 row + [^rotation-error-slot-prealloc] footnote)
 3. **RFC-0011-c must be Accepted** (D2.1 paired-acceptance bridge §F.5.1; `AttachError::UnknownKeyId` substrate variant originates here)
 4. **RFC-0011-l must be Accepted** (Phase 4 substrate landing; G21 row substrate references)
 5. **RFC-0015-a must be Accepted** (§6.5 paired-acceptance bridge; `KeyId` discriminator surface)
 
-Substrate-first ordering invariant per `no-phantom-mission-pointers`: this mission's substrate additions (variant mint + translation arm + exit-code arm + redaction helper) land BEFORE any future CLI caller surface (RFC-0011-w §Future Work F1) that surfaces the key-id translation path.
+Substrate-first ordering invariant per `docs/05-process/engineering-rules.md` §No phantom mission pointers: this mission's substrate additions (variant mint + translation arm + exit-code arm + redaction helper) land BEFORE any future CLI caller surface (RFC-0011-w §Future Work F1) that surfaces the key-id translation path.
 
 ## Out of Scope
 
 - CLI dispatch surface for the key-id translation path (deferred to RFC-0011-w §Future Work F1; current rebind-* dispatch arms return `Option<RebindCommit>` / `Option<RebindAbort>` not `Result<_, AttachError>` — substrate change required to route through `AttachError`)
 - D2.2 population policy (deferred post-PQC per RFC-0011-l Phase 4 §Substrate-Additions G21 row)
-- Per-extension concrete impl crates (Layer D; OUT OF SCOPE per `cipherocto-design-principles` §User extensibility)
+- Per-extension concrete impl crates (Layer D; OUT OF SCOPE per `docs/architecture/design-principles.md` §User extensibility)
 - Wire format versioning (out of RFC-0011-w scope; deferred per RFC-0011-h §Future Work items F8 + F9)
 - Post-PQC `KeyId` discriminator migration (out of RFC-0011-w scope; deferred per RFC-0011-c §F.5.1 paired-acceptance bridge migration notes)
 
 ## Notes
 
-Stub filed 2026-09-22 per `no-phantom-mission-pointers` + RFC-0011-w amendment cycle. The substrate gap was identified at RFC-0011-h Draft time: slot 91 was pre-allocated per [^rotation-error-slot-prealloc] footnote to avoid a runtime slot-arithmetic gap when the post-G21 amendment lands. Without this mission, `AttachError::UnknownKeyId` falls through to the wildcard arm of `From<AttachError>` and surfaces as `Internal(reason)` exit 64, collapsing the typed-discriminator information that the dedicated `NetworkKeyRotationUnknownId` exit was designed to surface.
+Stub filed 2026-09-22 per `docs/05-process/engineering-rules.md` §No phantom mission pointers + RFC-0011-w amendment cycle. The substrate gap was identified at RFC-0011-h Draft time: slot 91 was pre-allocated per [^rotation-error-slot-prealloc] footnote to avoid a runtime slot-arithmetic gap when the post-G21 amendment lands. Without this mission, `AttachError::UnknownKeyId` falls through to the wildcard arm of `From<AttachError>` and surfaces as `Internal(reason)` exit 64, collapsing the typed-discriminator information that the dedicated `NetworkKeyRotationUnknownId` exit was designed to surface.
 
-Variant reachability: requires `octo-attach-key-rotation` Cargo feature enabled in `octo-cli` (which propagates to `octo-runtime`) AND a CLI caller surface for the key-id translation path (RFC-0011-w §Future Work F1). Until F1 lands, the variant sits unused in the `#[non_exhaustive]` enum (additive-safe per `cipherocto-design-principles` §Extension over enumeration). Slot 91 arithmetic: 11 defined variants + 2 RESERVED slots (80, 81) + 8 RESERVED slots (92-99) = 21 slot positions within parent RFC-0011 future-amendment band (79-99) per RFC-0011-h §Exit Codes row 79-99 + §Substrate-Additions G3 row.
+Variant reachability: requires `octo-attach-key-rotation` Cargo feature enabled in `octo-cli` (which propagates to `octo-runtime`) AND a CLI caller surface for the key-id translation path (RFC-0011-w §Future Work F1). Until F1 lands, the variant sits unused in the `#[non_exhaustive]` enum (additive-safe per `docs/architecture/design-principles.md` §Extension over enumeration). Slot 91 arithmetic: 11 defined variants + 2 RESERVED slots (80, 81) + 8 RESERVED slots (92-99) = 21 slot positions within parent RFC-0011 future-amendment band (79-99) per RFC-0011-h §Exit Codes row 79-99 + §Substrate-Additions G3 row.
 
 Substrate-faithfulness verified by direct read at RFC-0011-w Draft time per `substrate-faithfulness-verification` R7.5 lesson: `AttachError::UnknownKeyId` signature at `crates/octo-runtime/src/handle/error.rs` exactly matches the translation arm shape in RFC-0011-w §Detailed Design. `KeyId` substrate type is `pub type KeyId = u32;` (typed version discriminator per RFC-0011-c §F.5.1, NOT a 32-byte opaque type) — 8 hex chars via `key_id.to_be_bytes()`. Feature flag wiring verified: `octo-attach-key-rotation` defined on `crates/octo-runtime/Cargo.toml`; propagation to `crates/octo-cli/Cargo.toml` REQUIRED (Cargo features do NOT transitively enable downstream) per RFC-0011-w §Detailed Design §Feature flag wiring + R1.B substrate-faithfulness review.
 
-Feature propagation clause added to `crates/octo-cli/Cargo.toml` (NEW per RFC-0011-w §Implementation Phases Task 4a; `octo-attach-key-rotation = ["octo-runtime/octo-attach-key-rotation"]` — no `dep:` prefix because `octo-runtime` is already declared as a required dep at `crates/octo-cli/Cargo.toml`, not `optional = true` per `substrate-faithfulness-verification` R3.A HIGH-1 finding). No new feature flag DEFINED on `octo-cli` (single source of truth remains `crates/octo-runtime/Cargo.toml`). No new Cargo.toml dependencies. Layer A frozen preserved per `cipherocto-design-principles` §Stable Abstractions Principle.
+Feature propagation clause added to `crates/octo-cli/Cargo.toml` (NEW per RFC-0011-w §Implementation Phases Task 4a; `octo-attach-key-rotation = ["octo-runtime/octo-attach-key-rotation"]` — no `dep:` prefix because `octo-runtime` is already declared as a required dep at `crates/octo-cli/Cargo.toml`, not `optional = true` per `substrate-faithfulness-verification` R3.A HIGH-1 finding). No new feature flag DEFINED on `octo-cli` (single source of truth remains `crates/octo-runtime/Cargo.toml`). No new Cargo.toml dependencies. Layer A frozen preserved per `docs/architecture/design-principles.md` §Stable Abstractions Principle.

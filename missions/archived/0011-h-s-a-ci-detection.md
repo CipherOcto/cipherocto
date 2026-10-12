@@ -50,12 +50,12 @@ CLI dispatch slice landed 2026-09-20 at `next 0df7e579` for the 3 Phase 4 subcom
 - [x] 6 CI-DENY-default subcommands exit 90 (`NetworkCIDenyDefault`) when `CiMode::CiAgent` detected (CLI dispatch slice; helper slice proves the detection logic)
 - [x] `cargo clippy -p octo-cli --all-targets -- -D warnings` clean
 - [x] `cargo test -p octo-cli --lib` green (378/378, +10 above Phase 3 baseline)
-- [x] Layer discipline preserved (Layer C CLI dispatch surface, NO Layer A/B change per `cipherocto-design-principles` §Stable Abstractions Principle)
+- [x] Layer discipline preserved (Layer C CLI dispatch surface, NO Layer A/B change per `docs/architecture/design-principles.md` §Stable Abstractions Principle)
 - [x] ≥3 unit tests + ≥2 integration tests (10 helper unit tests added; ≥2 integration tests deferred to CLI dispatch slice via clap arm + env-var probes)
 
 ## Dependencies
 
-Hard sequencing: RFC-0011-h must be Accepted before this mission lands. Substrate-first ordering per `no-phantom-mission-pointers`: G25 helper slice (this mission) lands BEFORE Phase 4 CLI dispatch slice.
+Hard sequencing: RFC-0011-h must be Accepted before this mission lands. Substrate-first ordering per `docs/05-process/engineering-rules.md` §No phantom mission pointers: G25 helper slice (this mission) lands BEFORE Phase 4 CLI dispatch slice.
 
 ## Out of Scope
 

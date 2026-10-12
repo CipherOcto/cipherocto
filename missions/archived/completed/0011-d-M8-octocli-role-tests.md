@@ -165,7 +165,7 @@ Per RFC-0011-d §11:
     error_message_contains: ["RFC-0855p-d", "RFC-0855p-e"] # Phase 2 gate RFCs
 ```
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - Tests live with their consumers (RFC-0011-d §11 + RFC §Mission Decomp M8 row)
 - Vectors authored in impl guide per RFC §Mission Decomp M8 row (canonical location); executable integration tests in `crates/octo-cli/tests/role_integration.rs` per `implementation-workflow-hook` test-vectors-with-consumer pattern

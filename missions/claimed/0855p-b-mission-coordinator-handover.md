@@ -83,7 +83,7 @@ Transfer on HandoverRequest acknowledgment. Flush on successor Active.
 - [ ] 3 canonical handover vectors pinned in `crates/octo-network/tests/canonical_handover_blobs.rs`; all PASS.
 - [ ] Composition with `HandoverReasonTypeId` (Layer B event type, `octo-coordinator-types/src/lib.rs`).
 - [ ] `cargo clippy -p octo-network --all-targets -- -D warnings` clean.
-- [ ] Reuses (does NOT duplicate) Layer B event types from `octo-coordinator-types` per `cipherocto-design-principles` §Stable Abstractions.
+- [ ] Reuses (does NOT duplicate) Layer B event types from `octo-coordinator-types` per `docs/architecture/design-principles.md` §Stable Abstractions.
 
 ## Dependencies
 

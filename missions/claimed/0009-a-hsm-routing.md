@@ -64,7 +64,7 @@ Refactor `IdentityKey` (and every signing call site in `octo-wallet`) to route t
 
 **Not Requires:**
 
-- Production LedgerSigner (APDU over USB HID) — tracked under RFC-0850 future work; no mission filed yet (will file under `missions/open/` when production APDU work starts; not a phantom pointer per `no-phantom-mission-pointers` because the substrate is documented in RFC-0850)
+- Production LedgerSigner (APDU over USB HID) — tracked under RFC-0850 future work; no mission filed yet (will file under `missions/open/` when production APDU work starts; not a phantom pointer per `docs/05-process/engineering-rules.md` §No phantom mission pointers because the substrate is documented in RFC-0850)
 - Per-extension crate extraction (RFC-0957; separate missions `0957-ext-*`)
 
 ## Implementation Guide
@@ -84,7 +84,7 @@ RFC-0009 HSM routing is multi-file (identity.rs + 4 capability files + tests). B
 
 ## Pull Request
 
-3eca8525 (local; push + remote writes await user instruction per `git-workflow`)
+3eca8525 (local; push + remote writes await user instruction per `docs/05-process/engineering-rules.md` §Git workflow)
 
 ## Closure Summary
 
@@ -105,8 +105,8 @@ fix in `crates/octo-wallet/src/identity.rs::AudienceId::from_str`.
 
 - This mission is the wallet-side complement to the 2026-08-08 specialized node protocol research + RFC-0871 §Implementation Phase 2.
 - Mission `0010-d-wallet-audience-validation.md` is the OTHER gap closure (AudienceId DID validation). These two missions together close the wallet-side foundational gaps surfaced by the audit. Both are independent of RFC-0871 acceptance — claimable today.
-- Per `deferred-vs-unspecified` named-owner rule: this mission has a concrete scope (RFC-0009 HsmAdapter Integration). No further deferral.
-- Production LedgerSigner (real APDU over USB HID) is tracked under RFC-0850 future work. No mission file exists today; a new mission will be filed under `missions/open/` (slug TBD at work-start; not pre-named to avoid phantom pointer per `no-phantom-mission-pointers`) when production APDU work begins.
+- Per `docs/05-process/engineering-rules.md` §Deferred versus unspecified named-owner rule: this mission has a concrete scope (RFC-0009 HsmAdapter Integration). No further deferral.
+- Production LedgerSigner (real APDU over USB HID) is tracked under RFC-0850 future work. No mission file exists today; a new mission will be filed under `missions/open/` (slug TBD at work-start; not pre-named to avoid phantom pointer per `docs/05-process/engineering-rules.md` §No phantom mission pointers) when production APDU work begins.
 
 **Version History:**
 

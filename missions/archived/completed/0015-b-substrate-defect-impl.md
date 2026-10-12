@@ -81,7 +81,7 @@ Per `docs/audits/2026-09-14-rfc-0015-0016-plateau-declaration.md`, the R12 + R13
 
 **File:** `rfcs/accepted/process/0015-a-wallet-agent-write-path.md`
 
-- ADD a new `#### §Amendment Surface` heading to RFC-0015-a (mirrors RFC-0015 §Amendment Surface per substrate-faithful single-source-of-truth principle; canonical home for additive write-path items post-RFC-0015-a acceptance per `deferred-vs-unspecified`).
+- ADD a new `#### §Amendment Surface` heading to RFC-0015-a (mirrors RFC-0015 §Amendment Surface per substrate-faithful single-source-of-truth principle; canonical home for additive write-path items post-RFC-0015-a acceptance per `docs/05-process/engineering-rules.md` §Deferred versus unspecified).
 - 1 additive row in the new §Amendment Surface table:
 
   | Substrate item                                                                 | Layer | Source                                       | Notes                                                                   |
@@ -138,8 +138,8 @@ R3 (DRY verification round 2 = DRY CLOSED) → closure artifacts
 - RFC-0002 §Agent State Machine (canonical state machine substrate)
 - RFC-0015-a §6.1 (canonical lock primitive + acquisition order + audit append + rollback contract)
 - RFC-0015-a §6.5 Layer A Paired-Acceptance Bridge (paired-acceptance discipline)
-- `cipherocto-design-principles` — Layer B stability contract
-- `deferred-vs-unspecified` — defect 5 deferral rationale
+- `docs/architecture/design-principles.md` — Layer B stability contract
+- `docs/05-process/engineering-rules.md` §Deferred versus unspecified — defect 5 deferral rationale
 
 ## Why gate
 

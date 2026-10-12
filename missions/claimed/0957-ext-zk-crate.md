@@ -81,7 +81,7 @@ Per-extension crate extraction is multi-file (1 NEW crate + 1 source migration +
 
 ## Claimant
 
-@unassigned (per `feedback_initiation_user_only` — user initiates the claim)
+@unassigned (per `docs/05-process/engineering-rules.md` §Git workflow — user initiates the claim)
 
 ## Pull Request
 
@@ -92,8 +92,8 @@ Per-extension crate extraction is multi-file (1 NEW crate + 1 source migration +
 - This mission is the SECOND per-extension crate extraction (after macaroon). Future extractions (`0957-ext-federation`, `0957-ext-time-lock`, `0957-ext-threshold-mpc`) follow the same pattern.
 - Mission depends on `0957-ext-macaroon-crate.md` (macaroon substrate must exist as separate crate before ZK can depend on it).
 - Mission `0958-c-real-cairo-crypto-followup.md` (5/30 ACs) tracks the broader RFC-0958 implementation work; this mission is the per-extension crate extraction subset.
-- Per `stoolap-general-purpose-db` red line: this is workspace-side extraction (NOT a fork PR); ZK crate lives in cipherocto workspace.
-- Per `cargo-fmt-workflow` + `feedback_clippy_zero_warnings`: `cargo fmt` + `cargo clippy -D warnings` green before commit.
+- Per `docs/architecture/stoolap-integration.md` red line: this is workspace-side extraction (NOT a fork PR); ZK crate lives in cipherocto workspace.
+- Per `docs/05-process/engineering-rules.md` §Format before commit + `feedback_clippy_zero_warnings`: `cargo fmt` + `cargo clippy -D warnings` green before commit.
 
 **Version History:**
 

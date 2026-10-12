@@ -304,7 +304,7 @@ nonce_rolled_back: true, audit_compensated: true } }`. R7 CRITICAL #3
   BurnEventRef with `registry_snapshot_epoch.0 > current_epoch.0`
   returns `Err(StaleSnapshot { snapshot: <future>, live: <current> })`
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-policy` (Layer C specialized node role) — `burn_event.rs` =
   **Layer B additive type hosted in Layer C node crate**; substrate-
@@ -359,7 +359,7 @@ cargo test -p octo-policy --lib burn_event
   consumes Mission F substrate
 - Mission A (`0960-v37-a-vault-balance-projection-substrate.md`) —
   cache table consumer
-- `cipherocto-design-principles` — Layer B additive-only rule
+- `docs/architecture/design-principles.md` — Layer B additive-only rule
 
 ## Claimant
 

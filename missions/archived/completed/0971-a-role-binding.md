@@ -2,7 +2,7 @@
 
 ## Status
 
-**Closed 2026-08-07.** Claimed 2026-08-04. Partial progress 2026-08-06: 11/22 ACs flipped GREEN (commit `67a47ace`). 9 ACs DEFERRED into mission `missions/archived/completed/0971-a1-deferred-acs.md` per `deferred-vs-unspecified` named-owner rule (filed 2026-08-07). **0971-a1 closed 2026-08-07 (9/9 GREEN, 14-39 days early)** — all 8 ACs moved to 0971-a1 (AC-A1 through AC-A5 + AC-B1 + AC-B2 + AC-B4) closed by commit `f465912d` + `9a46e06f` + `0bdbcb38`. Total: 22/22 ACs GREEN across 2 missions. Stale checkbox surface in this mission flipped 2026-08-07 (this commit).
+**Closed 2026-08-07.** Claimed 2026-08-04. Partial progress 2026-08-06: 11/22 ACs flipped GREEN (commit `67a47ace`). 9 ACs DEFERRED into mission `missions/archived/completed/0971-a1-deferred-acs.md` per `docs/05-process/engineering-rules.md` §Deferred versus unspecified named-owner rule (filed 2026-08-07). **0971-a1 closed 2026-08-07 (9/9 GREEN, 14-39 days early)** — all 8 ACs moved to 0971-a1 (AC-A1 through AC-A5 + AC-B1 + AC-B2 + AC-B4) closed by commit `f465912d` + `9a46e06f` + `0bdbcb38`. Total: 22/22 ACs GREEN across 2 missions. Stale checkbox surface in this mission flipped 2026-08-07 (this commit).
 
 ## RFC
 
@@ -225,7 +225,7 @@ consumer-side audit log uses the same redaction convention for `envelope_id`
 - **"audit log full (capacity N entries)"** — `RoleBindingAuditLog` is
   bounded. Increase capacity at construction, or rotate to a persistent
   ledger (stoolap-backed append-only ledger is a follow-up; per
-  `stoolap-general-purpose-db` hard red line, the cipherocto business
+  `docs/architecture/stoolap-integration.md` hard red line, the cipherocto business
   schema stays cipherocto-side).
 
 ## Dependencies

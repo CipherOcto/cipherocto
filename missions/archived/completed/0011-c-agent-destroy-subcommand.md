@@ -79,7 +79,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-c-agent-cr
 - [x] `AgentNotFound(Uuid)` (exit 42), `ConfirmationRequired { command }` (exit 2 per parent §Error Handling), `InvalidStateTransition { from, to }` (exit 43) wired (per RFC-0011-c §9.8 slot allocation 39-52; `ConfirmationRequired` exit code maps to the parent envelope)
 - [x] `--reason` flag implemented (audit log entry; per RFC-0011-c §9.3.4)
 - [x] TTY-aware renderer parity: pretty table on TTY, JSON when stdout is not a TTY OR `--json` set
-- [x] Layer direction verified (no reverse deps per `cipherocto-design-principles`)
+- [x] Layer direction verified (no reverse deps per `docs/architecture/design-principles.md`)
 - [x] Cargo clippy -p octo-cli --all-targets -- -D warnings clean
 - [x] Cargo test -p octo-cli --lib --tests green
 - [x] No new INVALID cites introduced (Guard 2 cite validator green)
@@ -98,7 +98,7 @@ See `docs/07-developers/octo-cli-implementation-guide.md` §Agent Subcommands fo
 
 ## Pull Request
 
-# (PR opened by user per `feedback_initiation_user_only` + `git-workflow`)
+# (PR opened by user per `docs/05-process/engineering-rules.md` §Git workflow + `docs/05-process/engineering-rules.md` §Git workflow)
 
 ## Notes
 
@@ -146,7 +146,7 @@ differ from RFC-0011-c §Test Vectors canonical form; mapping:
 | TV-AGT9  | `agent destroy` | Running agent, `--confirm`    | `AgentDestroyOutput { state: terminated, audit_log_entry: ..., ... }` (exit 0)                   | `destroy_exit_code_slots_pinned` (exit-code pin; payload exercised via `transition_agent` + audit append tests) |
 | TV-AGT10 | `agent destroy` | Running agent, no `--confirm` | `ConfirmationRequired { command: "agent destroy" }` (exit 2 per parent RFC-0011 §Error Handling) | `destroy_missing_confirm_exits_2`                                                                               |
 
-## Layer direction (RFC-0011-c §9.1 Architecture + per `cipherocto-design-principles`)
+## Layer direction (RFC-0011-c §9.1 Architecture + per `docs/architecture/design-principles.md`)
 
 - `octo-cli` (Layer C/D) — new `AgentAction::Destroy` dispatch + `AgentDestroyOutput` payload type; `--confirm` gate enforced via `OperatorModeFlags.confirm` global flag (no Destroy-variant clap arg; `ConfirmationRequired { command }` is pre-existing).
 - `octo-wallet` (Layer B) — substrate `transition_agent`, `AgentState` (existing types).
@@ -183,7 +183,7 @@ cargo test -p octo-cli --lib --tests  # green
 - RFC-0016-a §6.10 (canonical-bytes-on-write invariant; audit log append substrate)
 - RFC-0011 §Output Envelope, §Redaction Layer, §Error Handling — substrate sections
 - RFC-0002 §Agent State Machine (canonical state machine substrate)
-- `cipherocto-design-principles` — Layer B stability contract + no-parallel-abstractions principle
+- `docs/architecture/design-principles.md` — Layer B stability contract + `docs/architecture/design-principles.md` §No parallel abstractions principle
 - `rfc-0011-loop-dry-gate-closure` — review loop closure pattern from parent chain
 
 ## Why gate

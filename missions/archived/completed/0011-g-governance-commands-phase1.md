@@ -32,7 +32,7 @@ amendment: "RFC-0011-g v1.4 layer-model note: canonical `ProposalState` + `Decis
 **Status:** Open — unblocked. Phase 1 of RFC-0011-g; substrate prereqs (RFC-0011,
 RFC-0855, RFC-0855p-b, RFC-0855p-c, RFC-0010) all Accepted at RFC-0011-g
 filing time per RFC-0011-g §Implementation Phases. Implementation kickoff
-user-gated per `feedback_initiation_user_only` + `git-workflow` once
+user-gated per `docs/05-process/engineering-rules.md` §Git workflow + `docs/05-process/engineering-rules.md` §Git workflow once
 RFC-0011-g reaches Accepted.
 **Substrate:** RFC-0011-g §Substrate `[ADD]` — `octo_governance::snapshot`
 **Parent:** RFC-0011-g
@@ -91,7 +91,7 @@ Phase 2 (`attest` + `vote`).
       `OutputEnvelope<T>` + identity mission's active DID plumbing + capability
       mission's `OctoCliError` shape + RFC-0002 agent manifest re-exposure
 - [ ] Layer direction verified (no reverse deps per
-      `cipherocto-design-principles`)
+      `docs/architecture/design-principles.md`)
 - [ ] Cargo clippy -p octo-cli --all-targets --features full -- -D warnings
       clean
 - [ ] Cargo test -p octo-cli --lib --tests green
@@ -226,7 +226,7 @@ Snapshot + envelope coverage = 6 tests (RFC minimum: ≥20 spread across
 Phase 1 + Phase 2; Phase 2 carries the remaining 14 vectors per
 `0011-g-governance-attest-vote` §Test Vectors).
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-cli` (Layer C/D) — new `GovernanceAction::Snapshot` dispatch +
   `SnapshotOutput` envelope wrapper + `SnapshotRef` re-exposure +
@@ -276,7 +276,7 @@ octo governance snapshot --force-refresh
 - RFC-0010 — Canonical DID Codec (chain-ID canonical form + canonical
   DID wire form)
 - RFC-0002 — Agent Manifest (agent-side consumption of snapshot fields)
-- `cipherocto-design-principles` — Layer A/B/C/D/E stability contract
+- `docs/architecture/design-principles.md` — Layer A/B/C/D/E stability contract
 
 ## Why 1 release cycle gate (Phase 1)
 

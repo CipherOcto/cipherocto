@@ -6,13 +6,13 @@
 
 **Closed since:** 2026-08-07
 **Strategy:** Decide per-symbol whether to add the canonical name to the substrate OR rewrite the AC body to use the actual substrate name. Prefer the lower-cost path per symbol.
-**Outcome:** 29 ACs flipped [x] per `deferred-vs-unspecified` named-owner rule.
+**Outcome:** 29 ACs flipped [x] per `docs/05-process/engineering-rules.md` §Deferred versus unspecified named-owner rule.
 
 ## Context
 
 The Phase 1 AC table in `missions/claimed/0968-reputation-persistence.md` (§Phase 1 AC Table) cites 15+ canonical pre-RFC-0968-A1 type names that are NOT defined as `pub struct` in the current substrate. The audit's §Phase 1 AC Reconciliation section (added 2026-08-07) initially marked them SUBSTRATE-PRESENT based on file-level existence; deeper symbol-level audit (also 2026-08-07) revealed the drift.
 
-Substrate has equivalents — e.g., `auth::AttestorRegistration` (struct) instead of a canonical `RecorderRegistration`; `recorder::StakeCheck` (enum) instead of AC-4's `recorder_state_at` returning 7-state enum. The substrate evolved away from the canonical names during RFC-0968-A1 amendments without rewriting the parent mission's AC body. Per `no-phantom-mission-pointers` we cannot silently flip ACs whose cited symbols don't exist.
+Substrate has equivalents — e.g., `auth::AttestorRegistration` (struct) instead of a canonical `RecorderRegistration`; `recorder::StakeCheck` (enum) instead of AC-4's `recorder_state_at` returning 7-state enum. The substrate evolved away from the canonical names during RFC-0968-A1 amendments without rewriting the parent mission's AC body. Per `docs/05-process/engineering-rules.md` §No phantom mission pointers we cannot silently flip ACs whose cited symbols don't exist.
 
 ## Missing symbols (15 AC-1..AC-29 canonical type names)
 
@@ -70,7 +70,7 @@ Substrate has equivalents — e.g., `auth::AttestorRegistration` (struct) instea
 ## Acceptance Criteria
 
 - [x] All 5 Path A canonical symbols added (ResumeProof, ReputationPolicy, ReaderAuth, RetentionAuth, RETENTION_ROLE + BLAKE3_REPUTATION_RETENTION_DOMAIN) — commit `ecaa1313`
-- [x] 29 ACs (`AC-1` through `AC-29`) in `0968-reputation-persistence.md` either flipped [x] (per `cargo-fmt-workflow` + verified green) or rewritten to cite substrate names — **commit `5e5a9b0b`** (Path B AC body rewrite + flip, 2026-08-07)
+- [x] 29 ACs (`AC-1` through `AC-29`) in `0968-reputation-persistence.md` either flipped [x] (per `docs/05-process/engineering-rules.md` §Format before commit + verified green) or rewritten to cite substrate names — **commit `5e5a9b0b`** (Path B AC body rewrite + flip, 2026-08-07)
 - [x] `cargo test -p octo-reputation --features stoolap --lib` still passes (212 tests) — verified 2026-08-07 post-`ecaa1313`
 - [x] `cargo clippy -p octo-reputation --all-targets --all-features -- -D warnings` clean — verified 2026-08-07
 - [x] `cargo fmt -p octo-reputation -- --check` clean — verified 2026-08-07

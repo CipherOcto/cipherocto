@@ -70,7 +70,7 @@ depends_on:
 
 ## Pull Request
 
-(unset; awaiting user push instruction per `git-workflow`)
+(unset; awaiting user push instruction per `docs/05-process/engineering-rules.md` §Git workflow)
 
 ## Closure
 

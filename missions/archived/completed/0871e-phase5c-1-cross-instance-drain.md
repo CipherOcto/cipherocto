@@ -108,6 +108,6 @@ swaps the impl to LWW without changing the trait surface.
 - `mission-0871e-phase5b-status` — substrate predecessor
 - `wave-3-plan-correction-2026-08-10` — drift context
 - `wave-3-gaps-2026-08-10` — original wave 3 gap surface
-- `cipherocto-design-principles` — Layer A additive-only rule
+- `docs/architecture/design-principles.md` — Layer A additive-only rule
 - `rfcs/draft/networking/0862-writer-election-bootstrap-v120.md` —
   RFC-0862 v1.3 amendment (substrate)

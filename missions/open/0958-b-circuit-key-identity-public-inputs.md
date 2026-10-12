@@ -135,7 +135,7 @@ and a lookup constraint must fit inside that**, and if they do not, the answer
 is an explicit ceiling amendment — not trimming the chain assertion, which is
 load-bearing.
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `zk-circuit` (Layer A) — the constraint and the public-input layout
 - `zk-verifier` (Layer B) — the per-key gate in front of the identity gate

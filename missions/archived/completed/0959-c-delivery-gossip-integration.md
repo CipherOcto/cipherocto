@@ -2,7 +2,7 @@
 
 ## Status
 
-Closed (Band A — 2026-08-06; audit-closure rolled up 2026-08-07). Claimed 2026-08-04 by @mmacedoeu; implementation landed (commit `323a115f`-prior): `crates/octo-wallet/src/capability/gossip.rs` (137 lines) ships `gossip_envelope_to_buyer(env, buyer_did, catalog) -> Result<(), DeliveryError>` bounded retry loop with `MAX_GOSSIP_ATTEMPTS = 5` (per RFC-0959-A1 §Future Work F5), exponential backoff constants (`INITIAL_BACKOFF = 50ms`, `MAX_BACKOFF = 2s`), fail-fast path on `CatalogGossipError::Unsupported`, and 2 unit tests (`gossip_succeeds_on_first_attempt`, `gossip_fails_fast_on_unsupported`). **9/9 ACs GREEN** as of 2026-08-07 audit-closure roll-up: 4/9 landed in Band A (bounded loop + fail-fast + bounded constant + cross-crate compat); 5/9 closed by sub-mission roll-up — TV4 + exhaustion unit test + exponential backoff + manual redacting Debug → `0959-c1-gossip-error-variants` (Band A 2026-08-06; commit `178f25c3`); TV7 cross-node integration test → `0959-c2-cross-node-delivery` (Band A 2026-08-06; commit `feat(octo-wallet): 0959-c2 cross-node delivery TV7 in-process harness`). Production RFC-0862 gossip channel binding (in scope of `0959-c` long-term but out of scope of c1/c2) remains an explicit deferral to `0959-c3-octo-transport-wiring` per `deferred-vs-unspecified` named-owner rule (wallet-octo-transport dep inversion + async API decision).
+Closed (Band A — 2026-08-06; audit-closure rolled up 2026-08-07). Claimed 2026-08-04 by @mmacedoeu; implementation landed (commit `323a115f`-prior): `crates/octo-wallet/src/capability/gossip.rs` (137 lines) ships `gossip_envelope_to_buyer(env, buyer_did, catalog) -> Result<(), DeliveryError>` bounded retry loop with `MAX_GOSSIP_ATTEMPTS = 5` (per RFC-0959-A1 §Future Work F5), exponential backoff constants (`INITIAL_BACKOFF = 50ms`, `MAX_BACKOFF = 2s`), fail-fast path on `CatalogGossipError::Unsupported`, and 2 unit tests (`gossip_succeeds_on_first_attempt`, `gossip_fails_fast_on_unsupported`). **9/9 ACs GREEN** as of 2026-08-07 audit-closure roll-up: 4/9 landed in Band A (bounded loop + fail-fast + bounded constant + cross-crate compat); 5/9 closed by sub-mission roll-up — TV4 + exhaustion unit test + exponential backoff + manual redacting Debug → `0959-c1-gossip-error-variants` (Band A 2026-08-06; commit `178f25c3`); TV7 cross-node integration test → `0959-c2-cross-node-delivery` (Band A 2026-08-06; commit `feat(octo-wallet): 0959-c2 cross-node delivery TV7 in-process harness`). Production RFC-0862 gossip channel binding (in scope of `0959-c` long-term but out of scope of c1/c2) remains an explicit deferral to `0959-c3-octo-transport-wiring` per `docs/05-process/engineering-rules.md` §Deferred versus unspecified named-owner rule (wallet-octo-transport dep inversion + async API decision).
 
 ## RFC
 
@@ -27,7 +27,7 @@ This sub-mission depends on 0959-b envelope wire format + 0957-e `gossip_to_buye
 
 ### Cross-node delivery verification
 
-- [x] Integration test: seller node builds envelope; buyer node receives via gossip; buyer node's `HolderRegistry::lookup(envelope_id)` returns the inserted record (TV7). → **GREEN** via `0959-c2-cross-node-delivery` closure (Band A 2026-08-06; commit `feat(octo-wallet): 0959-c2 cross-node delivery TV7 in-process harness`): `crates/octo-wallet/tests/cross_node_delivery.rs` (NEW, 230 lines) bootstraps `InProcessDeliveryCatalog` (seller) + `StoolapHolderRegistry::open_in_memory()` (buyer). 4/4 TV7 tests pass. Production RFC-0862 gossip binding still deferred to `0959-c3-octo-transport-wiring` (separate scope; `deferred-vs-unspecified` named-owner rule — wallet-octo-transport dep inversion + async API decision).
+- [x] Integration test: seller node builds envelope; buyer node receives via gossip; buyer node's `HolderRegistry::lookup(envelope_id)` returns the inserted record (TV7). → **GREEN** via `0959-c2-cross-node-delivery` closure (Band A 2026-08-06; commit `feat(octo-wallet): 0959-c2 cross-node delivery TV7 in-process harness`): `crates/octo-wallet/tests/cross_node_delivery.rs` (NEW, 230 lines) bootstraps `InProcessDeliveryCatalog` (seller) + `StoolapHolderRegistry::open_in_memory()` (buyer). 4/4 TV7 tests pass. Production RFC-0862 gossip binding still deferred to `0959-c3-octo-transport-wiring` (separate scope; `docs/05-process/engineering-rules.md` §Deferred versus unspecified named-owner rule — wallet-octo-transport dep inversion + async API decision).
 
 ### Test vectors (RFC-0959-A1 §Test Vectors, this sub-mission owns TV4, TV7)
 
@@ -82,7 +82,7 @@ This sub-mission implements (per top-level Type Coverage table):
 
 ## Pull Request
 
-(unset; awaiting user push instruction per `git-workflow`)
+(unset; awaiting user push instruction per `docs/05-process/engineering-rules.md` §Git workflow)
 
 ## Closure
 

@@ -23,7 +23,7 @@ Substrate-faithful CLI surface for `octo network trust-graph render --depth 1-10
 - [x] `cargo clippy -p octo-cli --all-targets -- -D warnings` clean (next c2fee8f3)
 - [x] `cargo test -p octo-cli --lib` green (next c2fee8f3)
 - [x] Layer discipline preserved (CLI Layer C only; zero Layer A change) (next c2fee8f3)
-- [x] Substrate-faithful boundary: every call crosses typed façade per `cipherocto-design-principles` §Stable Abstractions Principle (next c2fee8f3)
+- [x] Substrate-faithful boundary: every call crosses typed façade per `docs/architecture/design-principles.md` §Stable Abstractions Principle (next c2fee8f3)
 
 ## Dependencies
 
@@ -36,4 +36,4 @@ Substrate-faithful CLI surface for `octo network trust-graph render --depth 1-10
 
 ## Notes
 
-Stub filed 2026-09-18 per `no-phantom-mission-pointers`. Paired closure transition paired with RFC-0011-i Phase 1 IMPLEMENTATION COMPLETE closure card. Substrate-faithfulness verified: `TrustGraph::render(GraphFormat)` returns `String` per RFC-0011-h closure audit at commit `next 638c8ac7` (PRE-PHASE-1 IMPL).
+Stub filed 2026-09-18 per `docs/05-process/engineering-rules.md` §No phantom mission pointers. Paired closure transition paired with RFC-0011-i Phase 1 IMPLEMENTATION COMPLETE closure card. Substrate-faithfulness verified: `TrustGraph::render(GraphFormat)` returns `String` per RFC-0011-h closure audit at commit `next 638c8ac7` (PRE-PHASE-1 IMPL).

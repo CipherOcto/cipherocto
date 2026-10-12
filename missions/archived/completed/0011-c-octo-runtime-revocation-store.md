@@ -35,9 +35,9 @@ impl_dry_closure_commit: 6dc20103
 
 **Implementation DRY CLOSED 2026-09-17** — R10 + R11 = 2 consecutive zero-finding 5-len rounds = GATE GREEN at HEAD `6dc20103`. Closure audit: `docs/audits/2026-09-17-0011-c-octo-runtime-revocation-store-impl-dry-closure.md`. 6/6 lib tests + 1/1 cross-process TV-AGT27 pass.
 
-**RFC DRY CLOSED 2026-09-17** — paired follow-on amendment to RFC-0011-c §F.7.5 DRY CLOSURE GATE GREEN. 3-commit chain: `c62ffcbd` (R3.5 — 53 findings) + `739c9c60` (R4.5 — 5 findings) + `642e76a8` (R5.5 — 5 findings). Closure audit: `docs/audits/2026-09-17-0011-c-phase-c-cross-process-revocation-dry-closure.md`. Layer D canonical definition extended to persistence adapters per `cipherocto-design-principles` §Layer model amendment.
+**RFC DRY CLOSED 2026-09-17** — paired follow-on amendment to RFC-0011-c §F.7.5 DRY CLOSURE GATE GREEN. 3-commit chain: `c62ffcbd` (R3.5 — 53 findings) + `739c9c60` (R4.5 — 5 findings) + `642e76a8` (R5.5 — 5 findings). Closure audit: `docs/audits/2026-09-17-0011-c-phase-c-cross-process-revocation-dry-closure.md`. Layer D canonical definition extended to persistence adapters per `docs/architecture/design-principles.md` §Layer model amendment.
 
-Originally Claimed (RFC-0011-c §F.7.5 paired amendment, the per-extension-crates pattern + Layer D persistence adapter topology per `cipherocto-design-principles` §User extensibility + §Layer model).
+Originally Claimed (RFC-0011-c §F.7.5 paired amendment, the per-extension-crates pattern + Layer D persistence adapter topology per `docs/architecture/design-principles.md` §User extensibility + §Layer model).
 
 ## Substrate (RFC-0011-c §F.7.5)
 
@@ -66,7 +66,7 @@ Located in `crates/octo-runtime/src/persistence.rs`:
 
 Per-extension crate pattern:
 
-- Cargo.toml: `stoolap = { git = "...", rev = "527e8eb" }` (CipherOcto fork per `feedback_stoolap_persistence`) — additive dep with rationale comment per `cipherocto-design-principles` §Crate dependency rationale. The Stoolap fork in this position is a **frozen external primitive** (fork-pinned, non-crypto); it does not host cipherocto business schema beyond the single revocation table (HARD RED LINE per `stoolap-general-purpose-db`).
+- Cargo.toml: `stoolap = { git = "...", rev = "527e8eb" }` (CipherOcto fork per `feedback_stoolap_persistence`) — additive dep with rationale comment per `docs/architecture/design-principles.md` §Crate dependency rationale. The Stoolap fork in this position is a **frozen external primitive** (fork-pinned, non-crypto); it does not host cipherocto business schema beyond the single revocation table (HARD RED LINE per `docs/architecture/stoolap-integration.md`).
 - `pub struct StoolapRevocationStore { db: RwLock<stoolap::Database> }` — opens / creates the ledger under `~/.local/share/octo/runtime/revocation.stoolap` (or `$CIPHEROCTO_DATA_DIR/revocation.stoolap`).
 - Ledger schema (single table):
   ```sql
@@ -132,7 +132,7 @@ RFC-0011-c §F.7.5 (Cross-process revocation substrate) + §F.8 (Per-Extension C
 - [ ] TV-AGT27 happy-path: spawn-side mints token + operator-side revokes + attach-side observes via `is_token_revoked` (returns `true`)
 - [ ] TV-AGT27 fail-CLOSED: revoke-side ledger write succeeds + attach-side ledger read returns `false` if shared path is empty (sanity baseline)
 - [ ] RFC-0011-c §F.7.5 §Cross-process test topology matches implementation (3 processes, not 2)
-- [ ] `cipherocto-design-principles` memory card already amended (R3.5 sweep) — implementation is substrate-faithful against the amended spec
+- [ ] `docs/architecture/design-principles.md` memory card already amended (R3.5 sweep) — implementation is substrate-faithful against the amended spec
 - [ ] Hard red line preserved: Stoolap ledger hosts ONLY the `revocation` table + no other cipherocto business schema
 - [ ] DRY CLOSURE gate: 2 consecutive zero-finding rounds on Phase C implementation (5-len reviewers with layer-model + substrate-faithfulness emphasis)
 
@@ -153,7 +153,7 @@ RFC-0011-c §F.7.5 (Cross-process revocation substrate) + §F.8 (Per-Extension C
 | `octo_runtime::is_token_revoked` (rewr)    | §F.7.5 (sub)   | Body rewrite: same dispatch; same signature preservation; same poisoned-lock fail-CLOSED                         |
 | `with_inner` (test hook)                   | §F.7.5 (sub)   | `pub(crate)` accessor on `InMemoryRevocationStore`; replaced `with_revocation_set` seam from earlier §F.3 drafts |
 
-## Layer direction (RFC-0011-c §9.1 + per `cipherocto-design-principles`)
+## Layer direction (RFC-0011-c §9.1 + per `docs/architecture/design-principles.md`)
 
 - `octo-runtime-revocation-store` (Layer D) — depends on `octo-runtime` (Layer B) for `RevocationStore` trait + `AttachError` + `SessionId`. No reverse deps.
 - `octo-runtime` (Layer B) — paired amendment additions + trait + default impl. NO compile-time dep on Layer D (factory façade accepts `Arc<dyn RevocationStore>` from any caller).
@@ -190,9 +190,9 @@ npx prettier --check rfcs/accepted/process/0011-c-agent-lifecycle.md  # clean
 - RFC-0011-c §F.7.5 — Cross-process revocation substrate (paired amendment)
 - RFC-0011-c §F.7.4 — Cross-process event bridging concern (Phase B Layer D transport; out of Phase C scope)
 - RFC-0011-c §F.8 — Per-Extension Crate Manifest Spec
-- `cipherocto-design-principles` — Layer model + per-extension crates + registry pattern + Layer D persistence adapter amendment
+- `docs/architecture/design-principles.md` — Layer model + per-extension crates + registry pattern + Layer D persistence adapter amendment
 - `feedback_stoolap_persistence` — Stoolap fork pin at rev 527e8eb
-- `stoolap-general-purpose-db` — Stoolap HARD RED LINE
+- `docs/architecture/stoolap-integration.md` — Stoolap HARD RED LINE
 - `0011-c-phase-c-cross-process-revocation-dry-closure-2026-09-17` — paired RFC DRY CLOSURE state
 - `0011-c-attachhandle-dry-closure-2026-09-16` — predecessor Layer B closure (trait + Register substrate)
 
@@ -216,11 +216,11 @@ Release-gated on `RevocationStore` trait + two-slot singleton + factory closure 
 # RFC-0011-c §F.7.5 paired amendment; Stoolap fork frozen external
 # primitive per `feedback_stoolap_persistence`, fork-pinned rev
 # 527e8eb, non-crypto, NEVER hosts cipherocto business schema per
-# `stoolap-general-purpose-db` HARD RED LINE)
+# `docs/architecture/stoolap-integration.md` HARD RED LINE)
 stoolap = { git = "...", rev = "527e8eb" }
 ```
 
-Plus per `cipherocto-design-principles` §Crate dependency rationale for the `octo-runtime` + `tokio` std/sync deps in this new crate.
+Plus per `docs/architecture/design-principles.md` §Crate dependency rationale for the `octo-runtime` + `tokio` std/sync deps in this new crate.
 
 ## Risk
 

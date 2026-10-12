@@ -114,4 +114,4 @@ These violate the convention because:
 - Memory card created + MEMORY.md updated.
 - Mission file `git mv` to `missions/archived/completed/0862-c10-rfc-version-pin-cleanup.md`.
 - 1 commit: `chore(rfcs): 0862-c10 — strip cross-RFC vN.M version pins (4 files, 17 sites)`.
-- NO push performed — push awaits user instruction per `feedback_initiation_user_only`.
+- NO push performed — push awaits user instruction per `docs/05-process/engineering-rules.md` §Git workflow.

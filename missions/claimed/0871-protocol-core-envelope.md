@@ -33,7 +33,7 @@ Create `crates/octo-protocol/` Layer-1-stable crate owning the canonical envelop
 - [ ] Workspace `Cargo.toml` adds `crates/octo-protocol` to `members`
 - [ ] `Cargo.toml` deps per CLAUDE.md crate stability: `borsh` (Layer A canonical serialization per RFC-0126), `blake3` (Layer A per RFC-0853), `octo-ident` (Layer B per RFC-0010)
 - [ ] `cargo clippy -p octo-protocol --all-targets -- -D warnings` clean (per `feedback_clippy_zero_warnings`)
-- [ ] `cargo fmt --check` clean (per `cargo-fmt-workflow`)
+- [ ] `cargo fmt --check` clean (per `docs/05-process/engineering-rules.md` §Format before commit)
 
 ### Test vectors (RFC-0871 §Test Vectors TV1–TV8)
 
@@ -138,7 +138,7 @@ Per RFC-0871 §Implementation Phases Phase 1 (Core envelope acceptance):
 
 ## Pull Request
 
-bf58559d (local; push + remote writes await user instruction per `git-workflow`)
+bf58559d (local; push + remote writes await user instruction per `docs/05-process/engineering-rules.md` §Git workflow)
 
 ## Closure Summary
 

@@ -54,7 +54,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-c-agent-cr
 - [x] `AgentListOutput` payload type implemented + unit-tested (`count`, `holder_did`, `agents[]` per envelope-boundary redaction contract)
 - [x] `AgentSummary` envelope wrapper implemented + unit-tested (`agent_id`, `holder_did`, `state`, `label`, `registered_at_unix`, `manifest_digest`)
 - [x] `RedactedIdentifier` envelope-boundary redaction applied to `agent_id` + `holder_did` (symmetric with `agent create` per RFC-0011-c §9.4)
-- [x] `--state`, `--limit`, `--cursor`, `--json` flags wired (`--chain-id` deferred: substrate does not filter on chain_id — substrate-faithful per `cipherocto-design-principles` no-parallel-abstractions)
+- [x] `--state`, `--limit`, `--cursor`, `--json` flags wired (`--chain-id` deferred: substrate does not filter on chain_id — substrate-faithful per `docs/architecture/design-principles.md` `docs/architecture/design-principles.md` §No parallel abstractions)
 - [x] `InvalidLimit` (exit 45), `InvalidCursor` (exit 46) wired; `AgentNotFound` (exit 42) + `ForbiddenHolderMismatch` (exit 17, slot moved 37→17 to avoid RFC-0011-g `UnknownAttestationKind` collision)
 - [x] Cargo clippy -p octo-cli --all-targets -- -D warnings clean
 - [x] Cargo test -p octo-cli --lib agent 17/17 PASS (9 NEW + 8 existing)
@@ -76,7 +76,7 @@ See `docs/07-developers/octo-cli-implementation-guide.md` §Agent Subcommands fo
 
 ## Pull Request
 
-# (PR opened by user per `feedback_initiation_user_only` + `git-workflow`)
+# (PR opened by user per `docs/05-process/engineering-rules.md` §Git workflow + `docs/05-process/engineering-rules.md` §Git workflow)
 
 ## Notes
 
@@ -124,7 +124,7 @@ No new external crates required; all substrate types (`AgentSummary`, `AgentStat
 | TV-AGT7 | `list_owned_agents` with `state: Some(Running)` → filter applied     | `list_parse_state_filter_accepts_known_labels` + `list::validate_cursor_accepts_none_and_placeholder` |
 | TV-AGT8 | N/A                                                                  | `list_invalid_limit_exits_45` (up-front CLI validation, no substrate round-trip)                      |
 
-## Layer direction (RFC-0011-c §9.1 Architecture + per `cipherocto-design-principles`)
+## Layer direction (RFC-0011-c §9.1 Architecture + per `docs/architecture/design-principles.md`)
 
 - `octo-cli` (Layer C/D) — new `AgentAction::List` dispatch + `AgentSummary` + `AgentListOutput` payload types + 4 error variants.
 - `octo-wallet` (Layer B) — substrate `list_owned_agents`, `AgentSummary`, `AgentState` (commit `533b07a4`).
@@ -159,7 +159,7 @@ cargo test -p octo-cli --lib agent  # 17/17 PASS
 - RFC-0011 §Output Envelope, §Redaction Layer, §Error Handling — substrate sections
 - RFC-0015 §6.2.1 `list_owned_agents` substrate (caller-attestation pattern + SECURITY HIGH)
 - RFC-0011-b §7.6 Attestation Surface (optional `reputation_score` field source — deferred)
-- `cipherocto-design-principles` — Layer B stability contract + no-parallel-abstractions principle
+- `docs/architecture/design-principles.md` — Layer B stability contract + `docs/architecture/design-principles.md` §No parallel abstractions principle
 - `rfc-0011-loop-dry-gate-closure` — review loop closure pattern from parent chain
 
 ## Why gate
@@ -176,7 +176,7 @@ Also added in commit `533b07a4`:
 
 - `lookup_agent(caller_did: &Did, uuid: Uuid) -> Result<AgentManifest, WalletError>` (RFC-0015 §6.2.3)
 - `validate_reason(reason: &str) -> Result<(), WalletError>` (RFC-0015 §6.2.5; rejects U+0000-U+001F and U+007F control chars; pager-hijack mitigation)
-- `WalletError::{AgentNotFound, ForbiddenHolderMismatch, ReasonContainsControlChars, ReasonTooLong}` (4 new variants; `#[non_exhaustive]` on enum for additive extension per cipherocto-design-principles)
+- `WalletError::{AgentNotFound, ForbiddenHolderMismatch, ReasonContainsControlChars, ReasonTooLong}` (4 new variants; `#[non_exhaustive]` on enum for additive extension per `docs/architecture/design-principles.md`)
 
 This substrate addition is reused by future `0011-c-agent-run-subcommand` + `0011-c-agent-destroy-subcommand` + `0011-c-agent-attach-subcommand` (write-path trio, Claimed awaiting RFC-0015-a + RFC-0016-a paired-acceptance unblock).
 

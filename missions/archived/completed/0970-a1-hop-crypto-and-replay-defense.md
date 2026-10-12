@@ -2,7 +2,7 @@
 
 ## Status
 
-Closed (Band A — 2026-08-07). Claimed 2026-08-07; implementation landed in 1 commit. Pivoted scope from phantom-laden predecessor per `no-phantom-mission-pointers` + `deferred-vs-unspecified`; renamed phantom file to `*.PHANTOM.md` (preserved for drift-surface history); wrote new mission text under same `0970-a1` slot, renamed to `0970-a1-hop-crypto-and-replay-defense.md`. 13/13 ACs green (5 HolderRecord ACs collapse to substrate confirmation per `quota-router-storage/src/holder_record.rs`; 8 crypto + replay + audit + epoch + TV ACs implemented).
+Closed (Band A — 2026-08-07). Claimed 2026-08-07; implementation landed in 1 commit. Pivoted scope from phantom-laden predecessor per `docs/05-process/engineering-rules.md` §No phantom mission pointers + `docs/05-process/engineering-rules.md` §Deferred versus unspecified; renamed phantom file to `*.PHANTOM.md` (preserved for drift-surface history); wrote new mission text under same `0970-a1` slot, renamed to `0970-a1-hop-crypto-and-replay-defense.md`. 13/13 ACs green (5 HolderRecord ACs collapse to substrate confirmation per `quota-router-storage/src/holder_record.rs`; 8 crypto + replay + audit + epoch + TV ACs implemented).
 
 **Sub-mission of:** `missions/archived/completed/0970-a-hop-envelope.md` (Band A closed 2026-08-06; commit `11921128`).
 
@@ -11,7 +11,7 @@ Closed (Band A — 2026-08-07). Claimed 2026-08-07; implementation landed in 1 c
 1. `cipherocto-crypto::X25519Keypair` — no such crate. X25519 substrate = `x25519_dalek::{StaticSecret, PublicKey}` at in `crates/octo-network/src/ocrypt/session.rs` (`x25519_shared_secret`).
 2. `cipherocto-crypto::Ed25519PublicKey` — no such crate. Ed25519 substrate = `ed25519_dalek::{SigningKey, Verifier, VerifyingKey, Signature}` used widely in `octo-wallet` + `octo-network`.
 3. `HolderRecord::from_hop_capability(hop_envelope, holder_did)` — substrate signature is `from_hop_capability(hop_capacity_id: [u8;32], wrapping_node_did: &str, wrapping_node_pub: &[u8;32], next_hop_did: &str, ttl_millis_unix: u64)` in `crates/quota-router-storage/src/holder_record.rs`. Constructor ALREADY EXISTS; the §HolderRecord binding ACs collapse to substrate confirmation.
-4. `crates/quota-router-core/src/registry.rs` — `HolderRecord` lives at `crates/quota-router-storage/src/holder_record.rs` (per `stoolap-general-purpose-db` red line, holder schema is cipherocto-side).
+4. `crates/quota-router-core/src/registry.rs` — `HolderRecord` lives at `crates/quota-router-storage/src/holder_record.rs` (per `docs/architecture/stoolap-integration.md` red line, holder schema is cipherocto-side).
 5. `audit_replay_log.rs` (NEW) — distinct from existing `audit_log.rs`. Intentional new file.
 
 ## RFC
@@ -47,7 +47,7 @@ The canonical 0970-a1 owned pieces are: real crypto in `wrap_for_hop`/`unwrap_at
 
 - [x] `verify_chain_hash` (or new `verify_hop_signature`) performs real Ed25519 verification over `(chain_hash || audience_did || ttl_millis_unix)` via `ed25519_dalek::{Verifier, VerifyingKey, Signature}`. Replaces the BLAKE3 placeholder.
 - [x] New `HopError::SignatureInvalid` variant on `ed25519_dalek::SignatureError`.
-- [x] Signer key derived from `wrapping_node_did` via `cipherocto-identity::Did::to_public_key()` (or equivalent lookup) — substrate resolution path; if absent, document as future work per `deferred-vs-unspecified`.
+- [x] Signer key derived from `wrapping_node_did` via `cipherocto-identity::Did::to_public_key()` (or equivalent lookup) — substrate resolution path; if absent, document as future work per `docs/05-process/engineering-rules.md` §Deferred versus unspecified.
 - [x] Forgery test: mutated `chain_hash` → `HopError::SignatureInvalid` (replaces 0970-a's BLAKE3 placeholder test).
 
 ### DestinationNonceStore
@@ -72,7 +72,7 @@ The canonical 0970-a1 owned pieces are: real crypto in `wrap_for_hop`/`unwrap_at
 ### HolderRecord::from_hop_capability (substrate confirmation)
 
 - [x] `crates/quota-router-storage/src/holder_record.rs::HolderRecord::from_hop_capability` constructor ALREADY EXISTS at symbol-form reference (signature `from_hop_capability(hop_capacity_id: [u8;32], wrapping_node_did: &str, wrapping_node_pub: &[u8;32], next_hop_did: &str, ttl_millis_unix: u64)`). Mission text "HolderRecord::from_hop_capability(hop_envelope, holder_did)" was a phantom pointer; the canonical constructor takes the primitive surface (5 params), not the wrapped envelope. AC closed by substrate.
-- [x] Cross-crate per `stoolap-general-purpose-db` — HolderRecord stays cipherocto-side (quota-router-storage crate); no stoolap fork PR.
+- [x] Cross-crate per `docs/architecture/stoolap-integration.md` — HolderRecord stays cipherocto-side (quota-router-storage crate); no stoolap fork PR.
 - [x] Test `from_hop_capability_distinguishes_holder_and_audience` in `holder_record.rs` covers TV15 (holder vs audience).
 
 ### Cross-crate compat

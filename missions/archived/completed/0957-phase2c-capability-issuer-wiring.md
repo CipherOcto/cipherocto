@@ -123,6 +123,6 @@ state machine:
 ## Cross-references
 
 - `0957-phase2-unblocker-map` — phase2c sub-mission
-- `cipherocto-design-principles` — Layer C specialized-node pattern
+- `docs/architecture/design-principles.md` — Layer C specialized-node pattern
 - `mission-gap-closure-priorities-2026-08-10` — Wave 1 plan
 - `rfc-0957-A1` — HolderRegistry / HolderRecord State Machine

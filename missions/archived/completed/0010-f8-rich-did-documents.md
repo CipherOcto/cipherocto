@@ -5,7 +5,7 @@
 **Owner:** @cipherocto
 **Substrate:** RFC-0010 v1.5 (additive on v1.3; this mission files the substrate extension)
 **Parent:** RFC-0010 v1.3 §Storage Extension §Out of scope; DAG predecessor `0871b-storage-backend` (LANDED 2026-08-11, commit `71f8d745`)
-**RFC prerequisite:** RFC-0010 v1.5 amendment (this mission files the substrate; RFC acceptance follows per `feedback_initiation_user_only`).
+**RFC prerequisite:** RFC-0010 v1.5 amendment (this mission files the substrate; RFC acceptance follows per `docs/05-process/engineering-rules.md` §Git workflow).
 
 ## Scope
 
@@ -97,7 +97,7 @@ cargo test --workspace --lib
 - `mission-0871b-storage-backend` — substrate mission (DAG predecessor)
 - `mission-0010-f2-multi-chain-did-resolution` — chain-keyed
   documents (rich documents compose per-chain)
-- `cipherocto-design-principles` — Extension over enumeration
+- `docs/architecture/design-principles.md` — Extension over enumeration
 
 ## Claimant
 
@@ -138,6 +138,6 @@ cargo test --workspace --lib
 
 - **StoolapDidRegistry schema migration v009** — `service_endpoints` + `controllers` + `verification_methods` JSON columns. Separate mission (Layer B-adjacent schema migration per Layer discipline).
 - **StoolapDidRegistry schema migration v010** — `capability_delegations` JSON column.
-- **RFC-0010 v1.5 acceptance** — RFC document needs to be filed + accepted per `feedback_initiation_user_only`. Substrate is ready.
+- **RFC-0010 v1.5 acceptance** — RFC document needs to be filed + accepted per `docs/05-process/engineering-rules.md` §Git workflow. Substrate is ready.
 
 #

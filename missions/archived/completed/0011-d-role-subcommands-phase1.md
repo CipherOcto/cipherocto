@@ -27,7 +27,7 @@ status: Completed
 
 # 0011-d-role-subcommands-phase1 — Role subcommands Phase 1 (list/show/select, 7 base roles)
 
-**Status:** Completed 2026-09-01 (aggregate) — All 9 Phase 1 atomic missions (M1-M9) closed at `missions/archived/completed/0011-d-M{1..9}-*.md` per audit `docs/audits/2026-09-01-rfc-0011-d-mission-dry-closure.md`. Landing commits `003a7b0f` / `043f8543` / `91c42ab2` / `3842e8c6` / `e07e85b0` / `63ffdf94` / `90ce73bd` (M1-M8 substrate) + M9 doc edit (drift-fix commit `c6f9ab6c`; §10 footnote in `token-design.md` + role-provisioning RFC cite now consistent). M9 closed via policy override per `deferred-vs-unspecified` "deferred not unspecified" — release gate (first dual-stake role addition) is bookkeeping artifact; substantive work delivered. Gate event re-fires when M10/M11 land (CLOSED 2026-09-03 at commit `96bccc4b` + drift-fix `c6f9ab6c`). Phase 1 fully closed; moved to `missions/archived/completed/` 2026-09-06.
+**Status:** Completed 2026-09-01 (aggregate) — All 9 Phase 1 atomic missions (M1-M9) closed at `missions/archived/completed/0011-d-M{1..9}-*.md` per audit `docs/audits/2026-09-01-rfc-0011-d-mission-dry-closure.md`. Landing commits `003a7b0f` / `043f8543` / `91c42ab2` / `3842e8c6` / `e07e85b0` / `63ffdf94` / `90ce73bd` (M1-M8 substrate) + M9 doc edit (drift-fix commit `c6f9ab6c`; §10 footnote in `token-design.md` + role-provisioning RFC cite now consistent). M9 closed via policy override per `docs/05-process/engineering-rules.md` §Deferred versus unspecified "deferred not unspecified" — release gate (first dual-stake role addition) is bookkeeping artifact; substantive work delivered. Gate event re-fires when M10/M11 land (CLOSED 2026-09-03 at commit `96bccc4b` + drift-fix `c6f9ab6c`). Phase 1 fully closed; moved to `missions/archived/completed/` 2026-09-06.
 **Substrate:** RFC-0011-d §Specification §7.1–§7.7 (role subcommand group)
 **Parent:** RFC-0011-d
 **Depends on:**
@@ -95,7 +95,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: core → identit
 - [ ] RFC-0855-namespaced UUIDv5 discriminator verified for all 7 role slugs (integration test asserts distinct UUIDs)
 - [ ] Dual-stake sufficiency check is substrate-authoritative (CLI does NOT pre-check; substrate returns `RoleError::StakeInsufficient { required, available }`)
 - [ ] Cross-chain partition invariant enforced: slash-ledger row keyed by `(chain_id, operator_did)` per RFC-0900 §Slash Ledger Substrate
-- [ ] Layer direction verified (no reverse deps per `cipherocto-design-principles`)
+- [ ] Layer direction verified (no reverse deps per `docs/architecture/design-principles.md`)
 - [ ] Cargo clippy -p octo-cli -p octo-role --all-targets -- -D warnings clean
 - [ ] Cargo test -p octo-cli -p octo-role --lib --tests green
 - [ ] No new INVALID cites introduced (cite validator runs clean per `docs/07-developers/octo-cli-implementation-guide.md` Guard 2)
@@ -124,7 +124,7 @@ See `docs/07-developers/octo-cli-implementation-guide.md` §Role Subcommands (co
 
 ## Pull Request
 
-# (PR opened by user per `feedback_initiation_user_only` + `git-workflow`)
+# (PR opened by user per `docs/05-process/engineering-rules.md` §Git workflow + `docs/05-process/engineering-rules.md` §Git workflow)
 
 ## Risk
 
@@ -190,7 +190,7 @@ At least 9 test vectors required per RFC-0011-d §Test Vectors:
 | TV-RX-4   | `role select builder --confirm --json` with signer.did ≠ operator_did — exit 35; `SignerMismatch` (F-16 dedicated slot)           | Role select          |
 | TV-RP-1   | `role select coordinator` (Phase 2 blocked) — exit 33; error message names prereq RFC (RFC-0855p-e)                               | Partial-prereq guard |
 
-### Layer direction (per `cipherocto-design-principles`)
+### Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-cli` (Layer C/D) — new `RoleAction` dispatch + 3 output envelopes + 4 error variants + filter parser + HSM gate + redaction pass
 - `octo-role` (Layer B; new crate per RFC-0011-d §7.4) — `RoleSummary` / `RoleRecord` / `RoleFilter` / `SlashingRule` / `RoleBinding` / `RoleError` substrate types + `[ADD]` `list` / `show` / `select` entrypoints
@@ -238,7 +238,7 @@ cargo test -p octo-cli -p octo-role --lib --tests  # green
 - RFC-0008 — Deterministic AI Execution Boundary (execution class mapping; role commands are class C)
 - RFC-0010 — Canonical DID Codec (ChainId typing for slash ledger partition)
 - RFC-0957 — Macaroon Substrate (signer trait cross-reference)
-- `cipherocto-design-principles` — Layer B stability contract; no central enum; typed discriminator
+- `docs/architecture/design-principles.md` — Layer B stability contract; no central enum; typed discriminator
 
 ## Why 1 release cycle gate
 

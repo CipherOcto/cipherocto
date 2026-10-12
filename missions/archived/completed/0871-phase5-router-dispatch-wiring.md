@@ -9,7 +9,7 @@
 
 After wave 2 commits, 4 specialized nodes (wallet-node + capability-issuer-node + reputation-anchor-node + identity-resolver-node) added `quota-router-core` as a Cargo dep + construct `RouterAnnouncePayload` directly. But `QuotaRouterNode` (in `crates/quota-router-core/src/node/mod.rs`) ALREADY owns the canonical announce path. The 4 specialized nodes re-implement it byte-equivalently but do not share the code. Drift risk: future announce-shape changes land in `QuotaRouterNode` but miss the 4 specialized nodes.
 
-Per cipherocto-design-principles §Stable Abstractions Principle + §No parallel abstractions, the announce path should live in ONE place. Recommended pattern: `QuotaRouterNode::broadcast_announce` is the single emitter; the 4 specialized nodes delegate.
+Per `docs/architecture/design-principles.md` §Stable Abstractions Principle + §No parallel abstractions, the announce path should live in ONE place. Recommended pattern: `QuotaRouterNode::broadcast_announce` is the single emitter; the 4 specialized nodes delegate.
 
 1. `crates/quota-router-core/src/node/announce.rs` — extract `RouterAnnounceBuilder` struct (or equivalent) that both `QuotaRouterNode::broadcast_announce` AND the 4 specialized nodes use. The builder takes `(node_id, network_id, supported_models, capacities, pricing_policy)` + the network key, computes HMAC, serializes to bincode/JSON.
 2. `crates/quota-router-core/src/node/mod.rs` — `QuotaRouterNode::broadcast_announce` refactored to use the builder.
@@ -37,7 +37,7 @@ Per cipherocto-design-principles §Stable Abstractions Principle + §No parallel
 
 - `quota-router-core` (Layer A) owns the canonical `RouterAnnounceBuilder`
 - 4 specialized nodes (Layer C) consume the builder via dep
-- Per cipherocto-design-principles §Stable Abstractions Principle: stable substrate (Layer A) hosts the canonical type; per-node business logic (Layer C) stays minimal
+- Per `docs/architecture/design-principles.md` §Stable Abstractions Principle: stable substrate (Layer A) hosts the canonical type; per-node business logic (Layer C) stays minimal
 
 ## Validation
 
@@ -51,7 +51,7 @@ Per cipherocto-design-principles §Stable Abstractions Principle + §No parallel
 - `wave-3-gaps-2026-08-10` — gap surface context
 - `mission-0871e-phase5c-status` — predecessor sub-mission (introduced duplication)
 - `0959-placeholder-identity-binding` — sibling sub-mission (provides real node_id)
-- `cipherocto-design-principles` — Stable Abstractions Principle + no parallel abstractions
+- `docs/architecture/design-principles.md` — Stable Abstractions Principle + no parallel abstractions
 
 ## LANDED substrate (2026-08-11)
 
@@ -79,7 +79,7 @@ Per cipherocto-design-principles §Stable Abstractions Principle + §No parallel
 - `octo-reputation-anchor-node::ReputationAnchorNode::broadcast_announce` — DONE (prior commit)
 - `octo-identity-resolver-node::IdentityResolverNode::broadcast_announce` — DONE (this mission)
 
-## Layer discipline (per `cipherocto-design-principles`)
+## Layer discipline (per `docs/architecture/design-principles.md`)
 
 - `quota-router-core` (Layer A) owns the canonical `RouterAnnounceBuilder` + `RouterAnnouncePayload` + HMAC trait surface. UNCHANGED for this mission (already in place).
 - 4 specialized nodes (Layer C) consume the builder via dep. ONE site (`octo-identity-resolver-node`) migrated in this mission; 3 were migrated in prior commits.

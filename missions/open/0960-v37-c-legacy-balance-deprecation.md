@@ -90,7 +90,7 @@ the vectors and let the two drift apart.
   `use-cases/`, `docs/` for `octo_w_balances` references at Cycle-3
   landing time (refusal trigger if non-zero matches found outside RFC-0960
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-vault` (Layer B) — `Vault.balance_dqa_micros` field removal
 - `quota-router-core` (Layer B substrate) — `Balance` struct removal,

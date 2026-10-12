@@ -27,7 +27,7 @@ Extend `VaultProjectionInvalidationEnvelope` with producer identity + signature,
 
 1. **Identity substrate import** — `crates/octo-vault/src/event_log_producer.rs`. Add `use octo_cap_macaroon::OverlayIdentity;` (RFC-0853 §3 Sovereign Identity Model — OverlayIdentity struct, re-exported from `crates/octo-network/src/ocrypt/identity.rs`) and a 64-byte signature field (`producer_signature: [u8; 64]` per RFC-0853 §8 Signature Model).
 
-2. **Envelope struct extension** — `VaultProjectionInvalidationEnvelope` becomes 7 fields. The 64-byte witness field is renamed `producer_signature: [u8; 64]` (an ed25519 signature per RFC-0853 §8 Signature Model; the term "attenuation_witness" belongs to the macaroon substrate and is reserved vocabulary — see `cipherocto-design-principles` §Attenuation invariants cross boundaries):
+2. **Envelope struct extension** — `VaultProjectionInvalidationEnvelope` becomes 7 fields. The 64-byte witness field is renamed `producer_signature: [u8; 64]` (an ed25519 signature per RFC-0853 §8 Signature Model; the term "attenuation_witness" belongs to the macaroon substrate and is reserved vocabulary — see `docs/architecture/design-principles.md` §Attenuation invariants cross boundaries):
    ```rust
    pub struct VaultProjectionInvalidationEnvelope {
        pub chain_id: ChainId,
@@ -67,7 +67,7 @@ Extend `VaultProjectionInvalidationEnvelope` with producer identity + signature,
 - TV-CB-6: Process init with empty trust list → all envelopes rejected (fail-closed default)
 - TV-CB-7: Wire-form round-trip via Serde preserves all 7 fields incl. `producer_signature`
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-vault` (Layer B) — envelope struct extension + emitter trait + subscriber verification
 - `octo-cap-macaroon` (Layer A) — `OverlayIdentity` import (existing primitive, no change)
@@ -90,11 +90,11 @@ grep -rn "VaultProjectionInvalidationEnvelope {" crates/ agents/ use-cases/
 
 - **Wire form:** BREAKING (envelope size + 3 new fields). Mitigation: version tag + 1-cycle `warn-only` feature flag.
 - **Trait signature:** BREAKING (`produce` gains `producer_did: &OverlayIdentity` + `producer_sequence: &AtomicU64` params). Layer C producer impls must update.
-- **Semver impact:** Layer B-additive per `cipherocto-design-principles` §Layer stability; envelope extension is semver-MINOR if version-tag-gated, semver-MAJOR if not.
+- **Semver impact:** Layer B-additive per `docs/architecture/design-principles.md` §Layer stability; envelope extension is semver-MINOR if version-tag-gated, semver-MAJOR if not.
 
 ## Risk
 
-- HIGH: 1-cycle warn-only window means old producers emit unverifiable envelopes that subscribers reject → cache staleness. Mitigation: feature-flag the subscriber-side rejection with a `--features accept-unauthenticated` flag for the cycle. **Hard guard:** `accept-unauthenticated` is gated behind `#[cfg(debug_assertions)]` so it physically cannot compile into release builds — `cargo build --release` MUST refuse to link the feature. Documented as a debug-only escape hatch in `Cargo.toml` feature description. Without this guard, the warn-only window becomes a production default after the cycle ends (CVSS-relevant — the auth-bypass vector is the foundational threat the entire envelope signing scheme is designed to prevent; any production-grade debug escape hatch defeats the substrate's security model per `cipherocto-design-principles` §Attenuation invariants cross boundaries).
+- HIGH: 1-cycle warn-only window means old producers emit unverifiable envelopes that subscribers reject → cache staleness. Mitigation: feature-flag the subscriber-side rejection with a `--features accept-unauthenticated` flag for the cycle. **Hard guard:** `accept-unauthenticated` is gated behind `#[cfg(debug_assertions)]` so it physically cannot compile into release builds — `cargo build --release` MUST refuse to link the feature. Documented as a debug-only escape hatch in `Cargo.toml` feature description. Without this guard, the warn-only window becomes a production default after the cycle ends (CVSS-relevant — the auth-bypass vector is the foundational threat the entire envelope signing scheme is designed to prevent; any production-grade debug escape hatch defeats the substrate's security model per `docs/architecture/design-principles.md` §Attenuation invariants cross boundaries).
 - MEDIUM: sequence number is in-memory; process restart resets sequence → replay window. Mitigation: persist `last_seen_sequence` per producer to disk at restart (Cycle 2).
 - LOW: trust list is static at init. Adding a new producer requires process restart. Mitigation: dynamic trust list (Cycle 2).
 
@@ -108,7 +108,7 @@ grep -rn "VaultProjectionInvalidationEnvelope {" crates/ agents/ use-cases/
 - Mission B (`0960-v37-b-event-log-producer-wiring.md`) — emitter trait
 - Mission `cache-subscriber-bus-wiring.md` — subscriber consumer
 - RFC-0960 §5 (Single Timeline — 3-cycle deprecation pattern described within) — template for feature-flag cycle
-- `cipherocto-design-principles` §Attenuation invariants cross boundaries — auth-bypass CVSS framing + `producer_signature` reserved-vocabulary disambiguation from macaroon `attenuation_witness`
+- `docs/architecture/design-principles.md` §Attenuation invariants cross boundaries — auth-bypass CVSS framing + `producer_signature` reserved-vocabulary disambiguation from macaroon `attenuation_witness`
 
 ## Claimant
 

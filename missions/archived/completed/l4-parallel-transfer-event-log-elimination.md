@@ -1,7 +1,7 @@
 # l4-parallel-transfer-event-log-elimination — consolidate parallel TransferEventLog trait (Layer B invariant)
 
 **Status:** claimed (2026-08-27)
-**Substrate:** RFC-0960 §2.5 (EventLogProducer trait) + `cipherocto-design-principles` §No parallel abstractions
+**Substrate:** RFC-0960 §2.5 (EventLogProducer trait) + `docs/architecture/design-principles.md` §No parallel abstractions
 **Parent:** RFC-0960 §6 Mission B follow-on (R3 review L4 CRITICAL #2)
 **Depends on:**
 
@@ -15,7 +15,7 @@ R3 adversarial review (Lens-4 Layer-direction) flagged that `produce_burn` carri
 1. `octo_vault::TransferEventLog` — Layer B substrate port (production impl lives in `octo-vault-stoolap`)
 2. `crate::burn_event::TransferEventLog` — Layer C parallel trait owned by octo-policy
 
-Both expose an `insert(&TransferEventRef)` shape but exist as two distinct trait declarations. Per `cipherocto-design-principles` §No parallel abstractions, this duplicates adapter code, creates two health-check surfaces, and violates the Layer B invariant (one source of truth for substrate ports).
+Both expose an `insert(&TransferEventRef)` shape but exist as two distinct trait declarations. Per `docs/architecture/design-principles.md` §No parallel abstractions, this duplicates adapter code, creates two health-check surfaces, and violates the Layer B invariant (one source of truth for substrate ports).
 
 ## Scope
 
@@ -35,7 +35,7 @@ Eliminate the parallel trait. The Layer B `octo_vault::TransferEventLog` (define
 
 ## Out of Scope
 
-- Moving `octo_vault::TransferEventLog` trait to a different layer (Layer B hosting is canonical per `cipherocto-design-principles`)
+- Moving `octo_vault::TransferEventLog` trait to a different layer (Layer B hosting is canonical per `docs/architecture/design-principles.md`)
 - Adding new methods to `TransferEventLog` (no surface change)
 - Changing `TransferEventLogInsertError` (re-exported from `vault_balance_projection`, already canonical)
 
@@ -47,7 +47,7 @@ Eliminate the parallel trait. The Layer B `octo_vault::TransferEventLog` (define
 - TV-L4-4: `pub use ... BurnTransferEventLog` re-export removed; downstream crate compiles without it
 - TV-L4-5: `grep -rn "TransferEventLog" crates/octo-policy/src/burn_event.rs` returns ONLY references to the imported `octo_vault::TransferEventLog` (zero decl / impl references to a local trait)
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-vault` (Layer B) — retains canonical `TransferEventLog` port (unchanged)
 - `octo-policy` (Layer C) — `crate::burn_event::TransferEventLog` deleted; `BurnEventRef::consume` rewritten to consume `octo_vault::TransferEventLog`
@@ -72,7 +72,7 @@ grep -rn "TransferEventLog" crates/octo-policy/src/burn_event.rs
 
 ## Backward compat
 
-- `produce_burn` signature BREAKING (8 params → 7 params). Justified per `cipherocto-design-principles` §No parallel abstractions + R3 review L4 CRITICAL #2 verdict.
+- `produce_burn` signature BREAKING (8 params → 7 params). Justified per `docs/architecture/design-principles.md` §No parallel abstractions + R3 review L4 CRITICAL #2 verdict.
 - `BurnEventRef::consume` signature BREAKING (Layer C → Layer B trait swap). Mitigated by `octo-policy` being the sole consumer.
 - All TV-BE tests require update — green at landing time.
 
@@ -84,7 +84,7 @@ grep -rn "TransferEventLog" crates/octo-policy/src/burn_event.rs
 
 ## Cross-references
 
-- `cipherocto-design-principles` §No parallel abstractions — canonical rule
+- `docs/architecture/design-principles.md` §No parallel abstractions — canonical rule
 - RFC-0960 §2.2 — `TransferEventLog` port (Layer B substrate)
 - RFC-0960 §2 — `BurnEventRef::consume` (Mission F substrate that consumes the trait)
 - Mission B (`0960-v37-b-event-log-producer-wiring.md`) — `produce_burn` call site

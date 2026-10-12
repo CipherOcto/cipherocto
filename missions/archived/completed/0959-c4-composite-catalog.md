@@ -56,4 +56,4 @@ Closes 0959-c3 Notes "out of scope for Band A" (gossip + storage delegation in o
 
 - `wave-3-gaps-2026-08-10` — gap surface context
 - `mission-gap-closure-priorities-2026-08-10` — Wave 2 plan (origin reference)
-- `cipherocto-design-principles` — Layer B→D boundary rules
+- `docs/architecture/design-principles.md` — Layer B→D boundary rules

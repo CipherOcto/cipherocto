@@ -44,7 +44,7 @@ This phase-aggregate mission decomposes per RFC-0011-d §Mission Decomposition i
 | M10 | `0011-d-M10-phase2-coordinator-domain-coordinator.md`      | `octo coordinator domain-coordinator {bind,unbind,list,show}` clap       | RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) + RFC-0855p-e Accepted |
 | M11 | `0011-d-M11-phase2-domain-coordinator-platform-binding.md` | `octo_coordinator::{bind,unbind,list,show}_domain_coordinator` substrate | RFC-0855p-e Accepted                                                                          |
 
-**Workflow:** Both atomics are GATED. Sub-step 1 of each mission is the gate verification (`git log` of Accepted RFC files). Do not claim M10/M11 until both prereq RFCs are Accepted. Per `deferred-vs-unspecified`, deferred (not unspecified).
+**Workflow:** Both atomics are GATED. Sub-step 1 of each mission is the gate verification (`git log` of Accepted RFC files). Do not claim M10/M11 until both prereq RFCs are Accepted. Per `docs/05-process/engineering-rules.md` §Deferred versus unspecified, deferred (not unspecified).
 
 **Ordering:** M11 (substrate) should land BEFORE M10 (CLI binding) so M10 has substrate to call. Per RFC-0011 substrate-first pattern.
 
@@ -71,7 +71,7 @@ See YAML frontmatter `depends_on` block + `release_gate` block above. Hard seque
 - [ ] Mission-level coordination surface wired (RFC-0855p-b `CoordinatorLifecycle` state machine; handover ceremony substrate)
 - [ ] Sub-group nesting respected for `domain-coordinator` role binding (RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) sub-DC authority)
 - [ ] HandoverRequest Envelope substrate wired into role binding flow (RFC-0855p-e handover ceremony)
-- [ ] Layer direction verified (no reverse deps per `cipherocto-design-principles`)
+- [ ] Layer direction verified (no reverse deps per `docs/architecture/design-principles.md`)
 - [ ] Cargo clippy -p octo-cli -p octo-role --all-targets -- -D warnings clean
 - [ ] Cargo test -p octo-cli -p octo-role --lib --tests green
 - [ ] No new INVALID cites introduced (cite validator runs clean per `docs/07-developers/octo-cli-implementation-guide.md` Guard 2)
@@ -94,7 +94,7 @@ See `docs/07-developers/octo-cli-implementation-guide.md` §Role Subcommands Pha
 
 ## Pull Request
 
-# (PR opened by user per `feedback_initiation_user_only` + `git-workflow`)
+# (PR opened by user per `docs/05-process/engineering-rules.md` §Git workflow + `docs/05-process/engineering-rules.md` §Git workflow)
 
 ## Risk
 
@@ -169,7 +169,7 @@ octo-subgroup = { path = "../octo-subgroup" }
 | TV-RDC-2  | `role select domain-coordinator` with 0855p-d Accepted but 0855p-e still Draft — exit 33; error names prereq (RFC-0855p-e)                                                                                        | (Phase 2) Domain-coordinator select               |
 | TV-RP-1   | `role select coordinator` (Phase 2 blocked) — exit 33; error names prereq (RFC-0855p-e)                                                                                                                           | Partial-prereq guard (carry-forward from Phase 1) |
 
-### Layer direction (per `cipherocto-design-principles`)
+### Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-cli` (Layer C/D) — Phase 2 dispatch extension (no new envelopes; reuses `RoleSelectOutput`); HSM gate + redaction pass reused from Phase 1
 - `octo-role` (Layer B) — `RoleBinding` extended with `platform_admin_id` + `handover_envelope_hash`; `octo_role::select` extended with `coordinator` + `domain-coordinator` slugs
@@ -217,7 +217,7 @@ cargo test -p octo-cli -p octo-role -p octo-coordinator -p octo-handover -p octo
 - RFC-0008 — Deterministic AI Execution Boundary (execution class mapping; role commands are class C)
 - RFC-0010 — Canonical DID Codec (ChainId typing for slash ledger partition)
 - RFC-0957 — Macaroon Substrate (signer trait cross-reference)
-- `cipherocto-design-principles` — Layer B stability contract; no central enum; typed discriminator
+- `docs/architecture/design-principles.md` — Layer B stability contract; no central enum; typed discriminator
 
 ## Why 1 release cycle gate
 

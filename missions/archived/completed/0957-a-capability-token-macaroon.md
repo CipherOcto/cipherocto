@@ -2,7 +2,7 @@
 
 ## Status
 
-Closed (Band A — audit-closure rolled up 2026-08-07). Claimed 2026-07-20; substrate shipped 2026-07-19 S02; RFC-0957 reaching Accepted 2026-07-20 unlocked decomposition into sub-missions `0957-a1` / `0957-b` / `0957-c` / `0957-d` / `0957-e`. **41/42 ACs GREEN** as of 2026-08-07 audit-closure (per §Path Reconciliation table: 33 `[ ]` ACs mechanically flipped to `[x]` via canonical→substrate path rewrites; `capability::mint` signature amendment from mission 0957-e landed at commit `e05f9639` per `no-phantom-mission-pointers`). 1/42 AC (AC-19 cross-crate clippy) PARTIAL with named owner + target per `deferred-vs-unspecified`: package-scoped clippy on `octo-wallet` clean; workspace-wide `--all-features` blocked by pre-existing unrelated `tdlib-rs` build script error E0425, owner @cipherocto, target 2026-09-15.
+Closed (Band A — audit-closure rolled up 2026-08-07). Claimed 2026-07-20; substrate shipped 2026-07-19 S02; RFC-0957 reaching Accepted 2026-07-20 unlocked decomposition into sub-missions `0957-a1` / `0957-b` / `0957-c` / `0957-d` / `0957-e`. **41/42 ACs GREEN** as of 2026-08-07 audit-closure (per §Path Reconciliation table: 33 `[ ]` ACs mechanically flipped to `[x]` via canonical→substrate path rewrites; `capability::mint` signature amendment from mission 0957-e landed at commit `e05f9639` per `docs/05-process/engineering-rules.md` §No phantom mission pointers). 1/42 AC (AC-19 cross-crate clippy) PARTIAL with named owner + target per `docs/05-process/engineering-rules.md` §Deferred versus unspecified: package-scoped clippy on `octo-wallet` clean; workspace-wide `--all-features` blocked by pre-existing unrelated `tdlib-rs` build script error E0425, owner @cipherocto, target 2026-09-15.
 
 ## RFC
 

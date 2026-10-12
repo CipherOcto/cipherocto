@@ -109,7 +109,7 @@ Verified by the §Test Vectors list.
   by this mission carries a layer-and-RFC comment per the repository
   convention. This is a read check, not a test; state it as such.
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-ident` (Layer B) — the registry; direction is B into the consumer
 - `octo-adapter-nostr` (Layer D) — D depends on B, which is permitted

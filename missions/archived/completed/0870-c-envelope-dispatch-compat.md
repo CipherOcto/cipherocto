@@ -45,7 +45,7 @@ The result: every borsh envelope silently falls into `_ => Ok(())` and is droppe
 
 ## Tests currently `#[ignore]`'d (per this mission's filter list)
 
-The following integration tests are pre-existing broken tests gated `#[ignore]` (per `deferred-vs-unspecified` named-owner rule):
+The following integration tests are pre-existing broken tests gated `#[ignore]` (per `docs/05-process/engineering-rules.md` §Deferred versus unspecified named-owner rule):
 
 - `crates/quota-router-integration-tests/tests/l2_gossip_convergence.rs::l2_t15_gossip_propagation`
 - `crates/quota-router-integration-tests/tests/l2_gossip_convergence.rs::l2_t17_three_node_gossip_convergence`

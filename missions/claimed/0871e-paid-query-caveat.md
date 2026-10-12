@@ -24,7 +24,7 @@ Implement paid query via caveat composition. Three components: (1) `PaymentCavea
 
 - [x] **Bridge only (MVP):** `PaidQueryCaveat` lives in the new `crates/octo-paid-query/src/lib.rs` (Layer E extension crate), NOT inside `octo-cap-macaroon`. Shape: `(caveat_name: "paid-query/v1", budget: MicroOCTO_W, model: String, expires_at_unix_ms: u64)`.
 - [ ] **Deferred (follow-on):** Migration of `PaidQueryCaveat` into `crates/octo-cap-macaroon/src/caveat/payment.rs` with discriminator 0x1A + `Caveat::verify` + `Caveat::attenuate` impls lands in mission 0957 Phase 2 follow-on (per mission file "Phase 4 extraction recommended"). Phase 5 MVP stands up the bridge crate so the caveat has a home before the per-extension migration completes.
-- [ ] **Deferred (follow-on):** Caveat decoder in `octo-protocol::EnvelopeDispatcher::verify` recognizes `PaymentCaveat` discriminator. The dispatcher-level decode is not needed in Phase 5 MVP because the wallet handler decodes `PaidQueryRequest` directly via `borsh::from_slice` (no central enum — per `cipherocto-design-principles` §"Extension over enumeration").
+- [ ] **Deferred (follow-on):** Caveat decoder in `octo-protocol::EnvelopeDispatcher::verify` recognizes `PaymentCaveat` discriminator. The dispatcher-level decode is not needed in Phase 5 MVP because the wallet handler decodes `PaidQueryRequest` directly via `borsh::from_slice` (no central enum — per `docs/architecture/design-principles.md` §"Extension over enumeration").
 
 ### Top-level: Pricing policy
 
@@ -158,7 +158,7 @@ Per RFC-0871 §Implementation Phases Phase 5 + RFC-0957 §Algorithms (caveat ver
 
 ## Pull Request
 
-# (local-only — no push per `git-workflow`)
+# (local-only — no push per `docs/05-process/engineering-rules.md` §Git workflow)
 
 ## Closure Record
 
@@ -202,7 +202,7 @@ Per RFC-0871 §Implementation Phases Phase 5 + RFC-0957 §Algorithms (caveat ver
 
 ### Why the bridge pattern, not the full caveat chain
 
-Per `cipherocto-design-principles` §"Extension over enumeration" + "User extensibility": the paid-query bridge is the smallest atomic increment that (a) allocates the `PAID_QUERY_VERIFY` payload kind namespace, (b) proves the per-extension crate shape, and (c) wires a verifier primitive the holder can call before a quota-router follow-on ships. Deferring the full `PaymentCaveat` chain migration + atomic drain to follow-on missions keeps each commit a single atomic review unit (per `cipherocto-design-principles` §"Discipline at first call site pays off"). The full surface lands in two follow-on missions:
+Per `docs/architecture/design-principles.md` §"Extension over enumeration" + "User extensibility": the paid-query bridge is the smallest atomic increment that (a) allocates the `PAID_QUERY_VERIFY` payload kind namespace, (b) proves the per-extension crate shape, and (c) wires a verifier primitive the holder can call before a quota-router follow-on ships. Deferring the full `PaymentCaveat` chain migration + atomic drain to follow-on missions keeps each commit a single atomic review unit (per `docs/architecture/design-principles.md` §"Discipline at first call site pays off"). The full surface lands in two follow-on missions:
 
 1. **Mission 0957 Phase 2 follow-on** — migrate `PaidQueryCaveat` into `octo-cap-macaroon::caveat::payment` with discriminator 0x1A + `Caveat::verify`/`attenuate` impls per RFC-0957 §Algorithms. Update `octo-paid-query` to depend on the migrated caveat.
 2. **Mission 0871e Phase 6 follow-on** (to be filed) — `RouterAnnouncePayload::pricing_policy` extension + `crates/quota-router-core/src/payment/drain.rs` atomic drain per RFC-0862 + proxy integration + `PaymentReceipt` event emission + dedicated `paid-query-node` specialized node + end-to-end tests.

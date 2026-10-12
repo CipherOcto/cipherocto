@@ -56,7 +56,7 @@ CLI dispatch wired 2026-09-20 at `next 624998ba`:
 - [x] `cargo clippy -p octo-cli --all-targets -- -D warnings` clean
 - [x] `cargo test -p octo-network --lib` green (4/4 dispatch tests pass)
 - [x] `cargo test -p octo-cli --lib` green (3/3 coordinator admin test vectors pass; +3 above Phase 2 baseline)
-- [x] Layer discipline preserved (Layer B only; zero Layer A change per `cipherocto-design-principles` §Stable Abstractions Principle; Layer C consumes via re-export)
+- [x] Layer discipline preserved (Layer B only; zero Layer A change per `docs/architecture/design-principles.md` §Stable Abstractions Principle; Layer C consumes via re-export)
 - [x] ≥3 unit tests + ≥1 integration test (4 substrate unit tests + 3 CLI test vectors added)
 
 ## Dependencies

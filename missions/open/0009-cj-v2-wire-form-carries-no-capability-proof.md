@@ -173,7 +173,7 @@ at the point where it is hardest to change.
 
 ## Design-principle reading
 
-This is `cipherocto-design-principles` §Storage is not a protocol, and §No
+This is `docs/architecture/design-principles.md` §Storage is not a protocol, and §No
 premature coupling, failing together. The field is named after a type and
 documented as carrying that type; nothing enforces it, and the contents are
 producer-specific. That shape forces every future consumer to either discover the

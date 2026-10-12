@@ -41,7 +41,7 @@ Create `crates/octo-vault/src/cache_subscriber.rs` — a per-process subscriber 
 
 3. **Process-init wiring** — `crates/octo-vault/src/lib.rs` exports a `pub fn init_cache_subscriber(...)` factory. Layer C crates (octo-wallet-node / quota-router-sm-engine / octo-policy) call this in their `main` / server bootstrap. **Note:** server bootstrap is OUT OF SCOPE for this mission — only the substrate `init_cache_subscriber` lands. Wire-up at each Layer C binary is a follow-on (tracked at `producer-wrapper-consumer-wiring.md`).
 
-4. **Lock ordering discipline** — subscriber acquires `cache: Arc<Mutex<VaultBalanceCache>>` lock; producers acquire `drain_lock: Arc<Mutex<()>>` then `TransferEventLog::insert` (NOT the cache). Lock ordering rule: subscriber holds cache lock only, never drain_lock; producers hold drain_lock only, never cache lock. This rule is captured in `cipherocto-design-principles` §Lock-ordering cross-boundary.
+4. **Lock ordering discipline** — subscriber acquires `cache: Arc<Mutex<VaultBalanceCache>>` lock; producers acquire `drain_lock: Arc<Mutex<()>>` then `TransferEventLog::insert` (NOT the cache). Lock ordering rule: subscriber holds cache lock only, never drain_lock; producers hold drain_lock only, never cache lock. This rule is captured in `docs/architecture/design-principles.md` §Lock-ordering cross-boundary.
 
 5. **Wildcard subscription** — subscriber port receives envelopes for ANY `cache:projection:<hex(vault_id)>` channel. Concrete adapter at Layer D opens a single wildcard subscription rather than N per-vault subscriptions (memory-efficient at scale).
 
@@ -61,7 +61,7 @@ Create `crates/octo-vault/src/cache_subscriber.rs` — a per-process subscriber 
 - TV-CS-5: Wildcard envelope for vault A invalidates cache entry for vault A (and B, C if present); single-bus round-trip
 - TV-CS-6: Subscriber init runs BEFORE any producer call (test: spawn subscriber, then call `produce_burn`; both observe cache empty initially, then receive envelope after producer inserts)
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `octo-vault` (Layer B) — port trait `VaultProjectionInvalidationSubscriber` + `spawn_cache_subscriber` factory + `init_cache_subscriber` bootstrap
 - `octo-vault-stoolap` (Layer D adapter, separate mission) — Stoolap NOTIFY/LISTEN impl
@@ -87,7 +87,7 @@ cargo doc --no-deps --workspace  # no broken links
 
 - HIGH: cache-subscriber bootstrap race — subscriber starts AFTER first `produce_*` call → first envelope missed, projection silently serves stale balances from the pre-projection-substrate `transfer_events` set (the table state before the RFC-0960 VaultBalanceProjection migration landed) for an unbounded window until the next event fires (silent consistency loss per RFC-0960 §7 Risk Callouts row 7). Mitigation: subscriber init in `main` BEFORE any handler is registered; mirror TV-PW-4 init-order verification pattern from `producer-wrapper-consumer-wiring`; RFC-0913 commit-coupled NOTIFY ensures bus event fires only on commit (no in-flight envelope loss).
 - MEDIUM: wildcard subscription memory ceiling — `cache:projection:*` channel cardinality scales with vault count; Stoolap NOTIFY/LISTEN per-channel overhead is non-trivial at scale. Mitigation: bounded by vault count, NOTIFY/LISTEN per-channel overhead acceptable up to 100k vaults; revisit at higher scale.
-- LOW: Stoolap NOTIFY/LISTEN transient disconnect — short network blip drops bus events. Mitigation: Stoolap client auto-reconnect (built into `stoolap` fork per `stoolap-general-purpose-db`); verified by stochastic disconnect test.
+- LOW: Stoolap NOTIFY/LISTEN transient disconnect — short network blip drops bus events. Mitigation: Stoolap client auto-reconnect (built into `stoolap` fork per `docs/architecture/stoolap-integration.md`); verified by stochastic disconnect test.
 
 ## Cross-references
 

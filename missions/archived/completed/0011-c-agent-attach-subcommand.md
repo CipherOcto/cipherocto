@@ -79,7 +79,7 @@ See YAML frontmatter `depends_on` block above. Hard sequencing: `0011-c-agent-cr
 - [x] `OctoCliRedactor` patterns applied (same set as `agent create` per RFC-0011-c §Security)
 - [x] 8 `AttachHandle*` OctoCliError mirror variants wired (slots 53-59, slots 53 shared-slot pattern; per RFC-0011-c §F.4 + §9.8)
 - [x] TTY-aware renderer parity: pretty table on TTY, JSON when stdout is not a TTY OR `--json` set
-- [x] Layer direction verified (no reverse deps per `cipherocto-design-principles`)
+- [x] Layer direction verified (no reverse deps per `docs/architecture/design-principles.md`)
 - [x] Cargo clippy -p octo-cli --all-targets -- -D warnings clean
 - [x] Cargo test -p octo-cli --lib --tests green (287 → 291 tests; 4 NEW TV per §F.6.2)
 - [x] No new INVALID cites introduced (Guard 2 cite validator green)
@@ -102,7 +102,7 @@ See `docs/07-developers/octo-cli-implementation-guide.md` §Agent Subcommands fo
 
 ## Pull Request
 
-# (PR opened by user per `feedback_initiation_user_only` + `git-workflow`)
+# (PR opened by user per `docs/05-process/engineering-rules.md` §Git workflow + `docs/05-process/engineering-rules.md` §Git workflow)
 
 ## Notes
 
@@ -161,7 +161,7 @@ No new external crates required; all substrate types are defined in `octo-wallet
 | TV-AGT11 | `agent attach` | Running agent    | `AgentAttachOutput { runtime_handle: ..., ... }` (exit 0) | Read-only attach                     |
 | TV-AGT12 | `agent attach` | Terminated agent | `AgentNotRunning(uuid)` (exit 48)                         | Attach to non-running agent rejected |
 
-## Layer direction (RFC-0011-c §9.1 Architecture + per `cipherocto-design-principles`)
+## Layer direction (RFC-0011-c §9.1 Architecture + per `docs/architecture/design-principles.md`)
 
 - `octo-cli` (Layer C/D) — new `AgentAction::Attach` dispatch + `AgentAttachOutput` payload type + 2 error variants.
 - `octo-wallet` (Layer B) — substrate `AgentState` (existing types; used to surface `AgentNotRunning`).
@@ -202,7 +202,7 @@ cargo test -p octo-cli --lib --tests  # green
 - RFC-0011-c §Implementation Phases Phase 1 (octo-runtime substrate release gate)
 - RFC-0011 §Output Envelope, §Redaction Layer, §Error Handling — substrate sections
 - RFC-0002 §Agent State Machine (canonical state machine substrate)
-- `cipherocto-design-principles` — Layer B stability contract + no-parallel-abstractions principle
+- `docs/architecture/design-principles.md` — Layer B stability contract + `docs/architecture/design-principles.md` §No parallel abstractions principle
 - `0011-c-attachhandle-dry-closure-2026-09-16` — predecessor substrate closure state
 
 ## Why gate
@@ -238,7 +238,7 @@ Hard sequencing per `no-phantom-mission-pointer` + hard audit 2026-09-15:
 
 **Follow-on cycle landed 2026-09-16** per paired amendment `0011-c-attach-cli-dispatch-amendment`. ACs checked + `release_gate_cleared_at` annotation set in this commit.
 
-Per the user-initiation-only mandate + `git-workflow` user owns the remote-write workflow + status transitions. NO PUSH. Mission remains `Claimed` per `memory-is-never-status-ground-truth`.
+Per the user-initiation-only mandate + `docs/05-process/engineering-rules.md` §Git workflow user owns the remote-write workflow + status transitions. NO PUSH. Mission remains `Claimed` per `memory-is-never-status-ground-truth`.
 
 ## RFC-0015-b substrate-defect dependency
 

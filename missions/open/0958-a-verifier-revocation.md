@@ -270,7 +270,7 @@ This list is **additive** to the existing corpus in
 and the mint vectors. Those are out of scope here, not superseded by this
 list.
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - `quota-router-core` (Layer C) — the verifier
 - The revocation store is reached through a typed query boundary, per

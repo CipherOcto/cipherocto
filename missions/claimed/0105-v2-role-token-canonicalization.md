@@ -115,4 +115,4 @@ fixtures in `test_vectors.rs` lock to the legacy form's bytes.
 - Memory card created + MEMORY.md updated.
 - Mission file `git mv` to `missions/claimed/0105-v2-role-token-canonicalization.md`.
 - 1 commit: `chore(crate-octo-vault): 0105-v2 — canonicalize role-token form (8 files, 26 sites)`.
-- NO push performed — push awaits user instruction per `feedback_initiation_user_only`.
+- NO push performed — push awaits user instruction per `docs/05-process/engineering-rules.md` §Git workflow.

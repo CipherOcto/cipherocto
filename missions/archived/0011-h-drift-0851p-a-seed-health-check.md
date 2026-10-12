@@ -51,8 +51,8 @@ pub struct NetworkStatusOutput {
 - [x] Drift closure documented in RFC-0011-n §Substrate-Additions drift-closure row (next 2ba4273b)
 - [x] `cargo clippy -p octo-cli --all-targets -- -D warnings` clean (next 2ba4273b)
 - [x] `cargo test -p octo-cli --lib` green (402/402, was 396 before Phase 6 vectors) (next 2ba4273b)
-- [x] Layer discipline preserved (Layer C CLI dispatch only; zero Layer A change per `cipherocto-design-principles` §Stable Abstractions Principle) (next 2ba4273b)
-- [x] Substrate-faithful boundary: typed façade per `cipherocto-design-principles` §Stable Abstractions Principle (next 2ba4273b)
+- [x] Layer discipline preserved (Layer C CLI dispatch only; zero Layer A change per `docs/architecture/design-principles.md` §Stable Abstractions Principle) (next 2ba4273b)
+- [x] Substrate-faithful boundary: typed façade per `docs/architecture/design-principles.md` §Stable Abstractions Principle (next 2ba4273b)
 - [x] Drift closure cross-reference added to RFC-0011-h §Subcommand Taxonomy row for `status` (next 2ba4273b)
 
 ## Dependencies

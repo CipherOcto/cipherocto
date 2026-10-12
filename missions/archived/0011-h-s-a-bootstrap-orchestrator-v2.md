@@ -72,7 +72,7 @@ The `BootstrapState` struct exposes the substrate-faithful observability surface
 - [x] `reset(&mut self)` registry helper lands
 - [x] `cargo clippy -p octo-network --all-targets -- -D warnings` clean
 - [x] `cargo test -p octo-network --lib` green (1461/1461, +10 above Phase 5 baseline of 1451)
-- [x] Layer discipline preserved (Layer B only, zero Layer A change per `cipherocto-design-principles` §Stable Abstractions Principle)
+- [x] Layer discipline preserved (Layer B only, zero Layer A change per `docs/architecture/design-principles.md` §Stable Abstractions Principle)
 - [x] ≥3 unit tests + ≥1 integration test (10 substrate unit tests pin: start_bootstrap fresh + start_bootstrap idempotent + start_bootstrap error paths + status default-state + status post-start + reset + BootstrapState Serialize/Deserialize round-trip + BootstrapMode coverage for all 3 variants)
 - [x] Distinct from Phase 2 G1 (`0011-h-s-a-bootstrap-orchestrator`) which adds only `BootstrapConfig::from_toml` parser + `save_toml` writer; G26 adds the lifecycle orchestrator struct + methods per RFC-0011-n R1 substrate-faithfulness finding
 
@@ -94,4 +94,4 @@ The `BootstrapState` struct exposes the substrate-faithful observability surface
 
 ## Notes
 
-Stub fill-in 2026-09-20 per RFC-0011-n R1 substrate-faithfulness finding — G1 does NOT carry `BootstrapOrchestrator` (Phase 2 G1 is parser/saver only); G26 NEW Phase 6 mission carries the lifecycle orchestrator struct + methods. The orchestrator struct is intentionally minimal (idempotent start + status + reset) to keep the canonical lifecycle logic in one place per `cipherocto-design-principles` §Stable Abstractions Principle. Future extensions (e.g. quorum tracking, governance tally aggregation) live in follow-on companion missions per the per-extension crate pattern. The `BootstrapState` struct's `peer_count` field will be populated by the follow-on companion mission that wires the peer-cache substrate into the status envelope.
+Stub fill-in 2026-09-20 per RFC-0011-n R1 substrate-faithfulness finding — G1 does NOT carry `BootstrapOrchestrator` (Phase 2 G1 is parser/saver only); G26 NEW Phase 6 mission carries the lifecycle orchestrator struct + methods. The orchestrator struct is intentionally minimal (idempotent start + status + reset) to keep the canonical lifecycle logic in one place per `docs/architecture/design-principles.md` §Stable Abstractions Principle. Future extensions (e.g. quorum tracking, governance tally aggregation) live in follow-on companion missions per the per-extension crate pattern. The `BootstrapState` struct's `peer_count` field will be populated by the follow-on companion mission that wires the peer-cache substrate into the status envelope.

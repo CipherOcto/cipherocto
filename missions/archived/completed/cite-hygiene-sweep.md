@@ -1,7 +1,7 @@
 # cite-hygiene-sweep — strip RFC version pins + line refs from doc-comments
 
 **Status:** claimed (2026-08-27)
-**Substrate:** `cipherocto-design-principles` §No line refs anywhere + CLAUDE.md §RFC Reference Conventions
+**Substrate:** `docs/architecture/design-principles.md` §No line refs anywhere + CLAUDE.md §RFC Reference Conventions
 **Parent:** R3 review follow-on (cite hygiene finding — mechanical sed sweep)
 **Depends on:** (none — pure mechanical edit)
 
@@ -12,7 +12,7 @@ R3 review surfaced a cite-hygiene finding: doc-comments across the workspace car
 The canonical rules:
 
 - **CLAUDE.md §RFC Reference Conventions:** "When referencing RFCs in prose, cross-references, changelogs, and approval criteria — use only the number. Never include status, version pins, or metadata."
-- **memory/no-line-refs-anywhere:** "§section_name / symbol names. Code exempt."
+- **memory/`docs/05-process/engineering-rules.md` §No line references in documentation:** "§section_name / symbol names. Code exempt."
 
 Current scope of the violation (verified via grep at mission creation):
 
@@ -63,7 +63,7 @@ Strip RFC version pins + line refs from all doc-comments (`///` and `//!`) and i
 ## Out of Scope
 
 - Touching `docs/` markdown — separate sweep mission (different file class, different sed rules)
-- Touching `missions/` YAML — cite hygiene there tracked by `no-phantom-mission-pointers` discipline
+- Touching `missions/` YAML — cite hygiene there tracked by `docs/05-process/engineering-rules.md` §No phantom mission pointers discipline
 - Touching `rfcs/` — RFCs legitimately carry their own VH version metadata
 - Touching `Cargo.toml` version strings — those are semver, not citation pins
 - Touching string literals — `"cipherocto/burn/v1/"` is data, not citation
@@ -79,7 +79,7 @@ Strip RFC version pins + line refs from all doc-comments (`///` and `//!`) and i
 - TV-CH-7: `cargo test --workspace --lib` green (no semantic change)
 - TV-CH-8: `cargo doc --no-deps --workspace` no broken links (citations unchanged at the §-section level)
 
-## Layer direction (per `cipherocto-design-principles`)
+## Layer direction (per `docs/architecture/design-principles.md`)
 
 - All crates — comment-text edits only
 - No semantic change → no layer-direction impact
@@ -113,10 +113,10 @@ grep -rhE '§[0-9]+\.[0-9]+ L[0-9]+|L[0-9]+-[0-9]+' crates/ | wc -l
 
 ## Cross-references
 
-- `cipherocto-design-principles` §No line refs anywhere
+- `docs/architecture/design-principles.md` §No line refs anywhere
 - CLAUDE.md §RFC Reference Conventions Reaffirmed
 - `rfc-referencing-convention` memory card
-- `no-line-refs-anywhere` memory card
+- `docs/05-process/engineering-rules.md` §No line references in documentation memory card
 - R3 review cite-hygiene finding
 
 ## Claimant

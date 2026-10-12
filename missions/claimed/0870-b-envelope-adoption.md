@@ -88,7 +88,7 @@ RFC-0870 NodeEnvelope adoption is multi-file (`node/{handler,mod,forward,gossip}
 
 94f8def8 (substrate layer)
 a059d54d (call-site migration)
-(local; push + remote writes await user instruction per `git-workflow`)
+(local; push + remote writes await user instruction per `docs/05-process/engineering-rules.md` §Git workflow)
 
 ## Closure Summary
 

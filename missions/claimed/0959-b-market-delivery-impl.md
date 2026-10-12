@@ -2,7 +2,7 @@
 
 ## Status
 
-Closed (Band A — 2026-08-06). Claimed 2026-08-04; implementation landed (commit `0ba67943`): 6 structs + 1 enum + 1 newtype authored in `crates/octo-wallet/src/capability/market_delivery.rs`; `BearerCapsule` re-exported from `crates/quota-router-storage/src/bearer_capsule_stub.rs` (canonical home per `stoolap-general-purpose-db` red line). 7/7 unit tests pass (envelope_id hash Eq, Debug redaction × 5, DeliveryError variant coverage). Remaining Band-A ACs (algorithm, chain_tip_lock CAS, append_deal_settled, settlement chain extension, test vectors) explicit cross-mission deferrals. Drift surfaced vs RFC-0959-A1 §Data Structures + §Error Handling: `RoleTag` shipped with `{Buyer, Seller, Router}` variants (RFC-0971 §Roles role-binding consolidation expected `{Asker, Router, TokenIssuer}`); `DeliveryError` shipped with 6 variants (RFC-0959-A1 §Error Handling defines 14 variants including `RoleBindingMismatch`, `InvalidSettledAtUnix`, `AskNotFound`, `CasError`, `OutboxError`, `ChainError`, `ChainAppendError`, `SettlementChainError`, etc.). Both drift items explicitly deferred to `0959-b1-mdelivery-types-drift` follow-up + `0959-b2-deliver-algorithm` mission per `deferred-vs-unspecified`.
+Closed (Band A — 2026-08-06). Claimed 2026-08-04; implementation landed (commit `0ba67943`): 6 structs + 1 enum + 1 newtype authored in `crates/octo-wallet/src/capability/market_delivery.rs`; `BearerCapsule` re-exported from `crates/quota-router-storage/src/bearer_capsule_stub.rs` (canonical home per `docs/architecture/stoolap-integration.md` red line). 7/7 unit tests pass (envelope_id hash Eq, Debug redaction × 5, DeliveryError variant coverage). Remaining Band-A ACs (algorithm, chain_tip_lock CAS, append_deal_settled, settlement chain extension, test vectors) explicit cross-mission deferrals. Drift surfaced vs RFC-0959-A1 §Data Structures + §Error Handling: `RoleTag` shipped with `{Buyer, Seller, Router}` variants (RFC-0971 §Roles role-binding consolidation expected `{Asker, Router, TokenIssuer}`); `DeliveryError` shipped with 6 variants (RFC-0959-A1 §Error Handling defines 14 variants including `RoleBindingMismatch`, `InvalidSettledAtUnix`, `AskNotFound`, `CasError`, `OutboxError`, `ChainError`, `ChainAppendError`, `SettlementChainError`, etc.). Both drift items explicitly deferred to `0959-b1-mdelivery-types-drift` follow-up + `0959-b2-deliver-algorithm` mission per `docs/05-process/engineering-rules.md` §Deferred versus unspecified.
 
 ## RFC
 
@@ -12,13 +12,13 @@ RFC-0959-A1 (Economics): Market Delivery Envelope (Amendment) — Accepted 2026-
 
 ### Settlement chain extension (DEFERRED — not in Band A)
 
-- [ ] `crates/quota-router-storage/src/ask.rs` (EXTEND) — `append_deal_settled` chain hash update logic. **NOT** `crates/quota-router-core/src/settlement/chain.rs` as original mission text claimed — that file path does not exist on disk; actual settlement chain lives in `crates/quota-router-storage/src/ask.rs` (the consolidated store per 0959-a landing). **DEFERRED to `0959-b3-settlement-chain` mission per `deferred-vs-unspecified`** — substrate-extension phase owns `SettlementChainEvent::DealSettled` variant + `append_settlement_event` overload + chain hash continuity rule.
+- [ ] `crates/quota-router-storage/src/ask.rs` (EXTEND) — `append_deal_settled` chain hash update logic. **NOT** `crates/quota-router-core/src/settlement/chain.rs` as original mission text claimed — that file path does not exist on disk; actual settlement chain lives in `crates/quota-router-storage/src/ask.rs` (the consolidated store per 0959-a landing). **DEFERRED to `0959-b3-settlement-chain` mission per `docs/05-process/engineering-rules.md` §Deferred versus unspecified** — substrate-extension phase owns `SettlementChainEvent::DealSettled` variant + `append_settlement_event` overload + chain hash continuity rule.
 - [ ] `settled_at_unix` derived from prior `SettlementEvent::settled_at_unix` field per RFC-0959-A1 §Determinism Requirements. NOT a separate timestamp.
 
 ### Drift fixes (DEFERRED — explicit cross-mission)
 
-- [ ] `RoleTag` variants `{Buyer, Seller, Router}` → RFC-0971 §Roles expected `{Asker, Router, TokenIssuer}`. **DEFERRED to `0959-b1-mdelivery-types-drift` follow-up mission per `deferred-vs-unspecified`** — drift surfaced in Band A; promotion requires RFC-0971 role-binding signature update (cross-mission with `0971-a-role-binding`).
-- [ ] `DeliveryError` 6 → 14 variants (adds `AskNotFound`, `GossipError`, `InvalidSettledAtUnix`, `RoleBindingMismatch`, `StoolapTxnError`, `StoolapDbError`, `CasError`, `OutboxError`, `ChainError`, `SerializationError`, `RegistryError`, `ChainAppendError` + `SettlementChainError` 4 variants). **DEFERRED to `0959-b1-mdelivery-types-drift` follow-up mission per `deferred-vs-unspecified`** — named owners per RFC-0959-A1 §Error Handling cascade.
+- [ ] `RoleTag` variants `{Buyer, Seller, Router}` → RFC-0971 §Roles expected `{Asker, Router, TokenIssuer}`. **DEFERRED to `0959-b1-mdelivery-types-drift` follow-up mission per `docs/05-process/engineering-rules.md` §Deferred versus unspecified** — drift surfaced in Band A; promotion requires RFC-0971 role-binding signature update (cross-mission with `0971-a-role-binding`).
+- [ ] `DeliveryError` 6 → 14 variants (adds `AskNotFound`, `GossipError`, `InvalidSettledAtUnix`, `RoleBindingMismatch`, `StoolapTxnError`, `StoolapDbError`, `CasError`, `OutboxError`, `ChainError`, `SerializationError`, `RegistryError`, `ChainAppendError` + `SettlementChainError` 4 variants). **DEFERRED to `0959-b1-mdelivery-types-drift` follow-up mission per `docs/05-process/engineering-rules.md` §Deferred versus unspecified** — named owners per RFC-0959-A1 §Error Handling cascade.
 
 ### Test vectors (RFC-0959-A1 §Test Vectors, this sub-mission owns TV1, TV2, TV3, TV5, TV6, TV8, TV9, TV10, TV11, TV12)
 
@@ -39,7 +39,7 @@ RFC-0959-A1 (Economics): Market Delivery Envelope (Amendment) — Accepted 2026-
 - [x] `cargo test -p octo-wallet --lib capability::market_delivery` green (7/7 unit tests pass)
 - [ ] `cargo build --workspace` green — verify post-`0959-b2-deliver-algorithm` and `0959-b3-settlement-chain` landings
 - [ ] `cargo test --workspace` green — verify post-`0959-b2-deliver-algorithm` and `0959-b3-settlement-chain` landings
-- [x] `cargo fmt --check` clean (per `cargo-fmt-workflow`)
+- [x] `cargo fmt --check` clean (per `docs/05-process/engineering-rules.md` §Format before commit)
 - [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean — verify post-`0959-b2-deliver-algorithm` and `0959-b3-settlement-chain` landings
 
 ## Dependencies

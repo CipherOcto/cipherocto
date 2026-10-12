@@ -2,11 +2,11 @@
 
 ## Status
 
-Closed (2026-08-09). Claimed + implemented in commit `pending` (see below). Sub-mission of `missions/claimed/0957-c-holder-registry-impl.md` per `deferred-vs-unspecified` deferral rule (TV5 cross-node mint verifiability).
+Closed (2026-08-09). Claimed + implemented in commit `pending` (see below). Sub-mission of `missions/claimed/0957-c-holder-registry-impl.md` per `docs/05-process/engineering-rules.md` §Deferred versus unspecified deferral rule (TV5 cross-node mint verifiability).
 
 **Substrate landed:** `serialize_for_gossip` + `apply_gossip_record` trait methods (RFC-0957-A1 §G5) at `crates/quota-router-storage/src/holder_registry.rs` + canonical JSON helpers at `crates/quota-router-storage/src/holder_record.rs` (`HolderRecord::canonical_ser` + `HolderRecord::canonical_de`). Integration test at `crates/octo-wallet/tests/holder_registry_cross_node_gossip.rs` (5/5 TV pass: TV5.1 cross-node mint verifiability + TV5.2 idempotent duplicate + TV5.3 missing record error + TV5.4 malformed bytes + TV5.5 revoked record not active). `sync_peers()` trait method kept as no-op stub (registry-wide sync; production wiring deferred to `0959-c3` `NodeTransport` fan-out per RFC-0862).
 
-**Design rationale:** `HolderRegistry` lives in Layer B-adjacent (quota-router-storage); adding `&dyn NodeTransport` to `sync_peers()` would couple Layer B → Layer D (forbidden per `cipherocto-design-principles` Layer direction table). Solution: `serialize_for_gossip` + `apply_gossip_record` are transport-agnostic; the test harness wires `tokio::sync::mpsc` as in-process gossip substitute. Production wiring (commit `4ed4ff1f` precedent: `NodeTransport::broadcast`) tracks in `0959-c3`.
+**Design rationale:** `HolderRegistry` lives in Layer B-adjacent (quota-router-storage); adding `&dyn NodeTransport` to `sync_peers()` would couple Layer B → Layer D (forbidden per `docs/architecture/design-principles.md` Layer direction table). Solution: `serialize_for_gossip` + `apply_gossip_record` are transport-agnostic; the test harness wires `tokio::sync::mpsc` as in-process gossip substitute. Production wiring (commit `4ed4ff1f` precedent: `NodeTransport::broadcast`) tracks in `0959-c3`.
 
 **Cross-crate compat:** `cargo test -p quota-router-storage --lib` 165/165 pass (zero regressions); `cargo test -p octo-wallet --lib capability` 145/145 pass (zero regressions); `cargo test -p octo-wallet --test holder_registry_cross_node_gossip` 5/5 pass; `cargo clippy -p quota-router-storage -p octo-wallet --all-targets -- -D warnings` clean; `cargo fmt --check` clean.
 
@@ -92,7 +92,7 @@ Single-file mission: 1 integration test + 1 trait method upgrade. Below BLUEPRIN
 
 ## Pull Request
 
-(unset — local commit per `feedback_initiation_user_only`; push awaits user instruction)
+(unset — local commit per `docs/05-process/engineering-rules.md` §Git workflow; push awaits user instruction)
 
 ## Closure Notes (2026-08-09)
 

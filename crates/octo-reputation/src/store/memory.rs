@@ -322,7 +322,7 @@ impl ReputationStore for InMemoryReputationStore {
         if snapshot.governance_set_hash != auth.governance_set_hash {
             return Err(ReputationError::GovernanceSetHashMismatch);
         }
-        if snapshot.quorum_count() < GOVERNANCE_QUORUM {
+        if !snapshot.meets_quorum() {
             return Err(ReputationError::GovernanceQuorumNotMet {
                 signatures: snapshot.quorum_count(),
                 quorum: GOVERNANCE_QUORUM,
@@ -387,7 +387,7 @@ impl ReputationStore for InMemoryReputationStore {
         if snap.governance_set_hash != proof.governance_set_hash {
             return Err(ReputationError::GovernanceSetHashMismatch);
         }
-        if snap.quorum_count() < GOVERNANCE_QUORUM {
+        if !snap.meets_quorum() {
             return Err(ReputationError::GovernanceQuorumNotMet {
                 signatures: snap.quorum_count(),
                 quorum: GOVERNANCE_QUORUM,
@@ -838,7 +838,7 @@ mod tests {
         let snap = GovernanceSnapshot {
             finalized_at_unix: now,
             governance_set_hash: [0u8; 32],
-            members: vec![[1u8; 32]; 3],
+            members: vec![[1u8; 32], [2u8; 32], [3u8; 32]],
         };
         let proof = GovernanceProof {
             governance_algorithm_id: crate::auth::default_governance_algorithm_id(),
@@ -880,7 +880,9 @@ mod tests {
             snapshot: GovernanceSnapshot {
                 finalized_at_unix: now,
                 governance_set_hash: [0u8; 32],
-                members: vec![[1u8; 32]; 3],
+                // Distinct: quorum counts distinct members, so three copies
+                // of one value is not a 3-of-3 set.
+                members: vec![[1u8; 32], [2u8; 32], [3u8; 32]],
             },
             governance_set_hash: [0u8; 32],
             slash_destination: Some(destination),
@@ -894,6 +896,34 @@ mod tests {
             .to_bytes()
             .to_vec();
         proof
+    }
+
+    /// Repeating one member does not meet quorum.
+    ///
+    /// `quorum_count` is `members.len()`, so `[x, x, x]` satisfied it and a
+    /// caller could reach the database behind a "3 of 3" quorum with a single
+    /// value written three times. RFC-0968 §10 specifies a **distinct** signer
+    /// set, and `AnchorGovernanceProof::meets_quorum` has always enforced that —
+    /// so the recorder paths were the weaker of two quorum checks in one crate.
+    #[tokio::test]
+    async fn slash_recorder_refuses_a_quorum_of_repeated_members() {
+        let store = InMemoryReputationStore::new();
+        let now = crate::migrations::now_unix();
+        let mut proof = signed_slash_proof(
+            RecorderId::from_u64(0),
+            SlashDestination::Treasury,
+            100,
+            AssetTag::Octo,
+            now,
+        );
+        // Same shape and a genuine signature — only the member set is degenerate.
+        proof.snapshot.members = vec![[0xAB; 32]; 3];
+        let err = store.slash_recorder(proof, now).await.unwrap_err();
+        assert_eq!(
+            err.discriminant(),
+            0x12,
+            "three copies of one member must not satisfy a 3-of-3 quorum"
+        );
     }
 
     #[tokio::test]
@@ -977,7 +1007,7 @@ mod tests {
         let snap = GovernanceSnapshot {
             finalized_at_unix: stale,
             governance_set_hash: [0u8; 32],
-            members: vec![[1u8; 32]; 3],
+            members: vec![[1u8; 32], [2u8; 32], [3u8; 32]],
         };
         let proof = GovernanceProof {
             governance_algorithm_id: crate::auth::default_governance_algorithm_id(),

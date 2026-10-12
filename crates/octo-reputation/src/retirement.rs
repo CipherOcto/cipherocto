@@ -116,7 +116,7 @@ pub fn stub_verify_proof_shape(
     if proof.snapshot.governance_set_hash != proof.governance_set_hash {
         return Err(ReputationError::GovernanceSetHashMismatch);
     }
-    if proof.snapshot.quorum_count() < GOVERNANCE_QUORUM {
+    if !proof.snapshot.meets_quorum() {
         return Err(ReputationError::GovernanceQuorumNotMet {
             signatures: proof.snapshot.quorum_count(),
             quorum: GOVERNANCE_QUORUM,

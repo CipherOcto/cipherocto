@@ -931,7 +931,7 @@ mod real {
             if snapshot.governance_set_hash != auth.governance_set_hash {
                 return Err(ReputationError::GovernanceSetHashMismatch);
             }
-            if snapshot.quorum_count() < crate::constants::GOVERNANCE_QUORUM {
+            if !snapshot.meets_quorum() {
                 return Err(ReputationError::GovernanceQuorumNotMet {
                     signatures: snapshot.quorum_count(),
                     quorum: crate::constants::GOVERNANCE_QUORUM,
@@ -991,7 +991,7 @@ mod real {
             if snap.governance_set_hash != proof.governance_set_hash {
                 return Err(ReputationError::GovernanceSetHashMismatch);
             }
-            if snap.quorum_count() < crate::constants::GOVERNANCE_QUORUM {
+            if !snap.meets_quorum() {
                 return Err(ReputationError::GovernanceQuorumNotMet {
                     signatures: snap.quorum_count(),
                     quorum: crate::constants::GOVERNANCE_QUORUM,

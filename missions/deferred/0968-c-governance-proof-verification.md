@@ -278,7 +278,11 @@ all three red.
       zeros.
 - [ ] The active governance set is resolved from a trust anchor rather than
       from the proof.
-- [ ] Quorum counts distinct, verified signers.
+- [x] Quorum counts distinct members. **Done:** `GovernanceSnapshot::meets_quorum`
+      enforces distinctness on every recorder path, mutation-verified.
+      Distinctness is still not verification — no member is shown to have
+      signed anything — so "distinct, _verified_ signers" remains open and is
+      the same gap as the set-hash half below.
 - [ ] No doc claims a check the code does not perform. **Satisfied for the
       four overstatements found, and deliberately not guarded** — a guard
       over a fixed list of already-corrected phrases is a census, not a check.

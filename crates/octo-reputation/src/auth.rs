@@ -54,6 +54,32 @@ impl GovernanceSnapshot {
     pub fn quorum_count(&self) -> u32 {
         self.members.len() as u32
     }
+
+    /// True iff this snapshot names at least `GOVERNANCE_QUORUM` **distinct**
+    /// members.
+    ///
+    /// `quorum_count` alone answers the wrong question: it is `members.len()`,
+    /// so repeating one 32-byte value three times satisfies it. RFC-0968 §10
+    /// specifies a distinct signer set, and the anchor path's
+    /// `AnchorGovernanceProof::meets_quorum` has always enforced exactly that
+    /// — so the two quorum checks in this crate disagreed, and the weaker one
+    /// was the one on the recorder governance paths.
+    ///
+    /// Distinctness is not verification: nothing here says any member signed
+    /// anything. Closing the set-hash half needs a governance registry that
+    /// does not exist yet, tracked in
+    /// `missions/deferred/0968-c-governance-proof-verification.md`.
+    #[must_use]
+    pub fn meets_quorum(&self) -> bool {
+        let mut seen: Vec<[u8; 32]> = Vec::with_capacity(self.members.len());
+        for m in &self.members {
+            if seen.contains(m) {
+                return false;
+            }
+            seen.push(*m);
+        }
+        seen.len() as u32 >= crate::constants::GOVERNANCE_QUORUM
+    }
 }
 
 /// Where slashed tokens are routed. RFC-0968 §21 amendment.

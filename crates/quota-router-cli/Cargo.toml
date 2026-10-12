@@ -13,7 +13,6 @@ license.workspace = true
 [dependencies]
 # Core library
 quota-router-core = { path = "../quota-router-core" }
-quota-router-sm-engine = { path = "../quota-router-sm-engine" }
 # Storage types (SettlementEnvelope, ConsumedReceiptIndex, Ask, AskRepository)
 # for `quota-router-cli settle` + `settle-replay` RPC-0959 §CLI subcommands.
 quota-router-storage = { path = "../quota-router-storage" }

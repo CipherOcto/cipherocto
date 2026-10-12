@@ -5050,3 +5050,177 @@ fn no_test_has_an_empty_body() {
          checks: {findings:?}"
     );
 }
+
+/// Git-tracked paths matching a glob, relative to the workspace root.
+fn tracked_paths(root: &Path, glob: &str) -> Vec<String> {
+    let out = Command::new("git")
+        .current_dir(root)
+        .args(["ls-files", glob])
+        .output()
+        .expect("git ls-files must run from the test");
+    assert!(
+        out.status.success(),
+        "git ls-files failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(std::borrow::ToOwned::to_owned)
+        .collect()
+}
+
+/// A workspace **path** dependency that nothing in the declaring crate
+/// references.
+///
+/// Five of these accumulated while crates moved. `octo-cli` and
+/// `octo-runtime` each dropped `octo-registry` by hand, with a comment
+/// saying why, and `octo-core` kept the same edge — the cleanup was applied
+/// in two of three places and never checked in the third. Separately,
+/// `quota-router` still declared thirteen dependencies after commit
+/// `616fe433` migrated its source out to `crates/quota-router-core`,
+/// leaving the whole block behind.
+///
+/// This only judges **path** dependencies, because those are the ones the
+/// workspace owns and can therefore fix without a version bump. A crates.io
+/// dependency nobody names may still be pulling a feature for something
+/// else, and that is not this guard's call.
+///
+/// Two entry shapes are deliberately not judged:
+///
+/// * `optional = true` — the dependency exists to be switched on by a
+///   feature. `octo-cli-meta` is a meta-crate whose entire job is
+///   composing other crates behind flags, and all three of its path deps
+///   look unreferenced by name while being exactly the thing its features
+///   turn on. Skipping on the marker is mechanical; an allowlist by crate
+///   name would have been a judgement encoded as data.
+/// * a non-empty `features = [...]` — the entry may exist to enable a
+///   feature on a crate that someone else depends on.
+#[test]
+fn no_path_dependency_is_declared_and_never_referenced() {
+    let root = workspace_root();
+    let manifests = tracked_paths(&root, "*Cargo.toml");
+    assert!(
+        manifests.len() > 50,
+        "only {} manifests were found — this guard is not looking at enough \
+         of the tree to mean anything",
+        manifests.len()
+    );
+
+    let mut findings: Vec<String> = Vec::new();
+    let mut examined = 0usize;
+    let mut skipped_optional = 0usize;
+    let mut skipped_features = 0usize;
+
+    for manifest in &manifests {
+        let Ok(text) = std::fs::read_to_string(root.join(manifest)) else {
+            continue;
+        };
+        let dir = match manifest.rfind('/') {
+            Some(i) => manifest[..i].to_owned(),
+            None => continue,
+        };
+
+        // Every .rs file under the declaring crate, across every surface a
+        // regular dependency is visible to: the library and binaries, the
+        // integration tests, benches, examples, the build script, fuzz
+        // targets. Scanning only src/ reports the tests' own dependencies
+        // as unused, which is how the first pass of this check produced
+        // seven false positives.
+        // List the whole crate directory as a prefix pathspec rather than a
+        // `dir/src/**/*.rs` glob. Git's `**` requires at least one
+        // intermediate directory, so a glob silently misses every file
+        // sitting directly in `src/` — for octo-cli that was 14 of 39
+        // files, which emptied the blob for most crates and turned this
+        // guard into a machine for reporting confident false positives.
+        let mut blob = String::new();
+        for rel in tracked_paths(&root, &dir) {
+            if rel.ends_with(".rs") {
+                if let Ok(s) = std::fs::read_to_string(root.join(&rel)) {
+                    blob.push_str(&s);
+                }
+            }
+        }
+
+        // Track which TOML table each line belongs to. Without this the
+        // scan reads `[dev-dependencies]` entries as production
+        // dependencies, and the first pass did exactly that: it reported a
+        // crate as carrying an unused edge when the entry was a test-only
+        // helper, correctly marked in the manifest as one. A dev dependency
+        // costs no consumer anything, which is the whole argument this
+        // guard rests on, so only `[dependencies]` and
+        // `[build-dependencies]` are in scope.
+        let mut section = String::new();
+        for line in text.lines() {
+            let t = line.trim();
+            if t.starts_with('[') && t.ends_with(']') {
+                section = t.trim_matches(|c| c == '[' || c == ']').to_owned();
+                continue;
+            }
+            if !(section.ends_with("dependencies") && !section.starts_with("dev")) {
+                continue;
+            }
+            if !t.contains("path") || !t.contains("../") {
+                continue;
+            }
+            let Some(rest) = t.split_once('=') else {
+                continue;
+            };
+            let name = rest.0.trim().to_owned();
+            let spec = rest.1;
+            // Only inline-table entries carry the key `path`. A manifest
+            // that spells a dependency as its own `[dependencies.foo]`
+            // table has a bare `path = "..."` line, and reading that as a
+            // dependency named `path` is how a first pass produced a
+            // finding that named a crate that does not exist.
+            if !spec.contains('{') {
+                continue;
+            }
+            if name.is_empty()
+                || !name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                || name.starts_with(|c: char| c.is_ascii_digit())
+            {
+                continue;
+            }
+            examined += 1;
+
+            if spec.contains("optional = true") {
+                skipped_optional += 1;
+                continue;
+            }
+            if let Some(i) = spec.find("features") {
+                let tail = &spec[i..];
+                if tail.contains('[') && !tail.contains("[]") {
+                    skipped_features += 1;
+                    continue;
+                }
+            }
+
+            let ident = name.replace('-', "_");
+            if !blob.contains(&ident) {
+                findings.push(format!("{manifest} declares `{name}`, never referenced"));
+            }
+        }
+    }
+
+    assert!(
+        examined > 100,
+        "only {examined} dependency entries were examined — the manifest parser \
+         is probably not matching entries, so this guard is measuring nothing"
+    );
+    // Recorded so the two skip rules stay honest: if these ever fall to
+    // zero the guard has stopped judging anything it should.
+    assert!(
+        skipped_optional > 0 || skipped_features > 0,
+        "no entries took either skip path — the optional and features \
+         exclusions are no longer doing anything"
+    );
+    assert!(
+        findings.is_empty(),
+        "a path dependency nothing references costs build time on every \
+         consumer and falsely signals a capability that is not there: \
+         {findings:?}"
+    );
+}

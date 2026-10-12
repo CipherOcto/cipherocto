@@ -5461,15 +5461,82 @@ mod tests {
              so an unsanitized hint hands substrate internals to any envelope consumer."
         );
 
+        /// Production code only: every test-only region of `src` removed.
+        ///
+        /// **Not a cut at the first `#[cfg(test)]`.** That attribute also appears on
+        /// single items — a test-only accessor, say — so cutting there hides every
+        /// construct below it. This is the same trap the octo-cli security-regression
+        /// suite had, where one method-level accessor hid 400 lines of
+        /// octo-settlement-core from a scan that reported green.
+        ///
+        /// The two cannot share a helper: an integration-test binary cannot see
+        /// another crate's test items, and a test-only helper has no business in
+        /// production source. The rule is the same in both places; only the copy is
+        /// duplicated.
+        fn production_region(src: &str) -> String {
+            const MARKER: &str = "#[cfg(test)]";
+            const TEST_MOD: &str = "mod tests";
+            let mut out = String::with_capacity(src.len());
+            let mut rest = src;
+            loop {
+                let marked = rest.find(MARKER);
+                let named = rest.find(TEST_MOD).filter(|i| {
+                    !rest[i + TEST_MOD.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_alphanumeric() || c == '_')
+                });
+                let (at, skip) = match (marked, named) {
+                    (Some(x), Some(y)) if x <= y => (x, MARKER.len()),
+                    (Some(_), Some(y)) => (y, TEST_MOD.len()),
+                    (Some(x), None) => (x, MARKER.len()),
+                    (None, Some(y)) => (y, TEST_MOD.len()),
+                    (None, None) => break,
+                };
+                let (head, tail) = rest.split_at(at);
+                out.push_str(head);
+                let after = &tail[skip..];
+
+                let brace = after.find('{');
+                let semi = after.find(';');
+                let is_block = match (brace, semi) {
+                    (Some(b), Some(s)) => b < s,
+                    (Some(_), None) => true,
+                    _ => false,
+                };
+                let consumed = if is_block {
+                    let mut depth = 0i32;
+                    let mut consumed = 0usize;
+                    for (i, c) in after.char_indices() {
+                        match c {
+                            '{' => depth += 1,
+                            '}' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    consumed = i + c.len_utf8();
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    consumed
+                } else {
+                    semi.or_else(|| after.find('\n'))
+                        .map_or(after.len(), |e| e + 1)
+                };
+                rest = &after[consumed..];
+            }
+            out.push_str(rest);
+            out
+        }
+
         // Source: the construction sites, as defence in depth. Even
         // with both display surfaces closed, no site should be
         // building an operator-visible payload out of raw substrate
         // text.
         let network_src = include_str!("commands/network.rs");
-        let production = network_src
-            .split("#[cfg(test)]")
-            .next()
-            .expect("network.rs must have a production region");
+        let production = production_region(network_src);
         let mut checked = 0usize;
         for window in production.split("NetworkSubstrateUnavailable {").skip(1) {
             let detail_line = window

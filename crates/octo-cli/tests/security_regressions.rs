@@ -3696,6 +3696,15 @@ fn no_source_or_doc_file_cites_a_private_working_note() {
     // Distinct *files*, not (file, token) pairs — a file naming two tokens
     // is still one file to sweep, and counting pairs made the number move
     // for reasons unrelated to how much work remains.
+    //
+    // 288 → 54. The reduction is the citation sweep. The remaining 54 are
+    // almost entirely citations inside `## Version History` and `## Closure`
+    // sections, which were deliberately preserved: a dated row recording
+    // what was decided then should not be rewritten to cite a document that
+    // did not exist yet. They are the correct end state, not outstanding
+    // work — but the baseline still has to hold them, because "correctly
+    // preserved" and "swept" look identical from here and the difference is
+    // the whole point.
     let md_files: BTreeSet<&str> = hits
         .iter()
         .filter_map(|h| h.split(" mentions ").next())
@@ -3703,9 +3712,9 @@ fn no_source_or_doc_file_cites_a_private_working_note() {
         .collect();
     let md_count = md_files.len();
     assert!(
-        md_count <= 288,
-        "markdown files citing private notes grew past the recorded baseline of 288 \
-         (now {md_count}). Either sweep them or, if that is genuinely the plan, \
-         raise this number deliberately — do not let it creep."
+        md_count <= 54,
+        "markdown files citing private notes grew past the recorded baseline of 54 \
+         (now {md_count}). Either sweep them or, if that is genuinely the plan, raise \
+         this number deliberately — do not let it creep."
     );
 }

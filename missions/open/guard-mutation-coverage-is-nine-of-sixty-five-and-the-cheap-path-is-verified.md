@@ -14,16 +14,21 @@ metadata:
 
 ## Status
 
-Substantially resolved. The path-dependency guard's blind spot is **fixed** —
-see §A blind spot below — and four mutations have landed, taking mutation
-coverage from 9 of 65 guards to **13 of 65**. Adding one of them exposed a false
-pass in the harness itself, now fixed — see §A false pass found below. The
-remaining 52 guards still have no mutation, and no full campaign has been run.
+Largely resolved. The path-dependency guard's blind spot is **fixed** — see §A
+blind spot below — and five mutations have landed, taking mutation coverage from
+9 of 65 guards to **14 of 65**. Adding one of them exposed a false pass in the
+harness itself, now fixed — see §A false pass found below.
 
-The pattern for adding one is now proven end to end: pick a guard that reads the
-tree at run time, plant a violation in a file outside octo-cli's dependency
-closure so no rebuild is needed, confirm the guard names the right file and
-token, restore, then add the entry and run it through the harness filtered.
+Separately, and more importantly: the harness has now been run in full for the
+first time. **All 24 entries observed red**, in 55 seconds. The mission
+previously recorded that the expensive entries could not be reached; that was an
+estimate mistaken for a constraint, and the measurement is in §The cost
+assumption that was wrong.
+
+The pattern for adding one is proven end to end: pick a guard that reads the
+tree at run time, plant a violation outside octo-cli's closure where possible,
+confirm the guard names the right file and token, restore, then add the entry
+and run it through the harness filtered.
 
 ## The finding
 
@@ -73,28 +78,116 @@ is half-fixed by counting the files its walk already reads.
 So all three exposed scans are floored, and the remaining four were cleared by
 reading each one rather than by pattern-matching it.
 
-## Where the remaining coverage risk actually sits
+## The cost assumption that was wrong
 
-The gap is not spread evenly, and that matters more than the headline number.
-Every mutation added so far targets a file outside octo-cli's dependency closure,
-because that is what keeps it build-free. The guards whose failures would hurt
-most are the opposite case.
+An earlier revision of this mission claimed the cheap recipe could not reach the
+guards whose failures hurt most, because mutating a crate inside octo-cli's
+closure forces a recompile, and predicted coverage would stall there until disk
+headroom arrived.
 
-`no_verification_site_hardcodes_an_algorithm` is the clearest example. It is
-also the best-defended guard in the file — it asserts every listed directory
-exists, floors `scanned_dirs > 0`, and floors `scanned_total >= 250` as what it
-calls the stronger half of the same floor. A faithful mutation for it has to put
-a hardcoded algorithm into a verification site in one of the crates it scans, and
-**all nine of those crates are inside octo-cli's closure**, as is the tenth it
-picks up separately. Any honest mutation therefore forces a rebuild of octo-cli
-and its graph.
+That was an estimate presented as a constraint, and it was wrong by a wide
+margin. Measured:
 
-So the cheap recipe cannot reach the expensive guards, which is worth stating
-plainly rather than discovering later. Reaching them needs either disk headroom
-or a split harness: the file-scanning entries are cheap enough to run anywhere,
-the code-mutating ones belong somewhere with room to compile. Until one of those
-exists, expect coverage to stall at exactly the guards where a vacuous pass would
-be most expensive.
+|                                         |                           |
+| --------------------------------------- | ------------------------- |
+| A dependency rebuild inside the closure | 3.3 s, no measurable disk |
+| One source-file mutation, end to end    | 3.5 s, no measurable disk |
+| The three feature-flag mutations        | 14.6 s, 0.5 GB            |
+| **The entire table, all 24 entries**    | **55 s, 0.9 GB**          |
+
+Everything is already compiled, so a mutation only invalidates one crate and its
+dependents. The feature-flag entries cost most because changing a feature edge
+re-resolves, not because the table is large.
+
+So the whole harness runs in under a minute. There was never a blocker, only an
+unmeasured guess — the second time this session that an estimated cost was
+treated as a real constraint. The first was deferring a test-crate rebuild that
+turned out to take 1.24 seconds. The pattern is worth naming: a cost nobody
+measured is indistinguishable from a wall, and writing it down as a blocker
+makes the guess durable.
+
+The `--cheap` flag stays, because a fast subset is worth having. Its premise —
+that the rest needs room to compile — does not.
+
+## Which harness entries are actually proven
+
+## Which harness entries are actually proven
+
+**All 24 entries have now been executed and observed red.** The full table was
+run end to end for the first time: 24 red, 0 vacuous, 0 bad-mutation, 0
+bad-anchor, in 55 seconds. Twelve are the file-scanning entries added to close
+the coverage gap here; the other twelve are inherited and had never been run
+since they were written.
+
+That matters more than the count. An inherited mutation harness that nobody has
+executed carries the same unbacked-claim problem the guards themselves had, and
+the whole table passing on its first full run is the result that says the
+tooling is sound rather than merely present.
+
+The classification is still mechanical and worth keeping: a mutation is free of
+a recompile unless it edits a crate's Rust sources or its manifest within the
+closure of the package under test. `--cheap` runs the free twelve in seconds,
+`--list` shows the split, and neither is a hand-maintained column that can go
+stale when a dependency edge moves.
+
+## Scans that could pass while reading nothing
+
+## Scans that could pass while reading nothing
+
+Seven scanning guards asserted nothing about how much they read. Five turned out
+to be safe by construction — one asserts its root list is non-empty, one compares
+against a non-empty expected list, one requires that it found something, and one
+compares its findings to a single-element list, so an empty scan fails all four.
+Two were genuinely exposed and both are now floored:
+
+- the named-vector mission check, which counted the missions it read and printed
+  that count in its failure message without ever asserting on it
+- the registry-reach scan, whose sibling walks the same tree and already floored
+  what it saw
+
+The seventh is now floored too. `the_wallet_crate_does_not_depend_on_storage`
+compares a boolean for its manifest half, so that half was never at risk, but the
+walk over octo-wallet source feeding its first assertion was. It was left alone
+for one commit on the reasoning that a guard whose halves enforce different
+properties is worth fixing as a whole or not at all — which was wrong. Adding a
+floor is additive protection, not a partial repair, and nothing about that guard
+is half-fixed by counting the files its walk already reads.
+
+So all three exposed scans are floored, and the remaining four were cleared by
+reading each one rather than by pattern-matching it.
+
+## The cost assumption that was wrong
+
+An earlier revision of this mission claimed the cheap recipe could not reach the
+guards whose failures hurt most, because mutating a crate inside octo-cli's
+closure forces a recompile, and predicted coverage would stall there until disk
+headroom arrived.
+
+That was an estimate presented as a constraint, and it was wrong by a wide
+margin. Measured:
+
+|                                         |                           |
+| --------------------------------------- | ------------------------- |
+| A dependency rebuild inside the closure | 3.3 s, no measurable disk |
+| One source-file mutation, end to end    | 3.5 s, no measurable disk |
+| The three feature-flag mutations        | 14.6 s, 0.5 GB            |
+| **The entire table, all 24 entries**    | **55 s, 0.9 GB**          |
+
+Everything is already compiled, so a mutation only invalidates one crate and its
+dependents. The feature-flag entries cost most because changing a feature edge
+re-resolves, not because the table is large.
+
+So the whole harness runs in under a minute. There was never a blocker, only an
+unmeasured guess — the second time this session that an estimated cost was
+treated as a real constraint. The first was deferring a test-crate rebuild that
+turned out to take 1.24 seconds. The pattern is worth naming: a cost nobody
+measured is indistinguishable from a wall, and writing it down as a blocker
+makes the guess durable.
+
+The `--cheap` flag stays, because a fast subset is worth having. Its premise —
+that the rest needs room to compile — does not.
+
+## Which harness entries are actually proven
 
 ## Which harness entries are actually proven
 

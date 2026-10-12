@@ -47,20 +47,42 @@ anything.
 
 ## Why this is an outlier, not a missing subsystem
 
-The same crate already verifies this struct properly, on the paths that
-suspend and slash a recorder:
+The same crate already verifies this class of record properly, on the paths
+that suspend and slash a recorder:
 
 - `auth::verify_governance_signature` is the single verification choke point.
-- `store/memory.rs` and `store/stoolap.rs` both call it on the slash path.
+- `store/memory.rs` and `store/stoolap.rs` both call it on the slash path,
+  passing `&auth.governance_algorithm_id`.
 - The `ReputationStore` trait documents `verify_governance_suspension` as
   validating "shape, freshness, quorum, and the signature", with signature
   verification delegated to that choke point.
+- A test asserts both store sources read `&auth.governance_algorithm_id,`,
+  because a store that assumed Ed25519 instead of reading the record would
+  verify under the wrong key.
 
-`declare_retirement_eligible` is the one governance entry point that does not.
-This is what makes it worth filing rather than treating as a stub: the
-capability to verify is present, in the same file, two methods away. Retirement
-is an omission from an established pattern, not a gap waiting on new
-machinery.
+`declare_retirement_eligible` is the one governance entry point that does not
+join that choke point.
+
+## Why it is not a one-line fix
+
+The verifier takes the algorithm as an argument, deliberately: the algorithm
+travels **on the record**, so no call site can silently fall back to Ed25519.
+`SuspensionAuth` carries `governance_algorithm_id`.
+
+**`GovernanceProof` carries no algorithm field.** So retirement cannot call
+`verify_governance_signature` as things stand — not because the plumbing is
+missing, but because the record does not carry the one thing the verifier
+needs. Two shapes are available and both are decisions, not edits:
+
+1. Add a `governance_algorithm_id` to `GovernanceProof`, making it
+   self-describing like `SuspensionAuth`. This changes a serialized record.
+2. Retire through `SuspensionAuth` instead of `GovernanceProof`, unifying on
+   the already-verified type and deleting the duplicate.
+
+That is why the mission is deferred rather than implemented. Note also that
+`GovernanceProof::signature` claimed "every store implementation delegates
+to" the verifier. That was false and is corrected as part of this filing: it
+is true of the suspension and slash paths, and false of retirement.
 
 ## What RFC-0968 additionally requires, and what is absent
 
@@ -107,7 +129,9 @@ enough that a reader concludes a signature was checked. That conclusion is
 false, and it is only visible by reading the body.
 
 Those three claims are corrected in the module and function docs as part of
-this filing. What remains is the verification itself.
+this filing. A fourth, on `GovernanceProof::signature`, claimed the
+verifier is one "every store implementation delegates to" — it is corrected
+in §Why it is not a one-line fix. What remains is the verification itself.
 
 ## What still has to be decided
 
@@ -142,6 +166,9 @@ this filing. What remains is the verification itself.
 
 ## Acceptance Criteria
 
+- [ ] Retirement carries the algorithm it will be verified under — either
+      `GovernanceProof` gains `governance_algorithm_id`, or retirement moves to
+      `SuspensionAuth`. **Unblocked by nothing; this is the first decision.**
 - [ ] `declare_retirement_eligible` verifies the proof signature through
       `verify_governance_signature` on both store implementations.
 - [ ] A proof signed by the wrong key is refused, mutation-checked against the
@@ -150,7 +177,7 @@ this filing. What remains is the verification itself.
       from the proof.
 - [ ] Quorum counts distinct, verified signers.
 - [ ] No doc claims a check the code does not perform. **Satisfied for the
-      three overstatements found, and deliberately not guarded** — a guard
+      four overstatements found, and deliberately not guarded** — a guard
       over a fixed list of already-corrected phrases is a census, not a check.
 
 ## What must not happen

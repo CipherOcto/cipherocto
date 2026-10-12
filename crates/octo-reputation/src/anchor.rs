@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::{AnchorGovernanceProof, AnchorGovernanceSnapshot};
 
-/// Canonical Option<u64> encoding for batch-digest inclusion.
+/// Canonical `Option<u64>` encoding for batch-digest inclusion.
 /// `None` ⇒ single `0x00` byte; `Some(h)` ⇒ `0x01` byte followed by
 /// the 8-byte big-endian height. Reused for `chain_block_height` and
 /// any future optional u64 field on the envelope (single source of
@@ -225,7 +225,7 @@ impl ReputationAnchorBatch {
     ///     || leaves[i].digest() for each leaf)
     /// ```
     ///
-    /// The Option<u64> encoding (presence byte then BE bytes) keeps
+    /// The `Option<u64>` encoding (presence byte then BE bytes) keeps
     /// the digest non-ambiguous across the None / Some(_)
     /// boundary — the absence tag is a single `0x00` byte and the
     /// presence tag is `0x01` followed by the 8-byte big-endian

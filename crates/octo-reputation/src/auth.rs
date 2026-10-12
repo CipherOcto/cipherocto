@@ -138,8 +138,19 @@ pub struct GovernanceProof {
     ///   RFC-0968 §21 + §23 Review-Round-7).
     ///
     /// Both forms are verified by
-    /// [`verify_governance_signature`], which every store
-    /// implementation delegates to.
+    /// [`verify_governance_signature`].
+    ///
+    /// **Not on every path, and not from this record.** The suspension and
+    /// slash paths verify through a [`SuspensionAuth`], which carries its own
+    /// `governance_algorithm_id` — the algorithm travels on the record, so a
+    /// store cannot silently fall back to Ed25519. This struct carries **no**
+    /// algorithm field, so it cannot be handed to the verifier as it stands:
+    /// [`verify_governance_signature`] takes the algorithm as an argument.
+    ///
+    /// The retirement path takes this type and does not verify it at all. See
+    /// `missions/deferred/0968-b-governance-proof-verification.md`. Wiring
+    /// retirement to the verifier therefore needs an algorithm on this record
+    /// or a switch to `SuspensionAuth`; neither is a local change.
     pub signature: Vec<u8>,
     /// Snapshot under which this proof is valid.
     pub snapshot: GovernanceSnapshot,

@@ -15,9 +15,10 @@ metadata:
 ## Status
 
 Largely resolved. The path-dependency guard's blind spot is **fixed** — see §A
-blind spot below — and five mutations have landed, taking mutation coverage from
-9 of 65 guards to **14 of 65**. Adding one of them exposed a false pass in the
-harness itself, now fixed — see §A false pass found below.
+blind spot below — and mutation coverage has moved from 9 of 65 guards to **19 of 65**, a figure the harness now derives from its own
+table rather than one maintained by hand — see §Coverage counted twice, and the
+count that was wrong. Adding one of them exposed a false pass in the harness
+itself, now fixed — see §A false pass found below.
 
 Separately, and more importantly: the harness has now been run in full for the
 first time. **All 24 entries observed red**, in 55 seconds. The mission
@@ -288,6 +289,44 @@ the risk that a test-crate rebuild would exhaust the budget was estimated, not
 measured, and estimating a cost you can simply measure is how a small fix gets
 pushed off indefinitely.
 
+## Coverage counted twice, and the count that was wrong
+
+The figure in §Status was maintained by hand, one number at a time, as each
+mutation landed. It was wrong twice in this mission's own life: it read 13 while
+the table held 15, and by the end of the current wave it would have read 15 while
+the table held 19. Both times the drift was in the same direction and for the same
+reason — two entries were added and the mission was not updated with them, because
+the count lived in prose instead of being derived from the table.
+
+This is the mission's own thesis turned on itself. A hand-maintained list is an
+unverified claim, and the mitigation is not vigilance but derivation. The count is
+now produced by reading the harness table and collecting the distinct
+`security_regressions` guard names out of each entry's cargo filter:
+
+```
+$ python3 scripts/mutate-zk-guards.py --list | tail -1
+  30 entries -> 19 distinct guards in security_regressions.rs  (+7 entries targeting other crates' suites)
+```
+
+That line is printed by the harness itself, derived by reading its own table. It
+did not exist when the count was first wrong, and putting it there is the fix:
+the number can no longer drift from the thing it counts, because it is recomputed
+every time anyone asks.
+
+**30 entries cover 19 guards, and the two numbers must not be conflated.** Seven
+entries do not target `security_regressions.rs` at all — three run
+`zk-vendor`'s `library_path` suite, two run `zk-verifier`, two run
+`cipherocto-fs-perms`. They are real mutations against real guards, but those
+guards are not among the 65 this mission counts, so counting them would inflate the
+coverage figure by seven. Conversely two entries target the **same** guard
+(`m15_every_adapter_canonicalize_verifies_the_envelope`, once for the hardcoded
+peer key and once for the dropped algorithm argument), so entry count overstates
+distinct coverage too. The two errors happen to run in opposite directions, which
+is exactly why neither was visible.
+
+Nothing about the harness changed to produce this — the same figure is derivable
+from the committed file at any time, and it was not before.
+
 ## Acceptance Criteria
 
 - [x] The section-form path dependency is parsed, with the dependency name taken
@@ -296,11 +335,18 @@ pushed off indefinitely.
 - [x] That change is verified in both directions: a planted unused
       section-form dependency goes red, and the four real ones stay green
 - [x] A mutation is added for each guard that reads files at runtime, starting
-      with the ones whose names promise the most — **four landed**
+      with the ones whose names promise the most — **eleven landed**
       (`no_test_has_an_empty_body`, `no_path_dependency_is_declared_and_never_referenced`,
       `no_source_or_doc_file_cites_a_private_working_note`,
-      `missions_claiming_named_vectors_have_those_names_in_the_tree`),
-      taking coverage from 9 of 65 to **13 of 65**
+      `missions_claiming_named_vectors_have_those_names_in_the_tree`,
+      `no_production_code_calls_a_placeholder_decoder`,
+      `no_verification_site_hardcodes_an_algorithm`,
+      `ac11_every_out_of_scope_crate_is_justified_and_disjoint`,
+      `ac11_every_crate_that_verifies_a_signature_is_scanned_or_explained`,
+      `every_adapter_naming_a_concrete_algorithm_declares_the_assumption`,
+      `m15_every_adapter_canonicalize_verifies_the_envelope` — twice, once for the
+      hardcoded key and once for the dropped algorithm argument),
+      taking coverage from 9 of 65 to **19 of 65**
 - [x] Any harness using the prebuilt-binary path refuses to run when the binary
       is older than the guard source — **satisfied a different way**: the
       committed harness runs through cargo, which rebuilds by construction, so
@@ -335,7 +381,7 @@ green as it applies to a guard's.
 ## Why the rest is filed rather than fixed
 
 The blind-spot fix is done and needs no defence. What remains is the coverage
-gap, and that is not urgent: fifty-six unbacked guards is a large number that
+gap, and that is not urgent: forty-six unbacked guards is a large number that
 reads as alarming and is not. These guards were written by adversarial review
 and several were mutation-checked by hand during that work. What is missing is
 the _re-runnable record_, which is what this harness would supply — and the

@@ -20,7 +20,11 @@ Three outcomes are distinguished, because collapsing them hides real defects:
                 the guard never ran - this is NOT a red guard
   VACUOUS       the guard stayed green, i.e. it does not detect its defect
 
-Usage: python3 scripts/mutate-zk-guards.py [--only SUBSTRING]
+Usage: python3 scripts/mutate-zk-guards.py [--only SUBSTRING] [--cheap] [--list]
+
+`--list` prints each entry with what it costs to run and derives the coverage
+figure from this table, so the count of guarded guards is never a hand-kept
+number in prose.
 """
 import os
 import pathlib
@@ -339,6 +343,93 @@ MUTATIONS = [
         ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
          "no_verification_site_hardcodes_an_algorithm", "--", "--exact"],
     ),
+    (
+        # An excuse that outlives the thing it excuses. AC11_OUT_OF_SCOPE holds
+        # one entry — the nostr adapter — and the guard asserts the crate still
+        # contains the site justifying the exclusion. Deleting the site is the
+        # ordinary way that happens (the code gets routed through the registry),
+        # and nothing else in the suite would notice: a crate that no longer
+        # needs an excuse keeps carrying one, exempting it from the gate for
+        # ever with a reason that describes nothing.
+        #
+        # Commented out rather than deleted so the entry cannot fail to
+        # compile. The guard matches against `strip_comments`, so a commented
+        # site and an absent site are the same input to it — and this entry
+        # additionally pins the fact that it strips comments before looking,
+        # which a deletion-based mutation could not distinguish from a guard
+        # that simply found the crate empty.
+        "G-G: the out-of-scope excuse no longer describes any site",
+        "crates/octo-adapter-nostr/src/lib.rs",
+        "        let verifying_key = VerifyingKey::from_bytes(&pk_arr).unwrap();",
+        "        // let verifying_key = VerifyingKey::from_bytes(&pk_arr).unwrap();",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "ac11_every_out_of_scope_crate_is_justified_and_disjoint", "--", "--exact"],
+    ),
+    (
+        # The workspace-wide coverage walk, one level above every fixed list: a
+        # crate that calls `verify_dispatch` and is named in no AC-11 list has
+        # never been read. This plants that exact situation — an adapter crate
+        # with a call site and no explanation — in a crate that is in no list
+        # today, which is the case the guard's own doc comment says is
+        # indistinguishable from a clean crate.
+        "G-H: an unaccounted crate calls the dispatch entry point",
+        "crates/octo-adapter-irc/src/lib.rs",
+        '            "key 20 should be the remaining entry"\n        );\n    }\n}\n',
+        '            "key 20 should be the remaining entry"\n        );\n    }\n}\n'
+        "\n/// Probe: a verification crate the AC-11 lists never name.\n"
+        "#[allow(dead_code)]\n"
+        "pub fn probe_dispatch(alg: &[u8], key: &[u8], msg: &[u8], sig: &[u8]) -> usize {\n"
+        "    verify_dispatch(alg, key, msg, sig)\n"
+        "}\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "ac11_every_crate_that_verifies_a_signature_is_scanned_or_explained", "--", "--exact"],
+    ),
+    (
+        # M-15's half that keeps a known limitation declared. Adapters that
+        # hardcode Ed25519 must say so at the call site and name the work that
+        # would retire it; the note is three comment lines above the call and
+        # the guard looks ten lines up for "registry" or "CD-6". Deleting the
+        # note is how the declaration gets lost — a cleanup pass that tidies
+        # prose above code never touches the code — and the rest of the file
+        # keeps the guard green, so nothing else reports it.
+        "G-I: the declared-assumption note is deleted from an adapter site",
+        "crates/octo-adapter-signal/src/lib.rs",
+        "        // Ed25519 named explicitly so this reads as an assumption rather than an\n"
+        "        // accident. CD-6's peer registry binds the key AND names the algorithm\n"
+        "        // it speaks, so this constant goes away when that registry lands.\n",
+        "",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "every_adapter_naming_a_concrete_algorithm_declares_the_assumption", "--", "--exact"],
+    ),
+    (
+        # M-15's "verify against the envelope's own key" half. A hardcoded peer
+        # key is the theatre case the guard names in its own message: the call
+        # still verifies, still passes two arguments, and still ends the return
+        # path — it just proves nothing about the frame that arrived. Both other
+        # checks on the same call (arity, trailing `Ok(`) still hold, so only
+        # this one can catch it.
+        "G-J: an adapter verifies against a hardcoded peer key",
+        "crates/octo-adapter-signal/src/lib.rs",
+        "        env.verify(&octo_algo_ed25519::ed25519_algorithm_id(), &env.source_peer)\n",
+        "        env.verify(&octo_algo_ed25519::ed25519_algorithm_id(), &HARDCODED_PEER_KEY)\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "m15_every_adapter_canonicalize_verifies_the_envelope", "--", "--exact"],
+    ),
+    (
+        # The arity half, checked structurally rather than by naming. Since
+        # RFC-0009 moved the algorithm to first position, a single-argument call
+        # is the pre-dispatch shape: it verifies under whatever the
+        # implementation assumes. The guard's comment records that the absence
+        # of this check stranded fourteen adapters that did not compile while
+        # the gate stayed green — a mutation is the only way to show the check
+        # as it stands now would have caught that.
+        "G-K: an adapter's verify call loses its algorithm argument",
+        "crates/octo-adapter-dingtalk/src/lib.rs",
+        "        env.verify(&octo_algo_ed25519::ed25519_algorithm_id(), &env.source_peer)\n",
+        "        env.verify(&env.source_peer)\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "m15_every_adapter_canonicalize_verifies_the_envelope", "--", "--exact"],
+    ),
 ]
 
 # NOT MUTATED, deliberately: `OpenOptionsExt::mode(0o600)` at creation inside
@@ -449,6 +540,33 @@ def mutation_cost(rel: str, closure: set[str]) -> str:
     return "free"
 
 
+def print_coverage():
+    """Report how many distinct guards this table actually backs.
+
+    Derived by reading the table rather than maintained by hand in prose. A
+    mission recorded this count twice — once as 13 when the table held 15, once
+    as 15 when it held 19 — because the figure lived in a sentence that only
+    got edited when its author remembered. Counting entries instead of guards
+    overstates coverage twice over: seven entries run other crates' suites
+    rather than this one, and two entries share a guard. The two errors run in
+    opposite directions, which is why neither showed up as a discrepancy.
+    """
+    guards = set()
+    elsewhere = 0
+    for _label, _rel, _old, _new, cmd in MUTATIONS:
+        if "security_regressions" in cmd:
+            guard = cmd[cmd.index("security_regressions") + 1]
+            if guard != "--":
+                guards.add(guard)
+        else:
+            elsewhere += 1
+    print(
+        f"\n  {len(MUTATIONS)} entries -> {len(guards)} distinct guards in "
+        f"security_regressions.rs"
+        f"  (+{elsewhere} entries targeting other crates' suites)"
+    )
+
+
 def main():
     acquire_lock()
     # `--only SUBSTRING` runs a subset. `--cheap` runs every entry that needs no
@@ -463,6 +581,7 @@ def main():
         closure = octo_cli_closure(ROOT)
         for label, rel, *_ in MUTATIONS:
             print(f"  {mutation_cost(rel, closure):8s} {label}")
+        print_coverage()
         release_lock()
         return 0
     if args and args[0] == "--cheap":

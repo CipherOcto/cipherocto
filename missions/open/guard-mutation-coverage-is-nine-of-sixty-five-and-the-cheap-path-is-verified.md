@@ -49,6 +49,25 @@ The 9 are the red-team remediation set: two `c1_`, one `h6_`, two `h7_`, three
 recently for dead dependency edges, empty test bodies, and placeholder decoders
 — is protected only by whatever someone remembers doing.
 
+## Scans that could pass while reading nothing
+
+Seven scanning guards asserted nothing about how much they read. Five turned out
+to be safe by construction — one asserts its root list is non-empty, one compares
+against a non-empty expected list, one requires that it found something, and one
+compares its findings to a single-element list, so an empty scan fails all four.
+Two were genuinely exposed and both are now floored:
+
+- the named-vector mission check, which counted the missions it read and printed
+  that count in its failure message without ever asserting on it
+- the registry-reach scan, whose sibling walks the same tree and already floored
+  what it saw
+
+One more is exposed only in half. `the_wallet_crate_does_not_depend_on_storage`
+compares a boolean for its manifest half, so that half cannot pass vacuously, but
+the walk over octo-wallet source feeding its first assertion has no floor. It is
+deliberately left unfloored rather than half-fixed, because a guard whose two
+halves enforce different properties is worth fixing as a whole or not at all.
+
 ## Which harness entries are actually proven
 
 Eleven of the harness's twenty-three entries have now been executed and

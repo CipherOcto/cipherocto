@@ -709,6 +709,33 @@ pub trait CapabilityCatalog {
         None
     }
 
+    /// RFC-0957-A1 §5: the holder registry this catalog owns a handle to.
+    ///
+    /// **This is the accessor the persistence contract runs through.**
+    /// RFC-0957-A1 §6 makes `CapabilityToken::mint` persistence-free by
+    /// design and assigns the write to *the caller* — via
+    /// `TransactionExt::insert_holder_record`. RFC-0957-A1 §Data Structures
+    /// says the `&dyn CapabilityCatalog` owns the Stoolap handle a
+    /// `Transaction` comes from. So a mint caller needs exactly this method
+    /// to have somewhere to write, and with it absent the caller has
+    /// nowhere: `holder_records_are_never_constructed_in_production` pins
+    /// that consequence.
+    ///
+    /// ## Why it defaults to `None` rather than being required
+    ///
+    /// Ten-plus implementations exist and most are attenuate-side fixtures
+    /// that have no business holding a registry. Requiring the method would
+    /// break every one of them for no gain. The default is the honest
+    /// answer for a catalog with no store behind it, and the same fail-closed
+    /// shape as [`Self::is_raw_name_registered`].
+    ///
+    /// A caller MUST treat `None` as "this mint cannot be registered", not as
+    /// "registration is unnecessary" — skipping the write silently returns a
+    /// capability that no verifier can resolve.
+    fn holder_registry(&self) -> Option<&dyn crate::holder_registry::HolderRegistry> {
+        None
+    }
+
     /// RFC-0957-A1 §Phase 3 (R13-N3 fix): gossip a `MarketDeliveryEnvelope`
     /// payload to the buyer's peer set.
     ///
@@ -2653,6 +2680,173 @@ mod tests {
         assert!(
             err.to_string().contains("vendor.example/approval"),
             "the refusal must name the evaluator: {err}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod holder_registry_accessor_tests {
+    use super::CapabilityCatalog;
+    use crate::caveat::Caveat;
+    use crate::clock::{Clock, FixedClock};
+    use crate::holder_kind::HolderKind;
+    use crate::holder_record::{CapabilityClass, CapabilityTokenLike, HolderRecord};
+    use crate::holder_registry::{HolderRegistry, RegistryError};
+    use crate::signer::{CapabilitySigner, CapabilitySignerError};
+    use crate::token::CapabilityToken;
+    use ed25519_dalek::{Signer as _, SigningKey};
+
+    const NOW_MS: u64 = 1_700_000_000_000;
+
+    /// Minimal registry, test-local on purpose.
+    ///
+    /// RFC-0957-A1 §4 names `StoolapHolderRegistry` as the reference
+    /// implementation. A production in-memory registry is a new component
+    /// and needs its own decision, so this stays in a test module where it
+    /// cannot be mistaken for one.
+    struct TinyRegistry(std::sync::Mutex<Vec<HolderRecord>>);
+
+    impl HolderRegistry for TinyRegistry {
+        fn lookup(&self, h: &[u8; 32]) -> Result<Option<HolderRecord>, RegistryError> {
+            Ok(self
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|r| r.cap_root_hash == *h)
+                .cloned())
+        }
+        fn lookup_by_ask(
+            &self,
+            _: &[u8; 32],
+            _: HolderKind,
+        ) -> Result<Option<HolderRecord>, RegistryError> {
+            Ok(None)
+        }
+        fn lookup_active(
+            &self,
+            h: &[u8; 32],
+            _: &dyn Clock,
+        ) -> Result<Option<HolderRecord>, RegistryError> {
+            self.lookup(h)
+        }
+        fn insert(&self, r: HolderRecord) -> Result<(), RegistryError> {
+            self.0.lock().unwrap().push(r);
+            Ok(())
+        }
+        fn revoke(&self, _: &[u8; 32], _: &dyn Clock) -> Result<(), RegistryError> {
+            Ok(())
+        }
+        fn sync_peers(&self) -> Result<(), RegistryError> {
+            Ok(())
+        }
+    }
+
+    /// Real Ed25519, local to this module.
+    ///
+    /// `IdentityKey` lives in `octo-wallet`, which depends on this crate, so
+    /// there is no back-edge to use it. Same shape as the fixture in
+    /// `signer`'s own tests.
+    #[derive(Debug)]
+    struct LocalSigner(SigningKey);
+
+    impl CapabilitySigner for LocalSigner {
+        fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, CapabilitySignerError> {
+            Ok(self.0.sign(msg).to_bytes().to_vec())
+        }
+        fn public_key_bytes(&self) -> Vec<u8> {
+            self.0.verifying_key().to_bytes().to_vec()
+        }
+        fn did(&self) -> String {
+            crate::signer::did_from_pubkey(&self.public_key_bytes())
+        }
+        fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+            octo_algo_ed25519::ed25519_algorithm_id()
+        }
+    }
+
+    /// A catalog that overrides the accessor.
+    struct CatalogWithRegistry {
+        inner: super::InMemoryCatalog,
+        registry: TinyRegistry,
+    }
+
+    impl CapabilityCatalog for CatalogWithRegistry {
+        fn lookup(&self, id: &[u8; 32]) -> Option<super::Macaroon> {
+            self.inner.lookup(id)
+        }
+        fn holder_registry(&self) -> Option<&dyn HolderRegistry> {
+            Some(&self.registry)
+        }
+    }
+
+    /// The default is `None`, so a catalog with no store behind it reports
+    /// that honestly rather than pretending registration is unnecessary.
+    #[test]
+    fn a_catalog_without_a_registry_reports_none() {
+        let c: &dyn CapabilityCatalog = &super::InMemoryCatalog::default();
+        assert!(c.holder_registry().is_none());
+    }
+
+    /// The accessor reaches a real registry through `&dyn`, which is the
+    /// whole point of adding it: a mint caller holding only
+    /// `Arc<dyn CapabilityCatalog>` can now find somewhere to write.
+    ///
+    /// A default-only method that nothing overrides would satisfy the
+    /// signature test while measuring nothing. This one inserts a record
+    /// through the returned reference and reads it back.
+    #[test]
+    fn the_accessor_reaches_a_registry_through_dyn_dispatch() {
+        let holder = LocalSigner(SigningKey::from_bytes(&[7u8; 32]));
+        let did = "did:example:holder-registry-accessor";
+
+        let token =
+            CapabilityToken::mint(&[0x11; 32], &holder, did, &[Caveat::Before(9_000)]).unwrap();
+        let cap_root_hash: [u8; 32] = crate::wire::compute_cap_root_hash_from_wire(
+            &crate::wire::serialize_wire(&token).unwrap(),
+        )
+        .unwrap();
+
+        let catalog = CatalogWithRegistry {
+            inner: super::InMemoryCatalog::default(),
+            registry: TinyRegistry(std::sync::Mutex::new(Vec::new())),
+        };
+        let as_dyn: &dyn CapabilityCatalog = &catalog;
+
+        // Exactly what a mint caller does: reach the registry through the
+        // catalog and persist the record mint deliberately did not.
+        let reg = as_dyn
+            .holder_registry()
+            .expect("this catalog overrides the accessor");
+        reg.insert(HolderRecord::from_capability(
+            &CapabilityTokenLike {
+                cap_root_hash,
+                class: CapabilityClass::V1,
+            },
+            &holder.public_key_bytes().to_vec().try_into().unwrap(),
+            did,
+            None,
+            NOW_MS + 3_600_000,
+        ))
+        .unwrap();
+
+        assert_eq!(
+            as_dyn
+                .holder_registry()
+                .unwrap()
+                .lookup_active(&cap_root_hash, &FixedClock::new(NOW_MS))
+                .unwrap(),
+            Some(HolderRecord::from_capability(
+                &CapabilityTokenLike {
+                    cap_root_hash,
+                    class: CapabilityClass::V1
+                },
+                &holder.public_key_bytes().to_vec().try_into().unwrap(),
+                did,
+                None,
+                NOW_MS + 3_600_000,
+            )),
+            "a record written through the accessor must be readable back through it"
         );
     }
 }

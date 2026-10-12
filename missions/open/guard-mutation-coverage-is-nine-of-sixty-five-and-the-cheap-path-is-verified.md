@@ -15,7 +15,7 @@ metadata:
 ## Status
 
 Largely resolved. The path-dependency guard's blind spot is **fixed** — see §A
-blind spot below — and mutation coverage has moved from 9 of 65 guards to **27 of 65**, a figure the harness now derives from its own
+blind spot below — and mutation coverage has moved from 9 of 65 guards to **31 of 65**, a figure the harness now derives from its own
 table rather than one maintained by hand — see §Coverage counted twice, and the
 count that was wrong. Adding one of them exposed a false pass in the harness
 itself, now fixed — see §A false pass found below.
@@ -305,7 +305,7 @@ now produced by reading the harness table and collecting the distinct
 
 ```
 $ python3 scripts/mutate-zk-guards.py --list | tail -1
-  38 entries -> 27 distinct guards in security_regressions.rs  (+7 entries targeting other crates' suites)
+  42 entries -> 31 distinct guards in security_regressions.rs  (+7 entries targeting other crates' suites)
 ```
 
 That line is printed by the harness itself, derived by reading its own table. It
@@ -313,7 +313,7 @@ did not exist when the count was first wrong, and putting it there is the fix:
 the number can no longer drift from the thing it counts, because it is recomputed
 every time anyone asks.
 
-**38 entries cover 27 guards, and the two numbers must not be conflated.** Seven
+**42 entries cover 31 guards, and the two numbers must not be conflated.** Seven
 entries do not target `security_regressions.rs` at all — three run
 `zk-vendor`'s `library_path` suite, two run `zk-verifier`, two run
 `cipherocto-fs-perms`. They are real mutations against real guards, but those
@@ -406,9 +406,13 @@ recorded rather than assumed absent elsewhere.
       `l7_active_symlink_swap_is_atomic`,
       `m16_bluetooth_stub_does_not_issue_a_delivery_receipt`,
       `m8_bearer_required_defaults_to_true`,
-      `m9_events_log_files_are_opened_owner_only` and
-      `m13_cdp_trace_is_private_and_defaults_outside_tmp`),
-      taking coverage from 9 of 65 to **27 of 65**
+      `m9_events_log_files_are_opened_owner_only`,
+      `m13_cdp_trace_is_private_and_defaults_outside_tmp`,
+      `m12_no_chrome_launcher_disables_the_renderer_sandbox`,
+      `c6_systemd_script_rejects_non_absolute_or_bracket_paths`,
+      `h10_quic_accept_loop_consults_the_replay_cache` and
+      `l5_health_server_does_not_trust_client_forwarded_for`),
+      taking coverage from 9 of 65 to **31 of 65**
 - [x] Any harness using the prebuilt-binary path refuses to run when the binary
       is older than the guard source — **satisfied a different way**: the
       committed harness runs through cargo, which rebuilds by construction, so
@@ -443,7 +447,7 @@ green as it applies to a guard's.
 ## Why the rest is filed rather than fixed
 
 The blind-spot fix is done and needs no defence. What remains is the coverage
-gap, and that is not urgent: thirty-eight unbacked guards is a large number that
+gap, and that is not urgent: thirty-four unbacked guards is a large number that
 reads as alarming and is not. These guards were written by adversarial review
 and several were mutation-checked by hand during that work. What is missing is
 the _re-runnable record_, which is what this harness would supply — and the

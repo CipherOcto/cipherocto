@@ -558,6 +558,67 @@ MUTATIONS = [
         ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
          "m13_cdp_trace_is_private_and_defaults_outside_tmp", "--", "--exact"],
     ),
+    (
+        # The one class of dependency the Chrome guard has no escape hatch for:
+        # these binaries drive a profile holding a live session, so a renderer
+        # compromise is account compromise, and the flag is refused on the
+        # string alone. Passing it to satisfy a container that cannot use user
+        # namespaces is the change this catches.
+        "G-T: a chrome launcher passes no-sandbox",
+        "crates/whatsapp_chrome_driver/src/main.rs",
+        "            opts.mode(0o600);\n",
+        "            opts.mode(0o600);\n"
+        "            let _sandbox_flag = \"--no-sandbox\";\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "m12_no_chrome_launcher_disables_the_renderer_sandbox", "--", "--exact"],
+    ),
+    (
+        # The `--systemd` branch interpolates these values into a unit-file
+        # heredoc, where a newline opens a new directive and a bracket opens a
+        # section header. The guard drives the real script with a hostile
+        # `--name`, so the mutation is in the script: dropping the shape check
+        # is how a broadened character class reopens the injection.
+        "G-U: the systemd unit-file character check is dropped",
+        "scripts/run-octo-whatsapp.sh",
+        """    case "$v" in
+        *$'\\n'*|*'['*|*']'*|'')
+            echo "invalid path: illegal character in (got: $v)" >&2; exit 1 ;;
+    esac
+""",
+        "",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "c6_systemd_script_rejects_non_absolute_or_bracket_paths", "--", "--exact"],
+    ),
+    (
+        # The original H-10 defect was a divergence: `ReplayCache` and its
+        # `check_and_insert` had thorough unit tests, and the spawned accept
+        # loop never called them. The cache's own tests pass either way, which
+        # is why the guard scopes to the loop's body. Removing the call is the
+        # regression, restored exactly.
+        "G-V: the quic accept loop stops consulting the replay cache",
+        "crates/octo-adapter-quic/src/lib.rs",
+        "                                                                            .check_and_insert(\n",
+        "                                                                            .map(|_| ())\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "h10_quic_accept_loop_consults_the_replay_cache", "--", "--exact"],
+    ),
+    (
+        # `axum::serve` exposes no `ConnectInfo`, so there is no socket peer to
+        # compare the header against: any use of `X-Forwarded-For` is a value
+        # the client chose. It reached the auth-failure metric, which made a
+        # security signal forgeable. A diagnostics module is the most likely
+        # way it comes back, since that is where it last lived.
+        "G-W: the health server reads X-Forwarded-For again",
+        "crates/octo-whatsapp/src/observability/health_server.rs",
+        "        assert!(\n            cfg.is_ok(),\n            \"loopback must be accepted; err={:?}\",\n            cfg.err()\n        );\n    }\n}\n",
+        "        assert!(\n            cfg.is_ok(),\n            \"loopback must be accepted; err={:?}\",\n            cfg.err()\n        );\n    }\n}\n"
+        "\n/// Probe: labelling an auth failure with a client-supplied header.\n"
+        "fn _probe_client_forwarded_for(headers: &axum::http::HeaderMap) -> Option<&str> {\n"
+        "    headers.get(\"x-forwarded-for\").and_then(|v| v.to_str().ok())\n"
+        "}\n",
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "l5_health_server_does_not_trust_client_forwarded_for", "--", "--exact"],
+    ),
 ]
 
 # NOT MUTATED, deliberately: `OpenOptionsExt::mode(0o600)` at creation inside

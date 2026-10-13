@@ -292,6 +292,16 @@ frontmatter_guard() {
     python3 scripts/lint_frontmatter.py --tree "$FIX/docs" --report
 }
 
+# `lint-rfc-anchors.py` computed its corpus root from `__file__` with no
+# override, which is what made it the last guard nothing could test. It now
+# takes `--root`, and `--baseline` points at a file inside the fixture so a
+# fixture run can never be measured against the repository's 588 entries.
+#
+# Both flags default to today's behaviour, so the repository run is unchanged.
+anchors_guard() {
+    python3 scripts/lint-rfc-anchors.py --root "$FIX" --baseline "$FIX/baseline.txt"
+}
+
 # Each case names the defect its guard must catch, and asserts both directions:
 # clean fixture first (must pass), then the planted defect (must fail AND name
 # the specific finding).
@@ -358,11 +368,75 @@ case_frontmatter() {
         "unquoted value containing ': '"
 }
 
+# The clean anchor corpus: one heading, and one cite that resolves to it.
+prepare_anchors_clean() {
+    cat >"$FIX/rfcs/0001-anchor.md" <<'EOF'
+# RFC-0001 Anchor
+
+## Identity
+
+Body text.
+
+See §Identity for a citation that resolves.
+EOF
+}
+
+write_anchors_defect() {
+    printf '\nSee §Invented Anchor for a citation that cannot resolve.\n' \
+        >>"$FIX/rfcs/0001-anchor.md"
+}
+
+case_anchors() {
+    prepare_case() { prepare_anchors_clean; }
+    write_defect() { write_anchors_defect; }
+    run_case "rfc_anchors/dangling-anchor" anchors_guard "invented anchor"
+}
+
+prepare_types_clean() {
+    cat >"$FIX/rfcs/0001-type.md" <<'EOF'
+# RFC-0001 Type
+
+## Identity
+
+```rust
+pub struct FixtureType { x: u64 }
+```
+
+References FixtureType, which is declared above in this same file.
+EOF
+}
+
+write_types_defect() {
+    cat >"$FIX/rfcs/0001-type.md" <<'EOF'
+# RFC-0001 Type
+
+```rust
+let x: TotallyMadeUpTypeName = y;
+```
+EOF
+}
+
+case_type_refs() {
+    prepare_case() { prepare_types_clean; }
+    write_defect() { write_types_defect; }
+    run_case "rfc_type_refs/undeclared-type" types_guard "TotallyMadeUpTypeName"
+}
+
+# The clean type-refs corpus must genuinely resolve. The first attempt used a
+# type name invented for the fixture, which the linter correctly reported as
+# undeclared — so the "clean" case was testing a guard that was right. A clean
+# fixture has to declare the type it references, or the case proves nothing.
+types_guard() {
+    python3 scripts/lint-rfc-type-refs.py --root "$FIX" --baseline "$FIX/baseline.txt"
+}
+
 case_section_cites
 case_status_vh
 case_no_vh
 case_cites
 case_frontmatter
+case_anchors
+case_type_refs
 
 printf '%s\n' "------------------------------------------------------------"
 printf 'passed=%d failed=%d skipped=%d\n' "$PASS" "$FAIL" "$SKIP"

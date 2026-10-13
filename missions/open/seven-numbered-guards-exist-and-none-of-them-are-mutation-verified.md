@@ -1,7 +1,7 @@
 ---
 name: seven-numbered-guards-exist-and-none-of-them-are-mutation-verified
 description: >-
-  Seven numbered document guards live in scripts/. None was mutation-verified, so "this guard catches its defect" was a process claim no reviewer could re-run. A guard that cannot report its finding passes an exit-code-only test. Measured directly: silencing only a guard's echo, leaving EXIT_CODE=1, left the harness reporting 3 of 4 cases green against guards that could no longer name anything they detect. Now covered for five of seven by scripts/mutation-verify-doc-guards.sh, which drives them from temp fixture corpora and writes no tracked file. Every assertion requires the guard to name its specific finding, not merely to exit non-zero. Covering lint_frontmatter.py exposed a ValueError crash that killed the run before any counter printed.
+  Seven numbered document guards live in scripts/. None was mutation-verified, so "this guard catches its defect" was a process claim no reviewer could re-run. A guard that cannot report its finding passes an exit-code-only test. Measured directly: silencing only a guard's echo, leaving EXIT_CODE=1, left the harness reporting 3 of 4 cases green against guards that could no longer name anything they detect. All seven are now covered by scripts/mutation-verify-doc-guards.sh, which drives them from temp fixture corpora and writes no tracked file. Every assertion requires the guard to name its specific finding, not merely to exit non-zero. Covering them exposed a ValueError crash, an UnboundLocalError that exited 0 while printing a traceback, and two guards with no corpus override.
 metadata:
   node_type: mission
   type: tooling
@@ -20,8 +20,9 @@ Supersedes the mutation-verification half of
 the guards exist and that none runs in CI. That mission is still accurate about
 CI. This one covers what CI alone would not have caught.
 
-Partially delivered. Five of the seven are now covered by a re-runnable harness.
-The other two are not, and the reasons are listed below.
+Delivered. All seven are now covered by a re-runnable harness, after adding
+`--root` and `--baseline` to the two that computed their corpus from `__file__`.
+Both additions are additive and default to today's behaviour.
 
 ## The gap
 
@@ -106,17 +107,51 @@ than silently, which is the property worth keeping:
 
 Each was loud. None would have been caught by reading the script.
 
-## Coverage: five of seven
+## Coverage: all seven
 
-| Guard                    | Covered | Note                                                    |
-| ------------------------ | ------- | ------------------------------------------------------- |
-| `lint_section_cites.sh`  | yes     |                                                         |
-| `lint_status_vh_sync.sh` | yes     |                                                         |
-| `lint_no_vh_accepted.sh` | yes     |                                                         |
-| `validate_cites.sh`      | yes     |                                                         |
-| `lint_frontmatter.py`    | yes     | added second; see the crash it exposed                  |
-| `lint-rfc-anchors.py`    | no      | no corpus-root override; would need a `--root` argument |
-| `lint-rfc-type-refs.py`  | no      | same, and it also compares against a baseline file      |
+| Guard                    | Covered | Corpus override           |
+| ------------------------ | ------- | ------------------------- |
+| `lint_section_cites.sh`  | yes     | `RFC_ROOT`                |
+| `lint_status_vh_sync.sh` | yes     | `RFC_ROOT`                |
+| `lint_no_vh_accepted.sh` | yes     | `RFC_ROOT`                |
+| `validate_cites.sh`      | yes     | `RFC_ROOT` plus file args |
+| `lint_frontmatter.py`    | yes     | `--tree` (existing)       |
+| `lint-rfc-anchors.py`    | yes     | `--root`, `--baseline`    |
+| `lint-rfc-type-refs.py`  | yes     | `--root`, `--baseline`    |
+
+The last two had no override, so they were added. Both are **additive and
+default to today's behaviour**: without the flags, the module-level roots are
+never rebound and the run is byte-identical, verified against the repository
+after the change. Neither baseline file was modified.
+
+`--baseline` exists because a fixture corpus has a different set of
+known-unresolved sites. Pointing `--root` at a fixture while leaving the
+baseline at the repository's 588 anchor and 652 type entries would make every
+fixture finding read as _baselined_ and every fixture fix read as a _shrink_ —
+the linter would report clean on a deliberately broken corpus.
+
+### `global` in a `main()` that only reads the name
+
+The first attempt at the type-refs override assigned `ROOT` inside `main()`
+without declaring it `global`. Python parsed it, and it failed at runtime with
+`UnboundLocalError: cannot access local variable 'ROOT'` — because assigning to
+a name anywhere in a function makes it local to that function, shadowing the
+module-level `ROOT` every other statement in `main()` reads.
+
+Worse, the script **exited 0 while printing that traceback**. A crash that
+reports success is the worst failure mode available: it is invisible to every
+caller that checks an exit code, and it happened in a gate.
+
+### A clean fixture must actually be clean
+
+The first type-refs fixture referenced a type name invented for the fixture.
+The linter correctly reported it as undeclared, and the case failed — the
+fixture was wrong, not the guard. The clean corpus now declares the type it
+references.
+
+This is the same discipline the harness exists to enforce, applied to the
+harness: a fixture that trips the rule it is supposed to be clean under is
+testing the wrong thing.
 
 ### Adding `lint_frontmatter.py` crashed the linter
 

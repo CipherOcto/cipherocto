@@ -232,7 +232,38 @@ def main() -> int:
                         help="report everything and always fail")
     parser.add_argument("--write-baseline", action="store_true",
                         help="rewrite the baseline from current findings")
+    parser.add_argument(
+        "--root",
+        help=(
+            "treat this directory as the repository root, so the linter can be "
+            "run against a fixture corpus. Defaults to the real root, so "
+            "omitting it changes nothing."
+        ),
+    )
+    parser.add_argument(
+        "--baseline",
+        help="read and write this baseline file instead of the repository's",
+    )
     args = parser.parse_args()
+
+    # Rebind the module-level roots once rather than threading a parameter
+    # through every helper that reads them. Absent these flags the branch never
+    # runs, so the default run is unchanged. Added so this guard, the last one
+    # `scripts/mutation-verify-doc-guards.sh` could not reach, is testable.
+    global ROOT, RFC_ROOT, CRATES_ROOT
+    if args.root:
+        ROOT = Path(args.root).resolve()
+        RFC_ROOT = ROOT / "rfcs"
+        CRATES_ROOT = ROOT / "crates"
+
+    # A fixture corpus has a different set of known-unresolved sites, so it must
+    # not be measured against the repository's 652-entry baseline. Otherwise
+    # every fixture finding reads as baselined.
+    global BASELINE_PATH
+    if args.baseline:
+        BASELINE_PATH = Path(args.baseline)
+    elif args.root:
+        BASELINE_PATH = Path(args.root) / "baseline.txt"
 
     if not RFC_ROOT.is_dir():
         # Not a pass — see the note in lint-rfc-anchors.py. A missing corpus

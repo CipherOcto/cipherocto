@@ -232,7 +232,50 @@ def main() -> int:
         action="store_true",
         help="rewrite the baseline from the current findings",
     )
+    parser.add_argument(
+        "--root",
+        help=(
+            "treat this directory as the repository root, so the linter can be "
+            "run against a fixture corpus instead of the real one. Defaults to "
+            "the real root, so omitting it changes nothing."
+        ),
+    )
+    parser.add_argument(
+        "--baseline",
+        help="read and write this baseline file instead of the repository's",
+    )
     args = parser.parse_args()
+
+    # Point the module-level paths at the requested root. They are read from
+    # inside several helpers, so rebinding them once here is what makes the
+    # override total; the alternative is threading a root parameter through
+    # every one of them.
+    #
+    # Absent, this branch never runs, so the default behaviour is unchanged.
+    # It exists so `scripts/mutation-verify-doc-guards.sh` can exercise this
+    # guard, which was the last one unverifiable because its corpus root came
+    # from `__file__` with no override.
+    if args.root:
+        global ROOT, RFC_ROOT, INDEX_SOURCES, SCAN_FILES
+        ROOT = Path(args.root).resolve()
+        RFC_ROOT = ROOT / "rfcs"
+        INDEX_SOURCES = [
+            RFC_ROOT,
+            ROOT / "docs",
+            ROOT / "missions",
+            ROOT / "CLAUDE.md",
+        ]
+        SCAN_FILES = [ROOT / "CLAUDE.md"]
+
+    # A fixture corpus has a different set of known-dangling sites, so it must
+    # not be compared against the repository baseline. Defaulting this to the
+    # real file while `--root` points elsewhere would make every fixture
+    # finding look baselined and every fixture fix look like a shrink.
+    global BASELINE_PATH
+    if args.baseline:
+        BASELINE_PATH = Path(args.baseline)
+    elif args.root:
+        BASELINE_PATH = Path(args.root) / "baseline.txt"
 
     rfc_files = sorted(RFC_ROOT.rglob("*.md"))
     rfc_files += [p for p in SCAN_FILES if p.is_file()]

@@ -14,20 +14,28 @@ metadata:
 
 ## Status
 
-Largely resolved. The path-dependency guard's blind spot is **fixed** — see §A
+**Closed 2026-10-12.** All five acceptance criteria are met. The guard-count
+re-measurement is in §An independent re-measurement, and it was taken from the
+test file rather than from the harness, because a figure derived by a tool from
+its own input is never checked against anything but itself.
+
+Coverage ended at **59 of 65 guards across 73 mutations**, all red, verified in
+full. The six that remain are not unfinished work in this mission — each names a
+missing capability in the harness or a limit cargo enforces — and they are
+carried forward by
+`missions/open/mutation-harness-cannot-prime-a-guard-table-or-plant-a-test-module-probe.md`.
+
+The path-dependency guard's blind spot is **fixed** — see §A
 blind spot below — and mutation coverage has moved from 9 of 65 guards to **59 of 65**, a figure the harness now derives from its own
 table rather than one maintained by hand — see §Coverage counted twice, and the
 count that was wrong. Adding one of them exposed a false pass in the harness
 itself, now fixed — see §A false pass found below.
 
-Separately, and more importantly: the harness has now been run in full for the
-first time. **All 24 entries observed red**, in 55 seconds, and the table has
-since grown to 42 entries. **Re-run in full against the current table: 42
-mutations, 42 red, 0 vacuous, 0 bad-mutation, 0 bad-anchor**, with the tree
-clean afterwards and disk unmoved (7.5 GB free before, 7.4 GB after). The mission
-previously recorded that the expensive entries could not be reached; that was an
-estimate mistaken for a constraint, and the measurement is in §The cost
-assumption that was wrong.
+The harness was run in full for the first time at 24 entries and re-run after
+every wave. **The final run: 73 mutations, 73 red, 0 vacuous, 0 bad-mutation, 0
+bad-anchor**, tree clean afterwards. The mission originally recorded that the
+expensive entries could not be reached; that was an estimate mistaken for a
+constraint, and the measurement is in §The cost assumption that was wrong.
 
 The pattern for adding one is proven end to end: pick a guard that reads the
 tree at run time, plant a violation outside octo-cli's closure where possible,
@@ -115,8 +123,6 @@ that the rest needs room to compile — does not.
 
 ## Which harness entries are actually proven
 
-## Which harness entries are actually proven
-
 **All 24 entries have now been executed and observed red.** The full table was
 run end to end for the first time: 24 red, 0 vacuous, 0 bad-mutation, 0
 bad-anchor, in 55 seconds. Twelve are the file-scanning entries added to close
@@ -133,83 +139,6 @@ a recompile unless it edits a crate's Rust sources or its manifest within the
 closure of the package under test. `--cheap` runs the free twelve in seconds,
 `--list` shows the split, and neither is a hand-maintained column that can go
 stale when a dependency edge moves.
-
-## Scans that could pass while reading nothing
-
-## Scans that could pass while reading nothing
-
-Seven scanning guards asserted nothing about how much they read. Five turned out
-to be safe by construction — one asserts its root list is non-empty, one compares
-against a non-empty expected list, one requires that it found something, and one
-compares its findings to a single-element list, so an empty scan fails all four.
-Two were genuinely exposed and both are now floored:
-
-- the named-vector mission check, which counted the missions it read and printed
-  that count in its failure message without ever asserting on it
-- the registry-reach scan, whose sibling walks the same tree and already floored
-  what it saw
-
-The seventh is now floored too. `the_wallet_crate_does_not_depend_on_storage`
-compares a boolean for its manifest half, so that half was never at risk, but the
-walk over octo-wallet source feeding its first assertion was. It was left alone
-for one commit on the reasoning that a guard whose halves enforce different
-properties is worth fixing as a whole or not at all — which was wrong. Adding a
-floor is additive protection, not a partial repair, and nothing about that guard
-is half-fixed by counting the files its walk already reads.
-
-So all three exposed scans are floored, and the remaining four were cleared by
-reading each one rather than by pattern-matching it.
-
-## The cost assumption that was wrong
-
-An earlier revision of this mission claimed the cheap recipe could not reach the
-guards whose failures hurt most, because mutating a crate inside octo-cli's
-closure forces a recompile, and predicted coverage would stall there until disk
-headroom arrived.
-
-That was an estimate presented as a constraint, and it was wrong by a wide
-margin. Measured:
-
-|                                         |                           |
-| --------------------------------------- | ------------------------- |
-| A dependency rebuild inside the closure | 3.3 s, no measurable disk |
-| One source-file mutation, end to end    | 3.5 s, no measurable disk |
-| The three feature-flag mutations        | 14.6 s, 0.5 GB            |
-| **The entire table, all 24 entries**    | **55 s, 0.9 GB**          |
-
-Everything is already compiled, so a mutation only invalidates one crate and its
-dependents. The feature-flag entries cost most because changing a feature edge
-re-resolves, not because the table is large.
-
-So the whole harness runs in under a minute. There was never a blocker, only an
-unmeasured guess — the second time this session that an estimated cost was
-treated as a real constraint. The first was deferring a test-crate rebuild that
-turned out to take 1.24 seconds. The pattern is worth naming: a cost nobody
-measured is indistinguishable from a wall, and writing it down as a blocker
-makes the guess durable.
-
-The `--cheap` flag stays, because a fast subset is worth having. Its premise —
-that the rest needs room to compile — does not.
-
-## Which harness entries are actually proven
-
-## Which harness entries are actually proven
-
-Eleven of the harness's twenty-three entries have now been executed and
-observed red. Four are the file-scanning entries added to close this gap; the
-other seven are pre-existing entries — the session-swap group and world-writable
-checks, plus the export-bundle and local-writer entries — run for the first time
-in this session and all confirmed still fire. That is worth recording because
-the alternative is an inherited harness nobody has run since it was written.
-
-The remaining twelve mutate crates inside octo-cli's dependency closure and so
-force a recompile. They were not run, because disk was the binding constraint,
-and a person picking this up should treat them as unproven rather than as
-passing. They are not in doubt — only unexecuted.
-
-The classification is mechanical: a mutation is cheap exactly when its target
-file is outside the closure, which is why the four added here were chosen that
-way rather than for any other reason.
 
 ## What is not wrong
 
@@ -376,6 +305,34 @@ the mutation `G-dd` — a real production call passing `&[0u8; 32]` — goes red
 `G-dd` recompiles `octo-cap-macaroon`, so it is the first rebuild-class entry
 added on purpose; the earlier statement that every mutation was free no longer
 holds, and the harness classifies it correctly.
+
+## An independent re-measurement
+
+The coverage figure is derived by the harness from its own table. That is the
+right way to maintain it — a hand-kept number is an unverified claim — but it
+leaves one thing unchecked: **the instrument is never checked against
+anything but itself.** A derivation that is wrong in the same direction every
+time still looks consistent.
+
+So the closing count was taken a second way, from the test file rather than
+from the harness:
+
+```
+guards via #[test] attributes:      65
+distinct guards with a --exact filter: 59
+guards with no entry:                 6
+```
+
+Both agree with `--list`, and the six names match the table in §Where coverage
+stops exactly. That is the check: the harness's count is not merely plausible,
+it names the same six guards this hand-count did.
+
+**The verification script's own count was wrong first.** It reported 47 entries
+against the table's 73, because its pattern required each label to start its own
+line and 26 entries are written `("label",` on the opening line. The table was
+right and the scanner was wrong — the fourth time this arc that a
+hand-written scanner has been the faulty party, and the reason §Coverage counted
+twice exists.
 
 ## Where coverage stops, and what is left
 
@@ -723,9 +680,10 @@ recorded rather than assumed absent elsewhere.
       is older than the guard source — **satisfied a different way**: the
       committed harness runs through cargo, which rebuilds by construction, so
       the staleness hazard cannot arise there
-- [ ] The guard count and the covered count are re-measured when this mission
+- [x] The guard count and the covered count are re-measured when this mission
       closes, and recorded the way the archived cite sweep recorded its own
-      re-count requirement
+      re-count requirement — **done, and deliberately not by the harness**:
+      see §An independent re-measurement
 
 ## A false pass found in the harness while doing this
 

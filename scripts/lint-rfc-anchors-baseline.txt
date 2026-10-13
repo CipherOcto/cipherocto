@@ -1,395 +1,590 @@
-145
-3.5.7
-531
-ac-8 2-cycle
-adapter extensions
-adversary a2
-adversary a3
-adversary a4
-adversary a5
-adversary a5; §lifecycle requirements
-adversary analysis; rfc-0855p-b §"adversary analysis" (sister
-agentmanifest +
-agentmanifest::fromjson (substrate-faithful
-aggregate acceptance step 9
-algorithm b
-algorithm d
-algorithm step 1
-algorithm step 2
-algorithm step 3
-algorithm step 5
-algorithm steps 4-5
-algorithms "envelope
-algorithms a
-algorithms holderregistry
-algorithms §4
-algorithms §authenticate(
-algorithms §compute
-algorithms); --confirm-acknowledge
-algorithms:phantomcallsite (r55-n5
-alreadyintransition (cli
-api version
-append-only contract
-appendices b
-appendix a + mermaid
-appendix a) = a's whatsapp
-appendix b layer a
-appendix b; cli
-architectural principles: "extension
-architectural principles: "for
-architectural principles: layer b (
-architectural principles; rfc-0012/0013/0014
-attenuation invariant) +
-attenuation invariant; cli
-attenuation →
-attestation kind registry
-attestation kind registry (forward
-attestation kinds (forward
-attestation log (forward
-audio parameters
-audit subcommand fixtures (prerequisite
-audit subcommand fixtures + §audit substrate
-audit subcommand fixtures must
-audit substrate mapping
-audit substrate mapping (rfc-0011-a
-audit window caveat
-auditerror (octo-audit-core §error
-auditfilter (cursor
-auditsubstratenotready (already
-auth flow
-authority rotation
-azure special case
-b5 provider resolution
-background requests
-balance history: projectionevent (substrate-side; cli
-base url alias
-binding domain
-bootstrap envelope types
-bootstrap orchestrator
-budget computation procedure
-budget computation procedure (clarifies
-budget identity
-bump acceptance criteria 30-day sla +
-canonical codec
-canonical did codec
-canonical domain separators table (new section
-canonical serialization
-capability extension
-capability keys; hkdf-blake3
-capability macaroon
-capability validation
-capability validation (6-step
-capability validation (the 6-step
-chain persistence + rfc-0959 §settlement chain
-chain-id derivation
-chainid 32-byte
-channel binding
-channel compromise analysis
-compatibility "additive
-compatibility "backward
-compatibility #1
-compatibility #4
-compatibility #4 8-pattern
-compatibility > §forward
-compatibility partial
-compatibility phase 10
-compatibility phase 9
-compatibility §backward
-compatibility §forward compatibility
-constraint encoding
-coordinator lifecycle
-cost computation
-coverage table
-cross-domain aggregation
-cross-layer aggregation
-cross-repo coordination; §implementation phases phase g cross-repo coordination
-crypto agility
-d1 deviation + 0206-008 §d1 deviation
-data structures:caproothash
-data structures:destinationnoncestore
-data structures:destinationnoncestore (3-arg
-data structures:roletag
-data structures; cli
-databasesyncadapter durability
-databasesyncadapter lsn advancement
-dependencies +
-dependencies optional
-dependencies optional (rfc-0959
-dependencies rfc-0009-b1
-design goal 3
-destination ranking
-deterministic canonical serialization (dcs
-deterministic constant
-deterministic encoding
-deterministic encoding (big-endian
-domain separators
-dual-stake; rfc-0909
-dual-stake; rfc-0909 §economic analysis
-dynamic registration
-election algorithm) landed
-encryption keys
-envelope codec
-error handling); cli
-event identity
-execution class a
-execution class mapping
-execution class mapping (slashing
-execution class mapping [^class-mapping-out-of-scope
-execution class mapping)[^class-mapping-out-of-scope
-exit code table
-exit codes); 100
-exit codes); 64
-extension surface
-extension surface (forward
-external blockers + §22 b0
-extra headers
-f1): ml-dsa + slh-dsa
-f3 holderregistry
-feature gate architecture):                         ║
-feature-gated provider initialization
-fiat-shamir "internal
-follow-on §f
-future roles
-fw2 + rfc-0014-v2 §fw4
-fw2 + §fw4
-fw3 + §s5
-fw6 + ac-11 + ac-12
-g5 "gateway federation: 1000+
-gossip envelope
-gossip heartbeat
-gossip heartbeat + partition recovery
-gossip heartbeat + retry
-gossip payload
-hex32 +
-holder sign; ed25519
-holderkind and
-holderregistry unique
-ia #6
-ia #7
-ia-2 (monotonic + ntp-synced
-ia-7 + rfc-0009 §vault
-identity management
-identity stability
-identitykey +
-identityrecord + rfc-0009 §identity struct + §hsmadapter integration
-implementation phase 2
-implementation phase 2; rfc-0870 §nodeenvelope adoption
-implementation phases) +
-implementation phases; §compatibility
-implementation reference → §implementation phases
-implicit assumptions audit; rfc-0855p-b §"implicit assumptions audit" (sister
-implicit assumptions ia-6
-implicit assumptions); §4 cross-references: "rfc-0957 §capability" → "rfc-0957 §capabilitytoken state machine"; "rfc-0964 §0
-inbound path
-inference pipeline
-invalidstatetransition (cli
-json schema validation
-key files; §6
-key handling rules); §key handling rules
-kind uuid registry
-kind uuid registry (private
-layer a/b/c/d/e
-lifecycle time bounds
-lock ordering invariant: always
-manifest schema
-market delivery
-migration etiquette
-migration" → "rfc-0206
-mission lifecycle's
-model list
-motivation + §implementation phases task 1 ("variant
-motivation 4
-multi-mission decomposition
-namespace byte
-network bootstrap phase 1
-network cli surface
-node destination selection
-node destination selection algorithm
-node taxonomy
-nodeenvelope adoption
-nodeenvelope adoption (atomicity
-nodeenvelope adoption uuid
-nodetype gating matrix
-nodetype gating matrix); (b) provider-key
-nodetype gating matrix; §nodetype gating rule; §algorithms
-nonce store
-nonce store gc
-notactive (substrate-faithful
-operational requirements
-out-of-scope +
-output envelope) only
-output envelope: outputenvelope<t>
-output envelope: vaultbalanceoutput
-output envelope: vaultlistoutput
-output envelope: vaulttransferoutput
-overlay cryptography
-overlay cryptography (blake3
-pairing discipline (paired keep +
-per-extension crate layout; rfc-0871 §wallet node lifecycle
-per-extension crate layout; rfc-0871 §wallet node lifecycle; layer 4
-performance targets; hkdf-blake3
-phantom types
-phantom types + rfc-0959-a1 §algorithms:phantomcallsite + rfc-0969 §algorithms:phantomcallsite
-phantom types:identitykey
-phantom types:identitykey + rfc-0959-a1 §algorithms:phantomcallsite (r60-n4
-platform-mediated handover
-platformadapter receiver
-primary key
-principle 12
-prompt cache
-provider sdk type registry
-public inputs
-quorum recording (forward
-quota api key (per r41
-raftlike writer election
-rationale "why
-rationale stwo
-re-export block cap
-reasoncontainscontrolchars + §reasontoolong
-receipt shape
-receipt shape (adds
-receipt shape must
-receipt status
-redaction layer) must
-redaction layer; json
-request routing algorithm
-revocation oracles
-rfc process"
-rfc process; r4
-rfc-0008 execution class mapping; §future work f1
-rfc-0015 r40
-rfc-0105 §sql column scale semantics
-rfc-0962 §4
-role token economics
-role/authority egress module
-roles + rfc-0957-a1 §holderregistry
-roles + §specification
-roles /
-roles marketplace index
-roles token issuer
-roles token issuer update
-roles update
-roles virtual-key operator
-roles/§adversary (5-question a1-a5)/§lifecycle (ask + marketplace index
-s1 + appendix a (substrate
-s1 + appendix a must
-s1 + §s2
-s1 + §s5
-s2 acl
-s2 receipt 6-field
-s3 receiptid
-s3) +
-s6 +
-s7 + fw2
-s7 + rfc-0014-v2 §fw4
-s7 + §fw2
-s7 + §fw2 (settlement-side
-s7 §table c
-sample kinds (forward
-sample walk-through a
-sample walk-through §a
-sc2 +
-sc2 + §s5
-security #1
-security #2
-security #3
-security #4
-security 1 / §security 4
-security 1a
-security 1a (atomic
-security 2
-security 4
-security 6
-security confirmation gate
-security considerations); ci
-security considerations: transfer replay
-security note
-service tier
-session resumption
-settlementenvelope + §defaults +
-settlementevent + §settlementreceipt
-shared session
-signature coverage
-snapshot ttl
-sovereign identity model
-specification + rfc-0901
-specification + rfc-0970 §phase 4
-specification / §data structure / §security / §test vectors
-specification > mpc
-specification envelope type added cgsb + §data structure (cgsb
-specification nor
-specification §adversary analysis (required
-specification §algorithms
-specification §chain integrity
-specification §compatibility (required
-specification §compatibility required
-specification §cross-rfc consistency checklist (compatibility + implicit assumptions audit
-specification §data structures
-specification §diddocument
-specification §dynamic loading flow
-specification §error
-specification §implicit assumptions audit (required
-specification §implicit assumptions audit required
-specification §lifecycle requirements (one-line
-specification §platformadapterbridge
-specification §proposal
-specification §reservation
-specification §rfc-0008 execution class mapping
-specification §security considerations (required
-specification §substrate
-specification §tally helpers
-specification §trait
-specification) +
-spendledger substrate
-stable abstractions principle: layer b (substrate
-stark curve
-subcommand taxonomy)"
-subdcdelegationpolicy (no
-substrate discipline
-substrate migration
-substrate validation table
-substrate-additions [^ci-detection-gated
-substrate-additions g-rows
-substrate-additions g1
-substrate-additions g12b
-substrate-additions g21
-substrate-additions g21 (the
-substrate-additions g21 + rfc-0011-c §f
-substrate-additions g3
-substrate-additions g3b
-substrate-faithfulness + phase 12 r2
-summary "internet analogy"
-summary "substrate-faithful
-summary #6 (mintdual algorithm
-tally canonicalisation
-test vectors): tv-aud-3
-the rfc process: "1
-third-party discharge
-tools → implementation guides
-top k
-trait g3
-trait version enforcement
-transfer flow: pre-flight
-transfer flow: pre-flight (transfer
-transfer flow: replay
-transitionreceipt; cli
-typed uuid
-unit system
-user extensions (forward
-value-preserving conversion
-vault +
-vault substrate
-vault substrate (chain-aware pk
-vault/§vault substrate
-verification); dkg-based pk-set
-vm canonicalization rule
-wallet node lifecycle; rfc-0870 §version history
-web search options
-why phase 1/2
-wire contract"
-wire format)"
-wiredid + §canonicalcodec (rfc-0010
-wiring diagram
-witness set aggregation
-writer election
-writerelection protocol); §implementation phases
+145	rfcs/accepted/economics/0960-grand-design-vaults-capabilities-reservations.md:140
+3.5.7	rfcs/accepted/economics/0959-ask-settlement-chain.md:656
+3.5.7	rfcs/accepted/economics/0959-ask-settlement-chain.md:740
+3.5.7	rfcs/accepted/economics/0959-ask-settlement-chain.md:946
+531	rfcs/accepted/economics/0960-grand-design-vaults-capabilities-reservations.md:126
+531	rfcs/accepted/economics/0960-grand-design-vaults-capabilities-reservations.md:128
+ac-8 2-cycle	rfcs/accepted/process/0012-v2-audit-substrate-amendment.md:278
+adapter extensions	rfcs/accepted/networking/0851p-b-dotdomain-bootstrap-mode.md:309
+adapter extensions	rfcs/accepted/networking/0851p-b-dotdomain-bootstrap-mode.md:325
+adversary a2	rfcs/accepted/process/0009-identity-management.md:473
+adversary a2	rfcs/accepted/process/0009-identity-management.md:724
+adversary a2	rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:1302
+adversary a3	rfcs/accepted/economics/0973-pluggable-proof-attestation-for-capabilities.md:2015
+adversary a3	rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:1081
+adversary a4	rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:1078
+adversary a5	rfcs/accepted/economics/0957-capability-token-format.md:1134
+adversary a5	rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:1372
+adversary a5; §lifecycle requirements	rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:1080
+adversary analysis; rfc-0855p-b §"adversary analysis" (sister	rfcs/accepted/networking/0850p-a-whatsapp-auth-onboarding.md:931
+agentmanifest +	rfcs/accepted/process/0015-a-wallet-agent-write-path.md:345
+agentmanifest +	rfcs/accepted/process/0015-wallet-agent-operations.md:368
+agentmanifest::fromjson (substrate-faithful	rfcs/accepted/process/0015-wallet-agent-operations.md:335
+aggregate acceptance step 9	rfcs/accepted/networking/0855p-e-handover-request-envelope.md:613
+algorithm b	rfcs/draft/networking/0850p-e-kick-detection.md:327
+algorithm d	rfcs/draft/networking/0850p-e-kick-detection.md:328
+algorithm d	rfcs/draft/networking/0850p-e-kick-detection.md:330
+algorithm step 1	rfcs/accepted/networking/0851p-b-dotdomain-bootstrap-mode.md:473
+algorithm step 2	rfcs/accepted/networking/0851p-b-dotdomain-bootstrap-mode.md:475
+algorithm step 3	rfcs/accepted/networking/0851p-b-dotdomain-bootstrap-mode.md:474
+algorithm step 5	rfcs/accepted/networking/0851p-b-dotdomain-bootstrap-mode.md:477
+algorithm steps 4-5	rfcs/accepted/networking/0851p-b-dotdomain-bootstrap-mode.md:476
+algorithms "envelope	rfcs/accepted/process/0011-f-mesh-operations.md:1011
+algorithms "envelope	rfcs/accepted/process/0011-f-mesh-operations.md:1470
+algorithms "envelope	rfcs/accepted/process/0011-f-mesh-operations.md:357
+algorithms "envelope	rfcs/accepted/process/0011-f-mesh-operations.md:358
+algorithms a	rfcs/draft/networking/0850p-e-kick-detection.md:326
+algorithms holderregistry	rfcs/accepted/economics/0969-dual-pipeline-authorization.md:806
+algorithms §4	rfcs/accepted/networking/0862-stoolap-data-sync.md:455
+algorithms §authenticate(	rfcs/accepted/economics/0969-dual-pipeline-authorization.md:685
+algorithms §compute	rfcs/accepted/process/0008-deterministic-ai-execution-boundary.md:113
+algorithms §compute	rfcs/accepted/process/0008-deterministic-ai-execution-boundary.md:639
+algorithms); --confirm-acknowledge	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:324
+algorithms:phantomcallsite (r55-n5	rfcs/accepted/networking/0971-destination-node-role-consolidation.md:78
+alreadyintransition (cli	rfcs/accepted/process/0015-wallet-agent-operations.md:121
+api version	rfcs/accepted/economics/0920-unified-python-sdk-dual-mode-compatibility.md:1180
+append-only contract	rfcs/accepted/process/0011-a-audit-subcommands.md:597
+append-only contract	rfcs/accepted/process/0011-a-audit-subcommands.md:654
+appendices b	rfcs/accepted/process/0011-a-audit-subcommands.md:999
+appendices b	rfcs/accepted/process/0011-x-wallet-store-identity-substrate.md:9
+appendix a + mermaid	rfcs/accepted/process/0016-a-audit-receipt-write-path.md:443
+appendix a) = a's whatsapp	rfcs/accepted/networking/0855p-c-domain-coordinator-role.md:751
+appendix b layer a	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:442
+appendix b; cli	rfcs/accepted/process/0015-wallet-agent-operations.md:475
+architectural principles: "extension	rfcs/accepted/process/0011-a-audit-subcommands.md:237
+architectural principles: "for	rfcs/accepted/process/0011-a-audit-subcommands.md:858
+architectural principles: layer b (	rfcs/accepted/networking/0855p-c-domain-coordinator-role.md:32
+architectural principles; rfc-0012/0013/0014	rfcs/accepted/process/0015-wallet-agent-operations.md:21
+architectural principles; rfc-0012/0013/0014	rfcs/accepted/process/0015-wallet-agent-operations.md:88
+attenuation invariant) +	rfcs/accepted/economics/0963-resource-shard-routing.md:406
+attenuation invariant; cli	rfcs/accepted/process/0011-g-governance-subcommands.md:731
+attenuation →	rfcs/accepted/process/0008-deterministic-ai-execution-boundary.md:639
+attestation kind registry	rfcs/accepted/process/0011-g-governance-subcommands.md:735
+attestation kind registry (forward	rfcs/accepted/process/0011-g-governance-subcommands.md:1539
+attestation kinds (forward	rfcs/accepted/process/0011-g-governance-subcommands.md:577
+attestation log (forward	rfcs/accepted/process/0011-g-governance-subcommands.md:1315
+attestation log (forward	rfcs/accepted/process/0011-g-governance-subcommands.md:205
+attestation log (forward	rfcs/accepted/process/0011-g-governance-subcommands.md:730
+audio parameters	rfcs/accepted/economics/0920-unified-python-sdk-dual-mode-compatibility.md:1183
+audit subcommand fixtures (prerequisite	rfcs/accepted/process/0011-a-audit-subcommands.md:716
+audit subcommand fixtures + §audit substrate	rfcs/accepted/process/0011-a-audit-subcommands.md:806
+audit subcommand fixtures must	rfcs/accepted/process/0011-a-audit-subcommands.md:758
+audit substrate mapping	rfcs/accepted/process/0012-audit-substrate.md:472
+audit substrate mapping (rfc-0011-a	rfcs/accepted/process/0012-audit-substrate.md:497
+audit window caveat	rfcs/accepted/process/0011-a-audit-subcommands.md:581
+auditerror (octo-audit-core §error	rfcs/accepted/process/0016-audit-receipt-api.md:140
+auditfilter (cursor	rfcs/accepted/process/0016-audit-receipt-api.md:130
+auditsubstratenotready (already	rfcs/accepted/process/0015-wallet-agent-operations.md:120
+auth flow	rfcs/accepted/networking/0850p-a-whatsapp-auth-onboarding.md:1233
+authority rotation	rfcs/draft/networking/0862p-a-writer-election-bootstrap.md:18
+azure special case	rfcs/accepted/economics/0930-provider-inference-from-model-string.md:83
+b5 provider resolution	rfcs/accepted/economics/0917-dual-mode-query-router.md:3584
+background requests	rfcs/accepted/economics/0920-unified-python-sdk-dual-mode-compatibility.md:1196
+balance history: projectionevent (substrate-side; cli	rfcs/accepted/process/0011-e-vault-operations.md:587
+base url alias	rfcs/accepted/economics/0920-unified-python-sdk-dual-mode-compatibility.md:1179
+binding domain	rfcs/accepted/process/0010-canonical-did-codec.md:854
+bootstrap envelope types	rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md:118
+bootstrap envelope types	rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md:2090
+bootstrap orchestrator	rfcs/draft/networking/0862p-a-writer-election-bootstrap.md:17
+budget computation procedure	rfcs/final/economics/0909-deterministic-quota-accounting.md:1736
+budget computation procedure	rfcs/final/economics/0909-deterministic-quota-accounting.md:435
+budget computation procedure (clarifies	rfcs/final/economics/0909-deterministic-quota-accounting.md:1740
+budget identity	rfcs/accepted/economics/0920-unified-python-sdk-dual-mode-compatibility.md:1003
+budget identity	rfcs/accepted/economics/0920-unified-python-sdk-dual-mode-compatibility.md:4523
+bump acceptance criteria 30-day sla +	rfcs/accepted/storage/0205-stoolap-fork-stability.md:40
+canonical codec	rfcs/accepted/process/0011-f-mesh-operations.md:1012
+canonical did codec	rfcs/accepted/process/0011-a-audit-subcommands.md:168
+canonical did codec	rfcs/accepted/process/0011-a-audit-subcommands.md:175
+canonical did codec	rfcs/accepted/process/0011-f-mesh-operations.md:1451
+canonical did codec	rfcs/accepted/process/0011-g-governance-subcommands.md:560
+canonical domain separators table (new section	rfcs/accepted/process/0206-v34-value-transfer-canonicalization.md:119
+canonical serialization	rfcs/accepted/economics/0967-a1-a1-workflowkind-trait-sig-amendment.md:21
+canonical serialization	rfcs/accepted/economics/0967-a1-a1-workflowkind-trait-sig-amendment.md:33
+canonical serialization	rfcs/accepted/economics/0967-a1-a1-workflowkind-trait-sig-amendment.md:66
+capability extension	rfcs/accepted/process/0011-a-audit-subcommands.md:1114
+capability extension	rfcs/accepted/process/0011-a-audit-subcommands.md:35
+capability extension	rfcs/accepted/process/0011-a-audit-subcommands.md:593
+capability keys; hkdf-blake3	rfcs/accepted/economics/0957-capability-token-format.md:64
+capability macaroon	rfcs/accepted/process/0009-identity-evolution-v12.md:1655
+capability validation	rfcs/accepted/process/0011-c-agent-lifecycle.md:340
+capability validation	rfcs/accepted/process/0011-c-agent-lifecycle.md:359
+capability validation	rfcs/accepted/process/0011-c-agent-lifecycle.md:404
+capability validation	rfcs/accepted/process/0011-c-agent-lifecycle.md:461
+capability validation	rfcs/accepted/process/0011-c-agent-lifecycle.md:505
+capability validation (6-step	rfcs/accepted/process/0011-c-agent-lifecycle.md:136
+capability validation (6-step	rfcs/accepted/process/0011-c-agent-lifecycle.md:214
+capability validation (the 6-step	rfcs/accepted/process/0011-c-agent-lifecycle.md:36
+chain persistence + rfc-0959 §settlement chain	rfcs/accepted/economics/0959-a1-market-delivery.md:893
+chain-id derivation	rfcs/accepted/process/0011-e-vault-operations.md:924
+chain-id derivation	rfcs/accepted/process/0015-wallet-agent-operations.md:156
+chainid 32-byte	rfcs/accepted/economics/0959-ask-settlement-chain.md:367
+channel binding	rfcs/accepted/networking/0871-specialized-node-protocol-envelope.md:323
+channel compromise analysis	rfcs/accepted/networking/0970-forwarding-hop-auth-envelope.md:961
+compatibility "additive	rfcs/accepted/process/0011-f-mesh-operations.md:825
+compatibility "backward	rfcs/accepted/process/0011-f-mesh-operations.md:1074
+compatibility #1	rfcs/accepted/process/0015-wallet-agent-operations.md:108
+compatibility #4	rfcs/accepted/process/0016-a-audit-receipt-write-path.md:237
+compatibility #4 8-pattern	rfcs/accepted/process/0016-a-audit-receipt-write-path.md:326
+compatibility > §forward	rfcs/accepted/process/0009-identity-evolution-v12.md:1582
+compatibility partial	rfcs/accepted/process/0011-d-role-provisioning.md:1604
+compatibility partial	rfcs/accepted/process/0011-d-role-provisioning.md:1673
+compatibility phase 10	rfcs/accepted/process/0011-r-oct-cli-network-phase-10.md:157
+compatibility phase 9	rfcs/accepted/process/0011-q-oct-cli-network-phase-9.md:191
+compatibility §backward	rfcs/accepted/economics/0959-ask-settlement-chain.md:992
+compatibility §forward compatibility	rfcs/accepted/process/0009-identity-management.md:460
+constraint encoding	rfcs/accepted/process/0011-e-vault-operations.md:146
+coordinator lifecycle	rfcs/accepted/process/0011-g-governance-subcommands.md:203
+cost computation	rfcs/accepted/economics/0904-real-time-cost-tracking.md:108
+cost computation	rfcs/accepted/economics/0904-real-time-cost-tracking.md:1112
+cost computation	rfcs/accepted/economics/0910-pricing-table-registry.md:1051
+coverage table	rfcs/accepted/economics/0959-ask-settlement-chain.md:745
+cross-domain aggregation	rfcs/accepted/process/0013-governance-substrate.md:603
+cross-layer aggregation	rfcs/accepted/process/0011-b-reputation-subcommands.md:166
+cross-layer aggregation	rfcs/accepted/process/0011-b-reputation-subcommands.md:172
+cross-repo coordination; §implementation phases phase g cross-repo coordination	rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:1084
+crypto agility	rfcs/accepted/economics/0957-capability-token-format.md:883
+d1 deviation + 0206-008 §d1 deviation	rfcs/accepted/storage/0206-octo-storage-split.md:427
+d1 deviation + 0206-008 §d1 deviation	rfcs/accepted/storage/0206-octo-storage-split.md:674
+data structures:caproothash	rfcs/accepted/economics/0957-a1-holder-registry.md:707
+data structures:destinationnoncestore	rfcs/accepted/networking/0970-forwarding-hop-auth-envelope.md:1242
+data structures:destinationnoncestore (3-arg	rfcs/accepted/networking/0970-forwarding-hop-auth-envelope.md:965
+data structures:roletag	rfcs/accepted/networking/0971-destination-node-role-consolidation.md:344
+data structures:roletag	rfcs/accepted/networking/0971-destination-node-role-consolidation.md:385
+data structures; cli	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:648
+databasesyncadapter durability	rfcs/accepted/networking/0862-stoolap-data-sync.md:310
+databasesyncadapter lsn advancement	rfcs/accepted/networking/0862-stoolap-data-sync.md:311
+dependencies +	rfcs/accepted/process/0011-u-oct-cli-network-phase-13.md:296
+dependencies optional	rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:75
+dependencies optional (rfc-0959	rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:1083
+dependencies rfc-0009-b1	rfcs/accepted/economics/0969-dual-pipeline-authorization.md:91
+design goal 3	rfcs/accepted/process/0011-u-oct-cli-network-phase-13.md:296
+design goal 3	rfcs/accepted/process/0011-u-oct-cli-network-phase-13.md:297
+destination ranking	rfcs/accepted/networking/0870-distributed-quota-router-network.md:1685
+deterministic canonical serialization (dcs	rfcs/accepted/economics/0959-v27-burn-event-wire-form.md:188
+deterministic constant	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:109
+deterministic constant	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:305
+deterministic constant	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:339
+deterministic constant	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:369
+deterministic encoding	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:188
+deterministic encoding	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:368
+deterministic encoding (big-endian	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:321
+deterministic encoding (big-endian	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:451
+domain separators	rfcs/accepted/economics/0967-a1-policy-registry.md:338
+domain separators	rfcs/accepted/economics/0967-a1-policy-registry.md:357
+dual-stake; rfc-0909	rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:1119
+dual-stake; rfc-0909 §economic analysis	rfcs/accepted/economics/0959-ask-settlement-chain.md:710
+dynamic registration	rfcs/accepted/economics/0904-real-time-cost-tracking.md:198
+election algorithm) landed	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:164
+encryption keys	rfcs/accepted/economics/0959-a1-market-delivery.md:891
+envelope codec	rfcs/accepted/networking/0871-specialized-node-protocol-envelope.md:310
+error handling); cli	rfcs/accepted/process/0011-f-mesh-operations.md:826
+event identity	rfcs/accepted/economics/0910-pricing-table-registry.md:145
+execution class a	rfcs/accepted/process/0014-v2-settlement-substrate-amendment.md:311
+execution class mapping	rfcs/accepted/economics/0105-v34-private-asset-namespace.md:86
+execution class mapping	rfcs/accepted/economics/0959-v27-burn-event-wire-form.md:173
+execution class mapping	rfcs/accepted/economics/0960-v35-vault-path-taxonomy.md:66
+execution class mapping	rfcs/accepted/economics/0960-v35-vault-path-taxonomy.md:91
+execution class mapping	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:165
+execution class mapping	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:331
+execution class mapping	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:663
+execution class mapping	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:664
+execution class mapping	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:78
+execution class mapping	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:819
+execution class mapping	rfcs/accepted/process/0015-b-substrate-defects.md:192
+execution class mapping	rfcs/accepted/process/0015-wallet-agent-operations.md:248
+execution class mapping	rfcs/accepted/process/0016-audit-receipt-api.md:160
+execution class mapping (slashing	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:106
+execution class mapping (slashing	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:331
+execution class mapping [^class-mapping-out-of-scope	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:106
+execution class mapping)[^class-mapping-out-of-scope	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:331
+exit code table	rfcs/accepted/process/0011-b-reputation-subcommands.md:314
+exit code table	rfcs/accepted/process/0011-b-reputation-subcommands.md:327
+exit code table	rfcs/accepted/process/0011-b-reputation-subcommands.md:497
+exit code table	rfcs/accepted/process/0011-b-reputation-subcommands.md:748
+exit code table	rfcs/accepted/process/0011-e-vault-operations.md:786
+exit codes); 100	rfcs/accepted/process/0011-e-vault-operations.md:1628
+exit codes); 64	rfcs/accepted/process/0011-g-governance-subcommands.md:1501
+extension surface	rfcs/accepted/process/0012-audit-substrate.md:355
+extension surface (forward	rfcs/accepted/process/0011-g-governance-subcommands.md:574
+external blockers + §22 b0	rfcs/planned/economics/0968-a3-chain-substrate-selection.md:21
+extra headers	rfcs/accepted/economics/0920-unified-python-sdk-dual-mode-compatibility.md:1178
+f1): ml-dsa + slh-dsa	rfcs/accepted/process/0009-identity-management.md:477
+f3 holderregistry	rfcs/accepted/process/0012-audit-substrate.md:152
+feature gate architecture):                         ║	rfcs/accepted/economics/0920-unified-python-sdk-dual-mode-compatibility.md:87
+feature-gated provider initialization	rfcs/accepted/economics/0927-router-config-extension.md:418
+fiat-shamir "internal	rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:1372
+follow-on §f	rfcs/accepted/process/0011-c-agent-lifecycle.md:1130
+follow-on §f	rfcs/accepted/process/0011-c-agent-lifecycle.md:258
+follow-on §f	rfcs/accepted/process/0011-c-agent-lifecycle.md:392
+follow-on §f	rfcs/accepted/process/0011-c-agent-lifecycle.md:417
+follow-on §f	rfcs/accepted/process/0011-c-agent-lifecycle.md:418
+follow-on §f	rfcs/accepted/process/0011-c-agent-lifecycle.md:419
+follow-on §f	rfcs/accepted/process/0011-c-agent-lifecycle.md:420
+follow-on §f	rfcs/accepted/process/0011-c-agent-lifecycle.md:421
+follow-on §f	rfcs/accepted/process/0011-c-agent-lifecycle.md:422
+follow-on §f	rfcs/accepted/process/0011-c-agent-lifecycle.md:423
+follow-on §f	rfcs/accepted/process/0011-c-agent-lifecycle.md:425
+future roles	rfcs/accepted/networking/0971-destination-node-role-consolidation.md:105
+fw2 + rfc-0014-v2 §fw4	rfcs/accepted/process/0012-v2-audit-substrate-amendment.md:278
+fw2 + §fw4	rfcs/accepted/process/0014-v2-settlement-substrate-amendment.md:143
+fw3 + §s5	rfcs/accepted/process/0014-v3-settlement-substrate-amendment.md:562
+fw6 + ac-11 + ac-12	rfcs/accepted/process/0012-v2-audit-substrate-amendment.md:307
+g5 "gateway federation: 1000+	rfcs/accepted/networking/0851p-a-network-bootstrap.md:63
+gossip envelope	rfcs/accepted/economics/0957-a1-holder-registry.md:1036
+gossip envelope	rfcs/accepted/economics/0957-a1-holder-registry.md:998
+gossip heartbeat	rfcs/accepted/economics/0957-a1-holder-registry.md:1028
+gossip heartbeat	rfcs/accepted/economics/0959-a1-market-delivery.md:955
+gossip heartbeat	rfcs/accepted/networking/0971-destination-node-role-consolidation.md:415
+gossip heartbeat + partition recovery	rfcs/accepted/economics/0957-a1-holder-registry.md:1066
+gossip heartbeat + retry	rfcs/accepted/economics/0959-a1-market-delivery.md:985
+gossip payload	rfcs/accepted/networking/0870-distributed-quota-router-network.md:1363
+hex32 +	rfcs/accepted/process/0011-a-audit-subcommands.md:834
+holder sign; ed25519	rfcs/accepted/economics/0959-ask-settlement-chain.md:312
+holderkind and	rfcs/accepted/process/0011-f-mesh-operations.md:134
+holderregistry unique	rfcs/accepted/economics/0959-a1-market-delivery.md:981
+ia #6	rfcs/accepted/process/0016-a-audit-receipt-write-path.md:475
+ia #6	rfcs/accepted/process/0016-a-audit-receipt-write-path.md:494
+ia #7	rfcs/accepted/process/0016-a-audit-receipt-write-path.md:475
+ia-2 (monotonic + ntp-synced	rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:1079
+ia-7 + rfc-0009 §vault	rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:1082
+identity management	rfcs/accepted/process/0011-e-vault-operations.md:133
+identity stability	rfcs/accepted/networking/0971-destination-node-role-consolidation.md:412
+identitykey +	rfcs/accepted/process/0015-wallet-agent-operations.md:272
+identityrecord + rfc-0009 §identity struct + §hsmadapter integration	rfcs/accepted/process/0015-wallet-agent-operations.md:272
+implementation phase 2	rfcs/accepted/process/0009-identity-management.md:723
+implementation phase 2; rfc-0870 §nodeenvelope adoption	rfcs/accepted/economics/0969-dual-pipeline-authorization.md:1021
+implementation phases) +	rfcs/accepted/process/0009-identity-evolution-v12.md:216
+implementation phases; §compatibility	rfcs/accepted/process/0011-d-role-provisioning.md:1059
+implementation reference → §implementation phases	rfcs/accepted/process/0009-identity-management.md:719
+implicit assumptions audit; rfc-0855p-b §"implicit assumptions audit" (sister	rfcs/accepted/networking/0850p-a-whatsapp-auth-onboarding.md:800
+implicit assumptions ia-6	rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:54
+implicit assumptions); §4 cross-references: "rfc-0957 §capability" → "rfc-0957 §capabilitytoken state machine"; "rfc-0964 §0	rfcs/accepted/economics/0967-a1-policy-registry.md:17
+inbound path	rfcs/accepted/networking/0870-distributed-quota-router-network.md:1685
+inference pipeline	rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:939
+invalidstatetransition (cli	rfcs/accepted/process/0015-wallet-agent-operations.md:122
+json schema validation	rfcs/accepted/economics/0920-unified-python-sdk-dual-mode-compatibility.md:1186
+key files; §6	rfcs/accepted/process/0016-a-audit-receipt-write-path.md:482
+key handling rules); §key handling rules	rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:1082
+kind uuid registry	rfcs/accepted/process/0206-v30-value-transfer-surface.md:143
+kind uuid registry (private	rfcs/accepted/economics/0105-v34-private-asset-namespace.md:112
+layer a/b/c/d/e	rfcs/accepted/process/0011-e-vault-operations.md:1297
+layer a/b/c/d/e	rfcs/accepted/process/0011-e-vault-operations.md:470
+lifecycle time bounds	rfcs/accepted/process/0009-identity-management.md:208
+lock ordering invariant: always	rfcs/accepted/economics/0904-real-time-cost-tracking.md:338
+manifest schema	rfcs/accepted/process/0015-wallet-agent-operations.md:335
+market delivery	rfcs/accepted/process/0014-settlement-substrate.md:825
+market delivery	rfcs/accepted/process/0014-settlement-substrate.md:95
+migration etiquette	rfcs/accepted/process/0015-wallet-agent-operations.md:311
+migration" → "rfc-0206	rfcs/accepted/process/0010-v17-chain-id-registration-authority.md:134
+mission lifecycle's	rfcs/accepted/process/0011-x-wallet-store-identity-substrate.md:1128
+model list	rfcs/accepted/economics/0920-unified-python-sdk-dual-mode-compatibility.md:1177
+motivation + §implementation phases task 1 ("variant	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:391
+motivation 4	rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md:1834
+multi-mission decomposition	rfcs/accepted/process/0011-a-audit-subcommands.md:791
+multi-mission decomposition	rfcs/accepted/process/0011-a-audit-subcommands.md:854
+multi-mission decomposition	rfcs/accepted/process/0011-d-role-provisioning.md:1543
+multi-mission decomposition	rfcs/accepted/process/0011-d-role-provisioning.md:1579
+multi-mission decomposition	rfcs/accepted/process/0011-e-vault-operations.md:1276
+namespace byte	rfcs/accepted/process/0206-v34-value-transfer-canonicalization.md:134
+network bootstrap phase 1	rfcs/accepted/networking/0870-distributed-quota-router-network.md:1365
+network cli surface	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:922
+network cli surface	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:935
+node destination selection	rfcs/accepted/networking/0870-distributed-quota-router-network.md:1492
+node destination selection algorithm	rfcs/accepted/networking/0870-distributed-quota-router-network.md:1672
+node taxonomy	rfcs/accepted/process/0011-q-oct-cli-network-phase-9.md:87
+nodeenvelope adoption	rfcs/accepted/networking/0870-distributed-quota-router-network.md:1250
+nodeenvelope adoption	rfcs/accepted/networking/0870-distributed-quota-router-network.md:1687
+nodeenvelope adoption	rfcs/accepted/networking/0871-specialized-node-protocol-envelope.md:556
+nodeenvelope adoption	rfcs/accepted/process/0009-identity-evolution-v12.md:1650
+nodeenvelope adoption	rfcs/accepted/process/0009-identity-evolution-v12.md:216
+nodeenvelope adoption (atomicity	rfcs/accepted/process/0009-identity-evolution-v12.md:1801
+nodeenvelope adoption uuid	rfcs/accepted/networking/0870-distributed-quota-router-network.md:1237
+nodetype gating matrix	rfcs/accepted/process/0009-identity-management.md:168
+nodetype gating matrix	rfcs/accepted/process/0009-identity-management.md:519
+nodetype gating matrix	rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:1375
+nodetype gating matrix); (b) provider-key	rfcs/accepted/process/0009-identity-management.md:534
+nodetype gating matrix; §nodetype gating rule; §algorithms	rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:1081
+nonce store	rfcs/accepted/networking/0970-forwarding-hop-auth-envelope.md:834
+nonce store	rfcs/accepted/networking/0970-forwarding-hop-auth-envelope.md:990
+nonce store gc	rfcs/accepted/networking/0970-forwarding-hop-auth-envelope.md:1048
+notactive (substrate-faithful	rfcs/accepted/process/0015-wallet-agent-operations.md:336
+operational requirements	rfcs/accepted/networking/0970-forwarding-hop-auth-envelope.md:1045
+out-of-scope +	rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md:1883
+output envelope) only	rfcs/accepted/process/0011-e-vault-operations.md:602
+output envelope: outputenvelope<t>	rfcs/accepted/process/0011-e-vault-operations.md:318
+output envelope: vaultbalanceoutput	rfcs/accepted/process/0011-e-vault-operations.md:339
+output envelope: vaultlistoutput	rfcs/accepted/process/0011-e-vault-operations.md:328
+output envelope: vaulttransferoutput	rfcs/accepted/process/0011-e-vault-operations.md:353
+overlay cryptography	rfcs/accepted/networking/0970-forwarding-hop-auth-envelope.md:1290
+overlay cryptography	rfcs/accepted/networking/0970-forwarding-hop-auth-envelope.md:42
+overlay cryptography (blake3	rfcs/accepted/networking/0970-forwarding-hop-auth-envelope.md:27
+pairing discipline (paired keep +	rfcs/accepted/process/0015-wallet-agent-operations.md:90
+per-extension crate layout; rfc-0871 §wallet node lifecycle	rfcs/accepted/economics/0957-capability-token-format.md:1104
+per-extension crate layout; rfc-0871 §wallet node lifecycle	rfcs/accepted/economics/0965-capability-extension-format.md:18
+per-extension crate layout; rfc-0871 §wallet node lifecycle	rfcs/accepted/economics/0965-capability-extension-format.md:581
+per-extension crate layout; rfc-0871 §wallet node lifecycle; layer 4	rfcs/accepted/economics/0957-capability-token-format.md:1137
+performance targets; hkdf-blake3	rfcs/accepted/process/0009-identity-management.md:354
+phantom types	rfcs/accepted/economics/0957-a1-holder-registry.md:96
+phantom types + rfc-0959-a1 §algorithms:phantomcallsite + rfc-0969 §algorithms:phantomcallsite	rfcs/accepted/economics/0959-a1-market-delivery.md:897
+phantom types:identitykey	rfcs/accepted/economics/0957-a1-holder-registry.md:80
+phantom types:identitykey + rfc-0959-a1 §algorithms:phantomcallsite (r60-n4	rfcs/accepted/networking/0971-destination-node-role-consolidation.md:78
+platform-mediated handover	rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md:113
+platform-mediated handover	rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md:2086
+platformadapter receiver	rfcs/accepted/networking/0870-distributed-quota-router-network.md:1685
+primary key	rfcs/accepted/economics/0960-v35-vault-path-taxonomy.md:55
+primary key	rfcs/accepted/economics/0960-v35-vault-path-taxonomy.md:90
+principle 12	rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:1086
+principle 12	rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:259
+prompt cache	rfcs/accepted/economics/0920-unified-python-sdk-dual-mode-compatibility.md:1197
+prompt cache	rfcs/accepted/economics/0920-unified-python-sdk-dual-mode-compatibility.md:1198
+provider sdk type registry	rfcs/accepted/economics/0920-unified-python-sdk-dual-mode-compatibility.md:1487
+public inputs	rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:210
+quorum recording (forward	rfcs/accepted/process/0011-g-governance-subcommands.md:1224
+quorum recording (forward	rfcs/accepted/process/0011-g-governance-subcommands.md:773
+quorum recording (forward	rfcs/accepted/process/0011-g-governance-subcommands.md:862
+quota api key (per r41	rfcs/accepted/process/0009-identity-evolution-v12.md:1828
+raftlike writer election	rfcs/draft/networking/0862p-a-writer-election-bootstrap.md:16
+rationale "why	rfcs/accepted/process/0011-f-mesh-operations.md:1272
+rationale "why	rfcs/accepted/process/0011-f-mesh-operations.md:1417
+rationale stwo	rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:1372
+re-export block cap	rfcs/accepted/process/0206-v40-pubsub-extension.md:32
+reasoncontainscontrolchars + §reasontoolong	rfcs/accepted/process/0015-wallet-agent-operations.md:104
+receipt shape	rfcs/accepted/process/0011-a-audit-subcommands.md:294
+receipt shape	rfcs/accepted/process/0011-a-audit-subcommands.md:580
+receipt shape	rfcs/accepted/process/0014-settlement-substrate.md:621
+receipt shape	rfcs/accepted/process/0014-settlement-substrate.md:843
+receipt shape (adds	rfcs/accepted/process/0014-settlement-substrate.md:857
+receipt shape must	rfcs/accepted/process/0011-a-audit-subcommands.md:680
+receipt status	rfcs/accepted/process/0011-a-audit-subcommands.md:246
+receipt status	rfcs/accepted/process/0011-a-audit-subcommands.md:862
+redaction layer) must	rfcs/accepted/process/0011-octo-cli-substrate.md:871
+redaction layer; json	rfcs/accepted/process/0011-g-governance-subcommands.md:863
+request routing algorithm	rfcs/accepted/networking/0870-distributed-quota-router-network.md:1064
+request routing algorithm	rfcs/accepted/networking/0870-distributed-quota-router-network.md:1357
+revocation oracles	rfcs/accepted/economics/0957-capability-token-format.md:689
+rfc process"	rfcs/accepted/economics/0968-a2-discriminant-stability.md:118
+rfc process"	rfcs/accepted/economics/0968-a2-discriminant-stability.md:24
+rfc process; r4	rfcs/accepted/economics/0105-v34-private-asset-namespace.md:111
+rfc-0008 execution class mapping; §future work f1	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:441
+rfc-0015 r40	rfcs/accepted/process/0015-a-wallet-agent-write-path.md:135
+rfc-0105 §sql column scale semantics	rfcs/accepted/economics/0959-v27-burn-event-wire-form.md:200
+rfc-0105 §sql column scale semantics	rfcs/accepted/economics/0959-v27-burn-event-wire-form.md:201
+rfc-0962 §4	rfcs/accepted/economics/0960-grand-design-vaults-capabilities-reservations.md:1439
+role token economics	rfcs/accepted/process/0011-d-role-provisioning.md:1662
+role/authority egress module	rfcs/accepted/economics/0957-capability-token-format.md:1134
+roles + rfc-0957-a1 §holderregistry	rfcs/accepted/economics/0957-a1-holder-registry.md:1380
+roles + §specification	rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md:57
+roles /	rfcs/accepted/process/0011-d-role-provisioning.md:1673
+roles marketplace index	rfcs/accepted/economics/0959-ask-settlement-chain.md:997
+roles token issuer	rfcs/accepted/economics/0957-a1-holder-registry.md:1376
+roles token issuer update	rfcs/accepted/economics/0957-a1-holder-registry.md:1374
+roles update	rfcs/accepted/economics/0959-a1-market-delivery.md:1255
+roles update	rfcs/accepted/networking/0971-destination-node-role-consolidation.md:630
+roles update	rfcs/accepted/networking/0971-destination-node-role-consolidation.md:634
+roles update	rfcs/accepted/networking/0971-destination-node-role-consolidation.md:638
+roles update	rfcs/accepted/networking/0971-destination-node-role-consolidation.md:642
+roles virtual-key operator	rfcs/accepted/economics/0969-dual-pipeline-authorization.md:805
+roles/§adversary (5-question a1-a5)/§lifecycle (ask + marketplace index	rfcs/accepted/economics/0959-ask-settlement-chain.md:998
+s1 + appendix a (substrate	rfcs/accepted/process/0012-v2-audit-substrate-amendment.md:277
+s1 + appendix a must	rfcs/accepted/process/0014-v2-settlement-substrate-amendment.md:351
+s1 + §s2	rfcs/accepted/process/0014-v2-settlement-substrate-amendment.md:805
+s1 + §s5	rfcs/accepted/process/0012-v2-audit-substrate-amendment.md:690
+s2 acl	rfcs/accepted/process/0012-v2-audit-substrate-amendment.md:598
+s2 receipt 6-field	rfcs/accepted/process/0016-a-audit-receipt-write-path.md:145
+s3 receiptid	rfcs/accepted/process/0016-a-audit-receipt-write-path.md:522
+s3) +	rfcs/accepted/process/0014-v2-settlement-substrate-amendment.md:805
+s6 +	rfcs/accepted/process/0014-v2-settlement-substrate-amendment.md:307
+s7 + fw2	rfcs/accepted/process/0012-v2-audit-substrate-amendment.md:601
+s7 + rfc-0014-v2 §fw4	rfcs/accepted/process/0014-v2-settlement-substrate-amendment.md:821
+s7 + §fw2	rfcs/accepted/process/0012-v2-audit-substrate-amendment.md:784
+s7 + §fw2 (settlement-side	rfcs/accepted/process/0012-v2-audit-substrate-amendment.md:706
+s7 §table c	rfcs/accepted/process/0014-v2-settlement-substrate-amendment.md:620
+sample kinds (forward	rfcs/accepted/process/0011-g-governance-subcommands.md:574
+sample kinds (forward	rfcs/accepted/process/0011-g-governance-subcommands.md:579
+sample walk-through a	rfcs/accepted/economics/0969-dual-pipeline-authorization.md:1021
+sample walk-through §a	rfcs/accepted/economics/0969-dual-pipeline-authorization.md:1021
+sc2 +	rfcs/accepted/process/0014-v2-settlement-substrate-amendment.md:226
+sc2 + §s5	rfcs/accepted/process/0014-v2-settlement-substrate-amendment.md:80
+security #1	rfcs/accepted/process/0016-a-audit-receipt-write-path.md:310
+security #2	rfcs/accepted/process/0016-a-audit-receipt-write-path.md:311
+security #3	rfcs/accepted/process/0016-a-audit-receipt-write-path.md:312
+security #4	rfcs/accepted/process/0016-a-audit-receipt-write-path.md:313
+security 1 / §security 4	rfcs/accepted/process/0011-d-role-provisioning.md:828
+security 1a	rfcs/accepted/process/0011-d-role-provisioning.md:1096
+security 1a	rfcs/accepted/process/0011-d-role-provisioning.md:1130
+security 1a	rfcs/accepted/process/0011-d-role-provisioning.md:1430
+security 1a	rfcs/accepted/process/0011-d-role-provisioning.md:291
+security 1a	rfcs/accepted/process/0011-d-role-provisioning.md:923
+security 1a (atomic	rfcs/accepted/process/0011-d-role-provisioning.md:920
+security 2	rfcs/accepted/process/0011-d-role-provisioning.md:1023
+security 2	rfcs/accepted/process/0011-d-role-provisioning.md:1124
+security 2	rfcs/accepted/process/0011-d-role-provisioning.md:1762
+security 2	rfcs/accepted/process/0011-d-role-provisioning.md:472
+security 2	rfcs/accepted/process/0011-d-role-provisioning.md:587
+security 2	rfcs/accepted/process/0011-d-role-provisioning.md:890
+security 4	rfcs/accepted/process/0011-d-role-provisioning.md:1054
+security 4	rfcs/accepted/process/0011-d-role-provisioning.md:1067
+security 4	rfcs/accepted/process/0011-d-role-provisioning.md:1123
+security 4	rfcs/accepted/process/0011-d-role-provisioning.md:244
+security 4	rfcs/accepted/process/0011-d-role-provisioning.md:915
+security 4	rfcs/accepted/process/0011-d-role-provisioning.md:916
+security 4	rfcs/accepted/process/0011-d-role-provisioning.md:917
+security 4	rfcs/accepted/process/0011-d-role-provisioning.md:92
+security 4	rfcs/accepted/process/0011-d-role-provisioning.md:928
+security 6	rfcs/accepted/process/0011-d-role-provisioning.md:753
+security confirmation gate	rfcs/accepted/process/0015-a-wallet-agent-write-path.md:261
+security considerations); ci	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:329
+security considerations: transfer replay	rfcs/accepted/process/0011-e-vault-operations.md:1209
+security note	rfcs/final/economics/0909-deterministic-quota-accounting.md:1564
+service tier	rfcs/accepted/economics/0920-unified-python-sdk-dual-mode-compatibility.md:1195
+session resumption	rfcs/accepted/networking/0970-forwarding-hop-auth-envelope.md:828
+settlementenvelope + §defaults +	rfcs/accepted/economics/0105-v34-private-asset-namespace.md:110
+settlementevent + §settlementreceipt	rfcs/accepted/economics/0959-a1-market-delivery.md:61
+shared session	rfcs/accepted/economics/0920-unified-python-sdk-dual-mode-compatibility.md:1185
+signature coverage	rfcs/accepted/networking/0855p-d2-sub-dc-delegation-lifecycle.md:337
+snapshot ttl	rfcs/accepted/process/0011-g-governance-subcommands.md:440
+sovereign identity model	rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md:119
+sovereign identity model	rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md:2091
+specification + rfc-0901	rfcs/accepted/networking/0870-distributed-quota-router-network.md:318
+specification + rfc-0970 §phase 4	rfcs/accepted/networking/0870-distributed-quota-router-network.md:317
+specification / §data structure / §security / §test vectors	rfcs/accepted/networking/0855p-d-subgroup-nesting.md:13
+specification > mpc	rfcs/accepted/process/0009-identity-evolution-v12.md:1386
+specification envelope type added cgsb + §data structure (cgsb	rfcs/accepted/networking/0855p-d1-subgroup-creation-and-state.md:5
+specification nor	rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md:1947
+specification §adversary analysis (required	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:332
+specification §algorithms	rfcs/accepted/process/0008-deterministic-ai-execution-boundary.md:369
+specification §chain integrity	rfcs/accepted/process/0012-audit-substrate.md:81
+specification §compatibility (required	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:422
+specification §compatibility required	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:533
+specification §cross-rfc consistency checklist (compatibility + implicit assumptions audit	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:5
+specification §data structures	rfcs/accepted/process/0008-deterministic-ai-execution-boundary.md:367
+specification §data structures	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:539
+specification §data structures	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:604
+specification §diddocument	rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md:1381
+specification §dynamic loading flow	rfcs/accepted/networking/0863-general-purpose-network-integration.md:340
+specification §error	rfcs/accepted/process/0013-governance-substrate.md:190
+specification §error	rfcs/accepted/process/0013-governance-substrate.md:512
+specification §implicit assumptions audit (required	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:432
+specification §implicit assumptions audit required	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:533
+specification §lifecycle requirements (one-line	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:294
+specification §platformadapterbridge	rfcs/accepted/networking/0863-general-purpose-network-integration.md:338
+specification §platformadapterbridge	rfcs/accepted/networking/0863-general-purpose-network-integration.md:339
+specification §platformadapterbridge	rfcs/accepted/networking/0863-general-purpose-network-integration.md:341
+specification §proposal	rfcs/accepted/process/0013-governance-substrate.md:80
+specification §reservation	rfcs/accepted/process/0014-settlement-substrate.md:558
+specification §rfc-0008 execution class mapping	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:309
+specification §security considerations (required	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:313
+specification §substrate	rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md:518
+specification §substrate	rfcs/accepted/process/0010-canonical-did-codec.md:1016
+specification §substrate	rfcs/accepted/process/0010-canonical-did-codec.md:840
+specification §tally helpers	rfcs/accepted/process/0013-governance-substrate.md:84
+specification §trait	rfcs/accepted/process/0012-audit-substrate.md:80
+specification §trait	rfcs/accepted/process/0014-settlement-substrate.md:87
+specification §trait	rfcs/accepted/process/0014-settlement-substrate.md:88
+specification) +	rfcs/accepted/process/0011-a-audit-subcommands.md:691
+spendledger substrate	rfcs/accepted/economics/0965-capability-extension-format.md:19
+spendledger substrate	rfcs/accepted/economics/0965-capability-extension-format.md:193
+spendledger substrate	rfcs/accepted/networking/0862-writer-election-bootstrap-v130.md:2117
+stable abstractions principle: layer b (substrate	rfcs/accepted/process/0011-j-oct-cli-network-phase-2.md:297
+stable abstractions principle: layer b (substrate	rfcs/accepted/process/0011-k-oct-cli-network-phase-3.md:252
+stable abstractions principle: layer b (substrate	rfcs/accepted/process/0011-l-oct-cli-network-phase-4.md:265
+stable abstractions principle: layer b (substrate	rfcs/accepted/process/0011-m-oct-cli-network-phase-5.md:234
+stable abstractions principle: layer b (substrate	rfcs/accepted/process/0011-n-oct-cli-network-phase-6.md:247
+stable abstractions principle: layer b (substrate	rfcs/accepted/process/0011-o-oct-cli-network-phase-7.md:334
+stark curve	rfcs/accepted/process/0009-identity-management.md:82
+subcommand taxonomy)"	rfcs/accepted/process/0011-a-audit-subcommands.md:1078
+subdcdelegationpolicy (no	rfcs/accepted/networking/0855p-d3-routing-aggregation-teardown.md:379
+substrate discipline	rfcs/accepted/process/0011-r-oct-cli-network-phase-10.md:159
+substrate discipline	rfcs/accepted/process/0011-r-oct-cli-network-phase-10.md:173
+substrate migration	rfcs/accepted/economics/0967-a1-policy-registry.md:17
+substrate migration	rfcs/accepted/economics/0967-a1-policy-registry.md:19
+substrate migration	rfcs/accepted/economics/0967-a1-policy-registry.md:345
+substrate migration	rfcs/accepted/economics/0967-a1-policy-registry.md:355
+substrate migration	rfcs/accepted/process/0010-v17-chain-id-registration-authority.md:134
+substrate migration	rfcs/accepted/process/0010-v17-chain-id-registration-authority.md:17
+substrate migration	rfcs/accepted/process/0010-v17-chain-id-registration-authority.md:27
+substrate migration	rfcs/accepted/process/0010-v17-chain-id-registration-authority.md:29
+substrate validation table	rfcs/planned/economics/0968-a3-chain-substrate-selection.md:95
+substrate-additions [^ci-detection-gated	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:543
+substrate-additions g-rows	rfcs/accepted/process/0011-p-oct-cli-network-phase-8.md:203
+substrate-additions g1	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:528
+substrate-additions g1	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:542
+substrate-additions g1	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:545
+substrate-additions g1	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:787
+substrate-additions g1	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:919
+substrate-additions g1	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:219
+substrate-additions g1	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:223
+substrate-additions g12b	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:537
+substrate-additions g21	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:785
+substrate-additions g21	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:19
+substrate-additions g21	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:237
+substrate-additions g21	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:426
+substrate-additions g21	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:452
+substrate-additions g21	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:471
+substrate-additions g21	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:495
+substrate-additions g21	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:5
+substrate-additions g21	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:504
+substrate-additions g21	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:53
+substrate-additions g21	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:66
+substrate-additions g21	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:77
+substrate-additions g21 (the	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:785
+substrate-additions g21 + rfc-0011-c §f	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:777
+substrate-additions g21 + rfc-0011-c §f	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:241
+substrate-additions g3	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:426
+substrate-additions g3	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:452
+substrate-additions g3	rfcs/accepted/process/0011-x-wallet-store-identity-substrate.md:569
+substrate-additions g3b	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:321
+substrate-additions g3b	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:460
+substrate-additions g3b	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:793
+substrate-faithfulness + phase 12 r2	rfcs/accepted/process/0011-o-oct-cli-network-phase-7.md:125
+summary "internet analogy"	rfcs/accepted/networking/0851p-a-network-bootstrap.md:62
+summary "substrate-faithful	rfcs/accepted/process/0015-a-wallet-agent-write-path.md:184
+summary #6 (mintdual algorithm	rfcs/accepted/economics/0969-dual-pipeline-authorization.md:1021
+tally canonicalisation	rfcs/draft/networking/0862p-a-writer-election-bootstrap.md:19
+test vectors): tv-aud-3	rfcs/accepted/process/0016-audit-receipt-api.md:259
+the rfc process: "1	rfcs/accepted/process/0011-b-reputation-subcommands.md:587
+the rfc process: "1	rfcs/accepted/process/0011-octo-cli-substrate.md:1202
+third-party discharge	rfcs/accepted/economics/0965-capability-extension-format.md:547
+tools → implementation guides	rfcs/accepted/process/0011-e-vault-operations.md:1327
+top k	rfcs/accepted/economics/0920-unified-python-sdk-dual-mode-compatibility.md:1193
+trait g3	rfcs/accepted/process/0012-v2-audit-substrate-amendment.md:149
+trait g3	rfcs/accepted/process/0012-v2-audit-substrate-amendment.md:220
+trait version enforcement	rfcs/accepted/numeric/0112-deterministic-vectors.md:141
+transfer flow: pre-flight	rfcs/accepted/process/0011-e-vault-operations.md:1032
+transfer flow: pre-flight	rfcs/accepted/process/0011-e-vault-operations.md:1217
+transfer flow: pre-flight	rfcs/accepted/process/0011-e-vault-operations.md:1219
+transfer flow: pre-flight	rfcs/accepted/process/0011-e-vault-operations.md:872
+transfer flow: pre-flight	rfcs/accepted/process/0011-e-vault-operations.md:985
+transfer flow: pre-flight (transfer	rfcs/accepted/process/0011-e-vault-operations.md:873
+transfer flow: replay	rfcs/accepted/process/0011-e-vault-operations.md:877
+transitionreceipt; cli	rfcs/accepted/process/0015-a-wallet-agent-write-path.md:166
+typed uuid	rfcs/accepted/process/0011-c-agent-lifecycle.md:771
+unit system	rfcs/accepted/economics/0904-real-time-cost-tracking.md:1459
+user extensions (forward	rfcs/accepted/process/0011-g-governance-subcommands.md:1266
+user extensions (forward	rfcs/accepted/process/0011-g-governance-subcommands.md:577
+value-preserving conversion	rfcs/draft/numeric/0131-bigint-to-dqa.md:500
+vault +	rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:902
+vault substrate	rfcs/accepted/economics/0960-grand-design-vaults-capabilities-reservations.md:32
+vault substrate	rfcs/accepted/economics/0960-grand-design-vaults-capabilities-reservations.md:734
+vault substrate	rfcs/accepted/economics/0961-ciphero-sql-language-spec.md:633
+vault substrate	rfcs/accepted/economics/0962-consensus-session-protocol.md:630
+vault substrate	rfcs/accepted/economics/0963-resource-shard-routing.md:423
+vault substrate	rfcs/accepted/economics/0964-constraint-encoding-standard.md:613
+vault substrate	rfcs/accepted/economics/0965-capability-extension-format.md:542
+vault substrate	rfcs/accepted/economics/0967-policy-object-graph.md:314
+vault substrate (chain-aware pk	rfcs/accepted/economics/0963-resource-shard-routing.md:385
+vault/§vault substrate	rfcs/accepted/economics/0967-a1-policy-registry.md:357
+verification); dkg-based pk-set	rfcs/accepted/process/0009-identity-evolution-v12.md:1353
+vm canonicalization rule	rfcs/draft/numeric/0132-dqa-to-bigint.md:162
+wallet node lifecycle; rfc-0870 §version history	rfcs/accepted/networking/0870-distributed-quota-router-network.md:1233
+web search options	rfcs/accepted/economics/0920-unified-python-sdk-dual-mode-compatibility.md:1181
+why phase 1/2	rfcs/accepted/process/0011-d-role-provisioning.md:1673
+wire contract"	rfcs/accepted/process/0011-b-reputation-subcommands.md:95
+wire format)"	rfcs/accepted/process/0011-u-oct-cli-network-phase-13.md:296
+wiredid + §canonicalcodec (rfc-0010	rfcs/accepted/process/0015-wallet-agent-operations.md:369
+wiring diagram	rfcs/accepted/networking/0870-distributed-quota-router-network.md:1678
+witness set aggregation	rfcs/accepted/networking/0855p-d-subgroup-nesting.md:239
+witness set aggregation	rfcs/accepted/networking/0855p-d-subgroup-nesting.md:54
+witness set aggregation	rfcs/accepted/networking/0855p-d3-routing-aggregation-teardown.md:606
+writer election	rfcs/draft/networking/0862p-a-writer-election-bootstrap.md:15
+writerelection protocol); §implementation phases	rfcs/accepted/process/0008-deterministic-ai-execution-boundary.md:639

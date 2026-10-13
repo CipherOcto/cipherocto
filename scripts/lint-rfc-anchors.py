@@ -14,6 +14,14 @@ corpus contains ~1.6k references that resolve nowhere. A lint that fails on
 default run fails only on NEW breakage. `--strict` reports everything and
 always exits 1. `--write-baseline` rewrites the baseline after a deliberate
 sweep.
+
+**The baseline is keyed on (name, site), not on name.** A name-only baseline
+cannot see a *new place* that cites an already-known-dangling anchor: a section
+written today citing `§145` produced exit 0 and no mention of the file, because
+the name was in the baseline and the baseline was never asked about lines.
+Verified by planting that citation against the old baseline and watching it
+pass, then watching it fail here. 576 of 729 entries in the type-reference
+linter's baseline had the same shape and were fixed the same way.
 """
 from __future__ import annotations
 
@@ -54,7 +62,14 @@ ANCHOR = re.compile(
 #
 # The negative lookahead forces the longest match: for `§6.1 Public` the shorter
 # `6` is rejected because a dot follows, so `6.1` wins.
-NUMBERED_ANCHOR = re.compile(r"§(\d+(?:\.\d+)*)(?![\w.])")
+# The trailing lookahead excludes a word character, not a period. Excluding the
+# period as well meant `§9.9.9.` — a numeric anchor at the end of a sentence,
+# which is how prose usually writes one — matched nothing at all: the regex
+# backtracked from `9.9.9` to `9.9` to `9` and every candidate was rejected by
+# the `.` that followed. Verified by planting `§9.9.9.` and `§9.9.9` in the same
+# run: the first produced exit 0 and no finding, the second exit 1 naming the
+# file. The word-character exclusion still rejects `§3.5.7a`.
+NUMBERED_ANCHOR = re.compile(r"§(\d+(?:\.\d+)*)(?![\w])")
 
 # A citation of a four-digit RFC id, the shape this project uses. External
 # specifications are cited the same way in prose (`RFC 8032 §5.1.6`), so the id
@@ -251,46 +266,73 @@ def main() -> int:
     for path, lineno, name in unresolved:
         by_name.setdefault(name, []).append(f"{path.relative_to(ROOT)}:{lineno}")
 
+    # (name, site) pairs, not names. A name-only baseline cannot see a *new*
+    # place that cites an already-known-dangling anchor: a document written
+    # today citing `§ac-8 2-cycle` produced exit 0 and no mention of the file,
+    # because the name was in the baseline and the baseline was never asked
+    # about lines. The thing being measured is violations, not vocabulary.
+    findings = {(name, site) for name, sites in by_name.items() for site in sites}
+
     if args.write_baseline:
         BASELINE_PATH.write_text(
-            "\n".join(sorted(by_name)) + ("\n" if by_name else ""), encoding="utf-8"
+            "\n".join(f"{name}\t{site}" for name, site in sorted(findings))
+            + ("\n" if findings else ""),
+            encoding="utf-8",
         )
-        print(f"baseline written: {len(by_name)} dangling anchor name(s)")
+        print(f"baseline written: {len(findings)} dangling reference(s) across "
+              f"{len(by_name)} distinct name(s)")
         return 0
 
     if not unresolved:
         print(f"anchor lint clean — {len(known)} headings indexed across docs")
         return 0
 
-    baseline: set[str] = set()
+    baseline: set[tuple[str, str]] = set()
     if BASELINE_PATH.exists():
-        baseline = {
-            line.strip()
-            for line in BASELINE_PATH.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        }
+        for line in BASELINE_PATH.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            name, _, site = line.partition("\t")
+            if not site:
+                # A bare name from a pre-site-keyed baseline. Kept as a
+                # name-only suppression so the migration does not turn the whole
+                # corpus red on one run, and reported so the debt stays visible.
+                baseline.add((name, "*"))
+            else:
+                baseline.add((name, site))
 
-    new_names = sorted(set(by_name) - baseline)
-    fixed = len(baseline - set(by_name))
+    wildcard = {n for n, site in baseline if site == "*"}
+    new_findings = sorted(f for f in findings - baseline if f[0] not in wildcard)
+    fixed = len({f for f in baseline if f not in findings and f[1] != "*"})
 
     print(f"anchors indexed: {len(known)} headings")
+    if wildcard:
+        print(f"note: {len(wildcard)} name(s) in the baseline are still name-only "
+              f"and cannot see a new site — re-run with --write-baseline")
     print(f"dangling: {len(unresolved)} reference(s) over {len(by_name)} distinct name(s)")
-    print(f"baselined: {len(baseline - set(by_name))} of {len(baseline)} previously known are now fixed")
+    # `baseline - set(by_name)` was computed against a name set. With a
+    # (name, site) set that subtraction is meaningless and reported every
+    # entry as fixed, which is the opposite of what it says.
+    print(f"baselined: {fixed} of {len(findings)} current reference(s) are recorded as known")
     if fixed:
         print("  -> shrink the baseline with --write-baseline")
 
-    if new_names:
+    if new_findings:
+        by_new: dict[str, list[str]] = {}
+        for name, site in new_findings:
+            by_new.setdefault(name, []).append(site)
         print(f"\nNEW dangling anchor(s) — not in baseline:\n")
-        for name in new_names:
-            sites = ", ".join(by_name[name][:4])
-            extra = f" (+{len(by_name[name]) - 4} more)" if len(by_name[name]) > 4 else ""
-            print(f"  §{name}\n      {sites}{extra}")
+        for name, sites in sorted(by_new.items()):
+            shown = ", ".join(sorted(sites)[:4])
+            extra = f" (+{len(sites) - 4} more)" if len(sites) > 4 else ""
+            print(f"  §{name}\n      {shown}{extra}")
 
     if args.strict and by_name:
         print(f"\n--strict: {len(by_name)} distinct dangling anchor name(s) outstanding.")
         return 1
 
-    if new_names:
+    if new_findings:
         print(
             "\nA dangling anchor in a normative 'settled in RFC-NNNN §X' sentence "
             "is an\nunauditable control: the reader is sent nowhere."

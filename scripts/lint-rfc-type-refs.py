@@ -21,6 +21,15 @@ What is left is a type referenced as though it existed but defined nowhere.
 Those are reported. Because the pre-existing corpus contains many, findings are
 baselined and the default run fails only on new ones.
 
+**The baseline is keyed on (name, site), not on name.** That is the whole
+difference between a suppression list and a record of debt. A name-only
+baseline made every *new* occurrence of an already-known-unresolved name
+invisible: an RFC written today referencing `ActionPayload` — undefined
+anywhere — produced exit 0 and no mention of the file, because the name was in
+the baseline and the baseline was never asked about places. Verified by
+planting exactly that and watching it pass, then watching it fail after the
+change.
+
 Deliberate limit: this checks *existence*, not *shape*. A type that exists with
 the wrong variants, or a function with the wrong signature, passes. Catching
 that needs the declaration compared field-by-field against the crate, which is a
@@ -218,10 +227,25 @@ def main() -> int:
                 continue
             unresolved.setdefault(name, []).append(str(path.relative_to(ROOT)))
 
+    # (name, site) pairs, not names. A name-only baseline makes every *new*
+    # occurrence of an already-known-unresolved name invisible: an RFC written
+    # today that references `ActionPayload` — undefined anywhere — produced exit
+    # 0 and no mention of the file, because the name is in the baseline and the
+    # baseline was never asked about places.
+    #
+    # The thing being measured is violations, not vocabulary. 576 known-bad
+    # names in a baseline is a suppression list; 576 known-bad *sites* is a
+    # record of where the debt is, and a new site is new debt.
+    findings = {(name, site) for name, sites in unresolved.items() for site in sites}
+
     if args.write_baseline:
-        BASELINE_PATH.write_text("\n".join(sorted(unresolved)) + ("\n" if unresolved else ""),
-                                 encoding="utf-8")
-        print(f"baseline written: {len(unresolved)} unresolved type name(s)")
+        BASELINE_PATH.write_text(
+            "\n".join(f"{name}\t{site}" for name, site in sorted(findings))
+            + ("\n" if findings else ""),
+            encoding="utf-8",
+        )
+        print(f"baseline written: {len(findings)} unresolved reference(s) "
+              f"across {len(unresolved)} name(s)")
         return 0
 
     if not unresolved:
@@ -234,28 +258,48 @@ def main() -> int:
         print(f"type-reference lint clean — {len(resolved)} symbols indexed")
         return 0
 
-    baseline: set[str] = set()
+    baseline: set[tuple[str, str]] = set()
     if BASELINE_PATH.exists():
-        baseline = {line.strip() for line in BASELINE_PATH.read_text(encoding="utf-8").splitlines()
-                    if line.strip()}
+        for line in BASELINE_PATH.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            name, _, site = line.partition("\t")
+            if not site:
+                # A bare name from a baseline written before this was
+                # site-keyed. Kept as a name-only suppression so the migration
+                # does not turn the whole corpus red on one run, but it is
+                # reported below so the debt is visible rather than silent.
+                baseline.add((name, "*"))
+            else:
+                baseline.add((name, site))
 
-    new_names = sorted(set(unresolved) - baseline)
-    fixed = len(baseline - set(unresolved))
+    wildcard = {n for n, site in baseline if site == "*"}
+    new_findings = sorted(f for f in findings - baseline if f[0] not in wildcard)
+    fixed = len({f for f in baseline if f not in findings and f[1] != "*"})
 
     print(f"symbols indexed: {len(resolved)}")
-    print(f"unresolved in RFC code blocks: {len(unresolved)} name(s)")
+    print(f"unresolved in RFC code blocks: {len(findings)} reference(s) over "
+          f"{len(unresolved)} name(s)")
+    if wildcard:
+        print(f"note: {len(wildcard)} name(s) in the baseline are still name-only "
+              f"and cannot see a new site — re-run with --write-baseline")
     if fixed:
-        print(f"baselined names now resolved: {fixed} — shrink with --write-baseline")
+        print(f"baselined references now resolved: {fixed} — shrink with --write-baseline")
 
-    if new_names:
+    if new_findings:
+        by_name: dict[str, list[str]] = {}
+        for name, site in new_findings:
+            by_name.setdefault(name, []).append(site)
         print(f"\nNEW type reference(s) with no declaration anywhere:\n")
-        for name in new_names:
-            sites = ", ".join(sorted(set(unresolved[name]))[:3])
-            print(f"  {name}\n      {sites}")
+        for name, sites in sorted(by_name.items()):
+            shown = ", ".join(sorted(sites)[:3])
+            more = f" (+{len(sites) - 3} more)" if len(sites) > 3 else ""
+            print(f"  {name}\n      {shown}{more}")
 
     if args.strict and unresolved:
         return 1
-    if new_names:
+    if new_findings:
         print(
             "\nA type referenced in an RFC code block and defined nowhere is the\n"
             "failure mode R41 found repeatedly: authoritative prose describing a\n"

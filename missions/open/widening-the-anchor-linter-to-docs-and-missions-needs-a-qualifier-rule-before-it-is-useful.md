@@ -1,6 +1,6 @@
 ---
 name: widening-the-anchor-linter-to-docs-and-missions-needs-a-qualifier-rule-before-it-is-useful
-description: "The anchors linter scans rfcs only. Widening it to docs and missions was measured rather than assumed: it would surface 2789 findings, of which 644 in docs and 894 in missions are extraction artifacts where the anchor pattern absorbed trailing prose. Of the remainder, 819 resolve as a real section name followed by a qualifier such as §Implementation Phases 1 or §Adversary A5, which is the same shape as the trailing-prose-word problem already filed. Widening without a qualifier rule produces mostly noise. A candidate terminator change that looked inert on the gated tree by extraction count turns CI red by 25 unbaselined findings when measured properly, so it is not the safe first commit it first appeared to be."
+description: "Widening the anchor linter from rfcs to docs and missions was measured with the linters own functions via scripts/measure_anchor_lint.py. Measured cost: rfcs 0 new, docs 538 findings across 163 of 886 files scanned, missions 644 across 216 of 785. The terminator change on the gated tree costs 12, of which 2 were genuine broken citations and both are fixed. Earlier figures in this mission came from a simulation of the linter loop and were too high by roughly two thirds; they are marked superseded where they appear. The ordering recommendation stands, the sizes did not.
 metadata:
   node_type: mission
   type: implementation
@@ -21,13 +21,18 @@ because it is one file and had live broken pointers.
 
 ## Why this was measured instead of proposed
 
-The obvious argument is "the linter misses 6,370 anchors, so widen it". That
-argument is wrong on the numbers, and adopting it would produce a gate that
-reports mostly noise on its first run. Every figure below was produced by
-running the linter's own `normalize`, `is_section_anchor`, and heading index
-against `docs/` and `missions/` before changing anything.
+The obvious argument is that the linter scans only `rfcs/` and therefore misses
+references elsewhere. Widening it would produce a gate that reports mostly noise
+on its first run, so the size of that noise is the first thing to establish.
 
-## What widening would actually surface
+> **The tables in this section are superseded.** They were produced by a
+> simulation of the linter's loop rather than by the linter itself, and every
+> number in them is too high. The measured figures are in §Authoritative figures
+> at the end of this entry, and they are reproducible with
+> `scripts/measure_anchor_lint.py`. The reasoning and the ordering they support
+> still hold; the sizes do not.
+
+## What widening would surface (simulated, superseded)
 
 | Stage                                                 | `docs/` | `missions/` | total |
 | ----------------------------------------------------- | ------- | ----------- | ----- |
@@ -37,7 +42,7 @@ against `docs/` and `missions/` before changing anything.
 | of those, resolvable as section name plus a qualifier | 338     | 489         | 827   |
 | remaining after a qualifier rule                      | 186     | 246         | 432   |
 
-Every row is measured per tree, not apportioned. The first two rows are the raw
+Every row below was measured per tree by that simulation. The first two rows are the raw
 classifier output; the third applies the prose filter; the last two partition
 the third by whether any proper prefix of the name is a known heading.
 
@@ -119,65 +124,65 @@ one.
       simple reduction:
 
       | Tree        | raw dangling | strict candidates |
-                                  | ----------- | ------------ | ----------------- |
-                                  | `docs/`     | 1,168 → 1,097 | 524 → 535         |
-                                  | `missions/` | 1,629 → 1,569 | 735 → 764         |
-                                  | `rfcs/`     | unchanged, 5,500 anchors extracted | unchanged |
+                                      | ----------- | ------------ | ----------------- |
+                                      | `docs/`     | 1,168 → 1,097 | 524 → 535         |
+                                      | `missions/` | 1,629 → 1,569 | 735 → 764         |
+                                      | `rfcs/`     | unchanged, 5,500 anchors extracted | unchanged |
 
-                                  Raw findings fall by 71 and 60. Plausible findings *rise* by 11 and 29,
-                                  because a tighter boundary stops absorbing a forbidden `L###` suffix
-                                  into the name, which unmasks references that were previously excluded as
-                                  over-capture. Those 40 newly-visible items are the line-number
-                                  convention violations recorded separately in mission
-                                  `ninety-one-section-references-carry-line-numbers-against-the-repo-own-rule`.
+                                      Raw findings fall by 71 and 60. Plausible findings *rise* by 11 and 29,
+                                      because a tighter boundary stops absorbing a forbidden `L###` suffix
+                                      into the name, which unmasks references that were previously excluded as
+                                      over-capture. Those 40 newly-visible items are the line-number
+                                      convention violations recorded separately in mission
+                                      `ninety-one-section-references-carry-line-numbers-against-the-repo-own-rule`.
 
-                                  **That `rfcs/` row is extraction count, not findings, and the
-                                  distinction reverses the conclusion.** Counting anchors extracted
-                                  per tree showed `rfcs/` identical under both patterns, which
-                                  looked like proof the change was inert on the gated tree. Counting
-                                  *findings* against the baseline shows otherwise:
+                                      **That `rfcs/` row is extraction count, not findings, and the
+                                      distinction reverses the conclusion.** Counting anchors extracted
+                                      per tree showed `rfcs/` identical under both patterns, which
+                                      looked like proof the change was inert on the gated tree. Counting
+                                      *findings* against the baseline shows otherwise:
 
-                                  | Measure (rfcs + CLAUDE.md) | current | candidate |
-                                  | ------------------------- | ------- | --------- |
-                                  | findings                  | 1,533   | 1,478     |
-                                  | baselined                 | 584     | 520       |
-                                  | **new, not baselined**    | 0       | **25**    |
+                                      | Measure (rfcs + CLAUDE.md) | current | candidate |
+                                      | ------------------------- | ------- | --------- |
+                                      | findings                  | 1,533   | 1,478     |
+                                      | baselined                 | 584     | 520       |
+                                      | **new, not baselined**    | 0       | **25**    |
 
-                                  The change **turns CI red**. 80 findings disappear because a `)`
-                                  or `:` now truncates a compound reference, and 64 baselined
-                                  entries stop matching. But 25 previously-invisible references
-                                  become visible, and they do not resolve under the current
-                                  matcher.
+                                      The change **turns CI red**. 80 findings disappear because a `)`
+                                      or `:` now truncates a compound reference, and 64 baselined
+                                      entries stop matching. But 25 previously-invisible references
+                                      become visible, and they do not resolve under the current
+                                      matcher.
 
-                                  **An earlier draft of this entry called those 25 "real dangling
-                                  names". That was wrong, and checking them individually reversed
-                                  it.** 23 of the 25 are near-misses: a proper prefix of the
-                                  captured name is a real heading.
+                                      **An earlier draft of this entry called those 25 "real dangling
+                                      names". That was wrong, and checking them individually reversed
+                                      it.** 23 of the 25 are near-misses: a proper prefix of the
+                                      captured name is a real heading.
 
-                                  | Captured name                        | Real heading exists           |
-                                  | ------------------------------------ | ----------------------------- |
-                                  | `implicit assumptions`                | `Implicit Assumptions Audit`  |
-                                  | `implementation phases commit 1`      | `Implementation Phases`       |
-                                  | `audit proof generation "(future`     | `Audit Proof Generation`      |
-                                  | `hw key custody §firmware attestation` | `HW Key Custody`             |
-                                  | `lifecycle (ask + marketplace index`   | `Lifecycle`                   |
-                                  | `determinism (dcs`                    | `Determinism`                 |
+                                      | Captured name                        | Real heading exists           |
+                                      | ------------------------------------ | ----------------------------- |
+                                      | `implicit assumptions`                | `Implicit Assumptions Audit`  |
+                                      | `implementation phases commit 1`      | `Implementation Phases`       |
+                                      | `audit proof generation "(future`     | `Audit Proof Generation`      |
+                                      | `hw key custody §firmware attestation` | `HW Key Custody`             |
+                                      | `lifecycle (ask + marketplace index`   | `Lifecycle`                   |
+                                      | `determinism (dcs`                    | `Determinism`                 |
 
-                                  Only 2 are hard-dangling, and both are still over-capture rather
-                                  than a missing heading: a cross-reference arrow swallowed by the
-                                  boundary, and a `§Roles/§Adversary` compound.
+                                      Only 2 are hard-dangling, and both are still over-capture rather
+                                      than a missing heading: a cross-reference arrow swallowed by the
+                                      boundary, and a `§Roles/§Adversary` compound.
 
-                                  So the 25 are mostly **incomplete citations** — a real section
-                                  cited without the qualifier that distinguishes it — which is the
-                                  same family as the qualifier problem above, not evidence of rot.
-                                  That makes the prerequisite even more clearly a resolver change
-                                  rather than a corpus repair, and it makes the terminator change
-                                  look far less alarming: most of what it surfaces is a citation
-                                  that is nearly right, not one that is wrong.
+                                      So the 25 are mostly **incomplete citations** — a real section
+                                      cited without the qualifier that distinguishes it — which is the
+                                      same family as the qualifier problem above, not evidence of rot.
+                                      That makes the prerequisite even more clearly a resolver change
+                                      rather than a corpus repair, and it makes the terminator change
+                                      look far less alarming: most of what it surfaces is a citation
+                                      that is nearly right, not one that is wrong.
 
-                                  It still turns CI red, and that is a deliberate change to a CI
-                                  gate, so it belongs to a maintainer. But the work it implies is
-                                  completing citations, not hunting for missing sections.
+                                      It still turns CI red, and that is a deliberate change to a CI
+                                      gate, so it belongs to a maintainer. But the work it implies is
+                                      completing citations, not hunting for missing sections.
 
 - [ ] Only then widen the scope, and baseline deliberately. The existing
       baseline is `(name, site)` keyed, so 1,259 entries is an additive

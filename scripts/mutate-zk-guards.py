@@ -1284,6 +1284,25 @@ fn probe_unverified_linkage(b: &str, c: &str) -> LinkageResult {
         ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
          "every_verifier_trait_has_a_production_implementation_or_is_accounted_for", "--", "--exact"],
     ),
+    (
+        # One verifier for the whole workspace. A second name for it is how a
+        # caller ends up verifying under looser rules than everyone else while
+        # every other guard stays green.
+        #
+        # **This entry is why the harness takes a list of files.** The rename
+        # has to reach the definition in `auth.rs` *and* the call site in
+        # `store/memory.rs`; editing only the definition does not compile, and
+        # editing only the call site leaves the guard's assertion satisfied.
+        # With one path per entry this guard was unreachable and the harness
+        # said so by reporting BAD-MUTATION for as long as anyone tried.
+        "G-iii: the governance verifier is renamed at every call site",
+        ["crates/octo-reputation/src/auth.rs", "crates/octo-reputation/src/store/memory.rs"],
+        ["verify_governance_signature", "verify_governance_signature"],
+        ["governance_sig_check", "governance_sig_check"],
+        ["cargo", "test", "-p", "octo-cli", "--test", "security_regressions",
+         "c4_the_signature_verifier_is_a_single_shared_choke_point", "--", "--exact"],
+        99,
+    ),
 ]
 # Seven entries were written and withdrawn rather than parked in the table,
 # because an entry that can never go red is worse than no entry at all.
@@ -1415,6 +1434,10 @@ def mutation_cost(rel: str, closure: set[str]) -> str:
     mutations that edit `scripts/swap_sessions.sh`: cargo never reads it, so they
     are free, and `--cheap` would have skipped work it could have done.
     """
+    if isinstance(rel, list):
+        # A multi-file entry costs a rebuild if ANY file it touches does, so
+        # taking the first would under-report it and put it in `--cheap`.
+        return "rebuild" if any(mutation_cost(r, closure) == "rebuild" for r in rel) else "free"
     path = pathlib.Path(rel)
     if not (path.suffix == ".rs" or path.name == "Cargo.toml"):
         return "free"
@@ -1464,8 +1487,8 @@ def main():
     args = sys.argv[1:]
     if args and args[0] == "--list":
         closure = octo_cli_closure(ROOT)
-        for label, rel, *_ in MUTATIONS:
-            print(f"  {mutation_cost(rel, closure):8s} {label}")
+        for entry in MUTATIONS:
+            print(f"  {mutation_cost(entry[1], closure):8s} {entry[0]}")
         print_coverage()
         release_lock()
         return 0
@@ -1497,23 +1520,40 @@ def main():
     for entry in selected:
         label, rel, old, new, cmd = entry[:5]
         count = entry[5] if len(entry) > 5 else 1
-        path = ROOT / rel
-        original = path.read_text()
-        if old not in original:
+        # `rel` is either one path or a list of them. A rename that has to
+        # span two files is a real mutation and one contiguous replacement
+        # cannot express it: editing only the definition breaks every call
+        # site, and the harness would report BAD-MUTATION forever. The list
+        # form applies one replacement per file, all restored together.
+        rels = rel if isinstance(rel, list) else [rel]
+        olds = old if isinstance(rel, list) else [old]
+        news = new if isinstance(rel, list) else [new]
+        path = ROOT / rels[0]
+        paths = [ROOT / r for r in rels]
+        originals = [pt.read_text() for pt in paths]
+        original = originals[0]
+        if any(o not in orig for o, orig in zip(olds, originals)):
             bad_anchor.append(label)
             print(f"[SKIP-BAD-ANCHOR] {label}", flush=True)
             continue
 
-        backup = tempfile.NamedTemporaryFile(delete=False, suffix=".bak")
-        backup.write(original.encode())
-        backup.close()
+        backups = []
+        for orig in originals:
+            b = tempfile.NamedTemporaryFile(delete=False, suffix=".bak")
+            b.write(orig.encode())
+            b.close()
+            backups.append(b.name)
 
         try:
             # `count` 1 is one contiguous replacement, which is right for
             # nearly every entry. Anything higher means replace-all, and it
             # needs no count check beyond the `in` above: the point is to clear
             # every occurrence of a token a `contains` assertion matches on.
-            path.write_text(original.replace(old, new) if count > 1 else original.replace(old, new, 1))
+            for pt, o, nw, orig_text in zip(paths, olds, news, originals):
+                pt.write_text(
+                    orig_text.replace(o, nw) if count > 1 else orig_text.replace(o, nw, 1)
+                )
+
             res = run(cmd)
             output = res.stdout + res.stderr
             # A mutation that does not compile makes cargo exit non-zero for a
@@ -1552,8 +1592,9 @@ def main():
                 else:
                     print(f"[RED ok] {label} -> {first.strip()}", flush=True)
         finally:
-            shutil.copyfile(backup.name, path)
-            pathlib.Path(backup.name).unlink(missing_ok=True)
+            for pt, bname in zip(paths, backups):
+                shutil.copyfile(bname, pt)
+                pathlib.Path(bname).unlink(missing_ok=True)
 
     red = len(selected) - len(vacuous) - len(bad_mutation) - len(bad_anchor)
     print("\n--- summary ---")

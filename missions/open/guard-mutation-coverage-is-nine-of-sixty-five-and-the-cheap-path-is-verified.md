@@ -15,7 +15,7 @@ metadata:
 ## Status
 
 Largely resolved. The path-dependency guard's blind spot is **fixed** — see §A
-blind spot below — and mutation coverage has moved from 9 of 65 guards to **58 of 65**, a figure the harness now derives from its own
+blind spot below — and mutation coverage has moved from 9 of 65 guards to **59 of 65**, a figure the harness now derives from its own
 table rather than one maintained by hand — see §Coverage counted twice, and the
 count that was wrong. Adding one of them exposed a false pass in the harness
 itself, now fixed — see §A false pass found below.
@@ -308,7 +308,7 @@ now produced by reading the harness table and collecting the distinct
 
 ```
 $ python3 scripts/mutate-zk-guards.py --list | tail -1
-  72 entries -> 58 distinct guards in security_regressions.rs  (+7 entries targeting other crates' suites)
+  73 entries -> 59 distinct guards in security_regressions.rs  (+7 entries targeting other crates' suites)
 ```
 
 That line is printed by the harness itself, derived by reading its own table. It
@@ -316,7 +316,7 @@ did not exist when the count was first wrong, and putting it there is the fix:
 the number can no longer drift from the thing it counts, because it is recomputed
 every time anyone asks.
 
-**72 entries cover 58 guards, and the two numbers must not be conflated.** Seven
+**73 entries cover 59 guards, and the two numbers must not be conflated.** Seven
 entries do not target `security_regressions.rs` at all — three run
 `zk-vendor`'s `library_path` suite, two run `zk-verifier`, two run
 `cipherocto-fs-perms`. They are real mutations against real guards, but those
@@ -379,7 +379,7 @@ holds, and the harness classifies it correctly.
 
 ## Where coverage stops, and what is left
 
-**58 of 65.** The point of the table below is that _"nine unbacked guards" reads
+**59 of 65.** The point of the table below is that _"nine unbacked guards" reads
 very differently from "nine unbacked guards, of which five cannot be backed and
 three name a missing capability in the harness"_ — and only the second sentence
 is actionable. An earlier version of this section grouped them by guess and got
@@ -392,17 +392,27 @@ survived measurement, not what was predicted:
 | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `the_two_algorithm_crates_stay_independent_and_additive`               | Cargo refuses the mutation first — a cyclic package dependency. The layer rule is already enforced by cargo.                                                                                |
 | `ac11_the_ed25519_registration_itself_is_where_keys_get_built`         | The constructor occurs once, so replace-all was never the obstacle. Deleting the only construction path does not compile.                                                                   |
-| `c4_the_signature_verifier_is_a_single_shared_choke_point`             | The rename spans `auth.rs` and `store/memory.rs`; the harness mutates one file per entry.                                                                                                   |
 | `ac11_every_allowlist_entry_still_exists_and_still_has_a_reason`       | Iterates an **empty** table, so its body asserts nothing today. A mutation cannot fill the table without editing the test's own constant, which would prove the test rather than the guard. |
 | `ac11_pending_table_is_complete_for_every_crate_it_covers`             | Walks three crate roots, all inside octo-cli's dependency closure, so a planted site forces a recompile — and the sibling pending-count guard is already covered by `G-ll`.                 |
 | `the_production_split_survives_an_item_level_test_marker`              | Asserts a property of the harness itself; the plant has to sit in another crate's `#[cfg(test)]` module and keep compiling.                                                                 |
 | `every_dispatched_payload_kind_is_driven_through_an_envelope_in_tests` | Same shape — a plant in another crate's test module.                                                                                                                                        |
 
-**Seven is a small, well-understood list now**, and all seven name a concrete
-missing capability rather than a defect: a multi-file entry, a way to make a
-table non-empty without editing the guard that reads it, and a way to plant a
-`#[cfg(test)]` probe without breaking the build. Those are harness work, and
-they are listed as such rather than as coverage gaps.
+**Six is a small, well-understood list now**, and every one of the six names a
+concrete missing capability rather than a defect in a guard. Two of the three
+capabilities have since been built, and both paid off immediately:
+
+- **multi-file entries** — added, and it covered
+  `c4_the_signature_verifier_is_a_single_shared_choke_point`. The rename has to
+  reach the definition and the call site together; editing one does not compile,
+  editing the other leaves the assertion satisfied. The entry still came back
+  green on its first attempt, because `count` defaults to 1 and only the first
+  occurrence per file was renamed — the same default-hides-the-thing failure as
+  the quic replay branch, and the reason the count is now explicit in the entry.
+- **replace-all** — added, covered `m4_ffi_calls_are_serialized`, and turned
+  out _not_ to help the two guards the estimate named. See §A replace-all.
+- **still missing**: a way to make a recorded table non-empty without editing
+  the guard that reads it, and a way to plant a `#[cfg(test)]` probe without
+  breaking the build. Those account for four of the six.
 
 The two guards that were "simply not written yet" are now written, and both
 went the way their design predicted. The valid-pagination mutation tightens the
@@ -411,6 +421,33 @@ guard exists to catch — its sibling is satisfied by a script that refuses
 everything. The verifier-trait mutation plants an `impl` the recorded stub set
 does not name, which is the drift a "no production impl" entry exists to make
 visible.
+
+## A multi-file entry that unlocked one guard on the first try
+
+`c4_the_signature_verifier_is_a_single_shared_choke_point` had been recorded as
+unreachable for a specific reason: the mutation has to rename
+`verify_governance_signature` in `auth.rs` **and** its call site in
+`store/memory.rs`. Editing only the definition does not compile; editing only
+the call site leaves the guard's `contains` assertion satisfied. One path per
+entry could express neither.
+
+An entry may now name a list of files with a replacement per file, restored
+together in one `finally`. The cost classifier takes the worst of the files
+rather than the first, so a multi-file entry is never quietly filed under
+`--cheap` because its first path happened to be a script.
+
+It compiled and went green on the first attempt. `count` defaults to 1, so only
+the **first** occurrence in each file was renamed — the definition still said
+`pub fn verify_governance_signature(`. The entry needed both capabilities at
+once, multi-file and replace-all, and the second one is invisible in the code.
+
+**That is now the third time a default has hidden the thing under test** in
+this arc: the quic replay branch hidden behind `if false`, the keystore KDF
+check hidden behind `false &&`, and now a rename hidden behind a count of one.
+Each looked like a broken guard and each was a mutation that did not do what its
+label said. The general rule is the one already recorded for text guards, now
+with a second instance: **when a mutation is green, the first question is what
+it actually changed.**
 
 ## A replace-all that unlocked one guard, not the three predicted
 
@@ -681,7 +718,7 @@ recorded rather than assumed absent elsewhere.
       `c5_the_integrity_only_verifier_no_longer_claims_authenticity`,
       `h4_redemption_evaluates_time_caveats_before_anything_else` and
       `h4_every_time_bearing_caveat_variant_is_covered`),
-      taking coverage from 9 of 65 to **58 of 65**
+      taking coverage from 9 of 65 to **59 of 65**
 - [x] Any harness using the prebuilt-binary path refuses to run when the binary
       is older than the guard source — **satisfied a different way**: the
       committed harness runs through cargo, which rebuilds by construction, so
@@ -716,7 +753,7 @@ green as it applies to a guard's.
 ## Why the rest is filed rather than fixed
 
 The blind-spot fix is done and needs no defence. What remains is the coverage
-gap, and that is not urgent: seven unbacked guards is a large number that
+gap, and that is not urgent: six unbacked guards is a large number that
 reads as alarming and is not. These guards were written by adversarial review
 and several were mutation-checked by hand during that work. What is missing is
 the _re-runnable record_, which is what this harness would supply — and the

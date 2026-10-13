@@ -121,6 +121,13 @@ makes the guess durable.
 The `--cheap` flag stays, because a fast subset is worth having. Its premise —
 that the rest needs room to compile — does not.
 
+**These numbers are for the 24-entry table and are not current.** Measured on
+the 73-entry table this mission ended with: **3m17s wall clock, 1.79 GB peak
+resident, no measurable disk growth** — about 3.5× the time. The conclusion
+holds and the figure does not carry over; see
+`missions/open/the-mutation-harness-is-not-run-by-any-ci-workflow-so-a-guard-can-be-made-vacuous-silently.md`
+for the current measurement and what it is proposed for.
+
 ## Which harness entries are actually proven
 
 **All 24 entries have now been executed and observed red.** The full table was

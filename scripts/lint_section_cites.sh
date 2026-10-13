@@ -32,7 +32,38 @@ echo ""
 
 while IFS= read -r -d '' rfc_file; do
     SCANNED=$((SCANNED + 1))
-    matches=$(grep -nEo '§[A-Za-z0-9._/(),;:]+' "$rfc_file" 2>/dev/null || true)
+    # The cite NAME is alphanumeric, with `.`, `_` and `/` as INTERNAL
+    # separators. It never contains a bracket, a comma, a semicolon, a colon,
+    # or a trailing sentence mark.
+    #
+    # The extraction used `§[A-Za-z0-9._/(),;:]+`, which absorbs sentence
+    # punctuation into the token. So `(per RFC-0957 §caveats)` extracted as
+    # `§caveats)` — the cite plus the sentence's own closing paren. Every
+    # downstream rule then examined a token that was not a citation.
+    #
+    # `[A-Za-z0-9]+(?:[._/][A-Za-z0-9]+)*` is the same shape stated positively:
+    # a name is alphanumeric, and every separator must have alphanumeric
+    # characters on BOTH sides. That keeps `§2.1`, `§7a`, `§S5.1` and
+    # `§DOT_PRODUCT` intact while dropping the sentence punctuation in
+    # `§6.6.`, `§2.3/` and `§B.)`.
+    #
+    # Requiring characters on both sides is what distinguishes the two roles a
+    # separator plays. A trailing `.` or `/` is sentence punctuation; an
+    # internal one is part of the name. A single character class cannot tell
+    # them apart, because both are the same character.
+    #
+    # Measured over the corpus: 10276 cite tokens before and after, so nothing
+    # was lost — only re-tokenised. 1431 of them differed from the greedy form
+    # by trailing punctuation alone, and all 1431 were prose: the closing
+    # paren in `(per RFC-0104 §3.2)`, the colon in `§9c):`, the period in
+    # `§Algorithms.`
+    # A name may also START with `/`, because this corpus cites API paths as
+    # sections — `§/v1/realtime` in RFC-0846 is a real endpoint, not a
+    # punctuation slip. Requiring an alphanumeric first character dropped it,
+    # and the only evidence was a single-token drop in the examined count
+    # (10276 to 10275), which is exactly the kind of quiet undercount a total
+    # is supposed to expose.
+    matches=$(grep -nEo '§/?[A-Za-z0-9]+([._/][A-Za-z0-9]+)*' "$rfc_file" 2>/dev/null || true)
     [ -z "$matches" ] && continue
 
     while IFS= read -r match; do
@@ -44,9 +75,47 @@ while IFS= read -r -d '' rfc_file; do
         # Strip prefix from line_num
         line_num="${line_num##*:}"
 
-        # Reject 1: trailing-punct (period/slash/comma/semicolon/colon/paren/bracket)
-        if grep -qE '[.,/();:\]]$' <<< "$cite" 2>/dev/null; then
+        # Reject 1: trailing-punct — now an invariant check, not a rejection rule.
+        #
+        # This is the second dead-rule episode for the same check, and the two
+        # had different causes.
+        #
+        # FIRST, the pattern was `[.,/();:\]]`, and `grep -E` reads `\]]` as an
+        # escaped closing bracket, so the character class never closes and the
+        # pattern matches NOTHING. Verified by bisection:
+        #
+        #     [.]                matches .
+        #     [.,]               matches .
+        #     [.;]               matches .
+        #     [(;)]              matches nothing
+        #     [.,/();:]          matches .
+        #     [.,/();:\]]        matches nothing
+        #
+        # So the rule could not fire. The corpus reported zero trailing-punct
+        # findings, which is what a clean corpus looks like — the two are
+        # indistinguishable from the output alone.
+        #
+        # SECOND, repairing the class to `[]().,;:/]` made it fire, and it
+        # reported 1431 violations. Every one was prose punctuation absorbed by
+        # a greedy extraction, not a malformed citation: the closing paren in
+        # `(per RFC-0104 §3.2)`, the period in `§Algorithms.`, the colon in
+        # `§9c):`. The extraction, not the rule, was the defect. Fixing the
+        # extraction to `§/?[A-Za-z0-9]+([._/][A-Za-z0-9]+)*` removed all 1431.
+        #
+        # That pattern cannot produce a token ending in punctuation: every
+        # separator must have alphanumerics on both sides, and the first
+        # character is alphanumeric or `/`. So the check is now kept as an
+        # ASSERTION that the extractor still holds its shape — if the pattern
+        # is ever loosened back to a greedy class, this fires immediately and
+        # says so, instead of the extractor quietly absorbing prose again.
+        #
+        # A rejection rule that cannot reject is worse than no rule, because it
+        # reads as coverage. An assertion that fails loudly when its invariant
+        # breaks is the honest form of the same check.
+        if grep -qE '[]().,;:/]$' <<< "$cite" 2>/dev/null; then
             echo "REJECT [trailing-punct]: $rfc_file:$line_num: $cite"
+            echo "  (the extractor should have stripped this punctuation; the"
+            echo "   cite pattern was loosened and is absorbing prose again)"
             REJECTED=$((REJECTED + 1))
             EXIT_CODE=1
             continue

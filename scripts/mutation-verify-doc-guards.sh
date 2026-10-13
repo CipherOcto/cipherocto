@@ -173,6 +173,14 @@ write_defect() { :; }
 #   Status version AFTER the `## Status` heading, matching the VH row. Reading
 #   the version off the heading line skipped 210 of 247 files and still
 #   reported PASS.
+#
+#   Cites wrapped in sentence punctuation — `(per RFC-0957 §Identity),` and a
+#   line-final `§Algorithms.` The extraction used to absorb the closing paren
+#   and the period into the cite token, and Reject 1 could not match them
+#   because its character class never closed. Repairing the class surfaced
+#   1431 findings, all of them prose. These two lines are that finding's
+#   smallest reproduction: a greedy extraction reports them, a correct one
+#   passes them.
 write_base_fixture() {
     cat >"$FIX/rfcs/0001-base.md" <<'EOF'
 ---
@@ -188,6 +196,8 @@ Accepted (v1.0.0) — promoted 2026-01-01
 ## 1. Identity
 
 Body text. The platform loss is described in §5a. Platform Loss.
+
+Written as (per RFC-0957 §Identity), and the method in §Algorithms.
 
 ### 5a. Platform Loss
 
@@ -321,9 +331,23 @@ anchors_guard() {
 # Each case names the defect its guard must catch, and asserts both directions:
 # clean fixture first (must pass), then the planted defect (must fail AND name
 # the specific finding).
+# A cite deeper than five levels. This rule worked all along, but it is pinned
+# here because it shares its loop with Reject 1 and Reject 3, and the extractor
+# feeding that loop was rewritten.
+write_section_cites_overdeep_defect() {
+    printf '\nSee §1.2.3.4.5.6.7 for an anchor deeper than five levels.\n' \
+        >>"$FIX/rfcs/0001-base.md"
+}
+
 case_section_cites() {
     write_defect() { write_section_cites_defect; }
     run_case "section_cites/phantom-token" section_cites_guard "REJECT [phantom-token]"
+}
+
+case_section_cites_overdeep() {
+    prepare_case() { :; }
+    write_defect() { write_section_cites_overdeep_defect; }
+    run_case "section_cites/over-deep" section_cites_guard "REJECT [over-deep]"
 }
 
 case_status_vh() {
@@ -447,6 +471,7 @@ types_guard() {
 }
 
 case_section_cites
+case_section_cites_overdeep
 case_status_vh
 case_no_vh
 case_cites

@@ -179,12 +179,43 @@ reachable through any tree argument that is not a repository subdirectory, which
 is precisely what a mutation harness wants to pass — so the harness and the fix
 were the same piece of work.
 
+## Regression pins in the clean fixture
+
+Each case plants one defect and asserts the guard catches it. That leaves the
+_other_ direction — a guard rejecting a document it should accept — resting on
+the clean fixture alone, which is why the clean fixture was strengthened with
+three constructs that exist only to pin false positives already fixed:
+
+| Construct in the fixture                                | Defect it pins                                                                                                 |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `§5a. Platform Loss`, with a matching `### 5a.` heading | the inverted numeric-then-alpha rule, which rejected real subsections while passing all 344 review-finding ids |
+| `\| v1.0.0 \|`, a `v`-prefixed version column           | the mandatory-bare-digit rule, which reported 28 populated Version Histories as empty                          |
+| Status version _after_ the heading, matching the row    | the heading-line read, which skipped 210 of 247 files and still reported PASS                                  |
+
+Reintroducing any of the three fails the relevant case's **clean** assertion,
+verified by doing exactly that:
+
+| Regression reintroduced          | Result                                            |
+| -------------------------------- | ------------------------------------------------- |
+| subsection rule re-inverted      | `section_cites` clean → `FALSE POSITIVE`, exit 1  |
+| `v`-prefix made mandatory        | `no_vh_accepted` clean → `FALSE POSITIVE`, exit 1 |
+| Status read back to heading-only | `status_vh` clean → fails, exit 1                 |
+
+Two of those three patches silently failed to apply on the first attempt — a
+wrong anchor and a misplaced argument — and the harness reported
+`passed=1 failed=0`. A green result from a mutation that never landed is
+indistinguishable from a green result from one that did, which is why each row
+above was checked for having actually changed the file.
+
 ## Follow-ups
 
 - No guard runs in CI. See
   `seven-numbered-guards-exist-and-none-of-them-runs-in-ci` for the drafted step.
-- `verify_canonical_blobs.py` and `mutate-zk-guards.py` are also unverified by
-  this harness and were not assessed.
-- Each case currently asserts one defect per guard. The guards have more rules
-  than that; one verified rule is not the same as a verified guard, and the
-  count of cases should not be read as coverage.
+- Each case plants ONE defect per guard, and the clean fixtures pin three
+  regression classes between them. The guards implement more rules than that.
+  One verified rule is not the same as a verified guard, and the count of cases
+  should not be read as coverage. The next rules worth pinning are
+  `lint_section_cites.sh`'s trailing-punct and over-depth rejects, and
+  `lint_no_vh_accepted.sh`'s bullet-rendered Version History.
+- `verify_canonical_blobs.py` and `mutate-zk-guards.py` are unverified by this
+  harness and were not assessed.

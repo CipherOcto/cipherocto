@@ -151,12 +151,28 @@ write_defect() { :; }
 # each case gets its own directory, so a base fixture written once at startup
 # would belong to a corpus no case is looking at.
 #
-# The document is deliberately correct in every respect these guards check —
-# Status version matches the Version History latest row, the Accepted status
-# has a populated Version History table, and the only §cite in it (§5a is a
-# heading, not a cite) resolves. So a "clean" failure means the guard rejects a
-# valid document, which is the false-positive direction these guards have all
-# shipped at some point.
+# The document is deliberately correct in every respect these guards check. A
+# "clean" failure therefore means the guard rejects a VALID document, which is
+# the false-positive direction every one of these guards has shipped at some
+# point.
+#
+# Three constructs in here exist to pin specific false positives that were
+# fixed, rather than to make the document look realistic. Each was a real
+# defect, and each would otherwise have nothing stopping its reintroduction:
+#
+#   `§5a. Platform Loss` — a numeric-then-alpha cite whose subsection heading
+#   exists. The rule that rejected it rejected exactly the class it was written
+#   to catch (real subsections like `§5a` and `§9b`) while passing all 344
+#   review-finding ids (`§A7`, `§F4`) it was written to reject. Inverted rule,
+#   58 false rejections. A regression here now fails this fixture.
+#
+#   `| v1.0.0 |` — a `v`-prefixed version column. Requiring a bare digit
+#   reported 28 Accepted RFCs with a populated Version History as having no
+#   data rows at all.
+#
+#   Status version AFTER the `## Status` heading, matching the VH row. Reading
+#   the version off the heading line skipped 210 of 247 files and still
+#   reported PASS.
 write_base_fixture() {
     cat >"$FIX/rfcs/0001-base.md" <<'EOF'
 ---
@@ -171,7 +187,7 @@ Accepted (v1.0.0) — promoted 2026-01-01
 
 ## 1. Identity
 
-Body text.
+Body text. The platform loss is described in §5a. Platform Loss.
 
 ### 5a. Platform Loss
 
@@ -181,7 +197,7 @@ Subsection text.
 
 | Version | Date | Changes |
 | --- | --- | --- |
-| 1.0.0 | 2026-01-01 | Initial |
+| v1.0.0 | 2026-01-01 | Initial |
 EOF
 }
 

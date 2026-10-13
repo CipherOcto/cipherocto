@@ -119,6 +119,11 @@ and is called out separately rather than lumped with the audit documents.
 - [ ] If checked, the check reports the file and line like every other linter
       here does, rather than being folded into anchor resolution where the
       diagnosis would be wrong.
+- [ ] Decide whether `measure_anchor_lint.py --line-refs` becomes the gate or
+      a report. It currently measures and exits 0, which is correct for a tool
+      whose other modes describe cost rather than correctness. Promoting it to
+      a gate is a separate decision from building it, and the two have been
+      treated as the same thing in this file until now.
 - [ ] The `docs/audits` concentration is addressed first. Audit documents are
       written fastest and cite most densely, which is why they carry most of
       the violations.

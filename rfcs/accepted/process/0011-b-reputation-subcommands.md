@@ -584,7 +584,7 @@ The reputation surface is large enough that a full RFC could subsume attestation
 
 ### Why Draft status (not Planned)
 
-Per BLUEPRINT.md §The RFC Process: "1. Draft RFC in `rfcs/draft/{category}/XXXX-title.md`. Draft = full template, open for discussion, 7-day minimum review." The full spec is filed; the user has requested full template; Draft is the correct landing per parent RFC-0011 §Why Draft status.
+Per BLUEPRINT.md §RFC (Request for Comments): "1. Draft RFC in `rfcs/draft/{category}/XXXX-title.md`. Draft = full template, open for discussion, 7-day minimum review." The full spec is filed; the user has requested full template; Draft is the correct landing per parent RFC-0011 §Why Draft status.
 
 ### Why Layer C/D placement
 

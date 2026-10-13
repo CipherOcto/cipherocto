@@ -542,8 +542,6 @@ summary "substrate-faithful	rfcs/accepted/process/0015-a-wallet-agent-write-path
 summary #6 (mintdual algorithm	rfcs/accepted/economics/0969-dual-pipeline-authorization.md:1021
 tally canonicalisation	rfcs/draft/networking/0862p-a-writer-election-bootstrap.md:19
 test vectors): tv-aud-3	rfcs/accepted/process/0016-audit-receipt-api.md:259
-the rfc process: "1	rfcs/accepted/process/0011-b-reputation-subcommands.md:587
-the rfc process: "1	rfcs/accepted/process/0011-octo-cli-substrate.md:1202
 third-party discharge	rfcs/accepted/economics/0965-capability-extension-format.md:547
 tools → implementation guides	rfcs/accepted/process/0011-e-vault-operations.md:1327
 top k	rfcs/accepted/economics/0920-unified-python-sdk-dual-mode-compatibility.md:1193

@@ -1199,7 +1199,7 @@ dependency.
 
 ### Why Draft status (not Planned)
 
-Per BLUEPRINT.md §The RFC Process: "1. Draft RFC in `rfcs/draft/{category}/XXXX-title.md`.
+Per BLUEPRINT.md §RFC (Request for Comments): "1. Draft RFC in `rfcs/draft/{category}/XXXX-title.md`.
 Draft = full template, open for discussion, 7-day minimum review." User explicitly
 requested "full spec". Draft is the correct landing.
 

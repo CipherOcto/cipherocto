@@ -27,14 +27,21 @@ echo ""
 LINE_THRESHOLD=50
 
 while IFS= read -r -d '' plan_file; do
-    CHECKED=$((CHECKED + 1))
-
     basename=$(basename "$plan_file")
     # Skip non-plan files
     case "$basename" in
         *.md) ;;
         *) continue ;;
     esac
+
+    # CHECKED counts plan files actually examined. It used to increment before
+    # the .md filter, so any non-markdown file in the plan root inflated it
+    # without being looked at, and CHECKED no longer matched the sum of the
+    # classification counters. Confirmed with a .txt alongside one .md:
+    # CHECKED=1, IN_SYNC=0, and no NO_VH_NO_YAML either — one file counted and
+    # zero examined. Harmless only because the directory happens to contain
+    # nothing but .md today.
+    CHECKED=$((CHECKED + 1))
 
     # Extract YAML frontmatter version
     yaml_version=""

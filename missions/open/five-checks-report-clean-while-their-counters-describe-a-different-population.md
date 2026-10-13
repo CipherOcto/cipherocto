@@ -1,6 +1,6 @@
 ---
-name: four-linters-report-clean-while-their-counters-describe-a-different-population
-description: "Four check scripts in scripts/ each report a verdict that their own counters contradict. lint_no_vh_accepted.sh counted every markdown file in CHECKED but only detected Accepted RFCs in PASS, hiding that it examined 7 of 155. lint_status_vh_sync.sh read the oldest Version History row as the newest. mutation-verify-guards.sh treats any argument as a name filter, so an unmatched filter yields passed=0 with no warning. lint_section_cites.sh guarded on ACCEPTED, a classification result rather than a count of work, and reported an empty run after examining every cite. Separately, the two cite linters together examine 10281 of 22169 tracked cite tokens."
+name: five-checks-report-clean-while-their-counters-describe-a-different-population
+description: "Five checks in scripts/ each report a verdict that their own counters contradict. lint_no_vh_accepted.sh counted every markdown file in CHECKED but only detected Accepted RFCs in PASS, hiding that it examined 7 of 155. lint_status_vh_sync.sh read the oldest Version History row as the newest. mutation-verify-guards.sh treats any argument as a name filter, so an unmatched filter yields passed=0 with no warning. lint_section_cites.sh guarded on ACCEPTED, a classification result rather than a count of work, and reported an empty run after examining every cite. lint-rfc-anchors.py, one of only two document linters wired into CI, prints the count of baseline entries that have gone stale under the label baselined, so a fully covered run reports baselined 0 of 588. Separately, the two cite linters together examine 10281 of 22169 tracked cite tokens."
 metadata:
   node_type: mission
   type: implementation
@@ -10,12 +10,19 @@ metadata:
     - RFC-0001
 ---
 
-# Mission `four-linters-report-clean-while-their-counters-describe-a-different-population`
+# Mission `five-checks-report-clean-while-their-counters-describe-a-different-population`
 
 ## Status
 
-Open. Three of the four counter defects are fixed. The cite coverage gap
+Open. Four of the five counter defects are fixed. The cite coverage gap
 below is recorded and not touched.
+
+The entry was a fifth after the first four were written: `lint-rfc-anchors.py`,
+the only document linter wired into CI besides its sibling, printed the count
+of baseline entries that had gone stale under the label "baselined". Renamed
+from `four-linters-...` to `five-checks-...` because a slug asserting a count
+that is wrong is the same defect the mission exists to record, and
+`lint-rfc-anchors.py` is not a linter in the same sense as the other four.
 
 ## The shape
 
@@ -30,6 +37,7 @@ why every one of them read as clean.
 | `lint_status_vh_sync.sh`    | newest version compared     | oldest version compared                                 |
 | `mutation-verify-guards.sh` | 10 guards verified          | any unmatched filter yielded `passed=0` and exit 0      |
 | `lint_section_cites.sh`     | a non-zero count means work | `ACCEPTED` is a classification result, not a work count |
+| `lint-rfc-anchors.py`       | 0 of 588 baselined          | 588 of 588 baselined; the 0 was a stale-entry count     |
 
 ## Fixed: `lint_no_vh_accepted.sh`
 
@@ -44,6 +52,55 @@ silent skip.
 
 Now reports `SCANNED=247 markdown files, CHECKED=155 Accepted RFCs`, and the
 verdict is `FAIL` with 51 real findings.
+
+## Fixed: `lint-rfc-anchors.py` printed the stale count as "baselined"
+
+The one in this set that CI actually runs, and the one that took longest to
+see, because the number it printed was true of a different population.
+
+```bash
+fixed = len({f for f in baseline if f not in findings and f[1] != "*"})
+...
+print(f"baselined: {fixed} of {len(findings)} current reference(s) are recorded as known")
+```
+
+`fixed` counts baseline entries that **no longer match** a current finding.
+The label says entries that **do** match. They are opposites, and on a healthy
+run the printed value is exactly zero:
+
+```text
+dangling: 597 reference(s) over 394 distinct name(s)
+baselined: 0 of 588 current reference(s) are recorded as known
+```
+
+Every one of the 588 is baselined. The line reads as though the baseline were
+doing nothing, which is the opposite of the truth and the most alarming way
+for a reader to be misinformed: it looks like an abandoned gate rather than a
+holding one.
+
+Verified independently by computing both populations from the same baseline
+file:
+
+| Measure                         | Value |
+| ------------------------------- | ----- |
+| current findings `(name, site)` | 588   |
+| baseline entries                | 588   |
+| findings that **are** baselined | 588   |
+| baseline entries now **stale**  | 0     |
+
+The fix reports the two separately and correctly labels both. Mutation-tested
+by appending one unmatched entry to the baseline: `baselined` stayed at 588 of
+588 and a separate line reported the 1 stale entry, which is the shape a reader
+needs in order to tell "the baseline is holding" from "the baseline has rotted".
+
+The sibling `lint-rfc-type-refs.py` computes the identical `fixed` value and
+prints it under the label `baselined references now resolved`, which is
+accurate. Same computation, correct label — the defect was purely the naming.
+
+A reader should not have to open the source to learn which of two opposite
+quantities a counter reports.
+
+The empty-corpus guard tested `ACCEPTED`:
 
 ## Fixed: `lint_section_cites.sh`
 

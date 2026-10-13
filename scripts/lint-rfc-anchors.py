@@ -321,19 +321,30 @@ def main() -> int:
 
     wildcard = {n for n, site in baseline if site == "*"}
     new_findings = sorted(f for f in findings - baseline if f[0] not in wildcard)
-    fixed = len({f for f in baseline if f not in findings and f[1] != "*"})
+
+    # Two different populations, and this line conflated them for a long time.
+    # `baselined_count` is how much of the current debt the baseline already
+    # covers. `stale` is how much of the baseline no longer matches any current
+    # finding, which is debt that has been fixed or has moved.
+    #
+    # The printed value was `stale` under the label "baselined", so a fully
+    # covered run — 588 findings, 588 baselined, 0 stale — printed
+    # `baselined: 0 of 588`, which reads as though the baseline were doing
+    # nothing at all. A reader cannot tell from that line whether the gate is
+    # holding or the baseline has been abandoned.
+    baselined_count = len(findings & baseline)
+    stale = len({f for f in baseline if f not in findings and f[1] != "*"})
 
     print(f"anchors indexed: {len(known)} headings")
     if wildcard:
         print(f"note: {len(wildcard)} name(s) in the baseline are still name-only "
               f"and cannot see a new site — re-run with --write-baseline")
     print(f"dangling: {len(unresolved)} reference(s) over {len(by_name)} distinct name(s)")
-    # `baseline - set(by_name)` was computed against a name set. With a
-    # (name, site) set that subtraction is meaningless and reported every
-    # entry as fixed, which is the opposite of what it says.
-    print(f"baselined: {fixed} of {len(findings)} current reference(s) are recorded as known")
-    if fixed:
-        print("  -> shrink the baseline with --write-baseline")
+    print(f"baselined: {baselined_count} of {len(findings)} current reference(s) "
+          f"are recorded as known")
+    if stale:
+        print(f"  -> {stale} baseline entry(ies) no longer match a finding; "
+              f"shrink with --write-baseline")
 
     if new_findings:
         by_new: dict[str, list[str]] = {}

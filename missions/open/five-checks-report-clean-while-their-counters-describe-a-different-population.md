@@ -158,38 +158,57 @@ Verified in all four directions:
 The second and third rows are the point: identical `passed=0 skipped=10`
 output, opposite meanings, and the exit code now distinguishes them.
 
-## Coverage gap: the cite linters see a third of the cites
+## Coverage gap: the cite linters see under half the cites
 
 Measured over git-tracked markdown, excluding `.claude/worktrees/`:
 
-| Location                  | `§` tokens |
-| ------------------------- | ---------- |
-| whole repository          | 22,169     |
-| `rfcs/`                   | 10,281     |
-| `docs/`                   | 10,520     |
-| `missions/`               | 8,708      |
-| `CLAUDE.md` + `README.md` | 12         |
+| Location         | `§` tokens |
+| ---------------- | ---------- |
+| whole repository | 22,899     |
+| `rfcs/`          | 10,580     |
 
-Counts are over git-tracked markdown, excluding `.claude/worktrees/`. The
-sub-totals exceed the repository total because the per-directory counts were
-taken over the working tree, which still contains worktree copies under
-`.claude/`; the tracked-file total is the authoritative one.
+Both cite linters now state their own coverage, because "EXAMINED=10281 cite
+tokens" is indistinguishable from "that is all of them" unless the total is
+given. Neither did, so the gap was invisible in every output and became
+visible only by counting the repository directly.
 
-`lint_section_cites.sh` and `validate_cites.sh` both default to `RFC_ROOT=rfcs`.
-Together they examine **10,281 of 22,169** tracked cite tokens — 46%. The
-remainder lives in `docs/`, in mission files, and in the two top-level
-governance documents that every agent reads first.
+```text
+# scripts/lint_section_cites.sh
+COVERAGE=44% of 22899 tracked section references
+unexamined: 12618 outside RFC_ROOT=rfcs
+```
 
-Neither linter printed a total, so the gap was not visible in any output. It
-became visible only by counting the repository directly.
+```text
+# scripts/validate_cites.sh
+SCOPE: 422 of 1256 tracked markdown files lie under (rfcs docs); 834 unexamined
+```
 
-Widening the scope is not a mechanical change: `validate_cites.sh` validates
-`RFC-XXXX §section` shapes, and the non-RFC corpus contains a different mix of
-anchors, including bare section names with no RFC number at all. Widening it
-would change what it rejects, which is a maintainer decision.
+The two are stated differently on purpose, because their blind spots are
+different in kind and a single percentage would conflate them.
+
+`lint_section_cites.sh` reads one root, `rfcs/`, so it misses everything in
+`docs/` and `missions/`. Stating the share of section references it examined
+is exact and meaningful.
+
+`validate_cites.sh` walks `$RFC_ROOT docs` and additionally requires the file
+to contain an RFC number, so its blind spot is structural rather than
+token-shaped. Its `CHECKED` counts RFC-plus-section **cite pairs**, which is
+not the same population as a count of section marks. Dividing one by the other
+would yield a confident percentage describing nothing, so it is reported in
+files instead: **422 of 1,256** tracked markdown files lie under its two roots,
+and **834** are never examined — **789** of those are mission files.
+
+Widening the roots is not a mechanical change and stays a maintainer
+decision: `validate_cites.sh` validates `RFC-XXXX §section` shapes, and the
+non-RFC corpus contains a different mix of anchors, including bare section
+names with no RFC number at all. Making the omission visible is not.
 
 ## Acceptance criteria
 
+- [x] Both cite linters report their own coverage, so the gap is visible in
+      their output rather than only by counting the repository by hand. Stated
+      in tokens for `lint_section_cites.sh` and in files for
+      `validate_cites.sh`, because their blind spots differ in kind.
 - [ ] A decision is recorded on the cite linters' corpus: `rfcs/` only, or
       widened, with the widened set measured rather than assumed.
 - [ ] Every check script prints the population it examined alongside its

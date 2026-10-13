@@ -280,7 +280,26 @@ for file in "${files_to_check[@]}"; do
 done
 
 echo ""
-echo "Summary: CHECKED=$CHECKED VALID=$VALID PHANTOM=$PHANTOM INVALID=$INVALID STALE=$STALE"
+# What share of the repository this run actually looked at.
+#
+# Stated in files rather than tokens on purpose. CHECKED counts RFC-plus-
+# section cite pairs, which is not the same population as a count of section
+# marks, and dividing one by the other would produce a confident percentage
+# describing nothing. The real blind spot is structural: this linter walks
+# "$RFC_ROOT docs", so every tracked markdown file outside those two roots is
+# unexamined no matter how many cites it carries.
+#
+# 789 of the 1256 tracked markdown files are missions, which is the bulk of
+# what goes unseen. Widening the roots changes what this linter rejects, so
+# that is a maintainer decision; making the omission visible is not.
+SCOPE_ALL=$(git ls-files '*.md' 2>/dev/null | grep -vc '^\.claude/worktrees/' || true)
+SCOPE_IN=$(git ls-files '*.md' 2>/dev/null | grep -v '^\.claude/worktrees/' | grep -cE "^(rfcs|docs)/" || true)
+if [ -n "$SCOPE_ALL" ] && [ "$SCOPE_ALL" -gt 0 ] 2>/dev/null; then
+    echo "Summary: CHECKED=$CHECKED VALID=$VALID PHANTOM=$PHANTOM INVALID=$INVALID STALE=$STALE"
+    echo "         SCOPE: $SCOPE_IN of $SCOPE_ALL tracked markdown files lie under (rfcs docs); $((SCOPE_ALL - SCOPE_IN)) unexamined"
+else
+    echo "Summary: CHECKED=$CHECKED VALID=$VALID PHANTOM=$PHANTOM INVALID=$INVALID STALE=$STALE"
+fi
 
 if [ "$EXIT_CODE" -ne 0 ]; then
     echo ""

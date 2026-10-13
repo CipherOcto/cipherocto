@@ -66,8 +66,31 @@ while IFS= read -r -d '' rfc_file; do
 done < <(find "$RFC_ROOT" -type f -name '*.md' -print0 2>/dev/null || true)
 
 echo ""
+# How much of the corpus exists, against how much was examined. Reported
+# because "EXAMINED=10281 cite tokens" is indistinguishable from "that is all
+# of them" unless the total is stated, and it is not all of them: this linter
+# reads RFC_ROOT, which defaults to rfcs/, while roughly half the tracked
+# section references in the repository live in docs/ and missions/.
+#
+# The count is over git-tracked markdown and takes about 30ms, so it is not
+# worth omitting. Widening RFC_ROOT is a maintainer decision because it changes
+# what this linter rejects; making the blind spot visible is not.
+CORPUS_TOTAL=$(git ls-files '*.md' 2>/dev/null | grep -v '^\.claude/worktrees/' | xargs grep -o '§' 2>/dev/null | wc -l | tr -d ' ')
+if [ -z "$CORPUS_TOTAL" ] || [ "$CORPUS_TOTAL" -eq 0 ] 2>/dev/null; then
+    CORPUS_TOTAL=0
+fi
+
 echo "Summary: SCANNED=$SCANNED files, EXAMINED=$EXAMINED cite tokens"
 echo "         ACCEPTED=$ACCEPTED NON_CANONICAL=$NON_CANONICAL REJECTED=$REJECTED"
+if [ "$CORPUS_TOTAL" -gt 0 ]; then
+    CORPUS_PCT=$((EXAMINED * 100 / CORPUS_TOTAL))
+    if [ "$EXAMINED" -lt "$CORPUS_TOTAL" ]; then
+        echo "         COVERAGE=$CORPUS_PCT% of $CORPUS_TOTAL tracked section references"
+        echo "         unexamined: $((CORPUS_TOTAL - EXAMINED)) outside RFC_ROOT=$RFC_ROOT"
+    else
+        echo "         COVERAGE=100% of $CORPUS_TOTAL tracked section references"
+    fi
+fi
 
 # A lint that examined no files has verified nothing, and must not report that
 # its corpus is clean. Each of these scripts takes its corpus root from the

@@ -98,6 +98,23 @@ with a baseline for the permitted Version History rows and the archived
 history, since both are legitimately full of versions. The same shape as the
 `no-line-refs` rule, which has the identical carve-outs.
 
+## The STALE backlog is now classified
+
+The 1007 `STALE [version pin mismatch]` findings this linter reports are
+classified in
+`a-thousand-stale-version-pins-are-ninety-nine-percent-real-but-the-linter-reports-the-wrong-version`.
+
+Summary: **997 genuine, 7 false positives, 3 citing a document with no Version
+History at all.** Unlike the `INVALID` and `PHANTOM` classes, this backlog is
+not inflated by a measurement error — the pins really are behind the documents
+they cite.
+
+The linter does name the wrong version in its message, having read the first
+version-shaped table row anywhere in a file rather than the latest Version
+History row. That is a report-quality defect rather than a verdict defect: a
+correct reader still reports the same 997 documents, with a message a
+maintainer can act on.
+
 ## Acceptance criteria
 
 - [x] Measure the population over git-tracked files rather than the working

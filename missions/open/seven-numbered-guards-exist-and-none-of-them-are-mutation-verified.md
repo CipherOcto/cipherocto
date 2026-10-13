@@ -1,7 +1,7 @@
 ---
 name: seven-numbered-guards-exist-and-none-of-them-are-mutation-verified
 description: >-
-  Seven numbered document guards live in scripts/. None is mutation-verified, so "this guard catches its defect" is a process claim no reviewer can re-run. A guard that cannot report its finding passes an exit-code-only test. Measured directly: silencing only a guard's echo, leaving EXIT_CODE=1, leaves the harness reporting 3 of 4 cases green against guards that can no longer name anything they detect. Now fixed by scripts/mutation-verify-doc-guards.sh, which drives four guards from temp fixture corpora and writes no tracked file. Every assertion requires the guard to name its specific finding, not merely to exit non-zero.
+  Seven numbered document guards live in scripts/. None was mutation-verified, so "this guard catches its defect" was a process claim no reviewer could re-run. A guard that cannot report its finding passes an exit-code-only test. Measured directly: silencing only a guard's echo, leaving EXIT_CODE=1, left the harness reporting 3 of 4 cases green against guards that could no longer name anything they detect. Now covered for five of seven by scripts/mutation-verify-doc-guards.sh, which drives them from temp fixture corpora and writes no tracked file. Every assertion requires the guard to name its specific finding, not merely to exit non-zero. Covering lint_frontmatter.py exposed a ValueError crash that killed the run before any counter printed.
 metadata:
   node_type: mission
   type: tooling
@@ -20,8 +20,8 @@ Supersedes the mutation-verification half of
 the guards exist and that none runs in CI. That mission is still accurate about
 CI. This one covers what CI alone would not have caught.
 
-Partially delivered. Four of the seven are now covered by a re-runnable harness.
-The other three are not, and the reasons are listed below.
+Partially delivered. Five of the seven are now covered by a re-runnable harness.
+The other two are not, and the reasons are listed below.
 
 ## The gap
 
@@ -106,7 +106,7 @@ than silently, which is the property worth keeping:
 
 Each was loud. None would have been caught by reading the script.
 
-## Coverage: four of seven
+## Coverage: five of seven
 
 | Guard                    | Covered | Note                                                    |
 | ------------------------ | ------- | ------------------------------------------------------- |
@@ -114,14 +114,35 @@ Each was loud. None would have been caught by reading the script.
 | `lint_status_vh_sync.sh` | yes     |                                                         |
 | `lint_no_vh_accepted.sh` | yes     |                                                         |
 | `validate_cites.sh`      | yes     |                                                         |
+| `lint_frontmatter.py`    | yes     | added second; see the crash it exposed                  |
 | `lint-rfc-anchors.py`    | no      | no corpus-root override; would need a `--root` argument |
 | `lint-rfc-type-refs.py`  | no      | same, and it also compares against a baseline file      |
-| `lint_frontmatter.py`    | no      | has `--tree`, so it is the easiest of the three to add  |
 
-`lint_frontmatter.py` already takes `--tree` and needs only a case. The other two
-compute their corpus root from `__file__` and read a sibling baseline file, so
-covering them means adding a root override first — a change to a CI-wired
-script, which is a maintainer decision rather than a tooling detail.
+### Adding `lint_frontmatter.py` crashed the linter
+
+It takes `--tree`, so it was the cheapest of the three to cover. But the tree is
+resolved against the repository root, so a `/tmp` fixture is not reachable by a
+relative name — it is reachable by an _absolute_ one, because `pathlib`'s `/`
+operator returns the right operand when that operand is absolute.
+
+Pointing it there crashed:
+
+```
+ValueError: '/tmp/.../bad.md' is not in the subpath of '/home/.../cipherocto'
+```
+
+`path.relative_to(ROOT)` assumes every path under examination is inside the
+repository. The run died with a traceback _after_ computing the classified cause
+and _before_ printing a single counter, so:
+
+- the exit code was 1 because of an unhandled exception rather than a finding,
+  and a caller could not tell a detected defect from a crash;
+- the classified cause was lost, along with every counter.
+
+Fixed in `display_path`, which falls back to the absolute path. The defect is
+reachable through any tree argument that is not a repository subdirectory, which
+is precisely what a mutation harness wants to pass — so the harness and the fix
+were the same piece of work.
 
 ## Follow-ups
 

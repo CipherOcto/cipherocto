@@ -279,6 +279,19 @@ status_vh_guard()      { env RFC_ROOT="$FIX/rfcs" bash scripts/lint_status_vh_sy
 no_vh_guard()          { env RFC_ROOT="$FIX/rfcs" bash scripts/lint_no_vh_accepted.sh; }
 cites_guard()          { env RFC_ROOT="$FIX/rfcs" bash scripts/validate_cites.sh "$FIX/docs/cites.md"; }
 
+# `lint_frontmatter.py` takes `--tree`, but it RESOLVES that tree against the
+# repository root, so a temp path under /tmp is not reachable through a
+# relative tree name. It is reachable through an absolute one, because
+# `pathlib`'s `/` operator returns the right operand when it is absolute.
+#
+# Reaching it that way exposed a crash: `path.relative_to(ROOT)` raised
+# ValueError on the first bad document outside the repository, after the cause
+# had been classified and before any counter printed. Fixed in
+# `display_path`.
+frontmatter_guard() {
+    python3 scripts/lint_frontmatter.py --tree "$FIX/docs" --report
+}
+
 # Each case names the defect its guard must catch, and asserts both directions:
 # clean fixture first (must pass), then the planted defect (must fail AND name
 # the specific finding).
@@ -326,10 +339,30 @@ See RFC-0004 §Adversary Analysis for the threat model.
 EOF
 }
 
+# The clean frontmatter corpus: one document whose YAML parses.
+prepare_frontmatter_clean() {
+    printf -- '---\nname: fixture\nv: "1.0"\n---\n\n# Parses\n' >"$FIX/docs/fm-good.md"
+}
+
+# An unquoted value carrying `: `, which is the single most common unparseable
+# frontmatter shape in this corpus (27 of the 33 blocks repaired under
+# `thirty-three-mission-and-rfc-frontmatter-blocks-are-unparseable-yaml`).
+write_frontmatter_defect() {
+    printf -- '---\nname: broken: value\n---\n\n# Does not parse\n' >"$FIX/docs/fm-bad.md"
+}
+
+case_frontmatter() {
+    prepare_case() { prepare_frontmatter_clean; }
+    write_defect() { write_frontmatter_defect; }
+    run_case "frontmatter/unquoted-colon" frontmatter_guard \
+        "unquoted value containing ': '"
+}
+
 case_section_cites
 case_status_vh
 case_no_vh
 case_cites
+case_frontmatter
 
 printf '%s\n' "------------------------------------------------------------"
 printf 'passed=%d failed=%d skipped=%d\n' "$PASS" "$FAIL" "$SKIP"

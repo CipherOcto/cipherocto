@@ -92,6 +92,26 @@ def classify(error: Exception, block: str) -> str:
     return "unclassified YAML error"
 
 
+def display_path(path: pathlib.Path) -> str:
+    """Repository-relative when the file is inside the repository, else absolute.
+
+    `path.relative_to(ROOT)` raises ValueError for a path outside ROOT, so
+    `--tree /tmp/whatever` crashed with a traceback the moment it found a bad
+    document — after computing the classified cause, and before printing any
+    counter. The run exited 1 because of an unhandled exception rather than
+    because of a finding, so a caller could not tell a detected defect from a
+    crash, and the cause it had just computed was lost.
+
+    This is not only reachable through an absolute `--tree`. It is reachable
+    through any tree argument that is not a repository subdirectory, which is
+    precisely what a mutation harness wants to pass.
+    """
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
 def documents(tree: str) -> list[pathlib.Path]:
     root = ROOT / tree
     if root.is_dir():
@@ -133,7 +153,7 @@ def main() -> int:
             try:
                 yaml.safe_load(block)
             except Exception as exc:  # noqa: BLE001 - report any loader error
-                failures.append((str(path.relative_to(ROOT)), classify(exc, block)))
+                failures.append((display_path(path), classify(exc, block)))
                 continue
             parsed += 1
 

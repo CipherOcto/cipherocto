@@ -16,6 +16,20 @@ echo "§section_name hygiene linter — Guard 1 (R37 P3)"
 echo "RFC root: $RFC_ROOT"
 echo ""
 
+# Every subsection number that is actually a heading in this corpus, e.g. the
+# `5a` in `### 5a. PlatformLoss Envelope`.
+#
+# Built once, before the scan, because Reject 3 needs to answer a question
+# about the corpus rather than about the shape of a token.
+SUBSECTIONS=""
+if [ -d "$RFC_ROOT" ]; then
+    SUBSECTIONS=$(grep -rhoE '^#+ [0-9]+[a-zA-Z][ .]' "$RFC_ROOT" 2>/dev/null \
+        | sed -E 's/^#+ ([0-9]+[a-zA-Z]).*/\1/' | sort -u || true)
+fi
+SUBSECTION_COUNT=$(grep -c . <<< "$SUBSECTIONS" || true)
+echo "subsection headings indexed: $SUBSECTION_COUNT"
+echo ""
+
 while IFS= read -r -d '' rfc_file; do
     SCANNED=$((SCANNED + 1))
     matches=$(grep -nEo '§[A-Za-z0-9._/(),;:]+' "$rfc_file" 2>/dev/null || true)
@@ -46,12 +60,29 @@ while IFS= read -r -d '' rfc_file; do
             continue
         fi
 
-        # Reject 3: numeric-then-alpha phantom-token (e.g., §1a, §1.2x)
-        if [[ "$cite" =~ ^§[0-9]+[a-zA-Z] ]]; then
-            echo "REJECT [phantom-token]: $rfc_file:$line_num: $cite"
-            REJECTED=$((REJECTED + 1))
-            EXIT_CODE=1
-            continue
+        # Reject 3: numeric-then-alpha token with no matching subsection
+        # heading (e.g., §1a, §1.2x).
+        #
+        # This used to reject the *shape* outright, on the assumption that a
+        # digit followed by a letter is a review-finding id. In this corpus
+        # that is backwards. Sections are written `5a`, `9b`, `9c`, and 7 of
+        # the 9 distinct tokens used carry a matching heading; review findings
+        # are written letter-first (`A7`, `F4`, `R15`), and all 344 of those
+        # passed untouched. The rule was therefore rejecting exactly the class
+        # it was written to catch and passing the class it was written to
+        # reject.
+        #
+        # It now asks the question it meant to ask: does a heading by this name
+        # exist. A typo like `§1z` still fails, which is what the shape test was
+        # for.
+        if [[ "$cite" =~ ^§([0-9]+[a-zA-Z]) ]]; then
+            subsection="${BASH_REMATCH[1]}"
+            if ! grep -qxF "$subsection" <<< "$SUBSECTIONS" 2>/dev/null; then
+                echo "REJECT [phantom-token]: $rfc_file:$line_num: $cite"
+                REJECTED=$((REJECTED + 1))
+                EXIT_CODE=1
+                continue
+            fi
         fi
 
         # Non-canonical: alphabetic §section_name

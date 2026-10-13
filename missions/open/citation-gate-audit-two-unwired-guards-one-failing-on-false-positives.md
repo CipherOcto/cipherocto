@@ -1,6 +1,6 @@
 ---
 name: citation-gate-audit-two-unwired-guards-one-failing-on-false-positives
-description: "Three gates police §section citations and only one is in CI. lint_section_cites.sh is unwired and fails today with 58 findings that are all adversarial-review finding ids such as §6a and §9b. validate_cites.sh documents itself as blocking on commit, but the only installed git hook is commit-msg, and its stated coverage of mission YAMLs is absent from its own file-discovery command. It does not pass: a completed full-tree run exits 1 with 1,323 unique findings, of which 313 are real dangling sections the old regex masked by truncating multi-word section names, 117 come from an ambiguous RFC-number resolver, and 120 are a trailing-word artifact of the replacement pattern. It still passes CLAUDE.md clean while that file holds two dangling section pointers."
+description: "Three gates police §section citations and only one is in CI. lint_section_cites.sh was unwired and failed today with 58 findings that were all adversarial-review finding ids. That reading was wrong and the linter has been fixed rather than deleted: the shape it rejected, digit-then-letter, is how this corpus writes numbered subsections, and 7 of the 9 distinct tokens used carry a matching heading. REJECTED is now 4, and the rule verifies a subsection heading exists instead of rejecting the shapesarial-review finding ids such as §6a and §9b. validate_cites.sh documents itself as blocking on commit, but the only installed git hook is commit-msg, and its stated coverage of mission YAMLs is absent from its own file-discovery command. It does not pass: a completed full-tree run exits 1 with 1,323 unique findings, of which 313 are real dangling sections the old regex masked by truncating multi-word section names, 117 come from an ambiguous RFC-number resolver, and 120 are a trailing-word artifact of the replacement pattern. It still passes CLAUDE.md clean while that file holds two dangling section pointers."
 metadata:
   node_type: mission
   type: implementation
@@ -212,6 +212,54 @@ rescue 402 findings by truncating the section name until something matched
 (`§Gas Model` → `Gas`, `§Writer Election` → `Writer`). Every one of those is a
 real dangling cite being laundered into a pass. That is the same defect in a
 different hat, and it is why the fix does not include one.
+
+## Correction: the 58 were subsections, not finding ids
+
+This entry reported that all 58 `lint_section_cites.sh` findings were
+adversarial-review finding ids, and that the linter should be deleted rather
+than fixed. Both halves of that were wrong.
+
+The rule was:
+
+```bash
+# Reject 3: numeric-then-alpha phantom-token (e.g., §1a, §1.2x)
+if [[ "$cite" =~ ^§[0-9]+[a-zA-Z] ]]; then
+```
+
+It assumed digit-then-letter is a finding id. In this corpus that is backwards:
+
+| Shape                                    | Occurrences | Example headings                                                | Verdict by the rule |
+| ---------------------------------------- | ----------- | --------------------------------------------------------------- | ------------------- |
+| digit-then-letter — `§5a`, `§9b`, `§9c`  | 58          | `### 5a. PlatformLoss Envelope`, `### 9b. Cross-Platform Slash` | **rejected**        |
+| letter-then-digit — `§A7`, `§F4`, `§R15` | 344         | none                                                            | passed untouched    |
+
+So the rule rejected exactly the class it was written to catch and passed the
+class it was written to reject. Of the 9 distinct tokens it fired on, **7 have
+a matching heading in the corpus**.
+
+The fix does not delete the rule. It asks the question the rule meant to ask —
+does a heading by this name exist — so a typo like `§1z` still fails, which is
+what the shape test was for. `SUBSECTIONS` is indexed once from the corpus
+before the scan.
+
+| Measure    | Before | After |
+| ---------- | ------ | ----- |
+| `REJECTED` | 58     | 4     |
+| `ACCEPTED` | 3933   | 3987  |
+
+Verified in both directions. The rejection path still fires, and the 4 it
+reports are examined individually:
+
+- **2 are genuine.** `rfcs/accepted/economics/0960-...md` cites `RFC-0963 §1a`
+  and `§1b`. RFC-0963 has `### 1. Shard ID derivation` and
+  `### 2. Per-shard event log` and **no** `1a` or `1b` subsections. Those two
+  citations dangle and should name `§1` and `§2`.
+- **2 are quotations.** `0011-d-role-provisioning.md` mentions the old
+  false-positive ids inside a Version History row recording the finding, which
+  is the standing exception for a document quoting a defect.
+
+A linter that reports 4 findings, 2 of which are real and 2 of which are a
+historical record, is doing its job. The one that reported 58 was not.
 
 ## Acceptance Criteria
 

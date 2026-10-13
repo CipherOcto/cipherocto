@@ -180,11 +180,41 @@ def report(m, label, paths, known, numbers, base, rx=None) -> dict:
     return {"findings": findings, "new": new, "names": names}
 
 
+LINE_REF = re.compile(r"§([A-Za-z][A-Za-z0-9._/ ]*?\b[lL]\d{2,}\b)")
+
+
+def line_refs(paths) -> list[tuple[str, str]]:
+    """Section references carrying a line number, which CLAUDE.md forbids.
+
+    A separate measurement from anchor resolution, deliberately. A reference
+    such as `§Test Vectors header L205` names a real section and appends a
+    forbidden suffix. Folded into the dangling-anchor report it would be
+    reported as a missing heading, and the reader sent to add a heading that
+    already exists. The diagnosis has to name the actual defect.
+    """
+    hits: list[tuple[str, str]] = []
+    for path in paths:
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for lineno, line in enumerate(lines, 1):
+            for raw in LINE_REF.findall(line):
+                try:
+                    site = f"{path.relative_to(ROOT)}:{lineno}"
+                except ValueError:
+                    site = f"{path}:{lineno}"
+                hits.append((raw, site))
+    return hits
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--tree", help="a directory to measure (not a CI-enforced tree)")
     ap.add_argument("--all", action="store_true", help="measure rfcs, docs and missions")
     ap.add_argument("--terminator", action="store_true", help="also the ) and : variant")
+    ap.add_argument("--line-refs", action="store_true",
+                    help="report section references carrying a line number")
     args = ap.parse_args()
 
     m = load_linter()
@@ -218,6 +248,17 @@ def main() -> int:
         if args.terminator:
             print(f"  -- with the ) and : terminator --")
             report(m, f"{label} + terminator", paths, known, numbers, base, TERMINATOR)
+
+    if args.line_refs:
+        print("\nline-number references in section cites (CLAUDE.md forbids these)")
+        for label, paths in targets:
+            hits = line_refs(paths)
+            files = {site.rsplit(":", 1)[0] for _, site in hits}
+            print(f"  {label}: {len(hits)} occurrence(s) across {len(files)} file(s)")
+            for raw, site in hits[:12]:
+                print(f"      §{raw}  {site}")
+            if len(hits) > 12:
+                print(f"      ... and {len(hits) - 12} more")
 
     print("\nThese numbers come from the linter's own functions.")
     print("A tree other than the gated one is measured, not enforced.")

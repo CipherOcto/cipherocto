@@ -1,6 +1,6 @@
 ---
-name: ninety-one-section-references-carry-line-numbers-against-the-repo-own-rule
-description: "CLAUDE.md states the no-line-refs rule as a hard architectural rule: section references must never use file:line or L### form. A corpus scan finds 91 section references that do exactly that, across 18 files, concentrated in docs/audits. Examples include mission §Test Vectors header L205 and §F.3 L72. These sit outside the tree the anchors linter scans, which is why no gate reports them."
+name: one-hundred-two-section-references-carry-line-numbers
+description: "CLAUDE.md states the no-line-refs rule as a hard architectural rule: section references must never use file:line or L### form. A corpus scan finds 102 section references that do exactly that, across 18 files, concentrated in docs/audits. Examples include mission §Test Vectors header L205 and §F.3 L72. These sit outside the tree the anchors linter scans, which is why no gate reports them."
 metadata:
   node_type: mission
   type: implementation
@@ -10,7 +10,7 @@ metadata:
     - RFC-0001
 ---
 
-# Mission `ninety-one-section-references-carry-line-numbers-against-the-repo-own-rule`
+# Mission `one-hundred-two-section-references-carry-line-numbers`
 
 ## Status
 
@@ -25,17 +25,30 @@ preference:
 > **Section refs not line refs** — these principle descriptions reference
 > other RFCs/sections by §section_name or symbol, NEVER by file:line.
 
-The corpus contains 91 section references written in exactly the forbidden
+The corpus contains 102 section references written in exactly the forbidden
 form, across 18 files:
 
-| Location                                                           | Count     |
-| ------------------------------------------------------------------ | --------- |
-| `docs/audits/2026-09-02-m10-m11-rfc-amendment-dry.md`              | 25        |
-| `docs/audits/2026-09-02-m10-m11-upstream-rfc-trace.md`             | 13        |
-| `docs/audits/rfc-0205-0206-r8-findings-2026-08-20.md`              | 7         |
-| `docs/audits/2026-09-16-r1-attachhandle-substrate-faithfulness.md` | 5         |
-| `docs/audits/rfc-0205-0206-r7-findings-2026-08-19.md`              | 4         |
-| 12 further files, plus 1 in `rfcs/`                                | remainder |
+| Location                                                             | Count |
+| -------------------------------------------------------------------- | ----- |
+| `docs/audits/2026-09-02-m10-m11-rfc-amendment-dry.md`                | 27    |
+| `docs/audits/2026-09-16-r1-attachhandle-substrate-faithfulness.md`   | 15    |
+| `docs/audits/2026-09-02-m10-m11-upstream-rfc-trace.md`               | 14    |
+| `docs/research/2026-08-21-vault-monetary-representation-redesign.md` | 12    |
+| `docs/audits/rfc-0205-0206-r8-findings-2026-08-20.md`                | 11    |
+| `docs/audits/rfc-0205-0206-r7-findings-2026-08-19.md`                | 5     |
+| `docs/audits/rfc-0205-0206-r9-findings-2026-08-20.md`                | 3     |
+| 12 further files, including 1 in `rfcs/`                             | 15    |
+
+By tree: `docs/` 100, `missions/` 13, `rfcs/` 1.
+
+Reproduce with:
+
+```bash
+python3 scripts/measure_anchor_lint.py --all --line-refs
+```
+
+The count excludes this mission file, which quotes several violations and
+would otherwise report its own examples.
 
 Representative violations, verbatim:
 
@@ -66,12 +79,25 @@ being swept up by anchor resolution.
 
 While measuring the cost of widening the anchors linter to `docs/` and
 `missions/`, a candidate terminator set that stops a name at `)` and `:` was
-tested. Raw dangling counts fell, but the count of _plausible_ names rose by 40. Every one of the newly-plausible names was a real anchor whose forbidden
-line suffix had previously been absorbed into the name by the old pattern and
-therefore excluded by a crude plausibility filter.
+tested against those trees.
 
-That is the useful part of that experiment: tightening the extraction made a
-pre-existing convention violation visible as data rather than as noise.
+**Correction.** This section previously said the terminator change unmasked 40
+line-number references. Measured with the linter's own functions via
+`scripts/measure_anchor_lint.py`, it unmasks **2**:
+
+| Tree        | terminator delta | line-ref shaped |
+| ----------- | ---------------- | --------------- |
+| `docs/`     | 13               | 2               |
+| `missions/` | 24               | 0               |
+
+The 40 came from the same faulty simulation that inflated the other figures in
+this area, and it was counted with a pattern requiring the _entire_ name to end
+in a line number, so a name such as `§Mission Decomp L1531-1532` was excluded
+because the name continues past the number.
+
+The finding itself is a direct corpus count, not a simulation output — but the recorded mechanism was wrong. The terminator
+change is not what exposed these. A direct pattern search does, and that is
+what a convention check should use.
 
 ## Scope note
 

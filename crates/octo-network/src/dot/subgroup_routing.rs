@@ -78,7 +78,7 @@ pub const SUBGROUP_TEARDOWN: [u8; 4] = *b"SGTP";
 
 /// S2PA witness-coverage threshold.
 ///
-/// Per RFC-0855p-d3 §Data Structure + §Layer placement L38. Returns 2/3
+/// Per RFC-0855p-d3 §Data Structure + §Layer placement. Returns 2/3
 /// super-majority of the active child membership's witness-set size. The
 /// check that consumes this (`signers_bitmap.count_ones() >= hodn_quorum(witness_set_size)`)
 /// MUST run AFTER `mesh_aggregated_signature` verification (per W10.5 L3 C2
@@ -223,7 +223,7 @@ impl ParentToSubRouteEnvelope {
 // -----------------------------------------------------------------------------
 
 /// `MemberAttestation` — individual attestation. Layer C per RFC-0855p-d3
-/// §Layer placement L37 (sub-DC-side governance policy); NOT embedded in
+/// §Layer placement (sub-DC-side governance policy); NOT embedded in
 /// Layer-B wire. Schema lives in Layer C because it reflects local trust model.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemberAttestation {

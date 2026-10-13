@@ -35,7 +35,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 /// BLAKE3 domain separator (32-byte context) used by
 /// [`CoordinatorRecord::canonical_bytes`] + the canonical-blob test vectors
 /// in `tests/canonical_coordinator_blobs.rs` (TV-1..TV-6 per RFC-0855p-b
-/// §Test Vectors L671-787).
+/// §Test Vectors-787).
 ///
 /// Per RFC-0008 §Class A + RFC-0126, this constant MUST NOT change for any
 /// state-machine serialization across the coordinator lifecycle. Bumping it
@@ -43,12 +43,12 @@ use borsh::{BorshDeserialize, BorshSerialize};
 pub const BLAKE3_REPUTATION_COORDINATOR_DOMAIN: &[u8] = b"cipherocto/coordinator/state/v1";
 
 // -----------------------------------------------------------------------------
-// CoordinatorLifecycle (8-variant enum per RFC §Data Structures L153-167)
+// CoordinatorLifecycle (8-variant enum per RFC §Data Structures-167)
 // -----------------------------------------------------------------------------
 
 /// Mission Coordinator lifecycle states.
 ///
-/// Per RFC-0855p-b §Data Structures L153-167 + §Appendix A state diagram,
+/// Per RFC-0855p-b §Data Structures-167 + §Appendix A state diagram,
 /// the lifecycle is an 8-state machine: `Designated → Elected → Active →
 /// Suspect ↔ Active / Suspect → Handover → Inactive` plus `Active →
 /// {Handover | Demoting | Resigned} → {Inactive | Demoting}`.
@@ -97,13 +97,13 @@ impl CoordinatorLifecycle {
 }
 
 // -----------------------------------------------------------------------------
-// CoordinatorSource (4-variant enum per RFC §Data Structures L175-182)
+// CoordinatorSource (4-variant enum per RFC §Data Structures-182)
 // -----------------------------------------------------------------------------
 
 /// Provenance tag for a [`CoordinatorRecord`] — how this coordinator became
 /// the active mission coordinator.
 ///
-/// Per RFC-0855p-b §Data Structures L175-182:
+/// Per RFC-0855p-b §Data Structures-182:
 /// - `GenesisDesignation`: first coordinator at mission genesis (per
 ///   RFC-0855p-b v1.1 `GenesisState` bootstrap).
 /// - `Election`: elected via `elect_coordinator` (Phase 2 substrate).
@@ -148,17 +148,17 @@ impl CoordinatorSource {
 // -----------------------------------------------------------------------------
 
 /// Mission-coordinator peer identifier — 32-byte Ed25519 public key per
-/// RFC-0855p-b §Roles L74 + §Data Structures L120. Type alias (not newtype)
+/// RFC-0855p-b §Roles + §Data Structures. Type alias (not newtype)
 /// to keep substrate interop with `octo_wallet::PeerId` callers lossless.
 pub type CoordinatorId = [u8; 32];
 
 // -----------------------------------------------------------------------------
-// ElectionTally (per RFC §Data Structures L188-206)
+// ElectionTally (per RFC §Data Structures-206)
 // -----------------------------------------------------------------------------
 
 /// Canonical election tally emitted by the §Phase 2 election algorithm.
 ///
-/// Per RFC-0855p-b §Data Structures L188-206:
+/// Per RFC-0855p-b §Data Structures-206:
 /// - `election_id`: BLAKE3(`mission_id || election_epoch || nonce`); nonce
 ///   defaults to `0x00` for deterministic pinning.
 /// - `election_epoch`: epoch the election was opened.
@@ -199,12 +199,12 @@ pub struct ElectionTally {
 }
 
 // -----------------------------------------------------------------------------
-// ElectionBallot (per RFC §Data Structures L208-216)
+// ElectionBallot (per RFC §Data Structures-216)
 // -----------------------------------------------------------------------------
 
 /// Voter-signed ballot cast in an election.
 ///
-/// Per RFC-0855p-b §Data Structures L208-216:
+/// Per RFC-0855p-b §Data Structures-216:
 /// - `voter_peer_id`: eligible voter's coordinator id.
 /// - `candidate_peer_id`: candidate the voter backs (or empty for
 ///   abstention).
@@ -229,11 +229,11 @@ pub struct ElectionBallot {
 }
 
 // -----------------------------------------------------------------------------
-// SlashProof (per RFC §Data Structures L218-230)
+// SlashProof (per RFC §Data Structures-230)
 // -----------------------------------------------------------------------------
 
 /// Adjudicated slash decision (canonical wire form per RFC-0855p-b
-/// §Data Structures L218-230).
+/// §Data Structures-230).
 ///
 /// Verification per Phase 5 §`verify_slash_proof`:
 /// - adjudicator signature valid against `governance_id` multi-sig;
@@ -268,10 +268,10 @@ pub struct SlashProof {
 }
 
 // -----------------------------------------------------------------------------
-// CoordinatorRecord (per RFC §Data Structures L234-254)
+// CoordinatorRecord (per RFC §Data Structures-254)
 // -----------------------------------------------------------------------------
 
-/// Canonical coordinator record per RFC-0855p-b §Data Structures L234-254.
+/// Canonical coordinator record per RFC-0855p-b §Data Structures-254.
 ///
 /// One record per (mission, coordinator) pair. Carries lifecycle state +
 /// economic stake + heartbeat state. The 10-field layout is consensus-
@@ -349,7 +349,7 @@ impl CoordinatorRecord {
 }
 
 // -----------------------------------------------------------------------------
-// CoordinatorError (per RFC §Error Handling L497-535)
+// CoordinatorError (per RFC §Error Handling-535)
 // -----------------------------------------------------------------------------
 
 /// Coordinator substrate error variants per RFC-0855p-b §Error Handling

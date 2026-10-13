@@ -1,6 +1,6 @@
 //! Layer C re-export shim for `octo_coordinator_types::state`.
 //!
-//! Per RFC-0855p-b §Key Files L847, the `mon/coordinator.rs` path is the
+//! Per RFC-0855p-b §Key Files, the `mon/coordinator.rs` path is the
 //! canonical Layer-C consumer entry-point for coordinator state-machine
 //! substrate. We re-export rather than duplicate types per
 //! `docs/architecture/design-principles.md` §Stable Abstractions: state machine

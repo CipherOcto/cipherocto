@@ -204,7 +204,7 @@ graph TB
         G["octo-wallet (Layer C specialized node) — OctoRoleBinding storage"]
         H["octo-role (Layer C specialized node; new per RFC-0011-d §7.4) — RoleRegistry + SlashRules"]
         I["octo-slash-ledger (Layer C specialized node) — RFC-0900 substrate"]
-        J["octo-network/src/mon/coordinator (Layer C specialized node; per RFC-0855p-b §Key Files L847) — Mission Coordinator Lifecycle substrate"]
+        J["octo-network/src/mon/coordinator (Layer C specialized node; per RFC-0855p-b §Key Files) — Mission Coordinator Lifecycle substrate"]
     end
 
     subgraph Net["Networking substrate (Layer C specialized node)"]

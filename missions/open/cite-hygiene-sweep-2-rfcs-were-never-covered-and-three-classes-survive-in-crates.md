@@ -29,12 +29,22 @@ The mission's second sub-step is explicit: `§X.Y L<num>` → `§X.Y`. That patt
 still has instances in `crates/`, including three of exactly this shape:
 
 ```rust
-//! Per RFC-0855p-b §Key Files L848, the `mon/election.rs` path is the
+//! Per RFC-0855p-b §Key Files, the `mon/election.rs` path is the
 ```
 
 in `crates/octo-network/src/mon/election.rs`, and the sibling files
 `coordinator.rs` and `slashing.rs`, which cite `L847` and `L849`. Forty-two
 instances of `§<name> L<num>` remain across `crates/`.
+
+> **Resolved.** All 42 were removed, across 15 files, and the section names
+> were verified to resolve before the suffix was dropped rather than after.
+> One of them was not a line-reference problem at all: `sender/mod.rs` cited
+> `§Network Sender`, which is a heading that exists nowhere in RFC-0863, where
+> the heading is `### NetworkSender Trait`. Stripping the line suffix would have
+> left a citation that still dangled, so the name was corrected too. Nothing
+> else in the crates matched `§<name> L<num>` afterwards, and
+> `crates/octo-cli/tests/security_regressions.rs` was checked for assertions on
+> the literal strings before the edit.
 
 Three further classes sit outside the patterns the sweep listed, so they are not
 a failure of it but are violations of the same rule:

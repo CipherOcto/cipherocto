@@ -1,5 +1,5 @@
 //! Canonical test vectors for §Phase 2 election algorithm
-//! (RFC-0855p-b §Election Algorithm L260-275).
+//! (RFC-0855p-b §Election Algorithm-275).
 
 use octo_coordinator_types::election::{
     elect_coordinator, tie_break, GovernanceModel, StakeEntry, VoterEligibility,

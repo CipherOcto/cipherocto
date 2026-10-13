@@ -9,7 +9,7 @@
 //! - [`NetworkSender`] — trait; each transport (BLE, USB, TCP,
 //!   QUIC, HID) ships its own Layer D impl crate.
 //! - [`SendContext`] — wire-format + metadata for a single outbound
-//!   payload (RFC-0863 §Network Sender L116 anchor).
+//!   payload (RFC-0863 §NetworkSender Trait anchor).
 //! - [`WireFormat`] — TCP-JSON / QUIC-Binary / BLE-CBOR / USB-Raw
 //!   wire-format discriminator.
 //! - [`NetworkSenderRegistry`] — in-process registry of
@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 pub type TransportTag = &'static str;
 
 /// `SendContext` carries the wire-format + metadata for a single
-/// outbound payload (RFC-0863 §Network Sender L116 anchor).
+/// outbound payload (RFC-0863 §NetworkSender Trait anchor).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SendContext {
     pub destination: [u8; 32],
@@ -54,7 +54,7 @@ pub enum WireFormat {
     UsbRaw,
 }
 
-/// `NetworkSender` trait per RFC-0863 §Network Sender trait anchor
+/// `NetworkSender` trait per RFC-0863 §NetworkSender Trait trait anchor
 /// at line 104. Per-extension crate pattern: each transport (BLE,
 /// USB, TCP, QUIC, HID) ships in its own Layer D crate implementing
 /// this trait. Core `octo-network` Layer B owns only the trait +

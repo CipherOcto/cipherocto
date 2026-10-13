@@ -51,7 +51,7 @@ use crate::session::GovernanceSession;
 /// Vote choice (RFC-0011-g §Vote Choice + §Command Taxonomy).
 ///
 /// On-the-wire canonical encoding is the lowercase string
-/// `yes` | `no` | `abstain` per RFC §Command Taxonomy L391
+/// `yes` | `no` | `abstain` per RFC §Command Taxonomy
 /// (substrate-recognized choice string, RFC-0855 amendment
 /// cadence). Two back-compat aliases `approve` | `reject` are
 /// accepted at `parse` for legacy callers (parse-only; the
@@ -76,7 +76,7 @@ pub enum VoteChoice {
 
 impl VoteChoice {
     /// Canonical lowercase wire form (`yes` | `no` | `abstain`).
-    /// Per RFC §Command Taxonomy L391 — substrate-recognized
+    /// Per RFC §Command Taxonomy — substrate-recognized
     /// choice vocabulary.
     #[must_use]
     pub fn as_str(self) -> &'static str {
@@ -662,7 +662,7 @@ mod tests {
 
     #[test]
     fn vote_v6_choice_parse_roundtrip() {
-        // Canonical vocabulary (RFC §Command Taxonomy L391).
+        // Canonical vocabulary (RFC §Command Taxonomy).
         assert_eq!(VoteChoice::parse("yes").unwrap(), VoteChoice::Yes);
         assert_eq!(VoteChoice::parse("no").unwrap(), VoteChoice::No);
         assert_eq!(VoteChoice::parse("abstain").unwrap(), VoteChoice::Abstain);

@@ -1,5 +1,5 @@
 //! Canonical test vectors for §Phase 3 liveness substrate
-//! (RFC-0855p-b §Implementation Phase 3 L819-826).
+//! (RFC-0855p-b §Implementation Phase 3-826).
 
 use octo_coordinator_types::liveness::{
     evaluate_liveness, CoordinatorHeartbeat, LivenessTracker, HEARTBEAT_GRACE_MULTIPLIER,

@@ -106,7 +106,7 @@ impl SlashTallyUpdate {
 
 /// `SlashReasonCode` typed discriminator for slash tally updates.
 ///
-/// Per RFC-0855p-b §Appendix B L945+ (extending RFC-0855 §17 "Token
+/// Per RFC-0855p-b §Appendix B+ (extending RFC-0855 §17 "Token
 /// Economics Integration"), the canonical slash offense code set covers
 /// `0x0001..=0x0012` (skipping reserved `0x000C..=0x000D` per RFC-0855p-d
 /// §Sub-DC delegation protocol) + `0x0013..=0x0016` (RFC-0855p-e Future

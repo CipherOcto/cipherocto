@@ -1,5 +1,5 @@
 //! Canonical-blob test vectors for the §Phase 1 coordinator state-machine
-//! substrate (RFC-0855p-b §Test Vectors L671-787).
+//! substrate (RFC-0855p-b §Test Vectors-787).
 //!
 //! 6 vectors pinned: TV-1..TV-6. Each TV builds a [`CoordinatorRecord`] +
 //! supporting types (`ElectionTally` / `SlashProof` where relevant), then

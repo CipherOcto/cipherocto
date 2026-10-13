@@ -1937,7 +1937,7 @@ pub struct NetworkDiscoveryAdvertisementShowOutput {
 /// (RFC-0011-m Phase 5 row G24). One entry per `invitation_id`
 /// lookup OR one entry per `MissionInvitationCache::iter()`
 /// enumeration. Each entry surfaces the `MissionInvitation`
-/// fields per RFC-0011-h §Output Envelope L511-L518.
+/// fields per RFC-0011-h §Output Envelope-L518.
 #[derive(Serialize, Debug, Clone, schemars::JsonSchema)]
 pub struct NetworkDiscoveryInvitationShowOutput {
     /// The 64-char hex-encoded `invitation_id` (BLAKE3-256 of
@@ -1950,10 +1950,10 @@ pub struct NetworkDiscoveryInvitationShowOutput {
     /// BLAKE3-256).
     pub mission_id_hex: String,
     /// The 64-char hex-encoded invitee gateway_id (per RFC-0011-h
-    /// §Output Envelope L511-L518).
+    /// §Output Envelope-L518).
     pub invitee_gateway_id_hex: String,
     /// The 64-char hex-encoded coordinator gateway_id (per
-    /// RFC-0011-h §Output Envelope L511-L518).
+    /// RFC-0011-h §Output Envelope-L518).
     pub coordinator_gateway_id_hex: String,
     /// Logical timestamp from the underlying
     /// `MissionInvitation.logical_timestamp` (RFC-0855 §8.2).

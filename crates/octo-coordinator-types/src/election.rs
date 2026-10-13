@@ -37,7 +37,7 @@ use crate::state::{CoordinatorError, CoordinatorId, ElectionBallot, ElectionTall
 pub const ELECTION_TIMEOUT: u64 = 1000;
 
 /// Maximum accumulated slashes before a coordinator is banned from
-/// re-election eligibility per RFC §Election Algorithm L290. Coordinators
+/// re-election eligibility per RFC §Election Algorithm. Coordinators
 /// with `slash_count >= MAX_SLASHES_BEFORE_BAN` are filtered out by the
 /// eligibility check.
 pub const MAX_SLASHES_BEFORE_BAN: u32 = 5;
@@ -50,7 +50,7 @@ pub const DAO_QUORUM_NUMERATOR: u64 = 1;
 pub const DAO_QUORUM_DENOMINATOR: u64 = 2;
 
 /// Federated Byzantine FT quorum: `f + 1` of `2f + 1` representatives
-/// (RFC §Election Algorithm L260-275).
+/// (RFC §Election Algorithm-275).
 pub const FEDERATED_QUORUM_NUMERATOR: u64 = 0;
 pub const FEDERATED_QUORUM_DENOMINATOR: u64 = 0;
 pub const FEDERATED_QUORUM_OFFSET: u64 = 1; // +1
@@ -69,7 +69,7 @@ pub const TRUST_SCORE_THRESHOLD: u32 = 500;
 pub const DAO_STAKE_THRESHOLD: u64 = 1_000;
 
 // -----------------------------------------------------------------------------
-// GovernanceModel (5-variant enum per RFC §Election Algorithm L260-275)
+// GovernanceModel (5-variant enum per RFC §Election Algorithm-275)
 // -----------------------------------------------------------------------------
 
 /// Governance model per RFC-0855 §11.1 + RFC-0855p-b §Election Algorithm
@@ -122,7 +122,7 @@ impl GovernanceModel {
 
 /// Coordinator stake entry for DAO election weighting.
 ///
-/// Per RFC-0855p-b §Election Algorithm L260-275, DAO candidates compete on
+/// Per RFC-0855p-b §Election Algorithm-275, DAO candidates compete on
 /// accumulated `octo_stake`. Stake is determined out-of-band (governance
 /// snapshot) and passed as a sorted slice for determinism.
 #[derive(
@@ -152,7 +152,7 @@ impl StakeEntry {
 }
 
 // -----------------------------------------------------------------------------
-// VoterEligibility (RFC §Election Algorithm L282-289)
+// VoterEligibility (RFC §Election Algorithm-289)
 // -----------------------------------------------------------------------------
 
 /// Voter eligibility check result per RFC-0855p-b §Election Algorithm
@@ -235,7 +235,7 @@ pub fn elect_coordinator(
             .then(a.ballot_epoch.cmp(&b.ballot_epoch))
     });
 
-    // Filter eligible ballots (RFC §Election Algorithm L282-289).
+    // Filter eligible ballots (RFC §Election Algorithm-289).
     let eligible_ballots: Vec<&ElectionBallot> = ballots_sorted
         .iter()
         .filter(|b| {
@@ -264,7 +264,7 @@ pub fn elect_coordinator(
 }
 
 // -----------------------------------------------------------------------------
-// Per-model branches (verbatim RFC §Election Algorithm L260-275 mechanics)
+// Per-model branches (verbatim RFC §Election Algorithm-275 mechanics)
 // -----------------------------------------------------------------------------
 
 fn elect_centralized(

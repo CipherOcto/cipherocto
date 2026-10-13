@@ -14,8 +14,37 @@ metadata:
 
 ## Status
 
-Open. Nothing changed. The references are in audit and research documents
-under `docs/`, plus one RFC, and rewriting them is author work.
+Open, with the reachable part now fixed. The corpus splits in three, and only
+two of the three were ever real work.
+
+| Population                                  | Count | Disposition                             |
+| ------------------------------------------- | ----- | --------------------------------------- |
+| `docs/audits/`, gitignored since 2026-08-20 | 88    | local-only, not in the repository       |
+| Rust source under `crates/`                 | 42    | **fixed**                               |
+| tracked markdown                            | 27    | 13 fixed, 14 quote a violation and stay |
+
+The headline count in this entry's name and description is a count of
+occurrences across the working tree, most of which are not tracked. Measured
+again over git-tracked files the reachable number was 27, not 102.
+
+**Rust, 42 occurrences across 15 files, all removed.** Every section name was
+verified to resolve in its cited RFC _before_ the suffix was dropped, not
+after. One was not a line-reference problem at all: `sender/mod.rs` cited
+`§Network Sender`, a heading that exists nowhere in RFC-0863, where the real
+heading is `### NetworkSender Trait`. Stripping `L116` alone would have left a
+citation that still dangled, so the name was corrected as well.
+`crates/octo-cli/tests/security_regressions.rs` was checked for assertions on
+the literal strings before any edit; there were none.
+
+**Tracked markdown, 13 fixed.** One live citation in
+`rfcs/accepted/process/0011-d-role-provisioning.md`, and 12 that the tooling
+counted but which are inside audit scratchpads that git no longer tracks.
+
+**14 remain and are correct.** They are in the three files that describe or
+quote this very violation class — the two entries recording it, plus five rows
+in a research document's Version History that quote the citation strings a past
+sweep was examining (`RFC-0102 §Vault correctly preserved at L557`). Removing
+those would delete the record of the defect.
 
 ## The finding
 

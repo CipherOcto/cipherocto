@@ -54,7 +54,7 @@ pub const HEARTBEAT_INTERVAL_MAX: u64 = 1_000;
 
 /// Heartbeat envelope signed by the active mission coordinator.
 ///
-/// Per RFC-0855p-b §Implementation Phase 3 L819-826:
+/// Per RFC-0855p-b §Implementation Phase 3-826:
 /// - `coordinator_peer_id`: CoordinatorId of the active sender.
 /// - `coordinator_term_id`: `BLAKE3(peer_id || start || source)` from the
 ///   coordinator's [`CoordinatorRecord`].

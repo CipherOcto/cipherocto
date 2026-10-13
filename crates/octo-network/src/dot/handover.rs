@@ -1739,7 +1739,7 @@ mod tests {
 //
 // Voluntary / Forced / Emergency handover paths + MessagePreservationQueue.
 // Composes with `HandoverReasonTypeId` from `octo-coordinator-types::lib`
-// (Layer B). Layer-C-only substrate per RFC §Key Files L847-851.
+// (Layer B). Layer-C-only substrate per RFC §Key Files-851.
 //
 // Lifted out of the inline `tests` mod so external integration tests
 // (e.g. `canonical_handover_blobs`) can construct and exercise the

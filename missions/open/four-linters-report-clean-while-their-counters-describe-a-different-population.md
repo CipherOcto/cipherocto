@@ -14,9 +14,8 @@ metadata:
 
 ## Status
 
-Open. Two of the four counter defects are fixed. The filter defect in
-`mutation-verify-guards.sh` and the coverage gap below are recorded and not
-touched.
+Open. Three of the four counter defects are fixed. The cite coverage gap
+below is recorded and not touched.
 
 ## The shape
 
@@ -29,7 +28,7 @@ why every one of them read as clean.
 | --------------------------- | --------------------------- | ------------------------------------------------------- |
 | `lint_no_vh_accepted.sh`    | 247 Accepted RFCs scanned   | 7 examined; 148 skipped on a failed detection regex     |
 | `lint_status_vh_sync.sh`    | newest version compared     | oldest version compared                                 |
-| `mutation-verify-guards.sh` | 10 guards verified          | any unmatched filter yields `passed=0` with no warning  |
+| `mutation-verify-guards.sh` | 10 guards verified          | any unmatched filter yielded `passed=0` and exit 0      |
 | `lint_section_cites.sh`     | a non-zero count means work | `ACCEPTED` is a classification result, not a work count |
 
 ## Fixed: `lint_no_vh_accepted.sh`
@@ -65,7 +64,7 @@ fails, a root of files containing no cites says so as a real result, and only a
 root with no files claims the lint verified nothing. The summary also gained
 the two counters it never had.
 
-## Not fixed: `mutation-verify-guards.sh` treats any argument as a filter
+## Fixed: `mutation-verify-guards.sh` treated any argument as a filter
 
 ```bash
 if [ -n "$FILTER" ] && [[ "$name" != *"$FILTER"* ]]; then
@@ -74,17 +73,33 @@ if [ -n "$FILTER" ] && [[ "$name" != *"$FILTER"* ]]; then
 fi
 ```
 
-Running it with `--help` reports `passed=0 skipped=10` and exits 0. There is no
-help output, because `--help` matched no guard name and every guard was skipped.
-The summary looks like a result.
+Running it with `--help` reported `passed=0 skipped=10` and exited 0. There was
+no help output, because `--help` matched no guard name and every guard was
+skipped. The summary looked like a result.
 
-With no argument it passes 10/10. The failure mode is narrow — nobody runs a
-verification script with `--help` in CI — but the same shape appears when
-someone typos a guard name: the script quietly verifies nothing and exits 0.
+With no argument it passed 10/10. The `--help` case is narrow, but a typo in a
+guard name failed the same way: the script verified nothing and exited 0.
 
-The fix is to fail when a filter matches no entry, or to support `--help`
-explicitly. Not applied here because the mutation harness is covered by a
-separate mission and the two should not drift apart.
+Both halves are now fixed.
+
+- `-h` / `--help` prints usage and lists every available guard, so the correct
+  name is discoverable instead of guessed.
+- A filter that matches no guard exits 1 with `FAIL: filter ... matched no
+guard`, and says plainly that the run verified nothing.
+- A partial filter still exits 0 but prints how many guards it skipped and by
+  which filter, so a narrowed run can never be mistaken for a full one.
+
+Verified in all four directions:
+
+| Invocation               | Before                         | After                                  |
+| ------------------------ | ------------------------------ | -------------------------------------- |
+| no argument              | 10/10, exit 0                  | 10/10, exit 0                          |
+| `workflow` (real filter) | 1 pass, 9 skipped, exit 0      | 1 pass, 9 skipped, exit 0, with a note |
+| `build_ouptut` (typo)    | 0 pass, 10 skipped, **exit 0** | exit 1, explicit failure               |
+| `--help`                 | 0 pass, 10 skipped, exit 0     | usage + guard list, exit 0             |
+
+The second and third rows are the point: identical `passed=0 skipped=10`
+output, opposite meanings, and the exit code now distinguishes them.
 
 ## Coverage gap: the cite linters see a third of the cites
 
@@ -118,8 +133,6 @@ would change what it rejects, which is a maintainer decision.
 
 ## Acceptance criteria
 
-- [ ] `mutation-verify-guards.sh` fails when a filter matches no guard, or
-      handles `--help` explicitly.
 - [ ] A decision is recorded on the cite linters' corpus: `rfcs/` only, or
       widened, with the widened set measured rather than assumed.
 - [ ] Every check script prints the population it examined alongside its

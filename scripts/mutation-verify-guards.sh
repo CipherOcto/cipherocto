@@ -50,6 +50,7 @@ FILTER="${1:-}"
 VERBOSE="${VERBOSE:-0}"
 VERIFY_GREEN="${VERIFY_GREEN:-1}"
 
+
 # Files the mutations may touch. Anything a mutation writes outside this list
 # is a bug in the mutation, not an accident to be cleaned up later.
 WATCHED=("$GUIDE" "$NIGHTLY" "$CI")
@@ -256,6 +257,20 @@ PY
 )"
 )
 
+# -h/--help prints usage and lists the available guards. Previously any
+# argument was treated as a substring filter, so `--help` silently matched
+# nothing and the script reported a successful run that verified nothing.
+if [ "$FILTER" = "-h" ] || [ "$FILTER" = "--help" ]; then
+  sed -n '31,37p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  echo ""
+  echo "Available guards (use as a substring filter):"
+  for entry in "${MUTATIONS[@]}"; do
+    printf '  %s\n' "${entry%%|*}"
+  done
+  rm -rf "$BACKUP_DIR"
+  exit 0
+fi
+
 # ---------------------------------------------------------------------------
 # run
 # ---------------------------------------------------------------------------
@@ -336,7 +351,34 @@ done
 printf '%s\n' "------------------------------------------------------------"
 printf 'passed=%d failed=%d skipped=%d\n' "$PASS" "$FAIL" "$SKIP"
 
+# A filter that matches no guard must not exit 0. `--help` used to be treated
+# as a substring filter, matched nothing, and produced `passed=0 skipped=10`
+# with a success exit: a script that verified nothing while reporting success.
+# A typo in a guard name failed the same way, silently.
+#
+# SKIP is only benign when no filter was supplied, in which case skipped
+# entries are individual guards excluded by design rather than by a mismatch.
 if [ "$FAIL" -ne 0 ]; then
   exit 1
 fi
+
+if [ -n "$FILTER" ] && [ "$PASS" -eq 0 ] && [ "$FAIL" -eq 0 ]; then
+  echo ""
+  echo "FAIL: filter '$FILTER' matched no guard."
+  echo "This run verified nothing. Check the guard name; available guards are"
+  echo "listed by running this script with no argument."
+  exit 1
+fi
+
+if [ "$PASS" -eq 0 ] && [ "$FAIL" -eq 0 ]; then
+  echo ""
+  echo "FAIL: no guards were defined."
+  exit 1
+fi
+
+if [ "$SKIP" -gt 0 ]; then
+  echo ""
+  echo "NOTE: $SKIP guard(s) skipped by filter '$FILTER'."
+fi
+
 exit 0

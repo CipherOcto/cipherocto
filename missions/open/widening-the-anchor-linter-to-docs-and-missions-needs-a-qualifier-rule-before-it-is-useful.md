@@ -1,6 +1,6 @@
 ---
 name: widening-the-anchor-linter-to-docs-and-missions-needs-a-qualifier-rule-before-it-is-useful
-description: "The anchors linter scans rfcs only. Widening it to docs and missions was measured rather than assumed: it would surface 2789 findings, of which 644 in docs and 894 in missions are extraction artifacts where the anchor pattern absorbed trailing prose. Of the remainder, 819 resolve as a real section name followed by a qualifier such as §Implementation Phases 1 or §Adversary A5, which is the same shape as the trailing-prose-word problem already filed. Widening without a qualifier rule produces mostly noise."
+description: "The anchors linter scans rfcs only. Widening it to docs and missions was measured rather than assumed: it would surface 2789 findings, of which 644 in docs and 894 in missions are extraction artifacts where the anchor pattern absorbed trailing prose. Of the remainder, 819 resolve as a real section name followed by a qualifier such as §Implementation Phases 1 or §Adversary A5, which is the same shape as the trailing-prose-word problem already filed. Widening without a qualifier rule produces mostly noise. A candidate terminator change that looked inert on the gated tree by extraction count turns CI red by 25 unbaselined findings when measured properly, so it is not the safe first commit it first appeared to be."
 metadata:
   node_type: mission
   type: implementation
@@ -119,22 +119,44 @@ one.
       simple reduction:
 
       | Tree        | raw dangling | strict candidates |
-          | ----------- | ------------ | ----------------- |
-          | `docs/`     | 1,168 → 1,097 | 524 → 535         |
-          | `missions/` | 1,629 → 1,569 | 735 → 764         |
-          | `rfcs/`     | unchanged, 5,500 anchors extracted | unchanged |
+                  | ----------- | ------------ | ----------------- |
+                  | `docs/`     | 1,168 → 1,097 | 524 → 535         |
+                  | `missions/` | 1,629 → 1,569 | 735 → 764         |
+                  | `rfcs/`     | unchanged, 5,500 anchors extracted | unchanged |
 
-          Raw findings fall by 71 and 60. Plausible findings *rise* by 11 and 29,
-          because a tighter boundary stops absorbing a forbidden `L###` suffix
-          into the name, which unmasks references that were previously excluded as
-          over-capture. Those 40 newly-visible items are the line-number
-          convention violations recorded separately in mission
-          `ninety-one-section-references-carry-line-numbers-against-the-repo-own-rule`.
+                  Raw findings fall by 71 and 60. Plausible findings *rise* by 11 and 29,
+                  because a tighter boundary stops absorbing a forbidden `L###` suffix
+                  into the name, which unmasks references that were previously excluded as
+                  over-capture. Those 40 newly-visible items are the line-number
+                  convention violations recorded separately in mission
+                  `ninety-one-section-references-carry-line-numbers-against-the-repo-own-rule`.
 
-          `rfcs/` is byte-identical either way, which is the property that matters
-          today: the gated tree is unaffected by a change that would prepare the
-          ungated ones. The terminator change is therefore safe to make first and
-          should be, because it is the prerequisite, not the scope change.
+                  **That `rfcs/` row is extraction count, not findings, and the
+                  distinction reverses the conclusion.** Counting anchors extracted
+                  per tree showed `rfcs/` identical under both patterns, which
+                  looked like proof the change was inert on the gated tree. Counting
+                  *findings* against the baseline shows otherwise:
+
+                  | Measure (rfcs + CLAUDE.md) | current | candidate |
+                  | ------------------------- | ------- | --------- |
+                  | findings                  | 1,533   | 1,478     |
+                  | baselined                 | 584     | 520       |
+                  | **new, not baselined**    | 0       | **25**    |
+
+                  The change **turns CI red**. 80 findings disappear because a `)`
+                  or `:` now truncates a compound reference, and 64 baselined
+                  entries stop matching. But 25 previously-invisible references
+                  become visible, and they do not resolve. They are not all
+                  genuine — 4 are themselves over-capture artifacts of the new
+                  boundary — while the rest are real dangling names such as
+                  `§The RFC Process`, `§Part 3`, `§Phantom Types`,
+                  `§Implicit Assumptions` and `§Appendix A`.
+
+                  So the prerequisite is real, but it is **not** a safe first
+                  commit. It lands together with either a baseline extension or a
+                  batch of citation repairs, and the 64 orphaned baseline entries
+                  need rewriting to match the new boundaries. That is a
+                  deliberate change to a CI gate and belongs to a maintainer.
 
 - [ ] Only then widen the scope, and baseline deliberately. The existing
       baseline is `(name, site)` keyed, so 1,259 entries is an additive

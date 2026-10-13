@@ -24,7 +24,26 @@ PHANTOM=0
 STALE=0
 
 # Extract RFC-XXXX §section pattern (without version pin) and RFC-XXXX vN.N §section pattern
-RFC_CITE_REGEX='RFC-[0-9]+(-[a-zA-Z0-9]+)?( v[0-9]+(\.[0-9]+)*)?( ?§[A-Za-z0-9._]+)?'
+# The §section part matches multi-word names: a space followed by another
+# capitalised word continues the section, a space followed by lowercase starts
+# prose. `§[A-Za-z0-9._]+` alone stopped at the first space, so `§Adversary
+# Analysis` was looked up as `Adversary`, reported INVALID, and the failure
+# message told a reader to fix a citation that was already correct.
+#
+# This repo writes `§section_name` in Title Case (CLAUDE.md §RFC Reference
+# Conventions), which is what makes the capitalisation test usable as a
+# boundary. 5,408 cites in the corpus carry a multi-word section name and
+# every one of them was truncated before the fix.
+#
+# Each word must END on an alphanumeric, not merely contain one. The looser
+# form `[A-Za-z0-9._]+([ ][A-Z]...)*` matched `§Adversary Analysis. The` out of
+# `RFC-0909 §Adversary Analysis. The attacker must hold stake` — the `.` was
+# absorbed into the word and the following capitalised word of the next sentence
+# was taken as part of the section name. Requiring the final char to be
+# alphanumeric drops trailing sentence punctuation (`§Identity.` -> `§Identity`)
+# and stops at the sentence break, so the two error directions cancel.
+RFC_SECTION='§[A-Za-z0-9._]*[A-Za-z0-9]([ ][A-Z][A-Za-z0-9._]*[A-Za-z0-9])*'
+RFC_CITE_REGEX="RFC-[0-9]+(-[a-zA-Z0-9]+)?( v[0-9]+(\\.[0-9]+)*)?( ?${RFC_SECTION})?"
 
 # RFC path cache: rfc_num → resolved file path. Eliminates N² find_rfc_path
 # blowup (per-cite full-tree walk) when validating large file batches.
@@ -196,7 +215,7 @@ for file in "${files_to_check[@]}"; do
 
         # Has §section?
         section=""
-        if [[ "$cite" =~ (§[A-Za-z0-9._]+) ]]; then
+        if [[ "$cite" =~ ($RFC_SECTION) ]]; then
             section="${BASH_REMATCH[1]}"
         fi
 
@@ -253,7 +272,11 @@ for file in "${files_to_check[@]}"; do
         fi
 
         VALID=$((VALID + 1))
-    done < <(timeout "$CITE_TIMEOUT" grep -noE 'RFC-[0-9]+(-[a-zA-Z0-9]+)?( v[0-9]+(\.[0-9]+)*)?( ?§[A-Za-z0-9._]+)?' "$file" 2>/dev/null || true)
+    # Uses $RFC_CITE_REGEX. The pattern used to be hardcoded here *and* defined
+    # as a constant above, with the constant referenced nowhere — so editing the
+    # named source of truth changed nothing and the script kept running on the
+    # inline copy. Two copies of one pattern, one of them decorative.
+    done < <(timeout "$CITE_TIMEOUT" grep -noE "$RFC_CITE_REGEX" "$file" 2>/dev/null || true)
 done
 
 echo ""

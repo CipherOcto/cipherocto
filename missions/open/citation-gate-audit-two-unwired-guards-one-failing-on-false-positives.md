@@ -1,6 +1,6 @@
 ---
 name: citation-gate-audit-two-unwired-guards-one-failing-on-false-positives
-description: "Three gates police §section citations and only one is in CI. lint_section_cites.sh is unwired and fails today with 58 findings that are all adversarial-review finding ids such as §6a and §9b. validate_cites.sh documents itself as blocking on commit, but the only installed git hook is commit-msg; its stated coverage of mission YAMLs is absent from its own file-discovery command; and it passes CLAUDE.md clean while that file holds two dangling section pointers. A full run of it produced no output in over two minutes."
+description: "Three gates police §section citations and only one is in CI. lint_section_cites.sh is unwired and fails today with 58 findings that are all adversarial-review finding ids such as §6a and §9b. validate_cites.sh documents itself as blocking on commit, but the only installed git hook is commit-msg, and its stated coverage of mission YAMLs is absent from its own file-discovery command. It does not pass: a completed full-tree run exits 1 with 1,323 unique findings, of which 313 are real dangling sections the old regex masked by truncating multi-word section names, 117 come from an ambiguous RFC-number resolver, and 120 are a trailing-word artifact of the replacement pattern. It still passes CLAUDE.md clean while that file holds two dangling section pointers."
 metadata:
   node_type: mission
   type: implementation
@@ -16,16 +16,21 @@ metadata:
 
 Open. Nothing has been deleted, rewired, or reconfigured.
 
+One change has landed inside Guard 2 itself: its citation pattern is no longer
+duplicated inline, and it now matches the multi-word section names this repo
+actually writes. Both directions of that change were measured, and the rejected
+alternative is recorded below rather than quietly dropped.
+
 ## The finding
 
 Three gates police `§section` citations in this repository. Exactly one of
 them is referenced by a workflow.
 
-| Gate                            | In CI  | State today                                   |
-| ------------------------------- | ------ | --------------------------------------------- |
-| `scripts/lint-rfc-anchors.py`   | yes    | green, 395-entry baseline                     |
-| `scripts/lint_section_cites.sh` | **no** | **fails, exit 1, 58 findings**                |
-| `scripts/validate_cites.sh`     | **no** | passes, but on a smaller shape than it claims |
+| Gate                            | In CI  | State today                                                 |
+| ------------------------------- | ------ | ----------------------------------------------------------- |
+| `scripts/lint-rfc-anchors.py`   | yes    | green, 395-entry baseline                                   |
+| `scripts/lint_section_cites.sh` | **no** | **fails, exit 1, 58 findings, all false positives**         |
+| `scripts/validate_cites.sh`     | **no** | **fails, exit 1, 2,675 findings** — not "passes", see below |
 
 A repository that keeps three implementations of one rule and runs one of them
 is not three gates. It is one gate and two artifacts.
@@ -115,6 +120,98 @@ A full-tree run produced no output in over two minutes and was cancelled. The
 script forks per cite and carries per-command `timeout` scaffolding precisely
 to survive that. Whatever it was designed to guard, a gate that takes minutes
 is not one a person keeps installed.
+
+## Correction: Guard 2 does not pass, and is not slow to fail
+
+Two claims above were wrong, and both were wrong because the run was abandoned
+before it produced a verdict rather than because the script was measured.
+
+A completed full-tree run exits **1**:
+
+```
+Summary: CHECKED=29277 VALID=26923 PHANTOM=339 INVALID=979 STALE=1036
+FAIL: cite validation found issues.
+```
+
+The gate does not "pass, on a smaller shape than it claims". It fails, on every
+number, against the tree it is meant to police. The two-minute run was a run
+that had not finished — the failure is cheap to observe and expensive to
+resolve, which is the ordinary shape of a real gate.
+
+## The regex never matched the section names this repo actually writes
+
+`validate_cites.sh` defined its citation pattern once as `RFC_CITE_REGEX` and
+then hardcoded the same pattern a second time at the extraction site. The
+constant was referenced nowhere. Editing the named source of truth changed
+nothing.
+
+The pattern itself only matched a single word after `§`:
+
+```
+( ?§[A-Za-z0-9._]+)?
+```
+
+This repo writes `§section_name` in Title Case (CLAUDE.md §RFC Reference
+Conventions), so every multi-word section name was truncated at its first word.
+`RFC-0909 §Adversary Analysis` was looked up as `Adversary`, and the failure
+message told the reader to fix a citation that was already correct. 5,408 cites
+in the corpus carry a multi-word section name.
+
+Fixing the dead constant exposed the truncation. A greedy first attempt at the
+boundary (`§[A-Za-z0-9._]+([ ][A-Z][A-Za-z0-9._]*)*`) then over-matched the other
+way, absorbing the first word of the following sentence: `RFC-0909
+§Adversary Analysis. The attacker` resolved to `§Adversary Analysis. The`.
+Requiring each word to _end_ on an alphanumeric fixes both directions at once —
+trailing sentence punctuation is dropped and the sentence boundary is respected.
+
+## What the fix actually changed, measured both ways
+
+Same tree, same script, both patterns run end to end and diffed at the finding
+level. Counts are **unique** findings — the file/line/cite tuple — because raw
+line counts double-report the same dangling section cited from several places:
+
+| Outcome                                           | Count |
+| ------------------------------------------------- | ----- |
+| Unique findings before                            | 1,053 |
+| Unique findings after                             | 1,323 |
+| Resolved by the fix (flagged before, clean after) | 307   |
+| Newly flagged                                     | 577   |
+| Unchanged                                         | 746   |
+
+Total unique findings rose by 270. The count going up is not the fix failing; it
+is the fix seeing more. Classified against the actual headings of the RFC each
+finding names:
+
+| Class                                                                     | Count |
+| ------------------------------------------------------------------------- | ----- |
+| Newly flagged, genuinely dangling — real errors the old truncation masked | 313   |
+| Newly flagged, resolver picked a different same-number RFC                | 117   |
+| Newly flagged, trailing prose word absorbed                               | 120   |
+| Newly flagged, not `INVALID` (PHANTOM/STALE volume)                       | 27    |
+
+The 313 are real. Example: `rfcs/draft/numeric/0131-bigint-to-dqa.md` cites
+`RFC-0105 §Canonical Representation`. The old regex looked for `Canonical`,
+found no heading, and reported INVALID — red for a truncated reason. The full
+name resolves.
+
+## The resolver is ambiguous and that is a separate defect
+
+RFC numbers are **not** unique across the tree. `RFC-0105` names both
+`rfcs/accepted/numeric/0105-deterministic-quant-arithmetic.md` and two files
+under `rfcs/accepted/economics/`. `find_rfc_path` resolves a bare cite by
+preferring `accepted/` and then sorting by version, so which file a cite is
+checked against depends on which directories happen to hold a file with that
+number.
+
+117 of the newly-flagged unique findings are of this shape: the section exists,
+in a real RFC, but not in the one the resolver selected. The pre-existing baseline contains 63 of the same class, so the
+ambiguity predates the fix and the fix merely made it visible more often.
+
+A prefix-fallback was considered and rejected against measurement: it would
+rescue 402 findings by truncating the section name until something matched
+(`§Gas Model` → `Gas`, `§Writer Election` → `Writer`). Every one of those is a
+real dangling cite being laundered into a pass. That is the same defect in a
+different hat, and it is why the fix does not include one.
 
 ## Acceptance Criteria
 

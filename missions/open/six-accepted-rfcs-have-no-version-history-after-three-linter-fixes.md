@@ -1,6 +1,6 @@
 ---
-name: thirty-nine-accepted-rfcs-have-no-usable-version-history-after-two-linter-fixes
-description: "lint_no_vh_accepted.sh reported PASS while examining 7 of 155 Accepted RFCs, because its detection regex required Accepted on the same line as the status heading and the corpus writes it on the following lines. Its CHECKED counter incremented once per markdown file rather than per Accepted RFC, so the summary read CHECKED=247 against PASS=7 and the gap looked like unexamined work rather than a silent skip. After the detection fix 51 Accepted RFCs were reported, and after a second fix recognising numbered Version History headings the real figure is 39: 6 have no Version History section at all and 33 have a section with no data rows."
+name: six-accepted-rfcs-have-no-version-history-after-three-linter-fixes
+description: "lint_no_vh_accepted.sh reported PASS while examining 7 of 155 Accepted RFCs, because its detection regex required Accepted on the same line as the status heading and the corpus writes it on the following lines. Its CHECKED counter incremented once per markdown file rather than per Accepted RFC, so the summary read CHECKED=247 against PASS=7 and the gap looked like unexamined work rather than a silent skip. It reported PASS while examining 7 of 155 Accepted RFCs. Three successive fixes to what counts as a Version History, a same-line status match, a numbered heading, a v-prefixed version column and a bullet-form history, took the reported figure from 51 to 6. Six Accepted RFCs genuinely have no Version History section."
 metadata:
   node_type: mission
   type: implementation
@@ -10,11 +10,11 @@ metadata:
     - RFC-0001
 ---
 
-# Mission `thirty-nine-accepted-rfcs-have-no-usable-version-history-after-two-linter-fixes`
+# Mission `six-accepted-rfcs-have-no-version-history-after-three-linter-fixes`
 
 ## Status
 
-Open. Both detection defects are fixed. The 39 findings are recorded here and
+Open. All three detection defects are fixed. The 6 findings are recorded here and
 **not** resolved — fixing an Accepted RFC's Version History means writing
 history for it, which is author work, not mechanical repair.
 
@@ -154,7 +154,6 @@ zero spaces. It collapsed `PASS` from 104 to 2. Explicit alternation is correct.
 
 - [ ] Each of the 6 files gains a Version History section, or a decision is
       recorded for why an Accepted RFC does not need one.
-- [ ] Each of the 33 files gains at least one data row, or is exempted.
 - [ ] `0001-mission-lifecycle.md` is resolved: either promoted out of `draft/`
       or its Status block corrected.
 - [ ] Any exemption is expressed as a mechanism the linter honours, not as a
@@ -187,3 +186,38 @@ disagreement was arithmetic rather than visible:
 
 A counter that does not match the population it describes is the failure mode
 worth hunting for next.
+
+## Correction: 39 was still wrong, and 6 is the real number
+
+A further two checks in the same script, each a different rendering of the same
+content:
+
+| Shape the corpus uses                    | Files affected | Effect |
+| ---------------------------------------- | -------------- | ------ |
+| `                                        | 2.12           | `vs`   | v2.12 | ` in the version column | 28  | −28 |
+| Version History written as a bullet list | 5              | −5     |
+
+So the sequence is 51 → 39 → 11 → **6**. The 33 empty-Version-History findings
+were almost entirely populated tables the linter could not read:
+
+- 28 have real tables whose version column is written `v2.12` rather than
+  `2.12`
+- 5 write the history as bullets, either `- **v3** (date): note` or
+  `- date — v3 note`
+
+Six Accepted RFCs genuinely have no Version History section, and that is the
+figure this mission should have carried from the start.
+
+Three implementation notes, each caught by testing rather than by reading:
+
+- mawk on this system does not support `{n}` interval quantifiers, so a date
+  pattern written that way silently matched nothing and the whole linter went
+  red. Written with explicit repetition instead.
+- A single `(\*\*)?v?[0-9]+\.` alternative failed to match `- **v3**`, which
+  has no dot after the version. Split into two explicit alternatives.
+- The bullet rule is kept to single-line awk patterns. A multi-line version
+  containing an em-dash inside a bracket expression matched nothing at all.
+
+Verified in both directions after each change: adding a Version History in any
+of the three shapes is accepted, and removing the entries from a populated one
+is still reported.

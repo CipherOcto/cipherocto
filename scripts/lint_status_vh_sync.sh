@@ -76,8 +76,21 @@ while IFS= read -r -d '' rfc_file; do
         DUAL_VH=$((DUAL_VH + 1))
     fi
 
-    # Extract latest VH row version (first numeric row in VH table)
-    vh_latest=$(awk '/^## (Version History|Changelog)$/{found=1; next} found && /^\| [0-9]+(\.[0-9]+)+ \|/ {print; exit}' "$rfc_file" 2>/dev/null | grep -oE '^\| [0-9]+(\.[0-9]+)+' | sed 's/^| //' | head -1 || true)
+    # Extract latest VH row version.
+    #
+    # This used `print; exit`, which stops at the FIRST numeric row in the
+    # table. A Version History table is append-ordered oldest-first, so the
+    # first row is the *oldest* entry, not the latest. Every RFC whose table
+    # had more than one row therefore compared its Status version against its
+    # initial version and was reported as out of sync: 8 of the 9 findings on
+    # the current tree were this bug, on files that are correctly in sync
+    # (e.g. Status v1.1.0 against a table whose first row is 1.0.0 and whose
+    # newest row is 1.1.0).
+    #
+    # Take every versioned row and sort -V, newest last. Version sorting is
+    # required, not lexicographic: 1.10.0 > 1.9.0 numerically but < it as a
+    # string.
+    vh_latest=$(awk '/^## (Version History|Changelog)$/{found=1; next} found && /^\| [0-9]+(\.[0-9]+)+ \|/ {print}' "$rfc_file" 2>/dev/null | grep -oE '^\| [0-9]+(\.[0-9]+)+' | sed 's/^| //' | sort -V | tail -1 || true)
 
     if [ -z "$vh_latest" ]; then
         echo "NO_VH_ROWS: $rfc_file (## Version History exists but no data rows)"

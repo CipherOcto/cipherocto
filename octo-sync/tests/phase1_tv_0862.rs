@@ -1,17 +1,17 @@
 //! Mission `0862-phase1-tv-fixture` — Phase 1 Test Vector Fixture for
-//! RFC-0862 v1.3.0.
+//! RFC-0862.
 //!
 //! 4 byte-exact test vectors (TV-1..TV-4) gating Phase 1 acceptance:
 //!
 //! - **TV-1** — `HLC monotonicity`: 3 consecutive `HlcClock::now()`
 //!   calls across an advancing wall-clock produce strictly increasing
 //!   `(physical_ms, logical, writer_node_id)` lexicographic order
-//!   (per RFC-0862 v1.3 §HLC Substrate; RFC-0008 Class A
+//!   (per RFC-0862 §HLC Substrate; RFC-0008 Class A
 //!   determinism).
 //! - **TV-2** — `HLC logical increment`: 3 consecutive
 //!   `HlcClock::now()` calls on a fixed wall-clock produce
 //!   `physical_ms` constant + `logical` advancing `0, 1, 2` (per
-//!   RFC-0862 v1.3 §HLC Substrate; intra-millisecond logical
+//!   RFC-0862 §HLC Substrate; intra-millisecond logical
 //!   counter).
 //! - **TV-3** — `WriterIdentity caching`: a fully-populated
 //!   `WriterIdentity` (writer_node_id + mission_id + term +
@@ -25,7 +25,7 @@
 //!   to a 32-byte BLAKE3 fingerprint over the sorted
 //!   `(node_id, overlay_id, mission_id)` triples. This is the
 //!   "acquired peer list" wire form downstream consumers
-//!   hash-verify against (per RFC-0862 v1.3 §BootstrapOrchestrator).
+//!   hash-verify against (per RFC-0862 §BootstrapOrchestrator).
 //!
 //! ## Verification pattern
 //!
@@ -51,7 +51,7 @@
 //!
 //! - Phase 3 TV-5..TV-8 (election latency, drain throughput,
 //!   failover pause, WAL fan-out lag) — separate mission per
-//!   RFC-0862 v1.3 §Test Vectors.
+//!   RFC-0862 §Test Vectors.
 // Allow `vec_init_then_push` for the `Vec<Phase1TvEntry>` builders
 // below — the `vec![..]` form would split the 4 TV across many lines
 // and the impl remains readable in push-form.

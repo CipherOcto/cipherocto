@@ -1,5 +1,5 @@
 //! Mission `0862-c15` — Phase 3 Performance Test Vector
-//! Fixture gate for RFC-0862 v1.3.0 TV-6.
+//! Fixture gate for RFC-0862 TV-6.
 //!
 //! 1 perf-budget test vector gating Phase 3 acceptance:
 //!
@@ -23,7 +23,7 @@
 //! ## Why async harness (unlike TV-5/7/8 sync substrate)
 //!
 //! `RaftLikeDrainCoordinator::submit_drain` is `async fn` (per
-//! RFC-0862 v1.3 §Concrete Impl + v1.4 §Concrete Impl Extension).
+//! RFC-0862 §Concrete Impl + v1.4 §Concrete Impl Extension).
 //! Sibling TV-5/7/8 use sync `Cluster::*` paths. Requires
 //! `#[tokio::test]` + `RaftLikeWriterElection` + `RaftLikeDrainCoordinator`
 //! construction following the existing pattern in

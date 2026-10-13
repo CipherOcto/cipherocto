@@ -93,7 +93,7 @@ impl PaidQueryVerifyHandler {
     /// **This always refuses.** The `PAID_QUERY_VERIFY` envelope carries no
     /// holder DID, so there is no holder to charge, and this boundary is
     /// exactly where RFC-0862 puts canonical holder validation: _"canonical
-    /// validation lives at the wallet-node boundary"_ (RFC-0862 v2.0.7).
+    /// validation lives at the wallet-node boundary"_ (RFC-0862).
     /// Substituting an empty DID here is not that validation.
     ///
     /// It used to substitute `WireDid::new(String::new())` and call

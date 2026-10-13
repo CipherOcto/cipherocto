@@ -1,4 +1,4 @@
-//! Substrate records + error enums (per RFC-0862 v1.3 §Supporting
+//! Substrate records + error enums (per RFC-0862 §Supporting
 //! types + error enums).
 //!
 //! `PeerIdentity` (bootstrap phase peer discovery), `NonceRecord` (WAL
@@ -13,7 +13,7 @@ use super::ids::ShardMissionId;
 use super::ids::WriterNodeId;
 
 /// Peer identity returned by `BootstrapOrchestrator::acquire_peers`
-/// (per RFC-0862 v1.3 §BootstrapOrchestrator trait).
+/// (per RFC-0862 §BootstrapOrchestrator trait).
 ///
 /// `node_id` is the writer node id; `overlay_id` is the underlying
 /// transport overlay (libp2p / custom) identity for the peer;
@@ -27,11 +27,11 @@ pub struct PeerIdentity {
     pub mission_id: ShardMissionId,
 }
 
-/// Nonce record (per RFC-0862 v1.3 §Substrate types).
+/// Nonce record (per RFC-0862 §Substrate types).
 ///
 /// Stored in WAL as entry type `ENTRY_TYPE_NONCE_RECORD` (0x10). The
 /// `NonceTracker` replays these on init and subsequently uses the
-/// `(term, nonce)` tuple set for replay-resistance (per RFC-0862 v1.3
+/// `(term, nonce)` tuple set for replay-resistance (per RFC-0862
 /// R11 M3 + R13 M3).
 #[derive(Clone, Debug, BorshSerialize, BorshDeserialize)]
 pub struct NonceRecord {
@@ -43,7 +43,7 @@ pub struct NonceRecord {
     pub nonce: [u8; 32],
 }
 
-/// Result of a successful drain (per RFC-0862 v1.3 §Supporting types).
+/// Result of a successful drain (per RFC-0862 §Supporting types).
 ///
 /// `receipt_lsn` is the WAL LSN at which the drain entry was appended;
 /// callers use this for cross-instance proof-of-payment replay.
@@ -59,11 +59,11 @@ pub struct ActualDrained {
     pub receipt_lsn: u64,
 }
 
-/// Writer-election errors (per RFC-0862 v1.3 §Supporting types + error enums).
+/// Writer-election errors (per RFC-0862 §Supporting types + error enums).
 #[derive(Debug, thiserror::Error)]
 pub enum WriterElectionError {
     /// No elected writer available for the shard (failover window,
-    /// partition, or bootstrap). Per RFC-0862 v1.3 R12 this is the
+    /// partition, or bootstrap). Per RFC-0862 R12 this is the
     /// default `submit_register_local_fallback` return value.
     #[error("writer unavailable")]
     WriterUnavailable,
@@ -113,7 +113,7 @@ pub enum WriterElectionError {
     RelinquishPending,
 }
 
-/// DID write coordinator errors (per RFC-0862 v1.3 §Supporting types).
+/// DID write coordinator errors (per RFC-0862 §Supporting types).
 #[derive(Debug, thiserror::Error)]
 pub enum DidWriteCoordinatorError {
     /// No elected writer available for the shard.
@@ -131,7 +131,7 @@ pub enum DidWriteCoordinatorError {
     WalCorruption,
 }
 
-/// Drain coordinator errors (per RFC-0862 v1.3 §Supporting types).
+/// Drain coordinator errors (per RFC-0862 §Supporting types).
 #[derive(Debug, thiserror::Error)]
 pub enum DrainCoordinatorError {
     /// No elected writer available for the shard.
@@ -145,7 +145,7 @@ pub enum DrainCoordinatorError {
     InsufficientBalance,
 }
 
-/// Bootstrap errors (per RFC-0862 v1.3 §Supporting types).
+/// Bootstrap errors (per RFC-0862 §Supporting types).
 #[derive(Debug, thiserror::Error)]
 pub enum BootstrapError {
     /// Peer acquisition timed out.

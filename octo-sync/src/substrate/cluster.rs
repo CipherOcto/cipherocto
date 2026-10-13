@@ -1,4 +1,4 @@
-//! Cross-instance cluster state substrate (per RFC-0862 v1.3 §Cluster
+//! Cross-instance cluster state substrate (per RFC-0862 §Cluster
 //! substrate + v1.4 §Concrete Impl Extension).
 //!
 //! In production, `RaftLikeWriterElection` + `RaftLikeDidWriteCoordinator`
@@ -28,7 +28,7 @@ use super::records::{NonceRecord, WriterElectionError};
 use super::state::WriterIdentity;
 use super::wal::WalEntry;
 
-/// Default lease duration in milliseconds (per RFC-0862 v1.3 §WriterElection
+/// Default lease duration in milliseconds (per RFC-0862 §WriterElection
 /// Protocol §Lease TTL). 5 seconds balances failover latency vs spurious
 /// lease expiry under transient packet loss.
 pub const DEFAULT_LEASE_DURATION_MS: u64 = 5_000;
@@ -70,7 +70,7 @@ impl Default for ClusterState {
     }
 }
 
-/// Cross-instance cluster substrate (per RFC-0862 v1.4 §Concrete Impl
+/// Cross-instance cluster substrate (per RFC-0862 §Concrete Impl
 /// Extension §Data Structures).
 ///
 /// `Arc<Cluster>` is shared across all instances. All methods take

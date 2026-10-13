@@ -57,7 +57,7 @@ pub enum RoutingDecision {
     Capability,
     /// Dual-pipeline (bearer + capability, both verified + linked).
     ///
-    /// **Superseded by RFC-0969 v1.2's dispatch table.** `authenticate_v12`
+    /// **Superseded by RFC-0969's dispatch table.** `authenticate_v12`
     /// never produces it. It is retained because [`GatewayAuthenticator::authenticate`]
     /// still implements the pre-v1.2 semantics and removing the variant would
     /// break callers that have not migrated. Mission `0969-c` tracks the

@@ -1,4 +1,4 @@
-//! Bootstrap orchestrator (per RFC-0862 v1.3 §BootstrapOrchestrator
+//! Bootstrap orchestrator (per RFC-0862 §BootstrapOrchestrator
 //! + §Supporting types).
 //!
 //! `BootstrapOrchestrator` discovers peers via the underlying
@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use super::records::BootstrapError;
 use super::records::PeerIdentity;
 
-/// Per-RFC-0862 v1.3 §BootstrapOrchestrator trait.
+/// Per-RFC-0862 §BootstrapOrchestrator trait.
 ///
 /// `#[async_trait]` for dyn-compatibility (per R12 M18): consumed
 /// via `Arc<dyn BootstrapOrchestrator>` at the election construction

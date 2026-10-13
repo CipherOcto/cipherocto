@@ -1,11 +1,11 @@
-//! Writer state + writer-election sealed traits (per RFC-0862 v1.3 §Substrate types + §WriterElection Protocol).
+//! Writer state + writer-election sealed traits (per RFC-0862 §Substrate types + §WriterElection Protocol).
 //!
 //! `WriterIdentity` is the lease record returned by a successful
 //! `WriterElection::acquire_writer` call. `WriterContext` is the
 //! per-shard in-memory state the writer-election substrate maintains
 //! during a lease. `ReplayState` is the 4-variant state machine tracking
 //! WAL replay progress during `replay_wal` (separate from the 7-state
-//! `WriterLifecycle` defined in RFC-0862 v1.3 §Roles and Authorities).
+//! `WriterLifecycle` defined in RFC-0862 §Roles and Authorities).
 //!
 //! `WriterElection` (sealed trait) + `WriterElectionForceRelinquish`
 //! (extra sealed supertrait) define the substrate trait surface. The
@@ -45,7 +45,7 @@ pub struct WriterIdentity {
     pub shard_key: ShardKey,
 }
 
-/// Per-RFC-0862 v1.3 §WriterElection Protocol.
+/// Per-RFC-0862 §WriterElection Protocol.
 ///
 /// Sealed trait pattern: only the substrate crate (`octo-sync`)
 /// implements this. Downstream crates cannot invent parallel
@@ -81,7 +81,7 @@ pub trait WriterElection: sealed::WriterElectionSealed + Send + Sync {
     ) -> Result<Option<WriterIdentity>, WriterElectionError>;
 }
 
-/// Per-RFC-0862 v1.3 §WriterElection §Force-Relinquish supertrait.
+/// Per-RFC-0862 §WriterElection §Force-Relinquish supertrait.
 ///
 /// Sealed (per `docs/architecture/design-principles.md` §No parallel
 /// abstractions): only the substrate crate can implement. The seal
@@ -105,7 +105,7 @@ pub trait WriterElectionForceRelinquish:
     ) -> Result<(), WriterElectionError>;
 }
 
-/// Sealed trait markers (per RFC-0862 v1.3 §WriterElection Protocol).
+/// Sealed trait markers (per RFC-0862 §WriterElection Protocol).
 ///
 /// `pub(crate)` so external crates cannot add new impls. The
 /// substrate crate (`octo-sync`) is the only impl author.
@@ -117,7 +117,7 @@ pub mod sealed {
 }
 
 /// Per-shard in-memory state maintained by the writer-election substrate
-/// during a lease (per RFC-0862 v1.3 §Substrate types).
+/// during a lease (per RFC-0862 §Substrate types).
 ///
 /// `relinquish_pending` and `flush_attempts` are atomic so the substrate
 /// can take `&self` method receivers; `replay_state` is a plain
@@ -134,7 +134,7 @@ pub struct WriterContext {
     pub replay_state: ReplayState,
 }
 
-/// WAL replay state (per RFC-0862 v1.3 §Substrate types).
+/// WAL replay state (per RFC-0862 §Substrate types).
 ///
 /// 4-variant state machine. Transitions:
 /// `Idle → InProgress → {Complete | Failed}`. The `replay_wal` function

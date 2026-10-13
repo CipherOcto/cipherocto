@@ -1,5 +1,5 @@
 //! `RaftLikeWriterElection` + `RaftLikeDidWriteCoordinator` concrete
-//! impls (per RFC-0862 v1.4 §Concrete Impl Extension §Data Structures).
+//! impls (per RFC-0862 §Concrete Impl Extension §Data Structures).
 //!
 //! Both impls are backed by a shared `Arc<Cluster>`. In production the
 //! cluster lives across instances and mediates consensus via the Raft
@@ -13,7 +13,7 @@
 //!   are implemented here (impls live in the substrate crate only).
 //! - `DidWriteCoordinatorSealed` (from `octo_ident::write_coordinator::sealed`)
 //!   is implemented here because `octo-sync` is the substrate crate that
-//!   RFC-0862 v1.3 + v1.4 designate as the concrete-impl author.
+//!   RFC-0862 + v1.4 designate as the concrete-impl author.
 //!
 //! # Layer discipline
 //!
@@ -48,7 +48,7 @@ use super::wal_traits::WalWriter;
 
 /// RaftLike `WriterElection` impl backed by `Arc<Cluster>`.
 ///
-/// Per RFC-0862 v1.4 §Concrete Impl Extension §Data Structures:
+/// Per RFC-0862 §Concrete Impl Extension §Data Structures:
 /// - `acquire_writer` blocks on `Cluster::try_acquire_leader` (in-memory
 ///   backing makes this synchronous; production awaits a Raft
 ///   `RequestVote` RPC).
@@ -59,7 +59,7 @@ pub struct RaftLikeWriterElection {
     hlc: HlcClock,
     cluster: Arc<Cluster>,
     /// Deployment `chain_id` used for governance attestation verification
-    /// (per RFC-0862 v1.3 R12 M23 — `attestation.chain_id` MUST match this
+    /// (per RFC-0862 R12 M23 — `attestation.chain_id` MUST match this
     /// configured deployment chain_id or the attestation is rejected with
     /// `ChainIdMismatch`).
     chain_id: ChainId,
@@ -68,7 +68,7 @@ pub struct RaftLikeWriterElection {
 impl RaftLikeWriterElection {
     /// Construct a new `RaftLikeWriterElection` for `node_id` backed by
     /// the shared `cluster` and bound to deployment `chain_id` (per
-    /// RFC-0862 v1.3 R12 M23 — deployment binding for governance
+    /// RFC-0862 R12 M23 — deployment binding for governance
     /// attestations).
     pub fn new(node_id: WriterNodeId, cluster: Arc<Cluster>, chain_id: ChainId) -> Self {
         Self {
@@ -146,7 +146,7 @@ impl WriterElectionForceRelinquish for RaftLikeWriterElection {
 /// RaftLike `DidWriteCoordinator` impl backed by `Arc<Cluster>` +
 /// `Arc<InMemoryWal>`.
 ///
-/// Per RFC-0862 v1.4 §Concrete Impl Extension §Data Structures:
+/// Per RFC-0862 §Concrete Impl Extension §Data Structures:
 /// - `submit_register_validated` checks the elected writer for the
 ///   DID's shard, then appends an `ENTRY_TYPE_DID_REGISTER` WAL entry.
 /// - `submit_revoke` checks the elected writer, then appends an
@@ -156,7 +156,7 @@ impl WriterElectionForceRelinquish for RaftLikeWriterElection {
 ///   default builds stay linearizable via the leader-election path).
 pub struct RaftLikeDidWriteCoordinator {
     /// Held for future CRDT (LWW) reconciliation in the failover window
-    /// (RFC-0862 v1.4 F12 + F13 amendment). Production code reads
+    /// (RFC-0862 F12 + F13 amendment). Production code reads
     /// cluster state to resolve competing HLC-stamped writes; the
     /// in-memory backing for the substrate test harness exposes only
     /// the WAL append path.
@@ -210,7 +210,7 @@ impl DidWriteCoordinator for RaftLikeDidWriteCoordinator {
             .map_err(|_| DidWriteCoordinatorError::WriterUnavailable)?
             .ok_or(DidWriteCoordinatorError::WriterUnavailable)?;
         if leader.writer_node_id != self.node_id {
-            // Per RFC-0862 v1.4 §Concrete Impl: only the elected leader
+            // Per RFC-0862 §Concrete Impl: only the elected leader
             // may commit; non-leaders forward via the leader-election
             // substrate in production.
             return Err(DidWriteCoordinatorError::WriterUnavailable);
@@ -262,7 +262,7 @@ impl DidWriteCoordinator for RaftLikeDidWriteCoordinator {
         Ok(())
     }
 
-    /// CRDT (Last-Write-Wins) local fallback (per RFC-0862 v1.4
+    /// CRDT (Last-Write-Wins) local fallback (per RFC-0862
     /// §Motivation 4: opt-in feature flag for partition-tolerance).
     ///
     /// Without the `crdt` feature, this method is the default trait impl
@@ -309,12 +309,12 @@ struct DrainWalPayload {
     macaroon_id: Vec<u8>,
     /// Drained amount in `MicroOCTO_W` (matches `octo_paid_query::MicroOCTO_W`).
     requested_cost: u128,
-    /// Chain ID (deployment binding per RFC-0862 v1.3 R12 M23).
+    /// Chain ID (deployment binding per RFC-0862 R12 M23).
     chain_id: String,
 }
 
 /// RaftLike `DrainCoordinator` impl backed by `Arc<Cluster>` +
-/// `Arc<InMemoryWal>` (per RFC-0862 v1.4 §Concrete Impl Extension + mission
+/// `Arc<InMemoryWal>` (per RFC-0862 §Concrete Impl Extension + mission
 /// `0871e-phase5c-1-cross-instance-drain`).
 ///
 /// `submit_drain` checks the elected writer for the holder's shard
@@ -329,7 +329,7 @@ struct DrainWalPayload {
 /// Authorisation design follows `RaftLikeDidWriteCoordinator`:
 /// - `chain_id` mismatch → `ChainIdMismatch` (gated).
 /// - No elected writer OR non-leader node → `WriterUnavailable`
-///   (fail-closed per RFC-0862 v1.3 R12).
+///   (fail-closed per RFC-0862 R12).
 /// - Balance / holder validation is OUT OF SCOPE here — the
 ///   consumer (the wallet-node handler) calls `StoolapSpendLedger`
 ///   before invoking `submit_drain`. The coordinator only routes
@@ -350,7 +350,7 @@ struct DrainWalPayload {
 ///   at the wallet-node construction boundary.
 pub struct RaftLikeDrainCoordinator {
     /// Held for future CRDT (LWW) reconciliation in the failover
-    /// window (RFC-0862 v1.4 F12 + F13 amendment). Matches the
+    /// window (RFC-0862 F12 + F13 amendment). Matches the
     /// `RaftLikeDidWriteCoordinator` precedent.
     #[allow(dead_code)]
     cluster: Arc<Cluster>,
@@ -411,7 +411,7 @@ impl DrainCoordinator for RaftLikeDrainCoordinator {
             .map_err(|_| DrainCoordinatorError::WriterUnavailable)?
             .ok_or(DrainCoordinatorError::WriterUnavailable)?;
         if leader.writer_node_id != self.node_id {
-            // Per RFC-0862 v1.4 §Concrete Impl: only the elected leader
+            // Per RFC-0862 §Concrete Impl: only the elected leader
             // may commit drains; non-leaders forward via the
             // leader-election substrate in production.
             return Err(DrainCoordinatorError::WriterUnavailable);
@@ -786,7 +786,7 @@ mod tests {
 
     #[tokio::test]
     async fn drain_unknown_holder_is_not_validated_by_coordinator() {
-        // Per RFC-0862 v1.4 §Concrete Impl Extension: `DrainCoordinator`
+        // Per RFC-0862 §Concrete Impl Extension: `DrainCoordinator`
         // does NOT validate holder balance — the consumer (wallet-node)
         // calls `StoolapSpendLedger::try_deduct` BEFORE invoking
         // `submit_drain`. The coordinator only checks writer

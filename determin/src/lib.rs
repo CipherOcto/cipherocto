@@ -906,7 +906,7 @@ mod tests {
     }
 
     /// `Dqa` is the canonical amount-bearing cross-crate payload
-    /// type (RFC-0862 v2.0.3 + RFC-0965 §3). Asserts the canonical
+    /// type (RFC-0862 + RFC-0965 §3). Asserts the canonical
     /// zero canonicalizes to `scale = 0` so consumers can rely on
     /// the `scale = 0` invariant for amount-bearing fields.
     #[test]

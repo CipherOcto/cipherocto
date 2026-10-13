@@ -1,5 +1,5 @@
 //! Mission `0862-phase3-tv-fixture` — Phase 3 Performance Test Vector
-//! Fixture gate for RFC-0862 v1.3.0.
+//! Fixture gate for RFC-0862.
 //!
 //! 1 perf-budget test vector (TV-5) gating Phase 3 acceptance:
 //!
@@ -8,7 +8,7 @@
 //!   unique shard_key so no lease contention) must complete within
 //!   the RFC-0862 §Performance Targets budget of 3 seconds. CI slack
 //!   factor of 10× (so assertion threshold = 30 s) absorbs CI jitter
-//!   without false-failing the gate. Per RFC-0862 v1.3.0 §Test
+//!   without false-failing the gate. Per RFC-0862 §Test
 //!   Vectors Phase 3 list.
 //!
 //! ## Why a perf-budget TV (different from Phase 1 byte-exact)

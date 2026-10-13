@@ -1,4 +1,4 @@
-//! 4 cross-instance test vectors (RFC-0862 v1.4 §Test Vectors) +
+//! 4 cross-instance test vectors (RFC-0862 §Test Vectors) +
 //! optional 5th CRDT LWW TV (gated on `--features crdt`).
 #![allow(clippy::doc_lazy_continuation)]
 //!
@@ -21,7 +21,7 @@
 //!
 //! ## Why `replay_wal` instead of cluster read
 //!
-//! TV-3 exercises the canonical `replay_wal` function (per RFC-0862 v1.3
+//! TV-3 exercises the canonical `replay_wal` function (per RFC-0862
 //! §WAL Replay Algorithm) over the `InMemoryWal::read_range` reader. This
 //! validates the checksum + LSN chain + shard_key checks end-to-end.
 

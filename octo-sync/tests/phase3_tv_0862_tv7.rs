@@ -1,5 +1,5 @@
 //! Mission `0862-c14` — Phase 3 Performance Test Vector
-//! Fixture gate for RFC-0862 v1.3.0 TV-7.
+//! Fixture gate for RFC-0862 TV-7.
 //!
 //! 1 perf-budget test vector gating Phase 3 acceptance:
 //!

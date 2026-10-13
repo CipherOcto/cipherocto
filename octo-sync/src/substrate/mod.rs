@@ -1,6 +1,6 @@
-//! RFC-0862 v1.3 + v1.4 cross-instance DID coordination substrate.
+//! RFC-0862 + v1.4 cross-instance DID coordination substrate.
 //!
-//! Per RFC-0862 v1.3 §Specification §Substrate types. This module
+//! Per RFC-0862 §Specification §Substrate types. This module
 //! re-exports the newtype primitives, error enums, and `WalEntry` type
 //! that the writer-election / drain / DID-write coordinator surfaces
 //! depend on. The sealed trait surfaces (`WriterElection`,
@@ -25,9 +25,9 @@
 //!
 //! # Why `ChainId` / `DidDocument` are not redefined here
 //!
-//! `ChainId` lives in `octo-ident` per RFC-0010 v1.4 §ChainId Namespace
+//! `ChainId` lives in `octo-ident` per RFC-0010 §ChainId Namespace
 //! Extension (typed 17-byte `ChainNamespace` form). `DidDocument` lives
-//! in `octo-ident` per RFC-0010 v1.3 storage extension + v1.5 rich
+//! in `octo-ident` per RFC-0010 storage extension + v1.5 rich
 //! fields. Substrate consumes these via the trait surface in task #121;
 //! the newtype ports here are pure-substance (no `octo-ident` dep at
 //! task #120).

@@ -1,13 +1,13 @@
-//! Identifier newtypes + governance primitives for RFC-0862 v1.3 + v1.4
+//! Identifier newtypes + governance primitives for RFC-0862 + v1.4
 //! cross-instance DID coordination.
 //!
-//! Per RFC-0862 v1.3 §Specification §Substrate types. All newtypes are 32
+//! Per RFC-0862 §Specification §Substrate types. All newtypes are 32
 //! (or 16) bytes wide to align with the surrounding crypto and identifier
 //! substrate; `WriterNodeId` / `ShardMissionId` / `ShardKey` /
 //! `OperatorId` are 32 bytes for BLAKE3-256 / ed25519 compatibility.
 //!
 //! `ChainId` is intentionally NOT redefined here. The canonical
-//! `ChainId` newtype lives in `octo-ident` per RFC-0010 v1.4
+//! `ChainId` newtype lives in `octo-ident` per RFC-0010
 //! §ChainId Namespace Extension (typed `ChainNamespace` + 17-byte
 //! canonical form). Substrate types that bind to a chain reference
 //! `octo_ident::ChainId` via the traits in `octo_sync::substrate::wal`
@@ -16,7 +16,7 @@
 
 use borsh::{BorshDeserialize, BorshSerialize};
 
-/// 32-byte writer node identifier (per RFC-0862 v1.3 §Substrate types).
+/// 32-byte writer node identifier (per RFC-0862 §Substrate types).
 ///
 /// Stable for the lifetime of a writer lease. Bound to the node's
 /// long-term public key via `BLAKE3(public_key)` derivation at
@@ -27,7 +27,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 )]
 pub struct WriterNodeId(pub [u8; 32]);
 
-/// 32-byte shard mission identifier (per RFC-0862 v1.3 §Substrate types).
+/// 32-byte shard mission identifier (per RFC-0862 §Substrate types).
 ///
 /// Per R12 H7: 32-byte width matches existing `octo-sync`'s
 /// `pub type MissionId = [u8; 32]`. No truncation/derivation needed;
@@ -36,7 +36,7 @@ pub struct WriterNodeId(pub [u8; 32]);
 #[derive(Clone, Debug, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize)]
 pub struct ShardMissionId(pub [u8; 32]);
 
-/// 32-byte shard key (per RFC-0862 v1.3 §Substrate types).
+/// 32-byte shard key (per RFC-0862 §Substrate types).
 ///
 /// Derived from a canonical record key via `derive_canonical` (BLAKE3-256
 /// over the canonical bytes). All writes to a shard MUST be addressed by
@@ -48,17 +48,17 @@ pub struct ShardKey(pub [u8; 32]);
 impl ShardKey {
     /// Derive a shard key from canonical record-key bytes.
     ///
-    /// Per RFC-0862 v1.3 §Substrate types: `ShardKey::derive_canonical`
+    /// Per RFC-0862 §Substrate types: `ShardKey::derive_canonical`
     /// defines the canonical mapping. The `record_key_canonical` input
     /// MUST be the canonical encoding of the record key (e.g., the
-    /// canonical DID form per RFC-0010 v1.0 / v1.3) — substrate does
+    /// canonical DID form per RFC-0010 / v1.3) — substrate does
     /// NOT enforce canonicalization; callers must pre-canonicalize.
     pub fn derive_canonical(record_key_canonical: &[u8]) -> Self {
         Self(*blake3::hash(record_key_canonical).as_bytes())
     }
 }
 
-/// 32-byte operator identifier (per RFC-0862 v1.3 §Specification
+/// 32-byte operator identifier (per RFC-0862 §Specification
 /// §Governance).
 ///
 /// Identification of a governance operator who may co-sign a
@@ -87,7 +87,7 @@ pub struct OperatorSignature {
     pub signature: [u8; 64],
 }
 
-/// M-of-N governance operator set (per RFC-0862 v1.3 §Substrate types).
+/// M-of-N governance operator set (per RFC-0862 §Substrate types).
 ///
 /// Per R10 H9: `OperatorSet` uses sorted canonical serialization for
 /// stable binding across serializations. `operators` is sorted +
@@ -104,7 +104,7 @@ pub struct OperatorSet {
 impl OperatorSet {
     /// Construct a new `OperatorSet` with config-time validation.
     ///
-    /// Per RFC-0862 v1.3 R11 M3: sorts operators lexicographically,
+    /// Per RFC-0862 R11 M3: sorts operators lexicographically,
     /// deduplicates, and validates `1 <= threshold <= operators.len()`.
     /// Returns `ConfigError::InvalidThreshold` on bad threshold.
     pub fn new(mut operators: Vec<OperatorId>, threshold: usize) -> Result<Self, ConfigError> {
@@ -124,7 +124,7 @@ impl OperatorSet {
 
     /// Canonical borsh serialization of the operator set.
     ///
-    /// Per RFC-0862 v1.3 R10 H9: deterministic form for cross-instance
+    /// Per RFC-0862 R10 H9: deterministic form for cross-instance
     /// signature binding. Used as input to governance signature
     /// verification (per R12 M23: deployment-binding via chain_id, but
     /// the operator set itself is also part of the canonical binding).
@@ -133,7 +133,7 @@ impl OperatorSet {
     }
 }
 
-/// Config-time validation errors (per RFC-0862 v1.3 §Supporting types
+/// Config-time validation errors (per RFC-0862 §Supporting types
 /// + error enums).
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {

@@ -1,4 +1,4 @@
-//! Hybrid Logical Clock (HLC) per RFC-0862 v1.3 §Substrate types.
+//! Hybrid Logical Clock (HLC) per RFC-0862 §Substrate types.
 //!
 //! HLC is a vector-clock + wall-clock hybrid. Each `HlcTimestamp` carries
 //! `(physical_ms, logical, writer_node_id)`. The `HlcClock` provides
@@ -18,7 +18,7 @@ use super::ids::WriterNodeId;
 
 /// HLC timestamp: physical_ms + logical counter + writer_node_id.
 ///
-/// Per RFC-0862 v1.3 §Substrate types. Total ordering: lexicographic
+/// Per RFC-0862 §Substrate types. Total ordering: lexicographic
 /// `(physical_ms, logical, writer_node_id)` — the `writer_node_id`
 /// discriminator breaks ties at the same `(physical_ms, logical)`
 /// pair across instances.
@@ -44,7 +44,7 @@ pub type ClockFn = Box<dyn Fn() -> u64 + Send + Sync>;
 
 /// HLC instance bound to a single writer node.
 ///
-/// Per RFC-0862 v1.3 R11 M8: thread-safe via atomics. Per R12 H13:
+/// Per RFC-0862 R11 M8: thread-safe via atomics. Per R12 H13:
 /// `&self` API (atomics make `&mut self` redundant). Per R13 M6: CAS
 /// loop on `last_physical_ms` + `last_logical` (replaces the
 /// load-then-store sequence in the presented pseudocode).
@@ -84,7 +84,7 @@ impl HlcClock {
 
     /// Generate a local HLC timestamp.
     ///
-    /// Per RFC-0862 v1.3 R11 M4: refuse-new on `logical == u32::MAX`.
+    /// Per RFC-0862 R11 M4: refuse-new on `logical == u32::MAX`.
     /// Per R12 H13: takes `&self` (atomics). Per R13 M6: CAS loop
     /// (pseudocode simplified for clarity).
     pub fn now(&self) -> Result<HlcTimestamp, HlcError> {
@@ -110,7 +110,7 @@ impl HlcClock {
 
     /// Observe a remote HLC timestamp and return a new local timestamp.
     ///
-    /// Per RFC-0862 v1.3 R12 H13: takes `&self`. Per R12 H14: overflow
+    /// Per RFC-0862 R12 H13: takes `&self`. Per R12 H14: overflow
     /// guards on BOTH remote-derived branches. Per R13 H1: skew cap
     /// `max_skew_ms = 1_000` (10x alarm threshold from §Implicit Assumptions
     /// Audit "NTP + alarm >100ms"). 60_000ms was 600x too loose;
@@ -171,7 +171,7 @@ impl HlcClock {
     }
 }
 
-/// HLC errors (per RFC-0862 v1.3 §Supporting types + error enums).
+/// HLC errors (per RFC-0862 §Supporting types + error enums).
 #[derive(Debug, thiserror::Error)]
 pub enum HlcError {
     /// `logical` overflow at `u32::MAX` — refuse-new posture.

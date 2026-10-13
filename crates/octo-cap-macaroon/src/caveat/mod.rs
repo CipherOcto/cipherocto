@@ -239,7 +239,7 @@ pub enum Caveat {
     #[serde(rename = "payment")]
     Payment(PaymentCaveat),
 
-    /// Asset-binding co-bound caveat (RFC-0965 v2.1 §5 PermissionKind Co-Bound Caveat).
+    /// Asset-binding co-bound caveat (RFC-0965 §5 PermissionKind Co-Bound Caveat).
     /// When co-occurring with `Caveat::Payment` in the same chain,
     /// `set_subsumes` enforces `payment.asset_id == self.asset_id`
     /// (Round 1 CRITICAL #5 mitigation — prevents PermissionKind bypass
@@ -378,7 +378,7 @@ pub struct RawCaveat {
     pub value: Vec<u8>,
 }
 
-/// Asset-binding co-bound caveat payload (RFC-0965 v2.1 §5 PermissionKind Co-Bound Caveat).
+/// Asset-binding co-bound caveat payload (RFC-0965 §5 PermissionKind Co-Bound Caveat).
 ///
 /// Pairs with a `Caveat::Payment(p)` to enforce that the payment
 /// caveat's `asset_id` matches this `asset_id`. Prevents
@@ -688,7 +688,7 @@ fn parent_caveat_implies(parent: &[Caveat], child: &Caveat) -> bool {
             .iter()
             .any(|p| matches!(p, Caveat::Vault(p) if p == c)),
         Caveat::AssetBinding(c) => parent.iter().any(|p| match p {
-            // Co-bound rule (RFC-0965 v2.1 §5 PermissionKind Co-Bound Caveat): when parent
+            // Co-bound rule (RFC-0965 §5 PermissionKind Co-Bound Caveat): when parent
             // carries a Caveat::AssetBinding AND child carries a
             // Caveat::Payment with a different asset_id, the chain is
             // rejected (prevents PermissionKind bypass on cross-asset
@@ -756,7 +756,7 @@ fn parent_caveat_implies(parent: &[Caveat], child: &Caveat) -> bool {
             Caveat::Sharded { shard_id: p_shard } => p_shard == c_shard,
             _ => false,
         }),
-        // Payment caveat subsumption (RFC-0965 v2.1 §2 PaymentCaveat Specification, mission 0957-phase2b):
+        // Payment caveat subsumption (RFC-0965 §2 PaymentCaveat Specification, mission 0957-phase2b):
         // child budget ≤ parent budget, child expiry ≤ parent expiry,
         // parent model empty OR matches child model. The child cannot
         // widen to a wildcard model (RFC-0957 §Attenuation Invariant).

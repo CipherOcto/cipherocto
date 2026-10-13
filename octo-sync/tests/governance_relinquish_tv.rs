@@ -1,5 +1,5 @@
 //! 8 end-to-end test vectors for `WriterElectionForceRelinquish`
-//! (mission `0871e-force-relinquish-governance`, RFC-0862 v1.3
+//! (mission `0871e-force-relinquish-governance`, RFC-0862
 //! §Specification §Governance).
 //!
 //! Covers the full attestation-verify → nonce-consume →

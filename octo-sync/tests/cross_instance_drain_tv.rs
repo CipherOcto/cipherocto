@@ -1,9 +1,9 @@
 //! 4 cross-instance drain test vectors (mission 0871e-phase5c-1 +
-//! RFC-0862 v1.4 §Test Vectors).
+//! RFC-0862 §Test Vectors).
 #![allow(clippy::doc_lazy_continuation)]
 //!
 //! Multi-instance test harness exercising the concrete
-//! `RaftLikeDrainCoordinator` impl (per RFC-0862 v1.4 §Concrete Impl
+//! `RaftLikeDrainCoordinator` impl (per RFC-0862 §Concrete Impl
 //! Extension + mission `0871e-phase5c-1-cross-instance-drain`).
 //! Mirrors the `cross_instance_tv.rs` pattern for
 //! `RaftLikeDidWriteCoordinator`.

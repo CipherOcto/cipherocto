@@ -1,6 +1,6 @@
 //! Sync-peer slash codes + emission mapping (mission 0862m).
 //!
-//! Defines the canonical slash code constants used by RFC-0862 v1.1.0
+//! Defines the canonical slash code constants used by RFC-0862
 //! Phase 4 ("Slashing for misbehaving sync peers") + the `SyncSlash`
 //! enum that maps `SyncError` variants onto the slash-code space.
 //! DomainCoordinator consumers (mission 0855p-c) emit

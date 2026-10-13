@@ -1,4 +1,4 @@
-//! WAL entry types + format constants (per RFC-0862 v1.3 §Substrate
+//! WAL entry types + format constants (per RFC-0862 §Substrate
 //! types + §V2 WAL header_size extension).
 //!
 //! The v1.3 WAL entry is NOT parseable by v1.2 readers (different Magic + ShardKey field + blake3 vs CRC32 checksum). Per R11 H5 + R12 C1, v1.2 nodes MUST be patched to v1.2.1 (reject unknown Magic) before v1.3 nodes deploy.
@@ -18,18 +18,18 @@ use super::ids::ShardKey;
 
 /// v1.2 WAL magic (ASCII `"WALE"`).
 ///
-/// Per RFC-0862 v1.3 R12 C2: kept for migration reference. v1.3 entries
+/// Per RFC-0862 R12 C2: kept for migration reference. v1.3 entries
 /// use `WAL_MAGIC_V13`; v1.2 readers identify v1.3 entries by the
 /// differing magic + v1.2.1+ reject them with `WalVersionTooNew`.
 pub const WAL_MAGIC_V12: u32 = 0x454C_4157;
 
 /// v1.3 WAL magic (ASCII `"WAL3"`).
 ///
-/// Per RFC-0862 v1.3 R12 C2: distinguishes v1.2 vs v1.3 entries. The
+/// Per RFC-0862 R12 C2: distinguishes v1.2 vs v1.3 entries. The
 /// 60-byte prefix layout (Magic..PayloadLength) is canonical for v1.3.
 pub const WAL_MAGIC_V13: u32 = 0x5741_4C33;
 
-/// Entry type codes (per RFC-0862 v1.3 R12 M20).
+/// Entry type codes (per RFC-0862 R12 M20).
 ///
 /// 0x10 = operator nonce record (governance proof replay).
 /// 0x20 = drain event (Layer B-substrate → epoch boundary).
@@ -46,7 +46,7 @@ pub const ENTRY_TYPE_DID_REGISTER: u8 = 0x21;
 /// DID revoke event entry type.
 pub const ENTRY_TYPE_DID_REVOKE: u8 = 0x22;
 
-/// v1.3 WAL entry (per RFC-0862 v1.3 §Substrate types + §V2 WAL
+/// v1.3 WAL entry (per RFC-0862 §Substrate types + §V2 WAL
 /// header_size extension).
 ///
 /// `prefix_bytes` is the canonical 60-byte serialization of the entry

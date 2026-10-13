@@ -20,7 +20,7 @@
 //! underlying `StoolapAdapter` impl internally calls
 //! `MVCCEngine::replay_two_phase`.
 //!
-//! Per RFC-0862 v1.1.0, the cipherocto sync engine never calls
+//! Per RFC-0862, the cipherocto sync engine never calls
 //! `MVCCEngine::replay_two_phase` directly; the trait is the integration
 //! boundary.
 
@@ -102,7 +102,7 @@ impl RaftOverlay {
     }
 
     /// Apply a committed Raft entry to the local database.
-    /// Per RFC-0862 v1.1.0, this goes through `adapter.apply_wal_entry`,
+    /// Per RFC-0862, this goes through `adapter.apply_wal_entry`,
     /// NOT via direct `MVCCEngine::replay_two_phase`.
     pub fn apply(&self, entry: &RaftEntry) -> Result<(), crate::error::SyncError> {
         self.adapter.apply_wal_entry(&entry.wal_entry)

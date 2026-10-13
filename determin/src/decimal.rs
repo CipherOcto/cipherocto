@@ -905,7 +905,7 @@ impl fmt::Display for Decimal {
 
 /// `FromStr` for `Decimal` — RFC-0111 §Locale Specification + §String Representation.
 ///
-/// Policy (RFC-0111 v1.21):
+/// Policy (RFC-0111):
 ///   - Whitespace: `trim()` leading + trailing; **TRAP** on internal whitespace.
 ///   - Sign: optional `+` for positive, `-` for negative; no-sign = positive.
 ///   - Decimal separator: `.` (period) only — comma rejected.

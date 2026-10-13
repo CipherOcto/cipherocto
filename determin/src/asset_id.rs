@@ -11,7 +11,7 @@
 //!
 //! Domain-separated: namespace `cipherocto/asset/v1/` guarantees
 //! future-version (`v2`, `v3`, ...) asset ID collision impossibility
-//! (per RFC-0105 v2.0 §Asset ID Derivation).
+//! (per RFC-0105 §Asset ID Derivation).
 //!
 //! ## 9 role-token enumeration
 //!
@@ -33,12 +33,12 @@
 //!
 //! Per ``docs/architecture/design-principles.md`.md` Layer A row: this function
 //! lives in the frozen substrate (RFC-frozen, semver-major only). The
-//! RFC-0105 v2.0 amendment mandates the canonical derivation rule +
+//! RFC-0105 amendment mandates the canonical derivation rule +
 //! namespace + 9-token enumeration; any future change requires a
 //! semver-major bump (e.g. `v3` namespace bump for asset ID collision
 //! avoidance across ecosystem forks).
 
-/// Canonical asset-ID derivation domain prefix for RFC-0105 v2.0.
+/// Canonical asset-ID derivation domain prefix for RFC-0105.
 ///
 /// Future version bumps (`v2`, `v3`, ...) MUST change this string to
 /// guarantee collision-free asset IDs across ecosystem forks. Any
@@ -77,7 +77,7 @@ pub const ROLE_TOKENS: &[&str] = &[
 ///
 /// # Layer
 ///
-/// RFC-0105 v2.0 §Asset ID Derivation — lives in Layer A frozen
+/// RFC-0105 §Asset ID Derivation — lives in Layer A frozen
 /// substrate. The 9-role-token enumeration (see [`ROLE_TOKENS`]) pins
 /// the canonical names; future additions land in a v1.1 enumeration
 /// extension or a v2 namespace bump.

@@ -1,10 +1,10 @@
-//! In-memory WAL backing (per RFC-0862 v1.4 §Concrete Impl Extension).
+//! In-memory WAL backing (per RFC-0862 §Concrete Impl Extension).
 //!
 //! `InMemoryWal` implements the canonical `WalWriter` + `WalReader` +
 //! `WalNonceScanner` traits on top of a shared `Arc<Cluster>`, plus
 //! the local `governance::WalAppender` supertrait that `NonceTracker`
 //! consumes. Production deployments replace this with a disk-backed WAL
-//! (per RFC-0862 v1.3 §WAL Replay Algorithm + §Test Vectors) — the
+//! (per RFC-0862 §WAL Replay Algorithm + §Test Vectors) — the
 //! `InMemoryWal` impl exists to exercise the substrate trait surface in
 //! the cross-instance test harness.
 //!
@@ -71,7 +71,7 @@ impl WalNonceScanner for InMemoryWal {
 /// `NonceTracker` (in `governance.rs`) takes `Arc<dyn WalAppender>` and
 /// needs sync `append_nonce_record` + `scan_nonce_records`. This impl
 /// satisfies that without forcing `NonceTracker` onto the canonical
-/// (async) `WalWriter` supertrait (per RFC-0862 v1.3 R13 M2: lift in
+/// (async) `WalWriter` supertrait (per RFC-0862 R13 M2: lift in
 /// v1.4 amendment).
 impl governance::WalAppender for InMemoryWal {
     fn append_nonce_record(&self, record: &NonceRecord) -> Result<(), WriterElectionError> {

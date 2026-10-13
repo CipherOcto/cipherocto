@@ -1,6 +1,6 @@
 //! Type aliases used in the [`DatabaseSyncAdapter`](crate::DatabaseSyncAdapter) trait signatures.
 //!
-//! Per RFC-0862 v1.1.0 §DatabaseSyncAdapter Trait §Type aliases. All aliases are
+//! Per RFC-0862 §DatabaseSyncAdapter Trait §Type aliases. All aliases are
 //! newtypes around primitive types; they preserve strong typing at the trait
 //! boundary without imposing runtime cost.
 

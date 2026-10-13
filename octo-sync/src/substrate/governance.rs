@@ -1,4 +1,4 @@
-//! Governance attestation + signature verification (per RFC-0862 v1.3
+//! Governance attestation + signature verification (per RFC-0862
 //! §Specification §WriterElection Protocol §Governance).
 //!
 //! Includes:
@@ -7,7 +7,7 @@
 //! - `verify_governance_attestation` (M-of-N threshold + ed25519 verifications + nonce consume)
 //! - `ed25519_verify` (single-signature verify helper)
 //!
-//! `MAX_GOVERNANCE_SIGNATURES = 32` per RFC-0862 v1.3 R12 M23 (DoS bound).
+//! `MAX_GOVERNANCE_SIGNATURES = 32` per RFC-0862 R12 M23 (DoS bound).
 
 use std::collections::HashSet;
 
@@ -20,12 +20,12 @@ use super::ids::ShardKey;
 use super::records::NonceRecord;
 use super::records::WriterElectionError;
 
-/// Maximum signatures per `GovernanceAttestation` (per RFC-0862 v1.3
+/// Maximum signatures per `GovernanceAttestation` (per RFC-0862
 /// R12 M23). Caps the ed25519-verify cost against a malicious deployment.
 pub const MAX_GOVERNANCE_SIGNATURES: usize = 32;
 
 /// Governance attestation for a `force_relinquish_writer` call (per
-/// RFC-0862 v1.3 §Specification §Governance).
+/// RFC-0862 §Specification §Governance).
 ///
 /// `chain_id` binds the attestation to a specific deployment (per
 /// R12 M23: prevents replay across deployments sharing an operator
@@ -62,7 +62,7 @@ pub struct OperatorSignature {
 
 /// Domain-separated message bound over `(shard_key, chain_id, term, nonce)`.
 ///
-/// Per RFC-0862 v1.3 R12 M23: the `chain_id` inclusion binds the
+/// Per RFC-0862 R12 M23: the `chain_id` inclusion binds the
 /// attestation to a deployment so an operator-set cannot be replayed
 /// across deployments. The blake3 domain prefix distinguishes
 /// governance signatures from other protocol signatures.
@@ -81,7 +81,7 @@ pub fn governance_signature_message(
     *blake3::hash(&input).as_bytes()
 }
 
-/// ed25519 signature verification (per RFC-0862 v1.3 §Supporting types).
+/// ed25519 signature verification (per RFC-0862 §Supporting types).
 ///
 /// Returns `true` if the signature is valid for the supplied message
 /// and public key. Used by `verify_governance_attestation` and by
@@ -97,7 +97,7 @@ pub fn ed25519_verify(pk: &[u8; 32], msg: &[u8], sig: &[u8; 64]) -> bool {
 /// Verify a `GovernanceAttestation` against the configured
 /// operator set + nonce tracker.
 ///
-/// Per RFC-0862 v1.3 §Specification §Governance:
+/// Per RFC-0862 §Specification §Governance:
 /// 1. `shard_key` + `chain_id` + `threshold` must match configured values
 /// 2. Signature count must be `≤ MAX_GOVERNANCE_SIGNATURES`
 /// 3. Each signature is verified against `governance_signature_message`
@@ -155,7 +155,7 @@ pub fn verify_governance_attestation(
     Ok(())
 }
 
-/// Per-shard replay-resistant nonce tracker (per RFC-0862 v1.3 R11 H1 + R13 M3).
+/// Per-shard replay-resistant nonce tracker (per RFC-0862 R11 H1 + R13 M3).
 ///
 /// Stores `(term, nonce)` tuples per `ShardKey` so `gc_expired_nonces`
 /// can prune by term boundary. `consume` writes the nonce to the WAL
@@ -191,7 +191,7 @@ impl NonceTracker {
 
     /// Consume a nonce; fail if already used.
     ///
-    /// Per RFC-0862 v1.3 R12 H15: check-then-append (NOT append-then-check)
+    /// Per RFC-0862 R12 H15: check-then-append (NOT append-then-check)
     /// so replayed nonces do NOT grow the WAL unboundedly. Per R13 M4:
     /// on WAL append failure, ROLL BACK the in-memory insert.
     pub fn consume(
@@ -219,7 +219,7 @@ impl NonceTracker {
 
     /// Prune nonces older than `current_term - MAX_NONCE_RETENTION_TERMS`.
     ///
-    /// Per RFC-0862 v1.3 R12 H15 + R13 M3: term-scoped GC. Runs on each
+    /// Per RFC-0862 R12 H15 + R13 M3: term-scoped GC. Runs on each
     /// new term boundary.
     pub fn gc_expired_nonces(&self, current_term: u64) {
         const MAX_NONCE_RETENTION_TERMS: u64 = 1_000;

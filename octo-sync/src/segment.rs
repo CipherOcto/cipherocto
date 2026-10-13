@@ -4,7 +4,7 @@
 //! via the `DatabaseSyncAdapter` trait, packages it as a `SyncSegment`,
 //! and ships it back to the reader.
 //!
-//! Per RFC-0862 v1.1.0 §Migration path step v1.1.0.d, all segment reads and
+//! Per RFC-0862 §Migration path step v1.1.0.d, all segment reads and
 //! writes go through the trait. The cipherocto sync engine never calls
 //! `MVCCEngine::create_snapshot_for_table` directly; the underlying
 //! `StoolapAdapter` impl handles that internally.
@@ -108,7 +108,7 @@ impl SyncSegment {
 
 /// The snapshot segment indexer.
 ///
-/// Holds the `DatabaseSyncAdapter` trait object (per RFC-0862 v1.1.0).
+/// Holds the `DatabaseSyncAdapter` trait object (per RFC-0862).
 pub struct SegmentIndexer {
     /// The database adapter (trait object).
     adapter: Arc<dyn DatabaseSyncAdapter>,
@@ -142,7 +142,7 @@ impl SegmentIndexer {
         segment_index: SegmentIndex,
         expected_root: [u8; 32],
     ) -> Result<SegmentLookupResult, SyncError> {
-        // Per RFC-0862 v1.1.0, the segment read goes through the trait.
+        // Per RFC-0862, the segment read goes through the trait.
         let segment: Option<AdapterSegment> = self
             .adapter
             .read_snapshot_segment(table_id, segment_index)?;

@@ -1,4 +1,4 @@
-//! DID encoding (per RFC-0862 v1.3 §Substrate types §canonical_hash +
+//! DID encoding (per RFC-0862 §Substrate types §canonical_hash +
 //! §EncodedDidDocument).
 //!
 //! `canonical_hash` is the canonical BLAKE3-256 hash of a `DidDocument`
@@ -9,7 +9,7 @@
 //!
 //! `EncodedDidDocument` is a small trait for callers that need to
 //! produce the canonical bytes (e.g., for inclusion in a WAL entry
-//! payload). The trait is NOT sealed (per RFC-0862 v1.3 §Substrate
+//! payload). The trait is NOT sealed (per RFC-0862 §Substrate
 //! types: "encoded via free fn + trait, NOT sealed").
 
 use octo_ident::canonical_hash as ident_canonical_hash;
@@ -18,20 +18,20 @@ use octo_ident::DidDocument;
 /// Re-exported from `octo_ident::canonical_hash`. Computes the
 /// BLAKE3-256 hash of `borsh::to_vec(doc)`.
 ///
-/// Per RFC-0862 v1.3 §Substrate types: free fn, NOT a trait method.
+/// Per RFC-0862 §Substrate types: free fn, NOT a trait method.
 /// This avoids forcing every `DidDocument` extension to re-implement
 /// the canonical encoding.
 pub fn canonical_hash(doc: &DidDocument) -> [u8; 32] {
     ident_canonical_hash(doc)
 }
 
-/// Per-RFC-0862 v1.3 §Substrate types §EncodedDidDocument.
+/// Per-RFC-0862 §Substrate types §EncodedDidDocument.
 ///
 /// Trait for types that can be encoded into the canonical borsh form
 /// used by `canonical_hash`. Default impl applies to `DidDocument`.
 ///
 /// `Send + Sync` so the trait can be used in `Arc<dyn EncodedDidDocument>`
-/// (per RFC-0862 v1.3 R12 H12 supertrait bound).
+/// (per RFC-0862 R12 H12 supertrait bound).
 pub trait EncodedDidDocument: Send + Sync {
     /// Encode the document into the canonical borsh form.
     fn encode(&self) -> Vec<u8>;

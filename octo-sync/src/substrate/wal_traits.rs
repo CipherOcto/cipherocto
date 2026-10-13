@@ -1,6 +1,6 @@
-//! WAL trait surface (per RFC-0862 v1.3 §Supporting types + error enums).
+//! WAL trait surface (per RFC-0862 §Supporting types + error enums).
 //!
-//! Per RFC-0862 v1.3 R12 M20: split `WalAppender` into three narrower
+//! Per RFC-0862 R12 M20: split `WalAppender` into three narrower
 //! traits (`WalWriter`, `WalReader`, `WalNonceScanner`) to respect
 //! Interface Segregation. A legacy `WalAppender` alias combines
 //! `WalWriter + WalNonceScanner` for backward-compat with the
@@ -19,7 +19,7 @@ use super::state::ReplayState;
 use super::state::WriterContext;
 use super::wal::WalEntry;
 
-/// Per-RFC-0862 v1.3 R12 M20 append-only WAL sink.
+/// Per-RFC-0862 R12 M20 append-only WAL sink.
 #[async_trait]
 pub trait WalWriter: Send + Sync {
     /// Append a generic WAL entry. Returns the assigned LSN.
@@ -28,7 +28,7 @@ pub trait WalWriter: Send + Sync {
     async fn append_nonce_record(&self, record: &NonceRecord) -> Result<(), WriterElectionError>;
 }
 
-/// Per-RFC-0862 v1.3 R12 M20 WAL reader.
+/// Per-RFC-0862 R12 M20 WAL reader.
 #[async_trait]
 pub trait WalReader: Send + Sync {
     /// Read a range of WAL entries. `from_lsn` is inclusive; `to_lsn`
@@ -40,7 +40,7 @@ pub trait WalReader: Send + Sync {
     ) -> Result<Vec<WalEntry>, WriterElectionError>;
 }
 
-/// Per-RFC-0862 v1.3 R12 M20 nonce scanner (for `NonceTracker` replay).
+/// Per-RFC-0862 R12 M20 nonce scanner (for `NonceTracker` replay).
 ///
 /// Synchronous because the WAL reader is typically in-memory-backed
 /// after a single cold-start scan. Follow-on implementations may
@@ -51,7 +51,7 @@ pub trait WalNonceScanner: Send + Sync {
 }
 
 /// Legacy alias combining `WalWriter + WalNonceScanner` (per
-/// RFC-0862 v1.3 R13 M2: `#[async_trait]` keeps the trait object-safe).
+/// RFC-0862 R13 M2: `#[async_trait]` keeps the trait object-safe).
 ///
 /// `#[deprecated]` — prefer `WalWriter` + `WalReader` + `WalNonceScanner`
 /// individually. `NonceTracker` (per governance.rs) still requires
@@ -60,7 +60,7 @@ pub trait WalNonceScanner: Send + Sync {
 #[deprecated(since = "1.3.0", note = "use WalWriter + WalReader + WalNonceScanner")]
 pub trait WalAppender: WalWriter + WalNonceScanner {}
 
-/// Per-RFC-0862 v1.3 §WAL Replay Algorithm.
+/// Per-RFC-0862 §WAL Replay Algorithm.
 ///
 /// Fail-closed on corruption (per R10 H3). Tracks `tip_lsn` and
 /// rejects gaps + non-monotonic LSNs (per R10 H4). Takes `&mut WriterContext`
@@ -139,7 +139,7 @@ pub async fn replay_wal(
     Ok(tip_lsn)
 }
 
-/// Per-RFC-0862 v1.3 §Supporting types: dispatch entry to its
+/// Per-RFC-0862 §Supporting types: dispatch entry to its
 /// per-entry-type apply logic. The default impl is a no-op stub;
 /// concrete impls (per §V2 WAL header_size extension) dispatch on
 /// `entry.entry_type` for `ENTRY_TYPE_DRAIN`,

@@ -33,6 +33,7 @@ Exit 0 always. This reports; it does not gate.
 from __future__ import annotations
 
 import argparse
+import collections
 import importlib.util
 import pathlib
 import re
@@ -165,7 +166,68 @@ def qualify(m, names: set[str], known: set[str]) -> int:
     return hits
 
 
-def report(m, label, paths, known, numbers, base, rx=None) -> dict:
+# The identifier-qualifier rule, measured rather than assumed.
+#
+# `resolves` never trims an anchor below two words. That floor is what stops
+# `§Gas Model` from resolving against a `§Gas` heading, and it is the correct
+# default. It has one consequence that is wrong far more often than not:
+# `§Adversary A5` does not resolve against a heading `Adversary`.
+#
+# A trailing token that is an identifier rather than an English word is
+# distinguishable from that ambiguity, which is the rule proposed in mission
+# `a-capitalized-word-after-a-section-name-is-prose-or-part-of-the-name-and-the-regex-cannot-tell`.
+# Names reaching this function have already been through `normalize`, so they
+# are lower case and the patterns below are written that way.
+#
+# Three exclusions, each of which a shape-only rule gets wrong. All three were
+# found by listing the items the rule rescues rather than counting them:
+#
+#   * `L###` tails are CLAUDE.md convention violations, not qualifiers. A
+#     resolver that accepts them deletes the only signal that they exist, since
+#     `--line-refs` is a separate measurement and is not wired into CI.
+#   * A bare common word is not a section name even when a heading carries it.
+#     `§Top K` is `Top` plus the letter K; `§The V2` is nothing at all.
+#   * A name containing `(` `)` or `:` is over-capture. Trimming it can appear
+#     to rescue it while the real defect is the extraction boundary.
+IDENTIFIER_TAIL = re.compile(r"^(?:[a-z]{1,4}\d+[a-z]?|[a-z]|\d+[a-z]?)$")
+LINE_NUMBER_TAIL = re.compile(r"^l\d+$")
+OVER_CAPTURE = re.compile(r"[():]")
+GENERIC_HEADS = {"the", "top", "a", "an", "of", "in", "to", "is", "and", "or"}
+
+
+def qualifier_breakdown(m, names: set[str], known: set[str]):
+    """Partition the two-word identifier-shaped names by what the rule does.
+
+    Returns a counter of verdicts and the names behind each, because the
+    verdicts are the claim and the names are the check. A rule reported only as
+    a count hides the items it rescues wrongly, which is the whole risk here.
+    """
+    verdicts: collections.Counter = collections.Counter()
+    examples: dict[str, list[str]] = collections.defaultdict(list)
+
+    def record(verdict: str, name: str) -> None:
+        verdicts[verdict] += 1
+        examples[verdict].append(name)
+
+    for name in sorted(names):
+        words = name.split()
+        if len(words) != 2 or not IDENTIFIER_TAIL.match(words[-1]):
+            continue
+        head = words[0]
+        if LINE_NUMBER_TAIL.match(words[-1]):
+            record("excluded: L### line reference", name)
+        elif OVER_CAPTURE.search(name):
+            record("excluded: over-capture", name)
+        elif head in GENERIC_HEADS:
+            record("refused: generic head", name)
+        elif m.resolves(head, known):
+            record("rescued", name)
+        else:
+            record("refused: head is not a heading", name)
+    return verdicts, examples
+
+
+def report(m, label, paths, known, numbers, base, rx=None, qualifier=False) -> dict:
     findings = scan(m, paths, known, numbers, rx)
     new = {f for f in findings - base if f[0] not in {n for n, s in base if s == "*"}}
     names = {n for n, _ in findings}
@@ -177,6 +239,14 @@ def report(m, label, paths, known, numbers, base, rx=None) -> dict:
     print(f"  baselined (name, site) {len(findings & base)}")
     print(f"  would turn CI red      {len(new)}")
     print(f"  prefix-resolvable      {qualify(m, names, known)} of {len(names)}")
+    if qualifier:
+        verdicts, examples = qualifier_breakdown(m, names, known)
+        print(f"  identifier-qualifier rule, two-word names only:")
+        for verdict in sorted(verdicts, key=lambda v: (-verdicts[v], v)):
+            shown = ", ".join(repr(n) for n in examples[verdict][:6])
+            more = f" (+{len(examples[verdict]) - 6} more)" if len(examples[verdict]) > 6 else ""
+            print(f"      {verdicts[verdict]:>4}  {verdict}{more}")
+            print(f"            {shown}")
     return {"findings": findings, "new": new, "names": names}
 
 
@@ -215,6 +285,8 @@ def main() -> int:
     ap.add_argument("--terminator", action="store_true", help="also the ) and : variant")
     ap.add_argument("--line-refs", action="store_true",
                     help="report section references carrying a line number")
+    ap.add_argument("--qualifier", action="store_true",
+                    help="partition two-word identifier-qualified names by verdict")
     args = ap.parse_args()
 
     m = load_linter()
@@ -244,7 +316,7 @@ def main() -> int:
         targets.append(("gated tree (rfcs + CLAUDE.md), as CI runs it", gated))
 
     for label, paths in targets:
-        report(m, label, paths, known, numbers, base)
+        report(m, label, paths, known, numbers, base, qualifier=args.qualifier)
         if args.terminator:
             print(f"  -- with the ) and : terminator --")
             report(m, f"{label} + terminator", paths, known, numbers, base, TERMINATOR)

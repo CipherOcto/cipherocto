@@ -44,19 +44,29 @@ string and its `depends_on` list disappears.
 
 Causes, which need four different fixes and so are not one bucket:
 
-| Count | Cause                                          | Fix             |
-| ----- | ---------------------------------------------- | --------------- |
-| 29    | unquoted value containing `: `                 | quote the value |
-| 3     | value beginning with `*`, read as a YAML alias | quote the value |
-| 1     | bare `@`, a reserved indicator                 | quote the value |
+| Count | Cause                                       | Fix               |
+| ----- | ------------------------------------------- | ----------------- |
+| 27    | unquoted value containing `: `              | quote the value   |
+| 5     | closing `---` fence placed after body prose | move the fence up |
+| 1     | bare `@`, a reserved indicator              | quote the value   |
 
-The 29 share one shape, an unquoted `description` carrying a reference like
+The 27 share one shape, an unquoted `description` carrying a reference like
 `§Mission Decomposition M10 row: extend existing ...`. In a plain YAML scalar
 a colon followed by a space opens a nested mapping, so the value cannot be
 read.
 
-The single Accepted RFC affected is `RFC-0907`, whose frontmatter carries an
-unquoted author line, `- @cipherocto`.
+The 5 open a frontmatter block and close it one to nine lines too late, so the
+block swallows a body paragraph beginning `**Retro-supersession ...**`. The
+loader reports these as a YAML _alias_ error about the leading `**`, which
+names a symptom rather than the defect. The defect is the fence, and it needs
+a different fix.
+
+The single Accepted RFC affected is `RFC-0907`, whose frontmatter is correctly
+fenced but carries an unquoted author line, `- @cipherocto`.
+
+The 5 misfenced documents also carry a `: ` in their own descriptions, so
+moving the fence is necessary and not sufficient. Each still fails to parse
+until its description is quoted as well.
 
 ## Why nothing caught it
 
@@ -101,8 +111,15 @@ at the point where they appear rather than only in a trailing note.
 - [x] Prove the tool does not report a green result when it examines nothing. A
       nonexistent tree exits 2 rather than 0, because four scripts in this
       repository once reported success on an empty run.
-- [ ] Repair the remaining 33, smallest fix first: 30 need a value quoted, 3
-      need a leading `*` quoted.
+- [x] Check each cause rather than reporting one bucket. The first version of
+      the classifier trusted the loader's message and recorded 3 of the
+      misfenced documents as alias errors; they are fence errors. A second
+      version used a proxy that over-matched, because a blank line followed by
+      a top-level key is ordinary YAML. The corrected test is structural: a
+      column-0 line that is neither a key nor a list item is body prose.
+- [ ] Repair the remaining 33. Smallest fix first: 28 need a value quoted, 5
+      need the closing fence moved up and their description quoted, and 1 in
+      `RFC-0907` needs its author line quoted.
 - [ ] Decide whether `scripts/lint_frontmatter.py` is wired into CI. Adopting it
       as a gate is only reasonable once the corpus is clean, or the gate lands
       red on a first run and gets muted.
@@ -123,3 +140,28 @@ invisible to it by construction.
 A reader that parses the block would have caught these the day they were
 written. The reason it does not is that the reader was written for a field,
 not for a document.
+
+## Correction: this tool mislabelled five documents before it counted them
+
+The first version of `scripts/lint_frontmatter.py` classified each failure from
+the loader's message text. That reported 29 unquoted values, 3 alias errors and
+1 reserved indicator.
+
+It was wrong about the 3, and wrong by omission as well. Five documents are
+misfenced, and the loader describes four of them as alias errors and one as an
+unquoted value, because a misplaced fence produces whatever symptom the first
+body character happens to cause. Checking the five individually against their
+fence positions showed each swallows one to nine lines of prose beginning
+`**Retro-supersession`.
+
+So the cause split is 27 / 5 / 1, not 29 / 3 / 1, and the totals agreed at 33
+throughout — which is the point. A total that stays correct while its
+composition is wrong is the most dangerous kind of measurement error, because
+every arithmetic cross-check still passes. The only thing that caught it was
+printing one document per line and noticing that the error pointed at a line
+of prose.
+
+The structural test replaced the message test. A column-0 line that is neither a
+key nor a list item is body, and a block containing one is misfenced. The first
+structural attempt used "a blank line followed by a top-level line" instead,
+which over-matched by 2 because that is ordinary YAML.

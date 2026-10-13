@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import pathlib
+import re
 import sys
 
 import yaml
@@ -49,13 +50,37 @@ def frontmatter_of(text: str) -> str | None:
     return text[4:end]
 
 
-def classify(error: Exception) -> str:
+def fence_misplaced(block: str) -> bool:
+    """True if the block runs past the metadata into body prose.
+
+    Detected structurally rather than by reading the loader's message. Three
+    mission files open a frontmatter block and do not close it until after a
+    paragraph of body text, so the loader reports a YAML *alias* error about a
+    `**bold**` marker that has no business being in metadata at all. The error
+    names the symptom; the defect is the fence. A first version of this
+    function trusted the message and mislabelled all three. A second trusted a
+    too-loose proxy -- a blank line followed by a top-level line -- and
+    over-matched, because that is ordinary YAML.
+    """
+    top_level_key = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_. -]*:")
+    for line in block.splitlines():
+        if not line.strip() or line[:1] in (" ", "\t", "-", "#"):
+            continue
+        if top_level_key.match(line):
+            continue
+        return True
+    return False
+
+
+def classify(error: Exception, block: str) -> str:
     """Name the defect, because the four causes need four different fixes.
 
     A single "invalid YAML" bucket would leave the reader to rediscover which
     of these they are looking at, for each of the failing documents.
     """
     message = str(error)
+    if fence_misplaced(block):
+        return "closing fence placed after body text - move the fence up"
     if "mapping values are not allowed" in message:
         return "unquoted value containing ': ' - quote the value"
     if "found character '@'" in message or "cannot start any token" in message:
@@ -108,7 +133,7 @@ def main() -> int:
             try:
                 yaml.safe_load(block)
             except Exception as exc:  # noqa: BLE001 - report any loader error
-                failures.append((str(path.relative_to(ROOT)), classify(exc)))
+                failures.append((str(path.relative_to(ROOT)), classify(exc, block)))
                 continue
             parsed += 1
 

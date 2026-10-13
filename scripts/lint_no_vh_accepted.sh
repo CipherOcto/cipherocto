@@ -72,7 +72,14 @@ while IFS= read -r -d '' rfc_file; do
     # did not match those, so an Accepted RFC with a populated Version History
     # was reported as having none. 2 files use the § form; both were false
     # positives before this.
-    if ! grep -qE '^## (Version History|Changelog|§Version History|§Changelog)' "$rfc_file" 2>/dev/null; then
+    # The optional section number matters. This corpus also numbers its
+    # top-level sections, so the same table is written `## 6. Version History`
+    # rather than `## Version History`. 14 Accepted RFCs carry a populated,
+    # numbered Version History and were reported as having none at all.
+    #
+    # The number is optional, not required, so this only ever recognizes more.
+    # Verified across the whole tree: 14 files newly recognized, none lost.
+    if ! grep -qE '^##+ ([0-9]+(\.[0-9]+)*\.? )?(Version History|Changelog|§Version History|§Changelog)' "$rfc_file" 2>/dev/null; then
         echo "MISSING_VH: $rfc_file (Accepted but no ## Version History / ## Changelog)"
         MISSING_VH=$((MISSING_VH + 1))
         FAIL=$((FAIL + 1))
@@ -81,7 +88,7 @@ while IFS= read -r -d '' rfc_file; do
     fi
 
     # Verify VH has at least one data row
-    vh_has_rows=$(awk '/^## (Version History|Changelog|§Version History|§Changelog)/{found=1; next} found && /^\| [0-9]+/ {print; exit}' "$rfc_file" 2>/dev/null || true)
+    vh_has_rows=$(awk '/^##+ ([0-9]+(\.[0-9]+)*\.? )?(Version History|Changelog|§Version History|§Changelog)/{found=1; next} found && /^\| [0-9]+/ {print; exit}' "$rfc_file" 2>/dev/null || true)
     if [ -z "$vh_has_rows" ]; then
         echo "MISSING_VH_ROWS: $rfc_file (## Version History exists but no data rows)"
         MISSING_VH=$((MISSING_VH + 1))

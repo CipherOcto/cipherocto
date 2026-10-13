@@ -1,6 +1,6 @@
 ---
-name: fifty-one-accepted-rfcs-have-no-usable-version-history-and-the-linter-that-checked-could-not-see-them
-description: "scripts/lint_no_vh_accepted.sh reported PASS while examining 7 of 155 Accepted RFCs, because its detection regex required Accepted on the same line as the status heading and the corpus writes it on the following lines. Its CHECKED counter incremented once per markdown file rather than per Accepted RFC, so the summary read CHECKED=247 against PASS=7 and the gap looked like unexamined work rather than a silent skip. After the detection fix, 51 Accepted RFCs have no usable Version History: 18 have no Version History section at all and 33 have a section with no data rows."
+name: thirty-nine-accepted-rfcs-have-no-usable-version-history-after-two-linter-fixes
+description: "lint_no_vh_accepted.sh reported PASS while examining 7 of 155 Accepted RFCs, because its detection regex required Accepted on the same line as the status heading and the corpus writes it on the following lines. Its CHECKED counter incremented once per markdown file rather than per Accepted RFC, so the summary read CHECKED=247 against PASS=7 and the gap looked like unexamined work rather than a silent skip. After the detection fix 51 Accepted RFCs were reported, and after a second fix recognising numbered Version History headings the real figure is 39: 6 have no Version History section at all and 33 have a section with no data rows."
 metadata:
   node_type: mission
   type: implementation
@@ -10,11 +10,11 @@ metadata:
     - RFC-0001
 ---
 
-# Mission `fifty-one-accepted-rfcs-have-no-usable-version-history-and-the-linter-that-checked-could-not-see-them`
+# Mission `thirty-nine-accepted-rfcs-have-no-usable-version-history-after-two-linter-fixes`
 
 ## Status
 
-Open. The detection defect is fixed. The 51 findings are recorded here and
+Open. Both detection defects are fixed. The 39 findings are recorded here and
 **not** resolved — fixing an Accepted RFC's Version History means writing
 history for it, which is author work, not mechanical repair.
 
@@ -62,30 +62,49 @@ Fixed. The linter now reads the Status block rather than the heading line, and
 separates `SCANNED` (files found) from `CHECKED` (Accepted RFCs examined). It
 now reports `SCANNED=247 markdown files, CHECKED=155 Accepted RFCs`.
 
-## The 51 findings
+## The 39 findings
 
 | Class                                                  | Count | Meaning                                            |
 | ------------------------------------------------------ | ----- | -------------------------------------------------- |
-| `MISSING_VH` — no Version History or Changelog section | 18    | the section is absent entirely                     |
+| `MISSING_VH` — no Version History or Changelog section | 6     | the section is absent entirely                     |
 | `MISSING_VH_ROWS` — section present, no data rows      | 33    | the heading exists and the table under it is empty |
 
-`PASS=104`.
+`PASS=116`.
 
-An independent probe over the corpus, written before the linter was fixed and
-using separate detection logic, predicted 20 with no section and 33 with no
-rows. 2 of the 20 turned out to be a third defect (below), leaving 18. The
-fixed linter reports exactly 18 + 33.
+**Correction: the first row was 18, not 6.** Twelve of those eighteen carry a
+fully populated Version History under a **numbered** heading — `## 6. Version
+History` — and the linter required the heading to be unnumbered. They were
+reported as having no Version History at all.
 
-### 18 with no Version History section
+Measured across the whole tree before changing anything: allowing an optional
+section number recognizes 14 files and loses none, so the change is strictly
+additive. Verified in both directions by mutation — adding a numbered Version
+History to a file that lacked one is now accepted, and deleting a populated
+one is still reported.
+
+Six rather than eighteen is the real size of this problem. Half of what looked
+like missing history was a linter that could not read a numbered heading.
+
+### 6 with no Version History section
 
 ```
 draft/process/0001-mission-lifecycle.md
 accepted/process/0002-agent-manifest.md
-accepted/process/0010-v17-chain-id-registration-authority.md
 accepted/process/0011-s-oct-cli-network-phase-11.md
 accepted/process/0011-t-oct-cli-network-phase-12.md
 accepted/process/0011-u-oct-cli-network-phase-13.md
 accepted/process/0011-v-oct-cli-network-phase-14.md
+```
+
+`0001-mission-lifecycle.md` is a draft that declares itself Accepted in its
+Status block. That is a status/placement inconsistency in its own right and is
+called out rather than folded in.
+
+The remaining twelve from the earlier list of eighteen carry a populated
+Version History under a numbered heading and are no longer findings:
+
+```
+accepted/process/0010-v17-chain-id-registration-authority.md
 accepted/process/0206-v30-value-transfer-surface.md
 accepted/economics/0105-v34-private-asset-namespace.md
 accepted/economics/0105-v35-payment-caveat-asset-generality.md
@@ -98,10 +117,6 @@ accepted/economics/0960-v37-vault-balance-projection-substrate.md
 accepted/economics/0965-v21-payment-caveat-asset-binding.md
 accepted/economics/0967-a1-policy-registry.md
 ```
-
-`0001-mission-lifecycle.md` is a draft that declares itself Accepted in its
-Status block. That is a status/placement inconsistency in its own right and is
-called out rather than folded in.
 
 ### 33 with an empty Version History
 
@@ -137,7 +152,7 @@ zero spaces. It collapsed `PASS` from 104 to 2. Explicit alternation is correct.
 
 ## Acceptance criteria
 
-- [ ] Each of the 18 files gains a Version History section, or a decision is
+- [ ] Each of the 6 files gains a Version History section, or a decision is
       recorded for why an Accepted RFC does not need one.
 - [ ] Each of the 33 files gains at least one data row, or is exempted.
 - [ ] `0001-mission-lifecycle.md` is resolved: either promoted out of `draft/`

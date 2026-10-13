@@ -1,6 +1,6 @@
 ---
 name: 0009-cj1-restore-the-v1-wire-as-the-mint-response-payload
-description: Implements draft RFC-0009-A1. The mint handlers respond with a CapabilityBundleV2 descriptor that contains no macaroon, while ProductionCapabilityVerifier and the attenuate handler consume the v1 macaroon wire. Measured: 2 production consumers of the v1 wire, 0 of the V2 bundle, every V2 canonical_de call site in a test. The capability lifecycle has no join because the cutover moved the issuing end and left both consumers alone. Blocked on RFC-0009-A1 acceptance, because the fix is a semver-major edit to a frozen Layer A wire form and the decision belongs to the RFC, not to a mission.
+description: "Implements draft RFC-0009-A1. The mint handlers respond with a CapabilityBundleV2 descriptor that contains no macaroon, while ProductionCapabilityVerifier and the attenuate handler consume the v1 macaroon wire. Measured: 2 production consumers of the v1 wire, 0 of the V2 bundle, every V2 canonical_de call site in a test. The capability lifecycle has no join because the cutover moved the issuing end and left both consumers alone. Blocked on RFC-0009-A1 acceptance, because the fix is a semver-major edit to a frozen Layer A wire form and the decision belongs to the RFC, not to a mission."
 metadata:
   node_type: mission
   type: implementation

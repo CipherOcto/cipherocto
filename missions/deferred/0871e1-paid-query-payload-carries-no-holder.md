@@ -1,6 +1,6 @@
 ---
 name: 0871e1-paid-query-payload-carries-no-holder
-description: RFC-0871's PAID_QUERY_VERIFY payload carries no holder DID, while RFC-0862's SpendLedger is keyed by (holder_did, macaroon_id) and deliberately treats an empty holder as a valid distinct key — RFC-0862 TV-0862-14 pins exactly that. The handler substituted an empty DID and drained against whatever row sat under it. Measured, not inferred: with one row seeded under the empty holder, the production envelope path returned Proceed and drained query_cost. Anything able to seed that row owned a budget every unauthenticated paid query could spend. The handler now refuses, which closes the hazard and leaves paid queries non-functional; making them work is a wire decision this is not.
+description: "RFC-0871's PAID_QUERY_VERIFY payload carries no holder DID, while RFC-0862's SpendLedger is keyed by (holder_did, macaroon_id) and deliberately treats an empty holder as a valid distinct key — RFC-0862 TV-0862-14 pins exactly that. The handler substituted an empty DID and drained against whatever row sat under it. Measured, not inferred: with one row seeded under the empty holder, the production envelope path returned Proceed and drained query_cost. Anything able to seed that row owned a budget every unauthenticated paid query could spend. The handler now refuses, which closes the hazard and leaves paid queries non-functional; making them work is a wire decision this is not."
 metadata:
   node_type: mission
   type: specification

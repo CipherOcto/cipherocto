@@ -1,6 +1,6 @@
 ---
 name: 0010-f8-rich-did-documents-clippy-fix
-description: Fix pre-existing borsh generic bounds defect in `crates/octo-ident/tests/rich_did_document_tv.rs` blocking `cargo clippy -p octo-ident --all-targets -- -D warnings`. Surfaced by RFC-0010 mission audit 2026-08-24; tracked separately per F-P5.2-3 RETAIN framework (substrate fabrication category — out of R19 inline-retrofix scope for retrofix cycle but blocks AC-7 of mission `0010-c-32-byte-addendum` indirectly via shared all-targets clippy invocation). 6 compile errors per `rustc --explain E0277` — borsh `from_slice<T: BorshDeserialize>` generic bound mismatch on round-trip types. Owner: layered substrate fix; mission owns the clippy-clean closure pass.
+description: "Fix pre-existing borsh generic bounds defect in `crates/octo-ident/tests/rich_did_document_tv.rs` blocking `cargo clippy -p octo-ident --all-targets -- -D warnings`. Surfaced by RFC-0010 mission audit 2026-08-24; tracked separately per F-P5.2-3 RETAIN framework (substrate fabrication category — out of R19 inline-retrofix scope for retrofix cycle but blocks AC-7 of mission `0010-c-32-byte-addendum` indirectly via shared all-targets clippy invocation). 6 compile errors per `rustc --explain E0277` — borsh `from_slice<T: BorshDeserialize>` generic bound mismatch on round-trip types. Owner: layered substrate fix; mission owns the clippy-clean closure pass."
 metadata:
   node_type: mission
   type: project

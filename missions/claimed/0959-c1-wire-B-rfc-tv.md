@@ -1,6 +1,6 @@
 ---
 name: 0959-c1-wire-B-rfc-tv
-description: Land RFC-0959 v2.0 wire-format amendment documentation + test-vector subset per recon 2026-08-19: file RFC-0959 v2.0 amendment (Status header v1.0 → v2.0, §Wire Format v2.0 subsection, NEW §Settlement-Time Vault Row Lookup subsection, NEW §Cross-Chain Settlement Reject subsection, §Version History v2.0 row); create `crates/quota-router-storage/tests/tv_0959_settlement_wire.rs` with 25 byte-exact fixtures covering v1.0/v2.0 envelope hash preimage + chain-match accept/reject + cost_vault_id_missing rejection. Per RFC-0206 §4 Layer B additive-only rule, v015 slot already taken by `v015__chain_aware_slash_ledger.sql` per recon; this mission verifies v016 already exists or creates if not.
+description: "Land RFC-0959 v2.0 wire-format amendment documentation + test-vector subset per recon 2026-08-19: file RFC-0959 v2.0 amendment (Status header v1.0 → v2.0, §Wire Format v2.0 subsection, NEW §Settlement-Time Vault Row Lookup subsection, NEW §Cross-Chain Settlement Reject subsection, §Version History v2.0 row); create `crates/quota-router-storage/tests/tv_0959_settlement_wire.rs` with 25 byte-exact fixtures covering v1.0/v2.0 envelope hash preimage + chain-match accept/reject + cost_vault_id_missing rejection. Per RFC-0206 §4 Layer B additive-only rule, v015 slot already taken by `v015__chain_aware_slash_ledger.sql` per recon; this mission verifies v016 already exists or creates if not."
 metadata:
   node_type: mission
   type: project

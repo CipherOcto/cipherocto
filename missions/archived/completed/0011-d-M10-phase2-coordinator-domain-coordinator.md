@@ -1,6 +1,6 @@
 ---
 name: 0011-d-M10-phase2-coordinator-domain-coordinator
-description: Phase 2 (gated) per RFC-0011-d §Mission Decomposition M10 row: extend existing `octo role select` with `--coordinator` + `--domain-coordinator` flags + 2 substrate entrypoints (`octo_role::select_coordinator` + `octo_role::select_domain_coordinator`); gate on RFC-0855p-d + RFC-0855p-e reaching Accepted; substrate-first ordering — DEPENDS ON M11 substrate landing.
+description: "Phase 2 (gated) per RFC-0011-d §Mission Decomposition M10 row: extend existing `octo role select` with `--coordinator` + `--domain-coordinator` flags + 2 substrate entrypoints (`octo_role::select_coordinator` + `octo_role::select_domain_coordinator`); gate on RFC-0855p-d + RFC-0855p-e reaching Accepted; substrate-first ordering — DEPENDS ON M11 substrate landing."
 metadata:
   node_type: substrate-cli
   type: cli-subcommand-phase2

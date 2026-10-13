@@ -1,6 +1,6 @@
 ---
 name: 0205-stoolap-fork-retirement
-description: Open 2026-08-19; RFC-0205 §Future Work phantom pointer 3/3 — drop-fork migration procedure: (a) Layer B crates migrate from `octo_storage_core::Database` re-export to direct `stoolap` crates-io semver; (b) `octo-storage-core` retires + handle re-export removed; (c) §Roles 1-4 lose steward/owner/reviewer duties; (d) RFC-0205 archived to `rfcs/archived/storage/`. Sister mission to RFC-0206 §Future Work `0205-stoolap-fork-retirement` cross-ref.
+description: "Open 2026-08-19; RFC-0205 §Future Work phantom pointer 3/3 — drop-fork migration procedure: (a) Layer B crates migrate from `octo_storage_core::Database` re-export to direct `stoolap` crates-io semver; (b) `octo-storage-core` retires + handle re-export removed; (c) §Roles 1-4 lose steward/owner/reviewer duties; (d) RFC-0205 archived to `rfcs/archived/storage/`. Sister mission to RFC-0206 §Future Work `0205-stoolap-fork-retirement` cross-ref."
 metadata:
   node_type: mission
   type: project

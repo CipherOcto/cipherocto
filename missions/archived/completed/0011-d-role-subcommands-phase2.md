@@ -1,6 +1,6 @@
 ---
 name: 0011-d-role-subcommands-phase2
-description: Implement `octo role select` Phase 2 (coordinator + domain-coordinator) per RFC-0011-d; gated on RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) AND RFC-0855p-e Accepted
+description: "Implement `octo role select` Phase 2 (coordinator + domain-coordinator) per RFC-0011-d; gated on RFC-0855p-d (INDEX; chain: RFC-0855p-d1 + RFC-0855p-d2 + RFC-0855p-d3) AND RFC-0855p-e Accepted"
 metadata:
   node_type: substrate-cli
   type: cli-substrate-extension

@@ -1,6 +1,6 @@
 ---
 name: 0959-d-market-delivery-roll-up-is-green-on-work-measurement-contradicts
-description: Mission 0959-a1 records all 12 RFC-0959-A1 test vectors as GREEN via a 2026-08-07 audit-closure, and its type-coverage table lists BearerCapsule and deliver_at_settlement as implemented. Measured: BearerCapsule is a structural stub with no cryptography and one definition in the workspace, deliver_at_settlement appears once in the whole tree and only inside a doc comment, and none of the RFC's vector names resolve to a test. The delivery types themselves are real and heavily referenced.
+description: "Mission 0959-a1 records all 12 RFC-0959-A1 test vectors as GREEN via a 2026-08-07 audit-closure, and its type-coverage table lists BearerCapsule and deliver_at_settlement as implemented. Measured: BearerCapsule is a structural stub with no cryptography and one definition in the workspace, deliver_at_settlement appears once in the whole tree and only inside a doc comment, and none of the RFC's vector names resolve to a test. The delivery types themselves are real and heavily referenced."
 metadata:
   node_type: mission
   type: implementation

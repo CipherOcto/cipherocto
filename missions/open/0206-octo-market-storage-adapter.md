@@ -1,6 +1,6 @@
 ---
 name: 0206-octo-market-storage-adapter
-description: Open 2026-08-19; RFC-0206 §Future Work phantom pointer 5/5 — `octo-market-storage/` adapter landing (deferred per RFC-0206 v1.4 §Maintainers `octo-market-storage/` deferred per plan §4.2 B.4). Defines scope: which market-domain traits (`MarketState` / `OrderBook` / `SettlementLedger` / etc.) the adapter implements; cross-RFC dependencies on RFC-0959 (server-side market delivery bundle per `rfc-0969-dual-pipeline-semantics`).
+description: "Open 2026-08-19; RFC-0206 §Future Work phantom pointer 5/5 — `octo-market-storage/` adapter landing (deferred per RFC-0206 v1.4 §Maintainers `octo-market-storage/` deferred per plan §4.2 B.4). Defines scope: which market-domain traits (`MarketState` / `OrderBook` / `SettlementLedger` / etc.) the adapter implements; cross-RFC dependencies on RFC-0959 (server-side market delivery bundle per `rfc-0969-dual-pipeline-semantics`)."
 metadata:
   node_type: mission
   type: project

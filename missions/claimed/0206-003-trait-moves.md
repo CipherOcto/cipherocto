@@ -1,6 +1,6 @@
 ---
 name: 0206-003-trait-moves
-description: Open 2026-08-20; — HolderRegistry: quota-router-storage → octo-cap-macaroon; StoolapDidRegistry impl: quota-router-storage → octo-ident-storage.
+description: "Open 2026-08-20; — HolderRegistry: quota-router-storage → octo-cap-macaroon; StoolapDidRegistry impl: quota-router-storage → octo-ident-storage."
 metadata:
   node_type: mission
   type: project

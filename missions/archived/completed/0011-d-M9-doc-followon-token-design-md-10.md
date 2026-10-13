@@ -1,6 +1,6 @@
 ---
 name: 0011-d-M9-doc-followon-token-design-md-10
-description: Pure-doc follow-on per RFC-0011-d §Mission Decomposition M9 row: add §10 cross-reference in `docs/04-tokenomics/token-design.md` noting that new OCTO-only roles (`recorder`, `wallet`) intentionally absent from §10 table; release-gated on first dual-stake role addition post-Phase 1.
+description: "Pure-doc follow-on per RFC-0011-d §Mission Decomposition M9 row: add §10 cross-reference in `docs/04-tokenomics/token-design.md` noting that new OCTO-only roles (`recorder`, `wallet`) intentionally absent from §10 table; release-gated on first dual-stake role addition post-Phase 1."
 metadata:
   node_type: substrate-cli
   type: doc-followon

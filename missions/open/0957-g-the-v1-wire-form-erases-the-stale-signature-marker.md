@@ -1,6 +1,6 @@
 ---
 name: 0957-g-the-v1-wire-form-erases-the-stale-signature-marker
-description: The v1 macaroon wire form has nowhere to put holder_sig_stale, so deserialize_wire hardcodes it to false. Every staleness guard in the token substrate therefore applies only to in-process tokens: a stale capability that arrives over the wire is silently reclassified as fresh, and the diagnosis is lost even though the signature still fails and the outcome stays fail-closed. Found while fixing unsigned wallet attenuation, where the real failure mode turned out to be cryptographic rather than the stale branch the guard was written for.
+description: "The v1 macaroon wire form has nowhere to put holder_sig_stale, so deserialize_wire hardcodes it to false. Every staleness guard in the token substrate therefore applies only to in-process tokens: a stale capability that arrives over the wire is silently reclassified as fresh, and the diagnosis is lost even though the signature still fails and the outcome stays fail-closed. Found while fixing unsigned wallet attenuation, where the real failure mode turned out to be cryptographic rather than the stale branch the guard was written for."
 metadata:
   node_type: mission
   type: implementation

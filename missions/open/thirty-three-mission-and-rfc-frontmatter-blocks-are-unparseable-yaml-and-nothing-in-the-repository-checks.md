@@ -1,11 +1,11 @@
 ---
 name: thirty-three-mission-and-rfc-frontmatter-blocks-are-unparseable-yaml-and-nothing-in-the-repository-checks
-description: "Three linters read document frontmatter for status and version fields, and all three do it with awk line matching rather than a YAML parser, so malformed frontmatter is invisible to every check in the repository. Measured with scripts/lint_frontmatter.py: 242 documents carry frontmatter, 33 of which no YAML loader accepts. The causes are unquoted values containing a colon-space (29), a leading asterisk read as an alias (3), and a bare at-sign in an Accepted RFC. The line-oriented readers happen to survive all three, so this is latent rather than active damage."
+description: "Three linters read document frontmatter for status and version fields, and all three do it with awk line matching rather than a YAML parser, so malformed frontmatter was invisible to every check in the repository. Measured with scripts/lint_frontmatter.py: 242 documents carried frontmatter and 33 of them were accepted by no YAML loader, from an unquoted value containing a colon-space, a closing fence placed after body text, and a bare at-sign in an Accepted RFC. All 33 have since been repaired and the count is 0; the figures in the population table are marked superseded where they appear. The line-oriented readers survived all three causes, so this was latent rather than active damage."
 metadata:
   node_type: mission
   type: implementation
   created: 2026-10-13T00:00:00.000Z
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0001
 ---
@@ -14,8 +14,9 @@ metadata:
 
 ## Status
 
-Open. Two documents have been repaired as part of filing this; the remaining
-33 are corpus work and are named in the tool's `--report` output.
+Repaired. All 33 documents parse and `scripts/lint_frontmatter.py` reports 0
+failures. The figures recorded below describe the state when the finding was
+made and are marked where they appear.
 
 ## How this was found
 
@@ -32,6 +33,10 @@ swallows every subsequent key, so the document's metadata becomes one long
 string and its `depends_on` list disappears.
 
 ## The population
+
+> **These figures are superseded.** They describe the corpus when the finding
+> was made. All 33 have been repaired; `scripts/lint_frontmatter.py` now reports
+> 243 of 243 parsing and 0 failures.
 
 `python3 scripts/lint_frontmatter.py --report`:
 
@@ -117,14 +122,24 @@ at the point where they appear rather than only in a trailing note.
       version used a proxy that over-matched, because a blank line followed by
       a top-level key is ordinary YAML. The corrected test is structural: a
       column-0 line that is neither a key nor a list item is body prose.
-- [ ] Repair the remaining 33. Smallest fix first: 28 need a value quoted, 5
-      need the closing fence moved up and their description quoted, and 1 in
-      `RFC-0907` needs its author line quoted.
-- [ ] Decide whether `scripts/lint_frontmatter.py` is wired into CI. Adopting it
-      as a gate is only reasonable once the corpus is clean, or the gate lands
-      red on a first run and gets muted.
-- [ ] If it is not wired, decide whether the three readers should use a real
-      parser instead, since a line match is what makes the class invisible.
+- [x] Repair the remaining 33. 28 values quoted, 5 fences moved up and their
+      descriptions quoted, and the author line in `RFC-0907` quoted. One further
+      shape turned up during the repair that the classifier had folded into the
+      unquoted-value bucket: a list item whose value is a quoted scalar followed
+      by trailing text, in `0855p-b-state-machine-types`. A quoted YAML scalar
+      cannot be followed by anything, so the parenthetical was folded into the
+      string rather than deleted. The tool now reports 0 failures over 243.
+- [x] Prove no content was lost. Every non-fence line of all 33 files was
+      compared against `HEAD` with quoting neutralised, and all 33 are
+      character-identical. The two frontmatter guards that read these documents
+      produce byte-identical output before and after, which is the check that
+      matters, since they are the readers this finding is about.
+- [ ] Decide whether `scripts/lint_frontmatter.py` is wired into CI. The corpus
+      is clean, so this is now a gate that would land green rather than red, but
+      wiring it is a change to CI and belongs to a maintainer.
+- [ ] Decide whether the three readers should use a real parser regardless of
+      whether the new gate is adopted. A line match is what made the class
+      invisible, and the new gate catches it only while it is run by hand.
 
 ## Notes
 

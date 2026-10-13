@@ -1,6 +1,6 @@
 ---
 name: 0969-a1-revocation-authorization
-description: The capability issuer node revokes capabilities for real, but any caller that reaches CAPABILITY_REVOKE can revoke any capability the node knows. This is not a missing feature — no RFC specifies who may invoke a revoke. The rule this gap was documented against, an RFC-0965 RevocationCaveat, does not exist: RFC-0965 never mentions revocation, discriminator 0x1A sits in its reserved range, and Caveat has no Revocation variant. The phantom citation appeared in the handler docs and two claimed missions, which made an undesigned security boundary look like an implementation backlog item.
+description: "The capability issuer node revokes capabilities for real, but any caller that reaches CAPABILITY_REVOKE can revoke any capability the node knows. This is not a missing feature — no RFC specifies who may invoke a revoke. The rule this gap was documented against, an RFC-0965 RevocationCaveat, does not exist: RFC-0965 never mentions revocation, discriminator 0x1A sits in its reserved range, and Caveat has no Revocation variant. The phantom citation appeared in the handler docs and two claimed missions, which made an undesigned security boundary look like an implementation backlog item."
 metadata:
   node_type: mission
   type: specification

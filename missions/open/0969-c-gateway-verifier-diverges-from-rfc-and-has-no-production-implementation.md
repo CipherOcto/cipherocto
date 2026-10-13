@@ -1,6 +1,6 @@
 ---
 name: 0969-c-gateway-verifier-diverges-from-rfc-and-has-no-production-implementation
-description: RFC-0969 specifies a capability verifier that reads ask_id via cap_token.ask_binding(). No such method exists — ask binding is a caveat on the macaroon. RFC-0969 v1.2 also replaced the dual-scheme dispatch table with a 4-way table rejecting both-schemes-present, but the implementation still carries the removed linkage machinery forward — relocated three days after the amendment, with BothSchemesUnsupported and NoAuth absent from the workspace entirely. Partly delivered: ask_binding(), the v1.2 dispatch, and a production CapabilityVerifier have all landed; what remains is a production mint that attaches AskBinding, without which the verifier correctly refuses every mintable capability.
+description: "RFC-0969 specifies a capability verifier that reads ask_id via cap_token.ask_binding(). No such method exists — ask binding is a caveat on the macaroon. RFC-0969 v1.2 also replaced the dual-scheme dispatch table with a 4-way table rejecting both-schemes-present, but the implementation still carries the removed linkage machinery forward — relocated three days after the amendment, with BothSchemesUnsupported and NoAuth absent from the workspace entirely. Partly delivered: ask_binding(), the v1.2 dispatch, and a production CapabilityVerifier have all landed; what remains is a production mint that attaches AskBinding, without which the verifier correctly refuses every mintable capability."
 metadata:
   node_type: mission
   type: implementation

@@ -5,7 +5,7 @@ version: 1.1
 created: 2026-03-12
 updated: 2026-05-18
 authors:
-  - @cipherocto
+  - "@cipherocto"
 related:
   - RFC-0929 (GatewayConfig Provider Dispatch)
   - RFC-0930 (Provider Inference from Model String)

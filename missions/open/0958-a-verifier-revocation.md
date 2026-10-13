@@ -1,6 +1,6 @@
 ---
 name: 0958-a-verifier-revocation
-description: RFC-0958. Implement the revocation contract on the ZK verify path: mandatory identity-scoped check, corrected asymmetric freshness window with validated policy relationships, RevocationSnapshot, and three new error variants.
+description: "RFC-0958. Implement the revocation contract on the ZK verify path: mandatory identity-scoped check, corrected asymmetric freshness window with validated policy relationships, RevocationSnapshot, and three new error variants."
 metadata:
   node_type: mission
   type: implementation

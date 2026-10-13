@@ -1,6 +1,6 @@
 ---
 name: 0968-c-governance-proof-verification
-description: Partially closed. The signature and quorum-distinctness halves are implemented on all three recorder governance paths (suspension, slash, retirement), each mutation-verified, and the fake byte-length signature check was removed. What remains open is the set-hash half: RFC-0968 requires it be checked against GovernanceRegistry::lookup_at_snapshot's active-set digest, but that comparison is against the proof's own claim, two fields the caller supplies, and no such registry exists anywhere in the tree. Deciding where the active governance set comes from is what blocks this mission.
+description: "Partially closed. The signature and quorum-distinctness halves are implemented on all three recorder governance paths (suspension, slash, retirement), each mutation-verified, and the fake byte-length signature check was removed. What remains open is the set-hash half: RFC-0968 requires it be checked against GovernanceRegistry::lookup_at_snapshot's active-set digest, but that comparison is against the proof's own claim, two fields the caller supplies, and no such registry exists anywhere in the tree. Deciding where the active governance set comes from is what blocks this mission."
 metadata:
   node_type: mission
   type: specification

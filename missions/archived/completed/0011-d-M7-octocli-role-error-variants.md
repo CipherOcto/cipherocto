@@ -1,6 +1,6 @@
 ---
 name: 0011-d-M7-octocli-role-error-variants
-description: Add 4 `OctoCliError` variants per RFC-0011-d §Mission Decomposition M7 row: `RoleNotFound` (31), `StakeInsufficient` (32), `RoleNotSelectable` (33), `SignerMismatch` (35 per F-16 reserved); redaction boundary per RFC-0011 §Redaction Layer.
+description: "Add 4 `OctoCliError` variants per RFC-0011-d §Mission Decomposition M7 row: `RoleNotFound` (31), `StakeInsufficient` (32), `RoleNotSelectable` (33), `SignerMismatch` (35 per F-16 reserved); redaction boundary per RFC-0011 §Redaction Layer."
 metadata:
   node_type: substrate-cli
   type: cli-error

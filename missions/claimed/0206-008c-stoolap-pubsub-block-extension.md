@@ -1,6 +1,6 @@
 ---
 name: 0206-008c-stoolap-pubsub-block-extension
-description: Extend substrate `pub mod stoolap` re-export block from v2.3 (6 types: DataType, Error, ApiTransaction, ResultRow, Rows, Value) to v2.4 (add `pubsub` module re-export: EventBus, WalPubSub, DatabaseEvent, InvalidationReason, SchemaChangeType, OperationType, generate_event_id, parse_event). Then drop direct `stoolap` Cargo.toml dep from quota-router-core. Closes remaining D1 deviation carrier.
+description: "Extend substrate `pub mod stoolap` re-export block from v2.3 (6 types: DataType, Error, ApiTransaction, ResultRow, Rows, Value) to v2.4 (add `pubsub` module re-export: EventBus, WalPubSub, DatabaseEvent, InvalidationReason, SchemaChangeType, OperationType, generate_event_id, parse_event). Then drop direct `stoolap` Cargo.toml dep from quota-router-core. Closes remaining D1 deviation carrier."
 metadata:
   node_type: mission
   type: project
@@ -11,9 +11,9 @@ metadata:
     - 0206-008b-stoolap-dep-drop-cascade
     - RFC-0206
 status: OPEN
+---
 
 **Retro-supersession (2026-08-24 Session 5 RFC-0206 substrate + S6 atomic-blocker):** Substrate LANDING DEFERRED — atomic-blocker per `docs/plans/2026-08-16-storage-layer-restructuring-execution-plan.md` §22 B0. Per active storage restructure plan (per `2026-08-16-storage-restructuring-plan-active` memory card), the `pubsub` module re-export extension requires coordination with the atomic-blocker resolution (S6 §22 B0) which depends on: (a) RFC-0206 v3.4 §2.5 0x01 namespace byte disambiguation (LANDED `f05d91d0` cross-RFC harmonization); (b) RFC-0959 v2.7 struct comment update (LANDED `e41edff9`); (c) canonical execution class taxonomy per RFC-0008. The pubsub re-export block extension remains calendar-gated until atomic-blocker S6 §22 B0 clears, which unblocks the `pubsub` re-export block extension + the direct `stoolap` Cargo.toml dep drop. Mission text preserved per historical-mission-preservation + R19 scope discipline. Per claim-and-implement scope, substrate landing remains OPEN until storage restructure plan S6 phase clears. NO PUSH per `docs/05-process/engineering-rules.md` §Git workflow.
----
 
 # Mission `0206-008c-stoolap-pubsub-block-extension` v1.0 — OPEN 2026-08-20
 

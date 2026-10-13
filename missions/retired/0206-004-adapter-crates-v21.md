@@ -1,6 +1,6 @@
 ---
 name: 0206-004-adapter-crates-v21
-description: Open 2026-08-20 v2.1; RFC-0206 v2.0 §Adapter Crate List — 5 adapter crates (octo-vault-storage, octo-reputation-storage, octo-cap-macaroon-vault-storage, octo-matrix-session-store-storage, octo-policy-storage) + 5 trait declarations (4 NEW + 1 MOVE: VaultLookup) + per-adapter fixtures. `octo-ident-storage` is the 6th adapter crate but owned by `0206-005-octoident-storage-crate`. Facade (`crates/octo-storage/`) migration owned by `0206-001-substrate-newtype` (out of scope).
+description: "Open 2026-08-20 v2.1; RFC-0206 v2.0 §Adapter Crate List — 5 adapter crates (octo-vault-storage, octo-reputation-storage, octo-cap-macaroon-vault-storage, octo-matrix-session-store-storage, octo-policy-storage) + 5 trait declarations (4 NEW + 1 MOVE: VaultLookup) + per-adapter fixtures. `octo-ident-storage` is the 6th adapter crate but owned by `0206-005-octoident-storage-crate`. Facade (`crates/octo-storage/`) migration owned by `0206-001-substrate-newtype` (out of scope)."
 metadata:
   node_type: mission
   type: project

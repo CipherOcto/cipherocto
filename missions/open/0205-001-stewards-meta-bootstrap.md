@@ -1,6 +1,6 @@
 ---
 name: 0205-001-stewards-meta-bootstrap
-description: Open 2026-08-20; RFC-0205 v2.0 post-acceptance Phase 0.1 gap closure. Bootstrap cipherocto-stewards-meta trust-anchor repo with 3 FPRs in trusted-keys.txt + first commit GPG-signed by 1-of-3. Operative condition: RFC-0205 v2.0 §Promotion Path Condition 2 ("Phase 0-1 complete").
+description: 'Open 2026-08-20; RFC-0205 v2.0 post-acceptance Phase 0.1 gap closure. Bootstrap cipherocto-stewards-meta trust-anchor repo with 3 FPRs in trusted-keys.txt + first commit GPG-signed by 1-of-3. Operative condition: RFC-0205 v2.0 §Promotion Path Condition 2 ("Phase 0-1 complete").'
 metadata:
   node_type: mission
   type: project

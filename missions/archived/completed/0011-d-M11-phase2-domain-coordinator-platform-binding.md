@@ -1,6 +1,6 @@
 ---
 name: 0011-d-M11-phase2-domain-coordinator-platform-binding
-description: Phase 2 (gated) per RFC-0011-d §Mission Decomposition M11 row: extend `crates/octo-network/src/dc/admin_attest.rs` (REAL substrate home; co-located with `PlatformAdminAttestError`) with `bind_domain_coordinator(operator_did, group_binding, platform_admin_proof, current_epoch) -> Result<GroupBinding, BindingError>`. Atomic with RFC-0850p-c binding ceremony + RFC-0855p-c §5a `PlatformEvent::AdminTransfer` envelope emission. Substrate-first: M11 lands BEFORE M10.
+description: "Phase 2 (gated) per RFC-0011-d §Mission Decomposition M11 row: extend `crates/octo-network/src/dc/admin_attest.rs` (REAL substrate home; co-located with `PlatformAdminAttestError`) with `bind_domain_coordinator(operator_did, group_binding, platform_admin_proof, current_epoch) -> Result<GroupBinding, BindingError>`. Atomic with RFC-0850p-c binding ceremony + RFC-0855p-c §5a `PlatformEvent::AdminTransfer` envelope emission. Substrate-first: M11 lands BEFORE M10."
 metadata:
   node_type: substrate-cli
   type: substrate-entrypoint-phase2

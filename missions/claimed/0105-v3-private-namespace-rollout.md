@@ -1,6 +1,6 @@
 ---
 name: 0105-v3-private-namespace-rollout
-description: Land RFC-0105 v3.0+ §2.2 private-namespace substrate coverage: add TV-P1..N byte-exact private-asset fixtures for `PRIVATE-{chain_id_32B-hex}-{asset_name}` variants to `crates/octo-vault/tests/test_vectors.rs`; verify `AssetId::derive("PRIVATE-{hex}-{name}")` byte-equality with `octo_determin::asset_id_for`; add `tv_p1_private_namespaces_round_trip` parallel to existing `tv_d9_vectors_cover_role_tokens_exactly_once`; document private-asset substrate form in `crates/octo-vault/src/lib.rs` doctring. RFC-0105 v3.4 substrate anchor chain unbroken.
+description: 'Land RFC-0105 v3.0+ §2.2 private-namespace substrate coverage: add TV-P1..N byte-exact private-asset fixtures for `PRIVATE-{chain_id_32B-hex}-{asset_name}` variants to `crates/octo-vault/tests/test_vectors.rs`; verify `AssetId::derive("PRIVATE-{hex}-{name}")` byte-equality with `octo_determin::asset_id_for`; add `tv_p1_private_namespaces_round_trip` parallel to existing `tv_d9_vectors_cover_role_tokens_exactly_once`; document private-asset substrate form in `crates/octo-vault/src/lib.rs` doctring. RFC-0105 v3.4 substrate anchor chain unbroken.'
 metadata:
   node_type: mission
   type: project

@@ -112,28 +112,93 @@ session's fixes from "true today" into "cannot silently regress":
 
 - name: Section citation hygiene
   run: bash scripts/lint_section_cites.sh
+
+- name: Document guards can still fail
+  run: bash scripts/mutation-verify-doc-guards.sh
 ```
 
-`scripts/lint_frontmatter.py` reports 246 of 246 documents parsing and 0
+The fourth step is different in kind from the other three. Those assert facts
+about the corpus. This one asserts that the _asserters_ still work, which is the
+only step that notices when a guard has been broken into reporting nothing.
+
+It is included because a guard that cannot fail is the failure mode this whole
+line of work keeps finding, and none of the other three steps can detect it: a
+broken guard that reports zero findings produces exactly the output a clean
+corpus produces.
+
+`scripts/lint_frontmatter.py` reports 251 of 251 documents parsing and 0
 failures, after the 33 unparseable blocks were repaired.
 `scripts/lint_no_vh_accepted.sh` reports `PASS=155 FAIL=0`, after four
 misfenced RFC headings were renamed and two Version History sections were
-added. `scripts/lint_section_cites.sh` reports `REJECTED=0`, after its
-numeric-then-alpha rule was found to be inverted and rebuilt to verify that a
-subsection heading exists rather than reject a token's shape.
+added. `scripts/lint_section_cites.sh` reports `REJECTED=0` over 10276 cite
+tokens, after its numeric-then-alpha rule was found to be inverted, its
+trailing-punct class was found to match nothing at all, and its extraction was
+found to be absorbing sentence punctuation into every cite token.
 
 Three are deliberately **not** in the snippet, because wiring them now
 would land red for reasons that are not the repository's fault:
 
-| Script                      | Exit | Why not yet                                                             |
-| --------------------------- | ---- | ----------------------------------------------------------------------- |
-| `lint_status_vh_sync.sh`    | 1    | one genuine drift, RFC-0855p-c at 1.0.0 vs 0.1.4                        |
-| `lint_plan_yaml_vh_sync.sh` | 1    | examines `/home/mmacedoeu/.claude/plans`, outside the repository        |
-| `validate_cites.sh`         | 1    | 1300 findings, of which 625 are its own path ambiguity and 436 are real |
+| Script                      | Exit | Why not yet                                                                      |
+| --------------------------- | ---- | -------------------------------------------------------------------------------- |
+| `lint_status_vh_sync.sh`    | 1    | 9 genuine drift findings, each read individually and left for an author decision |
+| `lint_plan_yaml_vh_sync.sh` | 1    | its corpus is a local scratchpad that does not exist on a runner                 |
+| `validate_cites.sh`         | 1    | 1300 findings, of which 625 are its own path ambiguity and 436 are real          |
 
 Wiring a check that fails is legitimate once the failures are understood, and
 all three above are understood. They are listed so the decision is informed
 rather than made by whoever runs the job first.
+
+### Guard 7 cannot run on a runner at all
+
+This one is not merely red; it is unrunnable. Simulated with an empty `HOME`:
+
+```
+FAIL: no plan files were examined (PLAN_ROOT=/home/runner/.claude/plans).
+This lint verified nothing. Point PLAN_ROOT at the intended corpus
+before treating a pass as meaningful.
+```
+
+It fails closed, which is the right behaviour and not a false pass — but it
+means wiring it would red every run for a corpus that is deliberately outside
+the repository. Its default is now `$HOME`-relative rather than hardcoded, so
+the guard works for whoever runs it locally; it still cannot gate CI until the
+plans directory is either tracked or the guard is given a repository corpus.
+
+This is the reason the snippet above lists three steps and not six. The other
+two red guards fail on documents that exist in the repository, and are waiting
+on a decision about those documents. Guard 7 is waiting on a decision about
+whether it belongs in CI at all.
+
+### The harness is worth wiring even though it is not a gate
+
+`scripts/mutation-verify-doc-guards.sh` currently runs 10 cases across 8
+guards and exits 0. Wiring it as a gating step is the one addition that changes
+what CI can catch rather than merely adding a gate that already passes: without
+it, a guard can be silently broken and the three gating steps above would still
+be green, because a broken guard that reports nothing looks exactly like a
+clean corpus.
+
+It costs seconds. It touches no tracked file. It is the direct answer to this
+mission's own thesis.
+
+### The proposal was validated in a CI-like environment
+
+Not reasoned about — run. A pristine `git clone` of `next` at this commit, with
+no `~/.claude`, no build, and no local state:
+
+| Proposed step                                | Exit in a clean clone |
+| -------------------------------------------- | --------------------- |
+| `python3 scripts/lint_frontmatter.py`        | 0                     |
+| `bash scripts/lint_no_vh_accepted.sh`        | 0                     |
+| `bash scripts/lint_section_cites.sh`         | 0                     |
+| `bash scripts/mutation-verify-doc-guards.sh` | 0 — 10 cases          |
+
+The harness was then shown to still bite in that environment: blinding
+`lint_section_cites.sh`'s phantom-token rule inside the clone produced
+`passed=10 failed=1` and exit 1.
+
+That last check is the one that matters. A step that passes in CI has not been
+shown to fail in CI, and until now no one had run either state there.
 
 ## Why nobody has noticed
 

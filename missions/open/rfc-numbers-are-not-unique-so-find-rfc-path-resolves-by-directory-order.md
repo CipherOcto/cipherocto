@@ -1,6 +1,6 @@
 ---
 name: rfc-numbers-are-not-unique-so-find-rfc-path-resolves-by-directory-order
-description: "RFC numbers are reused across category directories, and validate_cites.sh find_rfc_path resolves a bare RFC-XXXX cite by preferring accepted/ and then sorting by version. Measured blast radius against a completed run: 639 of the linter 1335 INVALID findings, 48 percent, are a section that exists in a sibling file carrying the same number, leaving 458 genuinely dangling citations. Splitting the recoveries into whole-heading matches and substring-only matches is what shows the obvious remedy would convert 299 honest failures into silent passes. An earlier estimate of 117 came from the faulty simulation and is superseded. RFC-0105 names three files in two categories. Which file a citation is checked against therefore depends on which directories happen to contain a file with that number, so 117 newly-flagged findings report a section as missing when it exists in a real RFC with the same number."
+description: "RFC numbers are reused across category directories, and validate_cites.sh find_rfc_path resolves a bare RFC-XXXX cite by preferring accepted/ and then sorting by version. Measured blast radius against a completed run: 625 of the linter 1300 INVALID findings, 48 percent, are a section that exists in a sibling file carrying the same number, leaving 436 genuinely dangling citations. Splitting the recoveries into whole-heading matches and substring-only matches is what shows the obvious remedy would convert 293 honest failures into silent passes. An earlier estimate of 117 came from the faulty simulation and is superseded. RFC-0105 names three files in two categories. Which file a citation is checked against therefore depends on which directories happen to contain a file with that number, so 117 newly-flagged findings report a section as missing when it exists in a real RFC with the same number."
 metadata:
   node_type: mission
   type: implementation
@@ -55,16 +55,21 @@ builds each file's heading list with the same command `get_rfc_sections` uses:
 
 | Class of INVALID finding                                     | Count   |
 | ------------------------------------------------------------ | ------- |
-| section is a whole heading in a sibling carrying that number | **340** |
-| name occurs only inside a heading in a sibling (substring)   | 299     |
-| genuinely missing, absent from every file with that number   | 458     |
+| section is a whole heading in a sibling carrying that number | **332** |
+| name occurs only inside a heading in a sibling (substring)   | 293     |
+| genuinely missing, absent from every file with that number   | 436     |
 | near-miss: dropping the trailing word resolves it            | 113     |
 | near-miss: a two-word prefix is a heading                    | 60      |
 | identifier-qualifier rule would resolve it                   | 34      |
 | remaining qualifier cases the rule does not help             | 23      |
 
-**639 of 1,335 INVALID findings — 48% — are the wrong file being opened.**
-Only 458 are a citation that resolves nowhere.
+**625 of 1,300 INVALID findings — 48% — are the wrong file being opened.**
+Only 436 are a citation that resolves nowhere, and those are tracked
+separately in mission
+`four-hundred-and-thirty-six-section-citations-name-a-section-that-does-not-exist`.
+
+Figures below are from before the case-sensitivity fix in `validate_cites.sh`,
+which removed 35 findings. The class shares barely moved.
 
 > The earlier figure in this section, 117 of 577 "newly-flagged unique
 > findings", came from the simulation that produced most of this session's
@@ -81,17 +86,17 @@ That converts an honest failure into a silent pass and hides the defect rather
 than removing it.
 
 Measuring the split makes the same rejection concrete rather than theoretical.
-The 340 findings in which a sibling carries **that exact heading** are genuine
+The findings in which a sibling carries **that exact heading** are genuine
 recoveries: `RFC-0105 §Canonical Representation` names a real `### Canonical
 Representation` in `0105-deterministic-quant-arithmetic.md`, verified by hand.
-The 299 in which the name merely occurs _inside_ a sibling heading are not
+The ones in which the name merely occurs _inside_ a sibling heading are not
 recoveries at all. A citation of `§Phase` is not satisfied by a heading reading
 `Phase 1: Data Structures + Algorithms` — that is a different section being
 substituted for the one that was written, which is precisely the failure mode
 the rejected remedy would institutionalise.
 
-So a `pass if any sibling matches` rule would convert 299 honest failures into
-silent passes while fixing 340 real ones, and the ratio alone would make it
+So a `pass if any sibling matches` rule would convert roughly 293 honest
+failures into silent passes while fixing roughly 332 real ones, and the ratio alone would make it
 look like progress.
 
 The durable fix is at the other end: make the number unique, or make the

@@ -142,6 +142,8 @@ def main() -> int:
     verdicts: collections.Counter = collections.Counter()
     examples: dict[str, list[str]] = collections.defaultdict(list)
     by_file: collections.Counter = collections.Counter()
+    genuine_by_file: collections.Counter = collections.Counter()
+    genuine_by_name: collections.Counter = collections.Counter()
 
     for f in findings:
         # Deliberately NOT lowercased. The script prints `$sec_normalized`
@@ -178,17 +180,39 @@ def main() -> int:
                 verdict = "qualifier rule does not help"
 
         if verdict is None:
-            # Not identifier-shaped. Is it a plain substring near-miss?
-            head = " ".join(words[:2])
-            if len(words) >= 3 and resolves(head, blob):
-                verdict = "near-miss: 2-word prefix is a heading"
-            elif resolves(" ".join(words[:-1]), blob):
-                verdict = "near-miss: dropping the last word resolves it"
+            # Is the script's case-sensitive match the only thing failing?
+            # The corpus writes both `§Data Structures` and `§data structures`
+            # against headings written in Title Case, and a bash `==` substring
+            # test distinguishes them for no reason a reader would.
+            if sec.lower() in blob.lower() and sec not in blob:
+                verdict = "case-only mismatch: name matches ignoring case"
+            elif len(words) >= 2 and IDENTIFIER_TAIL.match(words[-1].lower()):
+                head = " ".join(words[:-1])
+                if LINE_NUMBER_TAIL.match(words[-1].lower()):
+                    verdict = "qualifier excluded: L### line reference"
+                elif head.lower() in GENERIC_HEADS:
+                    verdict = "qualifier refused: generic head"
+                elif resolves(head, blob) or resolves(head.lower(), blob.lower()):
+                    verdict = "qualifier rule WOULD RESOLVE"
+                else:
+                    verdict = "qualifier rule does not help"
             else:
-                verdict = "genuinely missing"
+                # Not identifier-shaped. Is it a plain substring near-miss?
+                head = " ".join(words[:2])
+                if len(words) >= 3 and (resolves(head, blob) or
+                                        resolves(head.lower(), blob.lower())):
+                    verdict = "near-miss: 2-word prefix is a heading"
+                elif resolves(" ".join(words[:-1]), blob) or \
+                        resolves(" ".join(words[:-1]).lower(), blob.lower()):
+                    verdict = "near-miss: dropping the last word resolves it"
+                else:
+                    verdict = "genuinely missing"
 
         verdicts[verdict] += 1
         by_file[f["file"]] += 1
+        if verdict == "genuinely missing":
+            genuine_by_file[f["file"]] += 1
+            genuine_by_name[sec] += 1
         if len(examples[verdict]) < 4:
             examples[verdict].append(
                 f"{sec!r} looked in {f['rfc'].rsplit('/', 1)[-1]} "
@@ -203,6 +227,17 @@ def main() -> int:
         print(f"  {n:>5}  {verdict}")
         for ex in examples[verdict]:
             print(f"           {ex}")
+    print()
+    print(f"genuinely missing, by citing file (top 10 of "
+          f"{len(genuine_by_file)} files):")
+    for path, n in genuine_by_file.most_common(10):
+        print(f"  {n:>4}  {path}")
+    print()
+    print(f"genuinely missing, distinct section name: {len(genuine_by_name)}, "
+          f"most repeated:")
+    for name, n in genuine_by_name.most_common(8):
+        print(f"  {n:>4}  {name!r}")
+    print()
     rescued = verdicts.get("qualifier rule WOULD RESOLVE", 0)
     print()
     if total:

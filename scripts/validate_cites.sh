@@ -234,13 +234,26 @@ for file in "${files_to_check[@]}"; do
             sections=$(get_rfc_sections "$rfc_path")
 
             # Bash substring search avoids grep fork/cite.
-            if [[ "$sections" != *"$sec_normalized"* ]]; then
+            #
+            # Case-insensitively. A prose citation is not obliged to reproduce
+            # a heading's capitalisation, and this corpus writes both:
+            # `§Data Structures` and `§data structures` against headings in
+            # Title Case. The comparison was case-sensitive, so a correctly
+            # cited section was reported missing purely on capitalisation.
+            # Demonstrated directly against RFC-0110: with a heading
+            # `Schoolbook MUL Limb Reduction`, `§Schoolbook MUL Limb
+            # Reduction` matched and `§schoolbook mul limb reduction` did not.
+            #
+            # Lowercasing both sides is safe here in a way it is not for the
+            # trailing-qualifier rule: case carries no meaning that could
+            # distinguish two different sections, so no citation is laundered.
+            if [[ "${sections,,}" != *"${sec_normalized,,}"* ]]; then
                 sec_int=""
                 if [[ "$sec_normalized" =~ ^([0-9]+) ]]; then
                     sec_int="${BASH_REMATCH[1]}"
                 fi
                 if [ -n "$sec_int" ]; then
-                    if [[ "$sections" != *"${sec_int}."* && "$sections" != *"${sec_int} "* ]]; then
+                    if [[ "${sections,,}" != *"${sec_int}."* && "${sections,,}" != *"${sec_int} "* ]]; then
                         echo "INVALID [section missing]: $file:$line_num: $cite (looking for '$sec_normalized' in $rfc_path)"
                         INVALID=$((INVALID + 1))
                         EXIT_CODE=1

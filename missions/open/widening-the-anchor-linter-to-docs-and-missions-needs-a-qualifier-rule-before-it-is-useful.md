@@ -114,9 +114,28 @@ one.
       (`1`, `A5`, `B`, `TV1`) resolves to the section it qualifies, and record
       the rule. This is the prerequisite for widening; widening without it is
       what produces the 819-item noise class.
-- [ ] Decide whether `ANCHOR`'s terminator set should include `)` and `:`.
-      That alone removes roughly two thirds of the raw findings in these trees
-      and is a smaller change than the scope change.
+- [x] Decide whether `ANCHOR`'s terminator set should include `)` and `:`.
+      Measured rather than assumed, and the answer is more interesting than a
+      simple reduction:
+
+      | Tree        | raw dangling | strict candidates |
+          | ----------- | ------------ | ----------------- |
+          | `docs/`     | 1,168 → 1,097 | 524 → 535         |
+          | `missions/` | 1,629 → 1,569 | 735 → 764         |
+          | `rfcs/`     | unchanged, 5,500 anchors extracted | unchanged |
+
+          Raw findings fall by 71 and 60. Plausible findings *rise* by 11 and 29,
+          because a tighter boundary stops absorbing a forbidden `L###` suffix
+          into the name, which unmasks references that were previously excluded as
+          over-capture. Those 40 newly-visible items are the line-number
+          convention violations recorded separately in mission
+          `ninety-one-section-references-carry-line-numbers-against-the-repo-own-rule`.
+
+          `rfcs/` is byte-identical either way, which is the property that matters
+          today: the gated tree is unaffected by a change that would prepare the
+          ungated ones. The terminator change is therefore safe to make first and
+          should be, because it is the prerequisite, not the scope change.
+
 - [ ] Only then widen the scope, and baseline deliberately. The existing
       baseline is `(name, site)` keyed, so 1,259 entries is an additive
       extension rather than a format change, but it should be written

@@ -1,6 +1,6 @@
 ---
 name: the-only-ci-wired-anchor-linter-checks-rfcs-but-indexes-headings-from-the-whole-tree
-description: "scripts/lint-rfc-anchors.py builds its heading index from rfcs, docs, missions and CLAUDE.md, but its dangling-anchor scan only walks rfcs. A section reference that is plainly wrong in docs, in a mission, or in CLAUDE.md is never checked. Proven by planting the identical bogus anchor in both trees: it is reported in rfcs and silently passes in docs with exit 0. That is roughly 6370 multi-word anchors outside rfcs that no CI gate inspects."
+description: "scripts/lint-rfc-anchors.py builds its heading index from rfcs, docs, missions and CLAUDE.md, but its dangling-anchor scan only walks rfcs. A section reference that is plainly wrong in docs, in a mission, or in CLAUDE.md is never checked. Proven by planting the identical bogus anchor in both trees: it is reported in rfcs and silently passes in docs with exit 0. That is 6119 section anchors outside rfcs that no CI gate inspects."
 metadata:
   node_type: mission
   type: implementation
@@ -64,16 +64,21 @@ different verdicts decided purely by directory.
 Multi-word section anchors, the class `is_section_anchor` treats as real
 references rather than review-finding ids:
 
-| Tree        | Multi-word anchors |
-| ----------- | ------------------ |
-| `rfcs/`     | 3,714              |
-| `docs/`     | 2,417              |
-| `missions/` | 3,953              |
-| `CLAUDE.md` | 6                  |
+| Tree        | Section anchors |
+| ----------- | --------------- |
+| `rfcs/`     | 3,752           |
+| `docs/`     | 2,452           |
+| `missions/` | 3,667           |
+| `CLAUDE.md` | 10              |
 
-**6,370 anchors sit outside the checked tree.** `missions/` is the second
+**6,119 anchors sit outside the checked tree.** `missions/` is the second
 largest population and is written by exactly the agents this repository's
 process is built for.
+
+Counted with the linter's own `ANCHOR` and `is_section_anchor` via
+`scripts/measure_anchor_lint.py`, not with a loose grep for a capitalised word
+followed by another. The earlier figures of 3,714 / 2,417 / 3,953 / 6 came from
+that looser search and do not match what the linter actually examines.
 
 ## Why this matters more than the other coverage gaps
 
@@ -112,7 +117,7 @@ four trees and then reads from one.
 - [ ] A decision is recorded on the anchors linter's scan scope: `rfcs/` only,
       or the trees it already indexes.
 - [ ] If widened, the newly checked anchors are measured before adoption. The
-      6,370 figure is a population count, not a finding count, and widening
+      6,119 figure is a population count, not a finding count, and widening
       the scope will surface findings that then need baselining deliberately.
 - [x] `CLAUDE.md` included in the scan scope regardless of the wider
       decision. Done, together with fixing its three broken references.

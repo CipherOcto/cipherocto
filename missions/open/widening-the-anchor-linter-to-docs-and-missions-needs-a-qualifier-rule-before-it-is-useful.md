@@ -94,9 +94,9 @@ The difference between those two cases is that `1`, `A5`, `B` and `TV1` are
 That distinction is available to a resolver and is not available to a regex
 operating on a name it has already over-captured.
 
-## Scale
+## Scale _(figures simulated, superseded — see §Authoritative figures)_
 
-- 1,259 non-artifact candidates across 408 files
+- 1,259 non-artifact candidates across 408 files _(simulated; measured figures are in §Authoritative figures)_
 - worst: 96 in a single research document, 33 in a completed mission, 26 in
   an open mission
 - 521 distinct unresolvable names
@@ -105,7 +105,7 @@ Almost all of the worst offenders are audit and research documents, which cite
 finding ids heavily. That is consistent with the qualifier explanation rather
 than with widespread rot.
 
-## What RFC titles would and would not fix
+## What RFC titles would and would not fix _(figures simulated, superseded — see §Authoritative figures)_
 
 RFC documents put their title in an H1 of the form
 `# RFC-0871 (Networking): Specialized Node Protocol Envelope`, which the
@@ -124,68 +124,68 @@ one.
       simple reduction:
 
       | Tree        | raw dangling | strict candidates |
-                                      | ----------- | ------------ | ----------------- |
-                                      | `docs/`     | 1,168 → 1,097 | 524 → 535         |
-                                      | `missions/` | 1,629 → 1,569 | 735 → 764         |
-                                      | `rfcs/`     | unchanged, 5,500 anchors extracted | unchanged |
+                                          | ----------- | ------------ | ----------------- |
+                                          | `docs/`     | 1,168 → 1,097 | 524 → 535         |
+                                          | `missions/` | 1,629 → 1,569 | 735 → 764         |
+                                          | `rfcs/`     | unchanged, 5,500 anchors extracted | unchanged |
 
-                                      Raw findings fall by 71 and 60. Plausible findings *rise* by 11 and 29,
-                                      because a tighter boundary stops absorbing a forbidden `L###` suffix
-                                      into the name, which unmasks references that were previously excluded as
-                                      over-capture. Those 40 newly-visible items are the line-number
-                                      convention violations recorded separately in mission
-                                      `ninety-one-section-references-carry-line-numbers-against-the-repo-own-rule`.
+                                          Raw findings fall by 71 and 60. Plausible findings *rise* by 11 and 29,
+                                          because a tighter boundary stops absorbing a forbidden `L###` suffix
+                                          into the name, which unmasks references that were previously excluded as
+                                          over-capture. Those 40 newly-visible items are the line-number
+                                          convention violations recorded separately in mission
+                                          `ninety-one-section-references-carry-line-numbers-against-the-repo-own-rule`.
 
-                                      **That `rfcs/` row is extraction count, not findings, and the
-                                      distinction reverses the conclusion.** Counting anchors extracted
-                                      per tree showed `rfcs/` identical under both patterns, which
-                                      looked like proof the change was inert on the gated tree. Counting
-                                      *findings* against the baseline shows otherwise:
+                                          **That `rfcs/` row is extraction count, not findings, and the
+                                          distinction reverses the conclusion.** Counting anchors extracted
+                                          per tree showed `rfcs/` identical under both patterns, which
+                                          looked like proof the change was inert on the gated tree. Counting
+                                          *findings* against the baseline shows otherwise:
 
-                                      | Measure (rfcs + CLAUDE.md) | current | candidate |
-                                      | ------------------------- | ------- | --------- |
-                                      | findings                  | 1,533   | 1,478     |
-                                      | baselined                 | 584     | 520       |
-                                      | **new, not baselined**    | 0       | **25**    |
+                                          | Measure (rfcs + CLAUDE.md) | current | candidate |
+                                          | ------------------------- | ------- | --------- |
+                                          | findings                  | 1,533   | 1,478     |
+                                          | baselined                 | 584     | 520       |
+                                          | **new, not baselined**    | 0       | **25**    |
 
-                                      The change **turns CI red**. 80 findings disappear because a `)`
-                                      or `:` now truncates a compound reference, and 64 baselined
-                                      entries stop matching. But 25 previously-invisible references
-                                      become visible, and they do not resolve under the current
-                                      matcher.
+                                          The change **turns CI red**. 80 findings disappear because a `)`
+                                          or `:` now truncates a compound reference, and 64 baselined
+                                          entries stop matching. But 25 previously-invisible references
+                                          become visible, and they do not resolve under the current
+                                          matcher.
 
-                                      **An earlier draft of this entry called those 25 "real dangling
-                                      names". That was wrong, and checking them individually reversed
-                                      it.** 23 of the 25 are near-misses: a proper prefix of the
-                                      captured name is a real heading.
+                                          **An earlier draft of this entry called those 25 "real dangling
+                                          names". That was wrong, and checking them individually reversed
+                                          it.** 23 of the 25 are near-misses: a proper prefix of the
+                                          captured name is a real heading.
 
-                                      | Captured name                        | Real heading exists           |
-                                      | ------------------------------------ | ----------------------------- |
-                                      | `implicit assumptions`                | `Implicit Assumptions Audit`  |
-                                      | `implementation phases commit 1`      | `Implementation Phases`       |
-                                      | `audit proof generation "(future`     | `Audit Proof Generation`      |
-                                      | `hw key custody §firmware attestation` | `HW Key Custody`             |
-                                      | `lifecycle (ask + marketplace index`   | `Lifecycle`                   |
-                                      | `determinism (dcs`                    | `Determinism`                 |
+                                          | Captured name                        | Real heading exists           |
+                                          | ------------------------------------ | ----------------------------- |
+                                          | `implicit assumptions`                | `Implicit Assumptions Audit`  |
+                                          | `implementation phases commit 1`      | `Implementation Phases`       |
+                                          | `audit proof generation "(future`     | `Audit Proof Generation`      |
+                                          | `hw key custody §firmware attestation` | `HW Key Custody`             |
+                                          | `lifecycle (ask + marketplace index`   | `Lifecycle`                   |
+                                          | `determinism (dcs`                    | `Determinism`                 |
 
-                                      Only 2 are hard-dangling, and both are still over-capture rather
-                                      than a missing heading: a cross-reference arrow swallowed by the
-                                      boundary, and a `§Roles/§Adversary` compound.
+                                          Only 2 are hard-dangling, and both are still over-capture rather
+                                          than a missing heading: a cross-reference arrow swallowed by the
+                                          boundary, and a `§Roles/§Adversary` compound.
 
-                                      So the 25 are mostly **incomplete citations** — a real section
-                                      cited without the qualifier that distinguishes it — which is the
-                                      same family as the qualifier problem above, not evidence of rot.
-                                      That makes the prerequisite even more clearly a resolver change
-                                      rather than a corpus repair, and it makes the terminator change
-                                      look far less alarming: most of what it surfaces is a citation
-                                      that is nearly right, not one that is wrong.
+                                          So the 25 are mostly **incomplete citations** — a real section
+                                          cited without the qualifier that distinguishes it — which is the
+                                          same family as the qualifier problem above, not evidence of rot.
+                                          That makes the prerequisite even more clearly a resolver change
+                                          rather than a corpus repair, and it makes the terminator change
+                                          look far less alarming: most of what it surfaces is a citation
+                                          that is nearly right, not one that is wrong.
 
-                                      It still turns CI red, and that is a deliberate change to a CI
-                                      gate, so it belongs to a maintainer. But the work it implies is
-                                      completing citations, not hunting for missing sections.
+                                          It still turns CI red, and that is a deliberate change to a CI
+                                          gate, so it belongs to a maintainer. But the work it implies is
+                                          completing citations, not hunting for missing sections.
 
 - [ ] Only then widen the scope, and baseline deliberately. The existing
-      baseline is `(name, site)` keyed, so 1,259 entries is an additive
+      baseline is `(name, site)` keyed, so the measured volume is an additive
       extension rather than a format change, but it should be written
       knowingly rather than captured by a first run.
 - [ ] Consider limiting the widened scan to `docs/` and `missions/open/`,
@@ -195,7 +195,7 @@ one.
 ## Notes
 
 The tempting shortcut is to widen the scan and let the baseline absorb the
-result. That would produce a green gate whose baseline records 1,259 entries
+result. That would produce a green gate whose baseline records entries
 of which the large majority are the regex running long and the qualifier case
 that a resolver should handle. The baseline would then be a record of known
 noise, which is the opposite of what a baseline is for.

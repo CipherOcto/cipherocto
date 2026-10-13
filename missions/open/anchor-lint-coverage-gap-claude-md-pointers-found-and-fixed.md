@@ -1,6 +1,6 @@
 ---
 name: anchor-lint-coverage-gap-claude-md-pointers-found-and-fixed
-description: "The RFC anchor lint resolves references only inside rfcs/, which is 3752 of 9881 in-scope section references, or 38 percent. docs and missions are indexed as heading sources but never scanned as reference sites, so 6119 references are unexamined. CLAUDE.md was in the same position and is now scanned. The gap was real and already cost something: CLAUDE.md carried three pointers to sections that do not exist, all now fixed, while the tool trusted to catch that could not see them. Figures re-measured with scripts/measure_anchor_lint.py, which calls the linter rather than copying it.
+description: "The RFC anchor lint resolves references only inside rfcs/, which is 3752 of 9881 in-scope section references, or 38 percent. docs and missions are indexed as heading sources but never scanned as reference sites, so 6119 references are unexamined. CLAUDE.md was in the same position and is now scanned. The gap was real and already cost something: CLAUDE.md carried three pointers to sections that do not exist, all now fixed, while the tool trusted to catch that could not see them. Figures re-measured with scripts/measure_anchor_lint.py, which calls the linter rather than copying it."
 metadata:
   node_type: mission
   type: implementation

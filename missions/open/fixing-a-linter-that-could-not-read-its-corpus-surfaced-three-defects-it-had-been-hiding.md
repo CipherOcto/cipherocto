@@ -99,9 +99,28 @@ opposite in the same run.
 is `0.1.4`. Invisible until defect 1 was fixed, because its section is
 numbered.
 
-Which side is wrong is an author decision. Either the document was promoted to
-1.0.0 and never given a row for it, or 1.0.0 was declared without the history
-following.
+Which side is wrong is an author decision, and measuring the corpus narrowed it
+without settling it.
+
+Only **36** RFCs carry a frontmatter `version:` field at all. Of the 34 whose
+Version History has parseable version rows, **32 agree** with it. So the field
+is maintained, and this document is an outlier rather than one of a class.
+
+That makes three readings, not two:
+
+| Reading                                  | Evidence for                                                                                                  | Evidence against                     |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| frontmatter drifted                      | its `updated:` is 2026-08-22, earlier than the 0.1.4 row dated 2026-09-03, so the amendments never touched it | the mismatch predates the amendments |
+| 1.0.0 is intended, history is incomplete | the field said 1.0.0 from creation                                                                            | no 1.0.0 row was ever written        |
+| 1.0.0 is a typo for 0.1.0                | the history starts at 0.1.0 on the creation date                                                              | nothing explains the `1`             |
+
+The third is the one that becomes most likely once the creation date is read
+alongside it: the frontmatter has said 1.0.0 since 2026-06-16, and the history
+began at 0.1.0 the same day. So this is not drift introduced by the amendments;
+the two numbers were never reconciled.
+
+That is as far as the evidence goes. Choosing among the three is the author's,
+and each produces a different document.
 
 ## Finding 2: RFC-0001 is filed under draft while its Status reads Accepted
 

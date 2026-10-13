@@ -159,6 +159,30 @@ def strip_code_comments(text: str) -> str:
     return text
 
 
+def strip_string_literals(text: str) -> str:
+    """Blank out string literal contents, keeping the surrounding code.
+
+    A CamelCase token inside a string is data, not a type. RFC code blocks are
+    full of illustrative values, and one of them is a Telegram bot token:
+
+        bot_token = "1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
+
+    `ABCdefGHIjklMNOpqrsTUVwxyz` is not a type reference, it is a sample
+    credential in an example, and reporting it put a baselined entry on the
+    record that describes nothing. Measured across the baseline, 42 of 729
+    entries were string content rather than code.
+
+    Rust raw strings (`r"..."`, `r#"..."#`) are handled before the ordinary
+    forms so their contents are not rescanned as code. Lifetimes such as
+    `'static` are consumed by the same rule and that is harmless: a lifetime is
+    lowercase and can never match `IDENT`, which requires a leading capital.
+    """
+    text = re.sub(r'r#*"[^"]*"#*', '""', text)
+    text = re.sub(r'"(?:[^"\\\n]|\\.)*"', '""', text)
+    text = re.sub(r"'(?:[^'\\\n]|\\.)*'", "''", text)
+    return text
+
+
 def rfc_declared_types() -> set[str]:
     declared: set[str] = set()
     for path in RFC_ROOT.rglob("*.md"):
@@ -195,7 +219,7 @@ def known() -> set[str]:
 def references(text: str) -> set[str]:
     """Type-shaped identifiers referenced inside RFC code blocks."""
     found: set[str] = set()
-    for block in CODE_BLOCK.findall(strip_code_comments(text)):
+    for block in CODE_BLOCK.findall(strip_string_literals(strip_code_comments(text))):
         for name in IDENT.findall(block):
             if is_type_shaped(name):
                 found.add(name)

@@ -26,7 +26,7 @@ workflow.
 | --------------------------- | ----- | ---------- | ------------------------------------------------ |
 | `lint-rfc-anchors.py`       | yes   | 0          | 590-entry baseline                               |
 | `lint-rfc-type-refs.py`     | yes   | 0          | 729-entry baseline                               |
-| `lint_no_vh_accepted.sh`    | no    | 0          | passes, 247 Accepted RFCs scanned                |
+| `lint_no_vh_accepted.sh`    | no    | 1          | 51 real findings after the detection fix         |
 | `lint_status_vh_sync.sh`    | no    | 1          | 1 real finding after the fix below               |
 | `lint_plan_yaml_vh_sync.sh` | no    | 1          | lints a path outside the repository              |
 | `lint_section_cites.sh`     | no    | 1          | 58 findings, all false positives                 |
@@ -40,11 +40,19 @@ human review ("Manual review required: YES"), and
 `test-dangerous-tokens.sh` is a test fixture runner. Neither is a check that
 claims to police the tree.
 
-One measurement note, recorded because it nearly produced a wrong table: running
-`mutation-verify-guards.sh --help` reports `passed=0 skipped=10`, because the
-script treats any argument as a name filter and `--help` matches nothing. With
-no argument it passes 10/10. A script that treats its own help flag as a filter
-silently measures nothing, which is worth knowing before wiring it anywhere.
+One measurement note, recorded because it nearly produced a wrong table:
+`mutation-verify-guards.sh --help` used to report `passed=0 skipped=10`, because
+the script treated any argument as a name filter and `--help` matched nothing.
+With no argument it passed 10/10. A script that treats its own help flag as a
+filter silently measures nothing, which is worth knowing before wiring it
+anywhere.
+
+**Since fixed.** `--help` prints usage and lists every guard, and a filter that
+matches no guard exits 1 instead of reporting a successful empty run. Recorded
+in mission
+`four-linters-report-clean-while-their-counters-describe-a-different-population`.
+The 10/10 figure in the table above is unchanged and re-verified after that
+fix.
 
 ## Fixed here: the status linter compared against the oldest row
 

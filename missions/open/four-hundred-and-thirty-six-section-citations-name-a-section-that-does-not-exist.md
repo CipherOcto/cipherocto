@@ -1,133 +1,121 @@
 ---
 name: four-hundred-and-thirty-six-section-citations-name-a-section-that-does-not-exist
-description: "validate_cites.sh reports 1300 INVALID findings. Measured with scripts/classify_validate_cites.py, 436 of them name a section that exists in no file carrying the cited RFC number, across 116 files and 190 distinct section names. The remaining 864 are the linter opening the wrong file because RFC numbers are not unique. Two verified examples: RFC-0110 has no section called Limbs, and RFC-0862 has no section called RaftLike Writer Election. Repairing a citation requires knowing which section was meant, which is author work, so this records the backlog rather than mass-editing RFC text."
+description: >-
+  validate_cites.sh reports 1300 INVALID. Re-measured with exact-heading matching: 367 resolve mechanically, 296 against a sibling file carrying the same RFC number and 71 against a heading in docs/ or missions/. The remaining 933 name a section that exists nowhere and need author intent. Supersedes the earlier 625/436 split, which counted substring matches as resolutions.
 metadata:
   node_type: mission
-  type: implementation
+  type: tooling
   created: 2026-10-13T00:00:00.000Z
-  v: "1.0"
+  v: "2.0"
   depends_on:
-    - RFC-0001
+    - one-thousand-nine-hundred-rfc-references-carry-a-version-pin-and-only-a-fifth-are-cross-references
 ---
 
 # Mission `four-hundred-and-thirty-six-section-citations-name-a-section-that-does-not-exist`
 
 ## Status
 
-Open. Measured and characterised. No citation has been changed, because each
-one needs to know what the author meant, and that is not recoverable from the
-text.
+Re-measured. The headline figure is wrong and is corrected here in place rather
+than left standing next to a newer number.
 
-## What is actually broken
+The original split — 625 path-ambiguity, 436 genuinely dangling — counted
+**substring** matches as resolutions. Under exact-heading matching the
+resolvable set is **367**, not 625, and the genuinely-dangling set is **933**,
+not 436.
 
-`scripts/validate_cites.sh` reports **1300 INVALID** findings. Measured by
-`scripts/classify_validate_cites.py`, which reads the linter's own output and
-builds each file's heading list with the same command `get_rfc_sections` uses:
+## Current measurement
 
-| Class                                                      | Count   |
-| ---------------------------------------------------------- | ------- |
-| **genuinely missing — exists in no file with that number** | **436** |
-| recoverable: sibling carries that exact heading            | 332     |
-| name occurs only inside a sibling heading (substring)      | 293     |
-| near-miss: dropping the trailing word resolves it          | 111     |
-| near-miss: a two-word prefix is a heading                  | 63      |
-| identifier-qualifier rule would resolve it                 | 34      |
+`bash scripts/validate_cites.sh`, full tree:
 
-The 625 path-ambiguity findings belong to mission
-`rfc-numbers-are-not-unique-so-find-rfc-path-resolves-by-directory-order` and
-are not counted here. **This mission is about the other 436.**
+```
+Summary: CHECKED=29273 VALID=26627 PHANTOM=339 INVALID=1300 STALE=1007
+         SCOPE: 422 of 1263 tracked markdown files lie under (rfcs docs); 841 unexamined
+```
 
-## The shape of the 436
+The 1300 `INVALID [section missing]` findings break down as:
 
-They are not spread evenly, and the concentration is what makes the backlog
-tractable:
+| Count | Class                                                                                     | Needs            |
+| ----- | ----------------------------------------------------------------------------------------- | ---------------- |
+| 296   | the section exists as an exact heading in a **sibling file** carrying the same RFC number | a mechanical fix |
+| 71    | the section exists as an exact heading in `docs/`, `missions/`, or `CLAUDE.md`            | a mechanical fix |
+| 933   | the section exists nowhere, under exact matching                                          | author intent    |
 
-- **116 files**, of which one carries 58
-- **190 distinct section names**, of which the most repeated are `F3` (26),
-  `Wire Format` (24), `Domain Separators` (21), `F1` (12),
-  `Cargo.toml Templates Layer` (10), `Replay Protection` (10), `10.2` (10),
-  `Risk` (10)
+## Why 296 exist at all: RFC numbers are not unique
 
-Worst citing files:
+**28 RFC numbers are carried by more than one file — 110 files in total.**
 
-| Count | File                                                                 |
-| ----- | -------------------------------------------------------------------- |
-| 58    | `docs/research/2026-08-21-vault-monetary-representation-redesign.md` |
-| 20    | `rfcs/accepted/process/0011-g-governance-subcommands.md`             |
-| 16    | `rfcs/accepted/process/0011-c-agent-lifecycle.md`                    |
-| 12    | `rfcs/accepted/process/0009-identity-evolution-v12.md`               |
-| 12    | `rfcs/accepted/process/0012-audit-substrate.md`                      |
-| 12    | `rfcs/accepted/networking/0970-forwarding-hop-auth-envelope.md`      |
-| 12    | `rfcs/accepted/economics/0959-a1-market-delivery.md`                 |
+| RFC  | Files |
+| ---- | ----- |
+| 0011 | 26    |
+| 0850 | 8     |
+| 0855 | 8     |
+| 0903 | 5     |
+| 0959 | 4     |
+| 0960 | 4     |
+| 0206 | 4     |
 
-### Two sub-classes that are not section citations at all
+`find_rfc_path` resolves a bare cite to exactly one of them by a sort
+heuristic. `RFC-0011` resolves to `0011-x-wallet-store-identity-substrate.md`,
+so a cite naming a section that lives in any of the other 25 files is reported
+as broken because the wrong file was opened.
 
-`§F1` and `§F3` account for **38** findings and are adversarial-review finding
-ids, not section names. `§10.2` is a numbered section. Neither can be repaired
-by pointing at a heading: the first should be written as a finding reference
-rather than a section cite, and the second needs a heading that does not exist.
+This is the same shape as every other finding in this area: the check opened one
+file, concluded the section was missing, and reported a fact about the wrong
+population.
 
-This is the same distinction `lint-rfc-anchors.py` already draws with
-`is_section_anchor`, where a single-token token is treated as a finding id
-precisely because a section is multi-word.
+Measured across the 28 duplicated numbers, 2928 of 3502 heading names are
+present in exactly one file and so are disambiguated by searching siblings.
+The 574 shared names are dominated by boilerplate — `Summary`, `Status`,
+`Authors`, `Version History` — where the citation was never specific to begin
+with.
 
-## Two verified examples
+## Why the substring class is noise, and must not be "fixed"
 
-Checked by hand rather than trusted from the classifier.
+An earlier count credited 559 findings to substring matches in `docs/` and
+`missions/`. Sampling them shows what that class contains:
 
-**`§Limbs`.** Cited by `rfcs/draft/numeric/0131-bigint-to-dqa.md` as "Per
-RFC-0110 §Limbs". RFC-0110 has no heading named `Limbs`. It has `Schoolbook
-MUL Limb Reduction`, and nothing else containing the word in a heading
-position. The citation is wrong; which section it meant is not recoverable.
+| Cited section             | Matched against                                                        |
+| ------------------------- | ---------------------------------------------------------------------- |
+| `§out`                    | `manual setup (without the installer)`                                 |
+| `§dual`                   | `🏘️ individual user`                                                   |
+| `§dqa`                    | `1. deterministic numeric tower (rfc-0104 (dfp) + rfc-0105 (dqa) + …)` |
+| `§bootstrap orchestrator` | `q6. bootstrap orchestrator`                                           |
 
-**`§RaftLike Writer Election`.** Cited by
-`rfcs/draft/networking/0862p-a-writer-election-bootstrap.md` as "base
-RFC-0862". RFC-0862's headings include `WriterElection Protocol (sealed
-trait)` and nothing called `RaftLike Writer Election`. The cited name appears
-to have been derived from the impl type `RaftLikeWriterElection` rather than
-from a heading, which is how a citation gets invented.
+Two-character fragments matching any heading that happens to contain them. This
+is the same leniency `lint_section_cites.sh` measures explicitly in its
+coverage line, and the reason its substring semantics are documented as
+"generous by design".
 
-## Why nothing is repaired automatically
+**Absorbing these would turn the linter into something that cannot fail.** A
+guard that resolves `§out` against `without the installer` is worse than one
+that reports the citation, because it teaches readers that a green result means
+the citation resolves.
 
-Each repair needs to answer "which section did the author mean", and the three
-plausible answers are all different:
+So the substring class is recorded as unresolved, not as recoverable.
 
-- point the citation at the nearest existing heading,
-- rename a heading to match the citation, or
-- create the section the citation already promises.
+## What a mechanical fix would look like
 
-Only the third is safe when the citation is the more recent intent, and there
-is no signal here that says which is which. Editing 436 citations across 116
-files on a guess would trade a visible defect for an invisible one, which is
-worse than the defect.
+Search every file carrying the cited RFC number, not one; and index headings
+from `docs/`, `missions/`, and `CLAUDE.md` the way `lint-rfc-anchors.py`
+already does. That is a change to what this linter accepts, so it is a
+maintainer decision — but it is a bounded one: 367 findings, no interpretation
+required, and the change is to the resolver rather than to the corpus.
 
-## Acceptance criteria
+The durable fix for the remaining 933 is unique RFC numbers or unambiguous
+citations, which is a corpus change and needs author intent.
 
-- [x] Measure the backlog using the linter's own output and heading extraction,
-      with no reimplementation that could drift.
-- [x] Split the findings by cause, so the linter's own false positives are not
-      counted as repository rot.
-- [x] Give the concentration by file and by name, so the work can be ordered.
-- [x] Verify two instances by hand.
-- [ ] Decide whether `§F1`-style finding ids should be excluded from
-      `validate_cites.sh` the way `is_section_anchor` excludes them from the
-      anchor linter. That is a change to what the linter rejects, so it is a
-      maintainer decision.
-- [ ] Repair the concentration in descending order, starting with the single
-      research document that carries 58.
-- [ ] Consider whether a citation naming an impl type rather than a heading is
-      worth detecting as its own class, since that is how `§RaftLike Writer
-Election` was invented.
+## Also unexamined
 
-## Notes
+- 339 `PHANTOM [RFC missing]` — cites whose RFC number resolves to no file at
+  all. Not yet classified.
+- 1007 `STALE [version pin mismatch]` — see
+  `one-thousand-nine-hundred-rfc-references-carry-a-version-pin-and-only-a-fifth-are-cross-references`.
+- 841 of 1263 tracked markdown files are unexamined, and 789 of those are
+  missions. The linter reports this rather than hiding it.
 
-The headline number for this linter has been "1335 findings" for most of the
-session, quoted as though it described rot. It does not: 48 percent of it is
-the linter opening the wrong file, and only about a third is a citation that
-resolves nowhere.
+## Corrected history
 
-Separately, the same measurement found and fixed a real bug in the linter: its
-section match was case-sensitive, so a correctly cited section written in
-different capitalisation was reported missing. That removed 35 findings and
-left the genuinely-missing count at 436, unchanged — verified in both
-directions rather than assumed.
+This mission's own title carried the figure 436. That number came from a
+classification that treated substring matches as recoveries. The correct figure
+under exact matching is 933. Both numbers describe the same 1300 findings; they
+differ in what counts as evidence that a citation resolves.

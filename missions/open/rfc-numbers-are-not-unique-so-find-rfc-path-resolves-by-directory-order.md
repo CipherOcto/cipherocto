@@ -1,6 +1,6 @@
 ---
 name: rfc-numbers-are-not-unique-so-find-rfc-path-resolves-by-directory-order
-description: "RFC numbers are reused across category directories, and validate_cites.sh find_rfc_path resolves a bare RFC-XXXX cite by preferring accepted/ and then sorting by version. Measured blast radius against a completed run: 625 of the linter 1300 INVALID findings, 48 percent, are a section that exists in a sibling file carrying the same number, leaving 436 genuinely dangling citations. Splitting the recoveries into whole-heading matches and substring-only matches is what shows the obvious remedy would convert 293 honest failures into silent passes. An earlier estimate of 117 came from the faulty simulation and is superseded. RFC-0105 names three files in two categories. Which file a citation is checked against therefore depends on which directories happen to contain a file with that number, so 117 newly-flagged findings report a section as missing when it exists in a real RFC with the same number."
+description: "RFC numbers are reused across category directories, and validate_cites.sh find_rfc_path resolves a bare RFC-XXXX cite by preferring accepted/ and then sorting by version. Measured blast radius: 296 of the linter 1300 INVALID findings are a section that is an exact heading in a sibling file carrying the same number, and a further 71 are an exact heading in docs/ or missions/. Re-measured under exact-heading matching, which SUPERSEDES the earlier 625/436 split: that split credited 293 substring-only matches as recoveries, and sampling them shows they are noise, matching fragments such as out against manual setup without the installer and dual against individual user. Those 293 are unresolved, not recovered. 28 RFC numbers are carried by more than one file, 110 files in total, and RFC-0011 alone names 26. Which file a citation is checked against therefore depends on which directories happen to contain a file with that number."
 metadata:
   node_type: mission
   type: implementation
@@ -53,23 +53,48 @@ Measured against a completed run of `scripts/validate_cites.sh` by
 `scripts/classify_validate_cites.py`, which reads the linter's own output and
 builds each file's heading list with the same command `get_rfc_sections` uses:
 
-| Class of INVALID finding                                     | Count   |
-| ------------------------------------------------------------ | ------- |
-| section is a whole heading in a sibling carrying that number | **332** |
-| name occurs only inside a heading in a sibling (substring)   | 293     |
-| genuinely missing, absent from every file with that number   | 436     |
-| near-miss: dropping the trailing word resolves it            | 113     |
-| near-miss: a two-word prefix is a heading                    | 60      |
-| identifier-qualifier rule would resolve it                   | 34      |
-| remaining qualifier cases the rule does not help             | 23      |
+| Class of INVALID finding                                       | Count   | Verdict                 |
+| -------------------------------------------------------------- | ------- | ----------------------- |
+| section is an exact heading in a sibling carrying that number  | **296** | mechanically resolvable |
+| section is an exact heading in docs/ or missions/ or CLAUDE.md | 71      | mechanically resolvable |
+| name occurs only INSIDE a heading in a sibling (substring)     | 293     | **not a recovery**      |
+| genuinely missing, absent from every file with that number     | 436     | author intent           |
+| near-miss: dropping the trailing word resolves it              | 113     |
+| near-miss: a two-word prefix is a heading                      | 60      |
+| identifier-qualifier rule would resolve it                     | 34      |
+| remaining qualifier cases the rule does not help               | 23      |
 
-**625 of 1,300 INVALID findings — 48% — are the wrong file being opened.**
-Only 436 are a citation that resolves nowhere, and those are tracked
-separately in mission
-`four-hundred-and-thirty-six-section-citations-name-a-section-that-does-not-exist`.
+**367 of 1,300 INVALID findings — 28% — are mechanically resolvable**, being the
+wrong file being opened, and 933 need author intent.
 
-Figures below are from before the case-sensitivity fix in `validate_cites.sh`,
-which removed 35 findings. The class shares barely moved.
+This **supersedes the earlier 625/436 split**, which credited 293 substring-only
+matches as recoveries. Sampling that class shows what it contains:
+
+| Cited section | Matched against                                                          |
+| ------------- | ------------------------------------------------------------------------ |
+| `§out`        | `manual setup (without the installer)`                                   |
+| `§dual`       | `🏘️ individual user`                                                     |
+| `§dqa`        | `1. deterministic numeric tower (rfc-0104 (dfp) + rfc-0105 (dqa) + ...)` |
+
+Two-character fragments matching any heading that happens to contain them.
+Absorbing those would convert 293 honest failures into silent passes and make
+the linter unable to fail, which is the opposite of what this mission asks for.
+So they are recorded as unresolved, not recoverable.
+
+The remaining 933 are tracked in mission
+`four-hundred-and-thirty-six-section-citations-name-a-section-that-does-not-exist`,
+whose title carries the older figure and is superseded by this section.
+
+**The duplicate-number blast radius, measured directly:** 28 RFC numbers are
+carried by more than one file, 110 files in total. RFC-0011 names 26, RFC-0850
+and RFC-0855 name 8 each, RFC-0903 names 5. `RFC-0011` resolves to
+`0011-x-wallet-store-identity-substrate.md`, so a cite naming a section that
+lives in any of the other 25 files is reported as broken because the wrong file
+was opened.
+
+Figures in the table above are from a re-measurement against the current tree.
+Earlier figures quoted here (332 / 625 / 436) came from a classifier that
+credited substring matches, and are superseded.
 
 > The earlier figure in this section, 117 of 577 "newly-flagged unique
 > findings", came from the simulation that produced most of this session's

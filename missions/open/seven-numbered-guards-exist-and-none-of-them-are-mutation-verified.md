@@ -207,15 +207,64 @@ wrong anchor and a misplaced argument — and the harness reported
 indistinguishable from a green result from one that did, which is why each row
 above was checked for having actually changed the file.
 
+## The two scripts this mission listed as unassessed
+
+Both have now been checked. Neither needed a fix.
+
+### `verify_canonical_blobs.py` — verified, and it can fail
+
+It reimplements the reputation batch digest in Python and compares the result
+against the three vectors pinned in the Rust test file. That is a genuine
+cross-implementation check, not a self-consistency check.
+
+- **Detect direction.** Perturbing one argument of the Python implementation
+  (`batch_size=0` to `batch_size=1` in the 0-leaf vector) produced exactly one
+  mismatch, printed both digests, and exited 1. Restoring returned
+  `All 3 vectors match byte-identically`.
+- **Corpus guards.** `parse_pinned_vectors` exits with a message when the Rust
+  file does not contain exactly three vectors, and when any vector is not
+  exactly 32 bytes. Both were exercised against synthetic fixtures.
+
+The `pinned[name]` lookup that looks unguarded cannot in fact miss: the parser
+refuses to return unless all three names are present.
+
+### `mutate-zk-guards.py` — verified, 38/38
+
+This one already had the discipline this mission is arguing for. Its `--list`
+derives the coverage figure from the entry table rather than from a hand-kept
+number in prose, and it distinguishes three outcomes that are easy to collapse:
+
+| Outcome        | Meaning                                                |
+| -------------- | ------------------------------------------------------ |
+| `RED ok`       | the guard fired, and fired for the right reason        |
+| `BAD-MUTATION` | the mutation did not compile, so the guard never ran   |
+| `VACUOUS`      | the guard stayed green — it does not detect its defect |
+
+The `BAD-MUTATION` case is the one that matters most: a mutation that fails to
+compile makes cargo exit non-zero, which an exit-code-only harness reads as a
+red guard. Collapsing that into success would let a broken mutation certify a
+guard forever.
+
+The cheap tier was run rather than the full one, because the full tier
+recompiles the workspace and the disk is at 100% with 5.2G free:
+
+```
+mutations: 38/73  red: 38  vacuous: 0  bad-mutation: 0  bad-anchor: 0
+```
+
+Zero vacuous and zero bad-mutation across 38 entries. The remaining 35 are
+`rebuild`-tier and were not run.
+
 ## Follow-ups
 
 - No guard runs in CI. See
   `seven-numbered-guards-exist-and-none-of-them-runs-in-ci` for the drafted step.
-- Each case plants ONE defect per guard, and the clean fixtures pin three
+- Each case plants ONE defect per guard, and the clean fixtures pin five
   regression classes between them. The guards implement more rules than that.
   One verified rule is not the same as a verified guard, and the count of cases
-  should not be read as coverage. The next rules worth pinning are
-  `lint_section_cites.sh`'s trailing-punct and over-depth rejects, and
+  should not be read as coverage. `lint_section_cites.sh` now also has an
+  over-deep case. The next rule worth pinning is
   `lint_no_vh_accepted.sh`'s bullet-rendered Version History.
-- `verify_canonical_blobs.py` and `mutate-zk-guards.py` are unverified by this
-  harness and were not assessed.
+- The `rebuild` tier of `mutate-zk-guards.py` (35 of 73 entries) was not run:
+  it recompiles the workspace, and the disk is at 100%. Run it when there is
+  room, or on a machine that is not disk-constrained.

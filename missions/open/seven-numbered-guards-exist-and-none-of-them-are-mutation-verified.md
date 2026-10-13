@@ -179,6 +179,41 @@ reachable through any tree argument that is not a repository subdirectory, which
 is precisely what a mutation harness wants to pass — so the harness and the fix
 were the same piece of work.
 
+## The harness matched a counter and called it a finding
+
+Adding a clean-only case for a bullet-rendered Version History exposed a defect
+in the harness itself.
+
+`assert_red` matched the expected substring against the guard's **entire
+output**. Two expected strings are also counter names, and every guard prints
+its counters on a clean run:
+
+```
+PASS=1 FAIL=0 MISSING_VH=0
+OUT_OF_SYNC_STATUS_OLDER=0
+```
+
+So `grep -qF MISSING_VH` succeeded against `MISSING_VH=0`, on a guard that had
+found nothing. The assertion passed. A counter is a statement about the run; a
+finding is the run's output, and asserting on the output alone lets a guard
+report zero and still be believed.
+
+The matcher now filters to finding lines first — shell-guard prefixes
+(`REJECT`, `INVALID`, `MISSING_VH`, …), the Python guards' `NEW ` headings, and
+indented or count-prefixed cause lines — and excludes bare `NAME=value`
+counters.
+
+Narrowing that filter was itself wrong twice, and each failure was informative:
+
+- Requiring only shell-guard prefixes rejected three genuine detections. The
+  Python guards report findings in their own shapes, none of which start with a
+  shell prefix.
+- Requiring indentation missed `lint_frontmatter.py`, which groups findings by
+  cause and prefixes each group with a **count**, so its cause lines begin with
+  a digit.
+
+Both failures were loud and named the case, which is what made them cheap.
+
 ## Regression pins in the clean fixture
 
 Each case plants one defect and asserts the guard catches it. That leaves the
@@ -259,12 +294,11 @@ Zero vacuous and zero bad-mutation across 38 entries. The remaining 35 are
 
 - No guard runs in CI. See
   `seven-numbered-guards-exist-and-none-of-them-runs-in-ci` for the drafted step.
-- Each case plants ONE defect per guard, and the clean fixtures pin five
+- Each case plants ONE defect per guard, and the clean fixtures pin six
   regression classes between them. The guards implement more rules than that.
   One verified rule is not the same as a verified guard, and the count of cases
-  should not be read as coverage. `lint_section_cites.sh` now also has an
-  over-deep case. The next rule worth pinning is
-  `lint_no_vh_accepted.sh`'s bullet-rendered Version History.
+  should not be read as coverage. `lint_section_cites.sh` has an over-deep case
+  and `lint_no_vh_accepted.sh` has the bullet-rendered Version History.
 - The `rebuild` tier of `mutate-zk-guards.py` (35 of 73 entries) was not run:
   it recompiles the workspace, and the disk is at 100%. Run it when there is
   room, or on a machine that is not disk-constrained.

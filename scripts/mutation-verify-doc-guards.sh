@@ -80,23 +80,62 @@ assert_clean() {
 # The guard must go red AND name the specific finding. Checking only the exit
 # code would accept a guard that failed for the wrong reason — which is how
 # "green while measuring nothing" survives an exit-code-only test.
+#
+# The match is against the FINDING lines only, never the whole output.
+#
+# Matching the whole output is a bug this harness had. Two of the expected
+# strings are also counter names, and every guard prints its counters on a
+# clean run:
+#
+#     PASS=1 FAIL=0 MISSING_VH=0
+#     OUT_OF_SYNC_STATUS_OLDER=0
+#
+# So `grep -qF MISSING_VH` succeeded against `MISSING_VH=0` on a guard that had
+# found nothing at all, and the assertion passed. The case reported "ok" while
+# the guard never emitted a finding.
+#
+# The counter is a statement about the run; the finding is the run's output.
+# Asserting on the output alone lets a guard report 0 and still be believed.
+#
+# The finding-line prefixes span three output styles, and narrowing to the
+# shell guards' names made three cases fail — correctly, because the Python
+# guards report their findings in their own shapes:
+#
+#     lint_frontmatter.py   "1  unquoted value containing ': ' — quote the value"
+#     lint-rfc-anchors.py   "  §invented anchor"
+#     lint-rfc-type-refs.py "  TotallyMadeUpTypeName"
+#
+# None of those lines starts with a shell-guard prefix, so requiring one would
+# reject genuine detections. `lint_frontmatter.py` groups its findings by cause
+# and prefixes each group with a COUNT, so its cause lines start with a digit.
+# What all three share is that the finding is not a bare `NAME=value` counter,
+# which is the shape every guard prints on a clean run.
+FINDING_RE='^(REJECT|INVALID|PHANTOM|STALE|MISSING_VH|NO_VH|NO_STATUS_VERSION|NO_VH_ROWS|NO_VH_VERSION|OUT_OF_SYNC|NEW |  |[0-9]+  )'
+
 assert_red() {
     local name="$1" guard_fn="$2" expect="$3"
     local out
-    out="$("$guard_fn" 2>&1)"
-    if [ $? -eq 0 ]; then
-        printf '%-34s %-8s %s\n' "$name" "detect" "MISSED the planted defect"
-        FAIL=$((FAIL + 1))
-        return 1
+    if ! out="$("$guard_fn" 2>&1)"; then
+        local findings
+        findings="$(grep -E "$FINDING_RE" <<< "$out" | grep -vE '^[A-Z_]+=' )"
+        if [ -z "$findings" ]; then
+            printf '%-34s %-8s %s\n' "$name" "detect" "went red but emitted NO finding line"
+            printf '%s\n' "$out" | head -6 | sed 's/^/      /'
+            FAIL=$((FAIL + 1))
+            return 1
+        fi
+        if ! grep -qF "$expect" <<< "$findings"; then
+            printf '%-34s %-8s %s\n' "$name" "detect" "went red, but not with '$expect'"
+            printf '%s\n' "$findings" | head -4 | sed 's/^/      /'
+            FAIL=$((FAIL + 1))
+            return 1
+        fi
+        printf '%-34s %-8s %s\n' "$name" "detect" "ok"
+        return 0
     fi
-    if ! grep -qF "$expect" <<< "$out"; then
-        printf '%-34s %-8s %s\n' "$name" "detect" "went red but did not name '$expect'"
-        grep -E 'REJECT|INVALID|PHANTOM|NO_|FAIL|MISSING' <<< "$out" | head -4 | sed 's/^/      /'
-        FAIL=$((FAIL + 1))
-        return 1
-    fi
-    printf '%-34s %-8s %s\n' "$name" "detect" "ok"
-    return 0
+    printf '%-34s %-8s %s\n' "$name" "detect" "MISSED the planted defect"
+    FAIL=$((FAIL + 1))
+    return 1
 }
 
 # case <name> <guard-fn> <expected-finding>
@@ -360,6 +399,36 @@ case_no_vh() {
     run_case "no_vh_accepted/missing-vh" no_vh_guard "MISSING_VH"
 }
 
+# A Version History is not always a table. Six Accepted RFCs write it as a
+# bullet list, and the row reader only understood `| v1.0 |`, so it reported
+# those documents as having no data rows at all. This case is a clean-only
+# assertion: there is no defect to plant, because the document is correct and
+# the guard must not object to it. Requiring one rendering is measuring the
+# renderer rather than the document.
+write_bullet_vh() {
+    cat >"$FIX/rfcs/0002-bullets.md" <<'EOF'
+---
+status: accepted
+---
+
+# RFC-0002 Bullets
+
+## Status
+
+Accepted (v3.0) — promoted 2026-02-01
+
+## Version History
+
+- **v3** (2026-02-01): Third round.
+- **v2** (2026-01-01): Second round.
+EOF
+}
+
+case_no_vh_bullets() {
+    prepare_case() { write_bullet_vh; }
+    run_case "no_vh_accepted/bullet-history" no_vh_guard "MISSING_VH"
+}
+
 case_cites() {
     # The cites corpus is not part of the base fixture, because it is the only
     # case that needs `docs/` to exist as a separate root. Writing the clean
@@ -405,7 +474,7 @@ case_frontmatter() {
     prepare_case() { prepare_frontmatter_clean; }
     write_defect() { write_frontmatter_defect; }
     run_case "frontmatter/unquoted-colon" frontmatter_guard \
-        "unquoted value containing ': '"
+        "unquoted value containing"
 }
 
 # The clean anchor corpus: one heading, and one cite that resolves to it.
@@ -474,6 +543,7 @@ case_section_cites
 case_section_cites_overdeep
 case_status_vh
 case_no_vh
+case_no_vh_bullets
 case_cites
 case_frontmatter
 case_anchors

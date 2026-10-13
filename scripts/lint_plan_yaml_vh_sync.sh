@@ -4,11 +4,29 @@
 # Behavior: Parse YAML frontmatter `version:` field + ## Version History latest row per plan file.
 #           Detect OUT_OF_SYNC_YAML_OLDER / OUT_OF_SYNC_YAML_NEWER / NO_VH_NO_YAML.
 #           Mirror M35 RFC Status/VH sync pattern adapted for plans (no ## Status header).
-# Coverage: Plan files corpus-wide in /home/mmacedoeu/.claude/plans/.
-
+# Coverage: Plan files corpus-wide.
+#
+# PLAN_ROOT previously defaulted to /home/mmacedoeu/.claude/plans — an absolute
+# path in one developer's home directory, committed to a shared repository. That
+# made the guard's default corpus unresolvable on every other machine and on a
+# CI runner, where the path does not exist.
+#
+# It failed closed rather than silently: the empty-corpus guard at the end of
+# this file exits 1 with "no plan files were examined". So the failure mode was
+# a permanently red guard on any machine but one, which is a check nobody can
+# act on, rather than a false pass.
+#
+# The plans directory is a local scratchpad and is deliberately NOT in the
+# repository — CLAUDE.md treats it as such, and RFC-0113 references
+# `docs-plans-scratchpad`. So there is no in-repo default that would be correct.
+#
+# What this can do is resolve the conventional location relative to $HOME, so
+# the guard works for whoever runs it, and say plainly that the corpus is
+# local-only. A caller on a machine with no plans directory gets the existing
+# "examined nothing" failure, which is the honest answer.
 set -euo pipefail
 
-PLAN_ROOT="${PLAN_ROOT:-/home/mmacedoeu/.claude/plans}"
+PLAN_ROOT="${PLAN_ROOT:-${HOME:-}/.claude/plans}"
 EXIT_CODE=0
 CHECKED=0
 IN_SYNC=0
@@ -63,7 +81,32 @@ while IFS= read -r -d '' plan_file; do
     done < "$plan_file"
 
     # Extract ## Version History latest row
-    vh_latest=$(awk '/^## Version History/{found=1; next} found && /^\| [0-9]+(\.[0-9]+)+ \|/ {print; exit}' "$plan_file" 2>/dev/null | grep -oE '^\| [0-9]+(\.[0-9]+)+' | sed 's/^| //' | head -1 || true)
+    #
+    # Two defects, both inherited from the pattern this was copied from before
+    # the sibling guard `lint_status_vh_sync.sh` was corrected.
+    #
+    # `print; exit` stops at the FIRST matching row. A Version History is
+    # append-ordered oldest-first, so the first row is the OLDEST entry. A plan
+    # at `version: 2.0` whose table runs `| 1.0 |` then `| 2.0 |` was reported
+    # `YAML=v2.0, VH latest=v1.0` — out of sync with itself, against a
+    # document that agrees. Reproduced directly before the fix.
+    #
+    # The row pattern also required exactly one space around the version, so
+    # every column-aligned table — `| 1.0     | 2026-04-11 |` — matched nothing
+    # and the plan was reported as having no Version History at all.
+    #
+    # So: take EVERY versioned row, sort them, and keep the highest. Version
+    # sorting rather than lexicographic, since 1.10.0 is above 1.9.0
+    # numerically and below it as a string.
+    #
+    # The scan is also bounded to the table. `found` latching on at the heading
+    # and never clearing would read every later pipe table in the document as
+    # Version History rows, which is the defect already repaired in the sibling
+    # guard and would be reintroduced here by the naive fix.
+    vh_latest=$(awk '/^##+ ([0-9]+(\.[0-9]+)*\.? )?(Version History|Changelog)/{found=1; next}
+        found && /^\|/ {if (match($0, /^\|[ \t]+v?[0-9]+(\.[0-9]+)*([ \t]*\|)/)) print substr($0, RSTART, RLENGTH); next}
+        found && NF {exit}' "$plan_file" 2>/dev/null \
+        | grep -oE '[0-9]+(\.[0-9]+)*' | sed 's/^v//' | sort -V | tail -1 || true)
 
     # Short plan = no VH required (per P39 classification)
     line_count=$(wc -l < "$plan_file" 2>/dev/null || echo "0")

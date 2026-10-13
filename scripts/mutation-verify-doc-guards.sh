@@ -429,6 +429,59 @@ case_no_vh_bullets() {
     run_case "no_vh_accepted/bullet-history" no_vh_guard "MISSING_VH"
 }
 
+# Guard 7 reads YAML `version:` against the latest Version History row. It
+# honours PLAN_ROOT, so it is fixture-driven like the others.
+plan_guard() {
+    PLAN_ROOT="$FIX/plans" bash scripts/lint_plan_yaml_vh_sync.sh
+}
+
+write_plan_drift() {
+    cat >"$FIX/plans/q-drift.md" <<'EOF'
+---
+version: 1.0
+---
+
+# Plan Q
+
+## Version History
+
+| Version | Date |
+| --- | --- |
+| 1.0 | a |
+| 3.0.0 | c |
+EOF
+}
+
+# The in-sync plan carries an ALIGNED table and its `version:` equals its
+# newest row. That is the shape the old reader got wrong twice: it took the
+# first (oldest) row, and it required exactly one space around the version, so
+# an aligned table matched nothing at all.
+write_plan_clean() {
+    cat >"$FIX/plans/p-sync.md" <<'EOF'
+---
+version: 2.0
+---
+
+# Plan P
+
+## Version History
+
+| Version | Date     |
+| ------- | -------- |
+| 1.0     | a        |
+| 2.0     | b        |
+EOF
+}
+
+case_plan_yaml() {
+    prepare_case() {
+        mkdir -p "$FIX/plans"
+        write_plan_clean
+    }
+    write_defect() { write_plan_drift; }
+    run_case "plan_yaml/version-drift" plan_guard "OUT_OF_SYNC_YAML_OLDER"
+}
+
 case_cites() {
     # The cites corpus is not part of the base fixture, because it is the only
     # case that needs `docs/` to exist as a separate root. Writing the clean
@@ -544,6 +597,7 @@ case_section_cites_overdeep
 case_status_vh
 case_no_vh
 case_no_vh_bullets
+case_plan_yaml
 case_cites
 case_frontmatter
 case_anchors

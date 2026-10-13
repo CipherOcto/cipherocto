@@ -1661,7 +1661,7 @@ A holder settles a high-value transfer, then files a dispute within the audit wi
 
 ### Threat 4: Event log divergence
 
-Two nodes apply the same events in different orders; balance projections diverge. **Mitigation:** shard routing by `shard_for_vault(vault_id)` for state placement (RFC-0963 §1a) + `shard_for_segment(wal_segment_id)` for WAL segment routing (§1b); intra-shard writes serialize via consensus; cross-shard writes use `MultiEnvelope` (RFC-0962 §7).
+Two nodes apply the same events in different orders; balance projections diverge. **Mitigation:** shard routing by `shard_for_vault(vault_id)` for state placement (RFC-0963 §1) + `shard_for_segment(wal_segment_id)` for WAL segment routing (§1); intra-shard writes serialize via consensus; cross-shard writes use `MultiEnvelope` (RFC-0962 §7).
 
 ### Threat 5: Privacy leak via public event log
 

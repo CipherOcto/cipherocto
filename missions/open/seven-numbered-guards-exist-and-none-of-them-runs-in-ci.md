@@ -109,26 +109,30 @@ session's fixes from "true today" into "cannot silently regress":
 
 - name: Accepted RFCs carry a Version History
   run: bash scripts/lint_no_vh_accepted.sh
+
+- name: Section citation hygiene
+  run: bash scripts/lint_section_cites.sh
 ```
 
 `scripts/lint_frontmatter.py` reports 246 of 246 documents parsing and 0
 failures, after the 33 unparseable blocks were repaired.
 `scripts/lint_no_vh_accepted.sh` reports `PASS=155 FAIL=0`, after four
 misfenced RFC headings were renamed and two Version History sections were
-added.
+added. `scripts/lint_section_cites.sh` reports `REJECTED=0`, after its
+numeric-then-alpha rule was found to be inverted and rebuilt to verify that a
+subsection heading exists rather than reject a token's shape.
 
-Two more are deliberately **not** in the snippet, because wiring them now
+Three are deliberately **not** in the snippet, because wiring them now
 would land red for reasons that are not the repository's fault:
 
 | Script                      | Exit | Why not yet                                                             |
 | --------------------------- | ---- | ----------------------------------------------------------------------- |
 | `lint_status_vh_sync.sh`    | 1    | one genuine drift, RFC-0855p-c at 1.0.0 vs 0.1.4                        |
-| `lint_section_cites.sh`     | 1    | 58 findings, all false positives                                        |
 | `lint_plan_yaml_vh_sync.sh` | 1    | examines `/home/mmacedoeu/.claude/plans`, outside the repository        |
 | `validate_cites.sh`         | 1    | 1300 findings, of which 625 are its own path ambiguity and 436 are real |
 
 Wiring a check that fails is legitimate once the failures are understood, and
-all four above are understood. They are listed so the decision is informed
+all three above are understood. They are listed so the decision is informed
 rather than made by whoever runs the job first.
 
 ## Why nobody has noticed

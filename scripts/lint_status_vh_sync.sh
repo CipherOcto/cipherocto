@@ -73,16 +73,101 @@ while IFS= read -r -d '' rfc_file; do
     esac
 
     # Find ## Status block
-    status_line=$(grep -m1 -E '^## (Status|## Status|Status:)' "$rfc_file" 2>/dev/null || true)
+    #
+    # The VERSION lives in the lines after the heading, never on it. This used
+    # to read only the heading line:
+    #
+    #     status_line=$(grep -m1 -E '^## (Status|## Status|Status:)' ...)
+    #     status_version=$(grep -oE 'v[0-9]+(\.[0-9]+)*' <<< "$status_line")
+    #
+    # Measured over the whole corpus: the matched heading line carries a version
+    # 0 times in 246 files. This corpus writes the status on the line(s) after
+    # the heading — `## Status` / blank / `Accepted (v1.1.0) — promoted ...` — so
+    # the extraction ran against a string that never contained a version.
+    #
+    # The only reason the guard reported anything at all is the frontmatter
+    # fallback below, which reaches the 25 Accepted RFCs carrying a YAML
+    # `version:`. Everything else fell through to NO_STATUS_VERSION: 210 of 247
+    # files were reported as having no Status version, including files whose
+    # Status block plainly reads `Final (v35 - Stoolap compatibility)`.
+    #
+    # So this guard compared versions on roughly a seventh of the corpus and
+    # called the rest "no status version", which is the same defect as a lint
+    # that reports success on an empty corpus, wearing a different hat. Its
+    # sibling `lint_no_vh_accepted.sh` was already taught to read the Status
+    # *block*; this one was not, so two guards disagreed about the same
+    # documents.
+    #
+    # Read the whole Status block, from the heading to the next heading of any
+    # level, and take the version from there.
+    #
+    # The block is filtered to the STATUS line itself before the version is
+    # read. `grep -A5` returns prose too, and prose in this corpus is full of
+    # version-shaped tokens that are not the document's version: RFC-0959 writes
+    #
+    #     ## Status
+    #
+    #     Accepted
+    #
+    #     > **Note (v2.0, 2026-08-19):** Wire-format amendment adds ...
+    #
+    # so an unfiltered read reports Status=v2.0 for a document whose Status line
+    # says only "Accepted", and then manufactures an out-of-sync finding
+    # against the Version History. The `v2.0` there is the wire-format
+    # amendment's version, not the RFC's.
+    #
+    # The Status line is the first line of the block that is not blank, not a
+    # heading (the matched `## Status` itself, and the next section heading that
+    # -A5 can reach), not a blockquote (`>` Note / Amendment-chain asides), and
+    # not a table row. Drop all of those, then take what remains.
+    #
+    # The heading line is the trap here. It matches `-A5` as the first output
+    # line, and a filter that drops blanks, `>` asides and `|` rows leaves
+    # `## Status` at the head of the list. `head -1` then returns the heading —
+    # a line that by construction never carries a version — and the extraction
+    # reports "no Status version" for every file, reproducing the original
+    # defect behind a filter that looks like it works. Any filter on this block
+    # must drop headings too.
+    status_line=$(grep -m1 -A5 -E '^## (Status|## Status|Status:)' "$rfc_file" 2>/dev/null \
+        | grep -vE '^[[:space:]]*$' \
+        | grep -vE '^[[:space:]]*[>|]' \
+        | grep -vE '^#+ ' \
+        | head -1 || true)
 
     # Find ## Version History block (or equivalent)
     vh_line_num=$(grep -m1 -nE "$VH_HEADING" "$rfc_file" 2>/dev/null | head -1 | cut -d: -f1 || true)
 
     # Extract Status version (e.g., "Draft v3.1", "Accepted (2026-08-20)", etc.)
+    #
+    # A `v`-token that belongs to an RFC NUMBER is not this document's version.
+    # The extraction took the first `v[0-9]` on the line, and these Status lines
+    # open by summarising which other RFCs they amend:
+    #
+    #     **Accepted (2026-09-12)** — codifies the ... of RFC-0012-v2 + RFC-0014-v3
+    #
+    # so it read `v2` out of the cross-reference `RFC-0012-v2` and reported
+    # RFC-0012 and RFC-0014 as having Status=v2 against a Version History whose
+    # latest row is 3.0.0. Both files were reported out of sync because of a
+    # version belonging to a different document. Two of the eleven findings on
+    # the tree were this.
+    #
+    # Excluding the token when it is immediately preceded by an RFC number keeps
+    # the real cases: `Accepted (v2.0 — ...)` and `spec elaboration closed
+    # (v1.3)` are both bare tokens and both still match.
     status_version=""
     if [ -n "$status_line" ]; then
-        # Try multiple patterns
-        status_version=$(grep -oE 'v[0-9]+(\.[0-9]+)*' <<< "$status_line" | head -1 | sed 's/^v//' || true)
+        # Drop tokens that are the version half of an `RFC-NNNN-vX` reference.
+        status_version=$(python3 - "$status_line" <<'PY' 2>/dev/null || true
+import re, sys
+line = sys.argv[1]
+for m in re.finditer(r'v[0-9]+(?:\.[0-9]+)*', line):
+    pre = line[:m.start()]
+    if re.search(r'RFC-[0-9]+(-[a-z0-9]+)?-$', pre, re.IGNORECASE):
+        continue  # version of a different RFC, cited on this line
+    print(m.group(0)[1:])  # strip the leading `v`; the report line re-adds it
+    break
+PY
+)
     fi
 
     # If no ## Status block, try inline Status field in YAML frontmatter
@@ -103,7 +188,22 @@ while IFS= read -r -d '' rfc_file; do
     # Check for VH block
     if [ -z "$vh_line_num" ]; then
         # Special case: Accepted RFCs without VH = NO_VH
-        if grep -qE '^## (Status|## Status|Status:).*Accepted' "$rfc_file" 2>/dev/null; then
+        #
+        # This test was `grep -qE '^## (Status|## Status|Status:).*Accepted'`,
+        # which requires the word "Accepted" on the SAME line as the heading.
+        # This corpus never writes it there — the Status block puts it on the
+        # next line — so the branch could not fire on any file, and NO_VH was
+        # structurally 0 rather than measured 0. A guard that cannot reach its
+        # own counter is not a guard; it is a comment that ends in `fi`.
+        #
+        # The sibling guard `lint_no_vh_accepted.sh` has always read the Status
+        # block and has reported 6 Accepted RFCs missing a Version History.
+        # This one reported none. Same corpus, same rule, opposite answers.
+        #
+        # Read the block. The `status_line` computed above is already that
+        # block's first real line, so reuse it rather than re-grepping.
+        if grep -A5 -E '^## Status' "$rfc_file" 2>/dev/null | grep -q 'Accepted' \
+            || awk '/^---$/{c++; next} c==1 && /^status:/ {print; exit}' "$rfc_file" 2>/dev/null | grep -qi accepted; then
             echo "NO_VH: $rfc_file (Accepted but no ## Version History)"
             NO_VH=$((NO_VH + 1))
             EXIT_CODE=1
@@ -144,6 +244,21 @@ while IFS= read -r -d '' rfc_file; do
     # version column is not a missing table; it has nothing to compare a
     # Status version against, and saying so is more useful than claiming the
     # section is empty.
+    # A Version History TABLE ends at its last row. `found` used to latch on at
+    # the heading and never clear, so both row readers ran to end-of-file and
+    # read every subsequent pipe table in the document as Version History rows.
+    #
+    # RFC-0011-w has a Version History of `| 1.0 |` and `| 1.1 |`, then ~900
+    # lines later a CLI error-code slot table whose first column is `| 79 |`,
+    # `| 80 |`, ... `| 91 |`. The linter took the highest number in that table as
+    # the "latest version" and reported `OUT_OF_SYNC_STATUS_OLDER: Status=v1.1,
+    # VH latest=v91` — a finding manufactured entirely by reading the wrong
+    # table. Its Status and Version History agree.
+    #
+    # So the table is bounded: once a data row has been seen, the first line that
+    # is neither blank nor a pipe row ends the section. Prose after the table is
+    # still read by the bullet branches, since a bullet list is not a table and
+    # does not terminate it.
     vh_has_rows=$(awk -v h="$VH_HEADING" '$0 ~ h {found=1; next}
         found && /^\| v?[0-9]+(\.[0-9]+)*(-[A-Za-z0-9.]+)?[ ]*\|/ {print; exit}
         found && /^[ \t]*[-*][ \t]+\*\*v[0-9]/ {print; exit}
@@ -176,7 +291,9 @@ while IFS= read -r -d '' rfc_file; do
     # having no version at all. The optional `v` prefix matters for the same
     # reason `lint_no_vh_accepted.sh` allows it: 28 Accepted RFCs write
     # `| v2.12 |`.
-    vh_latest=$(awk -v h="$VH_HEADING" '$0 ~ h {found=1; next} found && /^\| v?[0-9]+(\.[0-9]+)*(-[A-Za-z0-9.]+)?[ ]*\|/ {print}' "$rfc_file" 2>/dev/null | grep -oE '^\| v?[0-9]+(\.[0-9]+)*(-[A-Za-z0-9.]+)?' | sed -E 's/^\| v?//' | sort -V | tail -1 || true)
+    vh_latest=$(awk -v h="$VH_HEADING" '$0 ~ h {found=1; next}
+        found && /^\|/ {if (match($0, /^\| v?[0-9]+(\.[0-9]+)*(-[A-Za-z0-9.]+)?[ ]*\|/)) print substr($0, RSTART, RLENGTH); next}
+        found && NF {exit}' "$rfc_file" 2>/dev/null | sed -E 's/^\| v?//; s/[ ]*\|$//' | sort -V | tail -1 || true)
 
     if [ -z "$vh_latest" ]; then
         echo "NO_VH_VERSION: $rfc_file (Version History has dated rows but no version column to compare)"

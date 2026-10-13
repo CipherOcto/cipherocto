@@ -34,7 +34,7 @@ For types with infinite extension surface, use **typed-discriminator + Raw escap
 
 ### Core engineering principles (always)
 
-> **Section refs not line refs** — these principle descriptions reference other RFCs/sections by §section_name or symbol, NEVER by file:line. The same rule applies to principle references themselves (see CLAUDE.md §RFC Reference Conventions Reaffirmed).
+> **Section refs not line refs** — these principle descriptions reference other RFCs/sections by §section_name or symbol, NEVER by file:line. The same rule applies to principle references themselves (see §RFC Reference Conventions (Reaffirmed) below).
 
 1. **Separation of concerns** — each module owns ONE thing; don't conflate parsing/verification/decision/dispatch/policy.
 2. **Stable Abstractions Principle** — abstractions depend on stable things, not the reverse. Primitives stable; business logic churns.
@@ -141,7 +141,7 @@ RFCs follow the process defined in `docs/BLUEPRINT.md`. Key stages:
 
 **Why:** Status/version in references causes sync bugs and verbose noise. Only the RFC's own Status header and version history table carry version info.
 
-See `docs/BLUEPRINT.md` §The RFC Process for full lifecycle details.
+See §RFC Process above for the full lifecycle detail.
 
 ## Development Workflow
 
@@ -192,7 +192,7 @@ ed25519-dalek = { version = "2.2", features = ["serde", "zeroize"] }
 
 (The example label uses "Layer B years-stable" — see the crate stability table above for the column this maps to.)
 
-For RFC / mission / specialized-node checklists (mandatory sections, naming conventions, decomposition thresholds, deferral rules, etc.) — see `docs/BLUEPRINT.md` §RFC Process, §Mission Lifecycle, §Multi-Mission Decomposition. CLAUDE.md captures the principles; BLUEPRINT.md is the operational playbook.
+For RFC / mission / specialized-node checklists (mandatory sections, naming conventions, decomposition thresholds, deferral rules, etc.) — see `docs/BLUEPRINT.md` §Mission Lifecycle and §Consistency Checklist. CLAUDE.md captures the principles; BLUEPRINT.md is the operational playbook.
 
 ## Branch Strategy
 

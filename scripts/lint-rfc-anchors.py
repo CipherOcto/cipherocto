@@ -43,6 +43,22 @@ BASELINE_PATH = Path(__file__).resolve().parent / "lint-rfc-anchors-baseline.txt
 # none of them could resolve while it went unindexed.
 INDEX_SOURCES = [RFC_ROOT, ROOT / "docs", ROOT / "missions", ROOT / "CLAUDE.md"]
 
+# Files checked for dangling anchors, as opposed to indexed as sources of valid
+# anchor names. These were the same set, which meant CLAUDE.md was indexed as a
+# source of headings while the references *inside* it were never verified.
+# Proved by planting the identical invented anchor in both trees: reported in
+# rfcs, silently ignored in docs.
+#
+# CLAUDE.md is checked separately rather than added to SCAN_SOURCES below because
+# it is a single file at the repo root, not a directory to walk, and because it is
+# the first file any agent reads. It carried three dangling references until this
+# was fixed: `§The RFC Process` (cited a BLUEPRINT section that does not exist,
+# when the heading is local), `§Multi-Mission Decomposition` (exists in no
+# document), and `§RFC Reference Conventions Reaffirmed` (the heading carries a
+# parenthesised suffix).
+SCAN_FILES = [ROOT / "CLAUDE.md"]
+SCAN_SOURCES = [RFC_ROOT]
+
 # `§Section Name` — the name runs to a backtick, pipe, newline, comma, an em or
 # en dash, or the start of the next sentence. The comma terminator matters:
 # `§A, §B` is two anchors, not one called "a, b". The dash terminators matter
@@ -219,6 +235,7 @@ def main() -> int:
     args = parser.parse_args()
 
     rfc_files = sorted(RFC_ROOT.rglob("*.md"))
+    rfc_files += [p for p in SCAN_FILES if p.is_file()]
     if not rfc_files:
         # Not a pass. An absent or renamed corpus means this gating step
         # verified nothing, and returning 0 here would let that read as a

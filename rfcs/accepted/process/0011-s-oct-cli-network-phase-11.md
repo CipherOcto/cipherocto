@@ -160,7 +160,7 @@ G14 `0011-h-s-a-topology-render` (Open → Claimed → Completed paired with CLI
 - Wire format versioning (RFC-0011-h §Future Work items F8+F9)
 - Real anti-entropy counter or live topology fetching (stub returns in-memory snapshot only)
 
-## History
+## Version History
 
 - 2026-09-20 — Draft (this RFC)
 - 2026-09-21 — R1.5 fix sweep: depth 1..=100 clamp via `parse_graph_depth`; cite hygiene strip status parentheticals on Dependencies + amendment chain; `§GraphFormat` REUSE ref to Phase 1 `TrustGraph::render`; removed file:line refs from prose; depth test vectors expanded to 7

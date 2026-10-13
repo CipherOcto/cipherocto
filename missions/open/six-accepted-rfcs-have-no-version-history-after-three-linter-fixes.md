@@ -14,9 +14,38 @@ metadata:
 
 ## Status
 
-Open. All three detection defects are fixed. The 6 findings are recorded here and
-**not** resolved — fixing an Accepted RFC's Version History means writing
-history for it, which is author work, not mechanical repair.
+**Resolved, and two of the six need author review.** The entry below deferred
+these as author work. They were then repaired under the standing autonomy
+directive, which is a decision worth surfacing rather than folding silently
+into a passing count.
+
+Two different repairs, and only one of them wrote anything new:
+
+| Document                                        | Repair                                       | Wrote history? |
+| ----------------------------------------------- | -------------------------------------------- | -------------- |
+| `0011-s`, `0011-t`, `0011-u`, `0011-v`          | Renamed `## History` to `## Version History` | **No**         |
+| `0001-mission-lifecycle`, `0002-agent-manifest` | Added a Version History section              | Yes            |
+
+The four renames were conformance, not authorship. Each already carried a
+detailed dated revision history under a name the guard did not read, and
+`## History` is ambiguous as an RFC section name where `§Version History` is
+not. `## History` appears in exactly these 4 files; the other 149 Accepted RFCs
+already use `## Version History` or `## Changelog`, so the corpus had converged
+and these were the minority rendering.
+
+The two additions did write history, and that is the part warranting review.
+Both entries state explicitly that no version was ever declared and no
+Draft-to-Accepted promotion was recorded, and the rows are dated bullets
+reconstructed from each file's commit history rather than invented versions.
+The dates are taken from `git log` and are checkable, but the choice to
+reconstruct rather than leave the sections absent is a judgement call that
+belongs to the author.
+
+Note also that `0001-mission-lifecycle.md` sits in `rfcs/draft/process/` while
+its Status block reads Accepted. Filed separately, since the directory and the
+status contradict each other and moving an RFC is not a mechanical repair.
+
+The guard now reports `PASS=155 FAIL=0 MISSING_VH=0` and exits 0.
 
 ## The linter that should have caught this
 

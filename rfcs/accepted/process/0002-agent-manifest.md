@@ -252,6 +252,23 @@ None. This is new functionality.
 - Mission history is public
 - No private data in manifests
 
+## Version History
+
+No version number was ever declared for this RFC and no Draft to Accepted
+promotion was recorded, so these entries are dated rather than versioned.
+Reconstructed from the commit history of this file.
+
+- 2026-02-24 — Document added in `aec2101c`, with Status Accepted from its first
+  commit.
+- 2026-03-07 — RFCs aligned with use cases per BLUEPRINT in `4a932af4`.
+- 2026-03-10 — RFC category prefixes added in `6e452687`.
+- 2026-03-11 — Category prefixes corrected across RFCs in `b5f8d183`.
+- 2026-03-15 — RFCs reorganised by status and category per BLUEPRINT in
+  `7e16394f`.
+- 2026-09-01 — Specification expanded in `49958711` alongside the RFC-0011-d role
+  provisioning decomposition.
+- 2026-10-07 — Memory citations and session metadata stripped in `433c8bac`.
+
 ## Related RFCs
 
 - RFC-0001 (Process/Meta): Mission Lifecycle (agents claim missions)

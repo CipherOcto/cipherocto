@@ -254,7 +254,7 @@ Per Phase 6 `9a903993` precedent, the final commit for RFC-0011-v sweep any rema
 - Wire format versioning (RFC-0011-h §Future Work items F8+F9)
 - Real probe logic (Phase 14 substrate returns Timeout unconditionally; real probe in follow-on Layer D adapter mission)
 
-## History
+## Version History
 
 - 2026-09-20 — Draft (this RFC)
 - 2026-09-21 — Accepted (retroactive multi-round DRY CLOSED at `next dfd09f32`); 5-len DRY gate cycle: R1 fail → R1.5 fix → R2 fail → R2.5 fix → R3 fail → R3.5 fix → R4 zero = GATE GREEN.

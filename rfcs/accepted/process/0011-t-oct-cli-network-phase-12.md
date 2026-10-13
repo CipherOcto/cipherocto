@@ -202,7 +202,7 @@ G15 `0011-h-s-a-gossip-stats` (Open → Claimed → Completed paired with CLI di
 - Wire format versioning (RFC-0011-h §Future Work items F8+F9)
 - Real anti-entropy counter (substrate plumbs `anti_entropy_rounds` slot; caller stubs at 0; Layer D adapter missions in future)
 
-## History
+## Version History
 
 - 2026-09-20 — Draft (this RFC)
 - 2026-09-21 — Promoted Draft → Accepted at `next f2664770` per retroactive multi-round DRY CLOSURE (R1 + R2 zero rounds gate pair). R1 verdict 1 PASS + 4 FAIL with 11 BLOCKER/MAJOR + 4 MINOR + 1 NIT; R1.5 fix sweep closed all 16 findings (registry gate removed, BTreeMap comment dropped, `Deserialize` derive added to `GossipStats` + `NetworkGossipStatsOutput`, `tv_net12_4` + `tv_net12_5` tests added, RFC cite hygiene sweep stripped status parentheticals + Governing RFC label + `.gitignore` ref); R2 achieved GATE GREEN with zero BLOCKER/MAJOR/MINOR.

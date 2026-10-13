@@ -14,8 +14,11 @@ metadata:
 
 ## Status
 
-Open. Nothing changed in `.github/`, and the linter's behaviour is unchanged.
-The scope decision belongs to a maintainer.
+Partially resolved. `CLAUDE.md` is now scanned as well as indexed, and its
+three dangling anchors are fixed. The wider `docs/` and `missions/` scope
+decision is untouched and remains a maintainer's.
+
+Nothing in `.github/` was changed.
 
 ## The finding
 
@@ -80,11 +83,20 @@ citation. A green run currently means "no _new_ dangling anchors inside
 `rfcs/`", which reads as "no dangling anchors".
 
 `CLAUDE.md` is the sharpest case. It is the first file any agent reads, and it
-carries three BLUEPRINT pointers, of which `§The RFC Process` and
-`§Multi-Mission Decomposition` do not resolve to any heading in the tree.
-`§Mission Lifecycle` does resolve. The linter indexes `CLAUDE.md` as a source
-of valid anchor names and never checks whether the references _in_ it are
-valid. That is recorded separately in mission
+carried three dangling references, none of which resolved to any heading:
+
+- `§The RFC Process` cited a BLUEPRINT.md section that does not exist. The
+  heading is local to CLAUDE.md, so the fix points at the local section.
+- `§Multi-Mission Decomposition` exists in no document at all. The content the
+  sentence describes lives under `§Mission Lifecycle` and
+  `§Consistency Checklist`, which is what it now cites.
+- `§RFC Reference Conventions Reaffirmed` missed its heading because the
+  heading carries a parenthesised suffix the normaliser does not strip.
+
+All three are fixed and `CLAUDE.md` is now scanned. Planting an invented anchor
+in the file is reported with a line number and exits 1.
+
+Related, recorded separately in mission
 `anchor-lint-coverage-gap-and-two-broken-pointers-in-claude-md`.
 
 ## Note on the other wired linter
@@ -102,9 +114,8 @@ four trees and then reads from one.
 - [ ] If widened, the newly checked anchors are measured before adoption. The
       6,370 figure is a population count, not a finding count, and widening
       the scope will surface findings that then need baselining deliberately.
-- [ ] `CLAUDE.md` is included in the scan scope regardless of the wider
-      decision. It is one file, three references, and two of them are broken
-      today.
+- [x] `CLAUDE.md` included in the scan scope regardless of the wider
+      decision. Done, together with fixing its three broken references.
 - [ ] The summary states which trees were scanned, so "no new dangling
       anchors" cannot be read as a repository-wide claim.
 

@@ -108,8 +108,10 @@ tally() {
     else
         # Named, like every other category. A count of files this guard read
         # and could not place, with nothing to identify them, is the same
-        # defect one level up.
-        echo "UNCLASSIFIED: $rfc_file (read, but no category applies)"
+        # defect one level up. The reason is stated too, where the path that
+        # reached here knew it — "read, but no category applies" describes
+        # this guard's state of mind, not the document's.
+        echo "UNCLASSIFIED: $rfc_file (${unclassified_why:-read, but no category applies})"
         UNCLASSIFIED=$((UNCLASSIFIED + 1))
     fi
 }
@@ -117,6 +119,7 @@ tally() {
 while IFS= read -r -d '' rfc_file; do
     SCANNED=$((SCANNED + 1))
     touched=0
+    unclassified_why=""
 
     # Skip non-content files (CHANGELOG-only, README, etc.)
     basename=$(basename "$rfc_file")
@@ -297,6 +300,18 @@ PY
             echo "NO_VH: $rfc_file (Accepted but no ## Version History)"
             NO_VH=$((NO_VH + 1))
             EXIT_CODE=1
+        else
+            # Reaching `tally` untouched from here means all three of these are
+            # known at once: a Status version was found, the Version History
+            # heading is absent, and the document is not Accepted. So this is
+            # not a governance failure — the sibling guard requires a Version
+            # History of Accepted RFCs only, and these are Draft or Archived.
+            #
+            # It counted as UNCLASSIFIED reading "read, but no category
+            # applies", which is the guard reporting its own confusion instead
+            # of the document's state, and left a maintainer with four files
+            # and no way to tell whether they were findings or noise.
+            unclassified_why="has a Status version but no ## Version History, and is not Accepted, so no history is required of it"
         fi
         tally
         continue

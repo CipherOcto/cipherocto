@@ -140,8 +140,54 @@ It is `§Key Files L847` inside a diagram, where a line reference is a
 navigational convenience rather than a claim in prose. It may be defensible
 and is called out separately rather than lumped with the audit documents.
 
+## A second shape the measuring tool does not see
+
+`measure_anchor_lint.py --line-refs` matches one shape: a section reference with
+a line number appended to it. It does not match a bare source path followed by a
+line suffix, which is the more common form in the tracked corpus.
+
+Measured over git-tracked markdown, that second shape occurs **863 times across
+54 files**:
+
+| Tree                     | Occurrences |
+| ------------------------ | ----------- |
+| `docs/`                  | 808         |
+| `.audit/` and `.audits/` | 22          |
+| `rfcs/`                  | 15          |
+| `missions/`              | 15          |
+| `.jcode/` and `crates/`  | 3           |
+
+Reproduce with:
+
+```bash
+git ls-files '*.md' | xargs grep -oE '[A-Za-z0-9_./-]+\.(md|rs|py|sh|toml|yml|yaml|json|ts|tsx|js|cfg|ini|lock):[0-9]+'
+```
+
+This is a pattern search rather than a linter call, so it counts the shape and
+does not rule on scope. Whether a bare path plus a line number is a violation, or
+a legitimate pointer inside a technical note, is the question the first
+acceptance criterion asks — and when it was written the only number available
+was the 27 reachable occurrences of the other shape.
+
+The concentration is `docs/research`, holding 23 of the 54 files. Fifteen
+occurrences sit in `rfcs/`, which are the ones that would matter most if the
+rule is read as covering normative documents.
+
+### The tracked audit scratch directories
+
+The disposition table above records the `docs/audits/` concentration as
+local-only, because that directory is gitignored. Two root-level scratch
+directories are tracked and were never part of that accounting: `.audit/` with
+11 files and `.audits/` with 2. Between them they hold 22 occurrences of the
+second shape. They are audit artifacts committed to the repository, so the
+local-only disposition does not reach them.
+
 ## Acceptance criteria
 
+- [ ] Decide whether the bare-path-plus-line shape is in scope at all. It is 863
+      tracked occurrences against the 27 reachable of the other shape, so the
+      answer decides whether this is a bounded fix or a sweep of every
+      technical note in `docs/research`.
 - [ ] Decide whether a check should reject line-suffixed section references, or
       whether the rule applies only to prose and not to diagram labels and
       audit tables.

@@ -334,6 +334,17 @@ detecting guard cannot both be red for the same input.
   at a fixture. That is consistent with the sibling mission's reading of it as
   a metric a human runs rather than a gate, but it is a capability gap rather
   than a settled decision.
+- Every accept-direction case in the harness has been mutation-verified. That
+  is a rule rather than a count, because counts go stale: a case is not
+  verified because it was written carefully, it is verified because a known
+  regression was applied and the case was seen to fail. Two cases here had
+  never been checked that way and were found to fail correctly when checked.
+- Assert against the presence of what a fix produced, never against the absence
+  of harm it prevents. Two cases in this harness asserted that nothing leaks or
+  goes wrong, and both passed against the regressed guard, because the harm
+  they were guarding against was unobservable in the fixture. Both now assert
+  that the guard finds something that only exists in the fixture, which is
+  observable in both directions.
 - The `rebuild` tier of `mutate-zk-guards.py` (35 of 73 entries) was not run:
   it recompiles the workspace, and the disk is at 100%. Run it when there is
   room, or on a machine that is not disk-constrained.

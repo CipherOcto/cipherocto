@@ -11,6 +11,7 @@ set -euo pipefail
 RFC_ROOT="${RFC_ROOT:-rfcs}"
 EXIT_CODE=0
 SCANNED=0
+SKIPPED_BY_NAME=0
 CHECKED=0
 PASS=0
 FAIL=0
@@ -27,7 +28,7 @@ while IFS= read -r -d '' rfc_file; do
 
     # Skip non-content files
     case "$basename" in
-        CHANGELOG.md|README.md|INDEX.md) continue ;;
+        CHANGELOG.md|README.md|INDEX.md) SKIPPED_BY_NAME=$((SKIPPED_BY_NAME + 1)); continue ;;
     esac
 
     # Check if RFC is Accepted.
@@ -127,6 +128,20 @@ done < <(find "$RFC_ROOT" -type f -name '*.md' -print0 2>/dev/null || true)
 echo ""
 echo "Summary: SCANNED=$SCANNED markdown files, CHECKED=$CHECKED Accepted RFCs"
 echo "         PASS=$PASS FAIL=$FAIL MISSING_VH=$MISSING_VH"
+#
+# The files this guard says nothing about are the non-Accepted ones. They are
+# skipped by design, because this is a promotion gate and a Draft RFC is not
+# required to carry a Version History. The summary previously named only the
+# two numbers without saying the gap was a skipped population, which reads as
+# unexamined work rather than as a rule.
+#
+# Stating it costs nothing and makes the scope auditable: 155 plus 91 is 246,
+# and every file in the corpus lands in exactly one of those two groups.
+if [ "$SCANNED" -gt 0 ]; then
+    echo "         NOT_ACCEPTED=$((SCANNED - CHECKED - SKIPPED_BY_NAME)) (this is a promotion gate, so a non-Accepted RFC needs no Version History)"
+    echo "         SKIPPED_BY_NAME=$SKIPPED_BY_NAME (CHANGELOG/README/INDEX)"
+    echo "         COVERAGE=$((CHECKED * 100 / SCANNED))% of scanned files are Accepted and in scope"
+fi
 
 # A lint that examined no files has verified nothing, and must not report that
 # its corpus is clean. Each of these scripts takes its corpus root from the

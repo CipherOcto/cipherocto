@@ -242,6 +242,38 @@ The harness was then shown to still bite in that environment: blinding
 That last check is the one that matters. A step that passes in CI has not been
 shown to fail in CI, and until now no one had run either state there.
 
+### Re-validated at the current commit
+
+The table above was measured when the harness ran ten cases. It has grown since,
+and three of the guards it drives have changed, so the claim was re-run rather
+than assumed — a pristine clone of `next` at the current commit, with `HOME`
+pointed at an empty writable directory so no `~/.claude`, no build, and no local
+state:
+
+| Proposed step                                | Exit in a clean clone |
+| -------------------------------------------- | --------------------- |
+| `python3 scripts/lint_frontmatter.py`        | 0                     |
+| `bash scripts/lint_no_vh_accepted.sh`        | 0                     |
+| `bash scripts/lint_section_cites.sh`         | 0                     |
+| `bash scripts/mutation-verify-doc-guards.sh` | 0 — 29 cases          |
+
+The `HOME` detail is not incidental. Pointing it at a directory that does not
+exist makes the harness fail at cleanup rather than at its checks, because the
+repository's deletion wrapper resolves its trash directory under `$HOME`. A CI
+runner has a writable `HOME`, so this is an artefact of simulating the
+environment, but it is worth knowing that the harness depends on `$HOME` being
+writable for a reason unrelated to what it checks.
+
+### One guard must not be wired as a gate in this form
+
+`lint_plan_yaml_vh_sync.sh` defaults its corpus to `$HOME/.claude/plans`, a
+personal plans directory that exists on no runner. Run in the clean clone it
+exits 1 with `no plan files were examined` — which is the guard refusing to
+report a verdict over nothing, and is correct. It also means that guard cannot
+be added to the gating set without being given a corpus that exists in the
+repository. It is a metric over one operator's local plans, not a repository
+check, and the seven numbered guards are a different set from it.
+
 ## Why nobody has noticed
 
 Every surface that could have surfaced this reports success:

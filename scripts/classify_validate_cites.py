@@ -127,11 +127,30 @@ def heading_exact(name: str, blob: str) -> bool:
     return False
 
 
+USAGE = """usage: classify_validate_cites.py <validate_cites output>
+
+Classifies the findings a validate_cites.sh run printed, grouping them by
+whether each is a genuine defect or a shape the guard reports without one.
+
+    bash scripts/validate_cites.sh > /tmp/cites.txt
+    python3 scripts/classify_validate_cites.py /tmp/cites.txt"""
+
+
 def main() -> int:
-    if len(sys.argv) < 2:
-        print("usage: classify_validate_cites.py <validate_cites output>")
+    # An unrecognised argument used to be treated as a filename and die with a
+    # traceback. `--help` is the case that matters: asking a tool what it does
+    # produced a stack trace instead of a sentence. A missing file is the same
+    # shape of failure and deserves the same treatment.
+    args = sys.argv[1:]
+    if not args or args[0] in {"-h", "--help"}:
+        print(USAGE)
+        return 0 if args else 2
+    path = pathlib.Path(args[0])
+    if not path.is_file():
+        print(f"no such file: {path}", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
         return 2
-    text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+    text = path.read_text(encoding="utf-8", errors="replace")
 
     findings = []
     for line in text.splitlines():

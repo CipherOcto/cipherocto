@@ -148,6 +148,23 @@ still missed, because the run includes the prefix and no longer decodes. Fixing
 that changes matching semantics and risks false positives; it is recorded, not
 attempted.
 
+## A latent fail-open that is NOT reachable, tested rather than assumed
+
+The commit-msg hook reads the library as `dangerous_present "$TEXT" || true`,
+which conflates "no offenders" with "the scan failed". That is the same shape as
+both defects above, so it was probed before being called a defect.
+
+Nine adversarial inputs were run through the library under `set -u -o pipefail`:
+empty string, a NUL byte, 100k characters, 5000 newlines, a 40-digit number, a
+64-character uppercase run, a 64-character mixed-case run, 5000 multibyte
+characters, and control characters. **All nine returned exit 1.** None produced
+an abnormal status.
+
+So the swallowed-failure path is **latent, not live**, and is left alone.
+Distinguishing "failed" from "clean" would require the shared library to report
+completion separately, which is an API change to a file seven layers depend on —
+not justified by a path no input can reach.
+
 ## Cost on real input
 
 Measured across all 554 commit messages in this repository: the longest

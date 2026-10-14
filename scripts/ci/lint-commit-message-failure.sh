@@ -18,6 +18,42 @@ set -euo pipefail
 
 BAD="${1:-}"
 
+case "${1:-}" in
+    -h|--help)
+        cat <<'USAGE'
+Render the commit-message lint failure banner for commit-message-lint.yml.
+
+Usage:
+  bash scripts/ci/lint-commit-message-failure.sh "$BAD"
+  bash scripts/ci/lint-commit-message-failure.sh --help
+
+  $BAD  space-separated list of offending commit SHAs. Required.
+
+Refuses to run with no list. Rendering "COMMIT MESSAGE LINT FAILED" and then
+naming no commits states a failure about a population the caller never
+supplied, and exits 0, so a caller checking the exit code reads it as
+success.
+USAGE
+        exit 0
+        ;;
+esac
+
+# An argument this script does not understand is a commit SHA as far as it can
+# tell, and it renders. `--help` printed a failure banner listing a commit
+# called "--help", which is how a banner that names its own input can be
+# trusted to name real commits.
+if [ -z "${BAD//[[:space:]]/}" ]; then
+    echo "Refusing to render a commit-message lint failure banner naming no commits." >&2
+    echo "" >&2
+    echo "Called with '${1-<no argument>}' and no offending commit SHAs." >&2
+    echo "A banner headed COMMIT MESSAGE LINT FAILED that lists nothing asserts a" >&2
+    echo "failure about a population the caller did not supply. This script exits 1" >&2
+    echo "there rather than print one." >&2
+    echo "" >&2
+    echo "Invoke it only with the SHAs to report. Run with --help for usage." >&2
+    exit 1
+fi
+
 cat <<EOF
 
 ================================================================================

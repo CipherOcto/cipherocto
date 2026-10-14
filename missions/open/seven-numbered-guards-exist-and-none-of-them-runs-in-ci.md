@@ -171,7 +171,7 @@ whether it belongs in CI at all.
 
 ### The harness is worth wiring even though it is not a gate
 
-`scripts/mutation-verify-doc-guards.sh` currently runs 10 cases across 8
+`scripts/mutation-verify-doc-guards.sh` currently runs 14 cases across 8
 guards and exits 0. Wiring it as a gating step is the one addition that changes
 what CI can catch rather than merely adding a gate that already passes: without
 it, a guard can be silently broken and the three gating steps above would still
@@ -186,12 +186,20 @@ mission's own thesis.
 Not reasoned about — run. A pristine `git clone` of `next` at this commit, with
 no `~/.claude`, no build, and no local state:
 
-| Proposed step                                | Exit in a clean clone |
-| -------------------------------------------- | --------------------- |
-| `python3 scripts/lint_frontmatter.py`        | 0                     |
-| `bash scripts/lint_no_vh_accepted.sh`        | 0                     |
-| `bash scripts/lint_section_cites.sh`         | 0                     |
-| `bash scripts/mutation-verify-doc-guards.sh` | 0 — 10 cases          |
+| Proposed step                                | Exit in a clean clone       |
+| -------------------------------------------- | --------------------------- |
+| `python3 scripts/lint_frontmatter.py`        | 0                           |
+| `bash scripts/lint_no_vh_accepted.sh`        | 0                           |
+| `bash scripts/lint_section_cites.sh`         | 0                           |
+| `bash scripts/mutation-verify-doc-guards.sh` | 0 — 10 cases at that commit |
+
+The 10 there is what the clone produced when this was validated. The harness has
+since grown to 14 cases, because its own case listing counted only the cases
+written in one call form and omitted the four that assert on a guard's output
+instead of planting a defect for it to catch. The step still exits 0; the figure
+moved because the count was underreporting, not because the harness began
+examining something else. The blind result below is likewise a record of that
+run rather than a current one.
 
 The harness was then shown to still bite in that environment: blinding
 `lint_section_cites.sh`'s phantom-token rule inside the clone produced

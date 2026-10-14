@@ -95,8 +95,16 @@ which is what the harness case now keeps in place permanently.
 ## Coverage
 
 `lint_plan_yaml_vh_sync.sh` honours `PLAN_ROOT`, so it joins the fixture-driven
-set. The harness is now **ten cases across eight guards**.
+set. The harness is now **fourteen cases across eight guards**.
 
-The three guards that remain uncovered are `verify_canonical_blobs.py`,
-`mutate-zk-guards.py` (already assessed and sound) and none other — every
-`RFC_ROOT`- or environment-driven guard in `scripts/` is now covered.
+**Correction.** The ten this section previously carried was the instrument
+underreporting. The harness's case listing counted only the cases written in one
+call form, so it omitted the four that assert on a guard's own output rather
+than planting a defect and expecting the guard to notice. The count is now taken
+from every case name, and the run asserts that the number of named cases equals
+the number of case functions executed, so the gap cannot reopen silently.
+
+The two guards that remain uncovered are `verify_canonical_blobs.py` and
+`mutate-zk-guards.py`, the latter already assessed and sound — every
+`RFC_ROOT`- or environment-driven guard in `scripts/` is now covered. This
+section previously said three and then named two.

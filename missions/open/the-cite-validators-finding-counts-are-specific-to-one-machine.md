@@ -94,6 +94,38 @@ When every walked file is tracked, it says so instead, and when the run happens
 outside a repository it prints neither line rather than guessing. The finding
 counts are untouched.
 
+## How far the class reaches
+
+Not every check is exposed. The exposure is specific to a script whose corpus is
+assembled by walking directories that contain gitignored local documents, so
+every guard was measured in both environments rather than reasoned about:
+
+| Script                   | Corpus built from              | Verdict differs?  | Local vs clone                            |
+| ------------------------ | ------------------------------ | ----------------- | ----------------------------------------- |
+| `lint-rfc-anchors.py`    | `rfcs docs missions CLAUDE.md` | **yes**           | 588 vs 619 findings, 0 vs 31 new          |
+| `validate_cites.sh`      | `rfcs docs`                    | **yes**           | 1300 vs 972 INVALID                       |
+| `lint_frontmatter.py`    | whole tree                     | no, both 0 failed | 712 more files scanned, 22 more documents |
+| `lint-rfc-type-refs.py`  | `rfcs crates`                  | no                | identical, 652 of 652 baselined           |
+| `lint_section_cites.sh`  | `rfcs`                         | no                | `rfcs/` holds no gitignored files         |
+| `lint_status_vh_sync.sh` | `rfcs`                         | no                | 247 scanned in both                       |
+
+So two of the six change their verdict, one changes only its population
+statement, and three are untouched because their corpus root happens to hold
+nothing git ignores.
+
+`lint_frontmatter.py` is the subtle one. Its `SCANNED` and `WITH_FRONTMATTER`
+figures are properties of this machine, not of the repository: a clean checkout
+scans 712 fewer files and finds 22 fewer documents carrying frontmatter. Its
+verdict is unaffected — `FAILED 0` in both, and its own reconciliation holds in
+both — but every count it prints describes a corpus a runner will not build.
+
+The absolute figures are not quoted here, and that is deliberate: both sides
+move. Adding any document carrying frontmatter raises `WITH_FRONTMATTER`, and
+adding a mission file raises `SCANNED`, so a figure written into a mission is
+wrong by the time the next one is filed. An earlier draft of this section quoted
+both, and was wrong within the hour it was measured. The difference between the
+two environments is the stable quantity.
+
 ## Decisions for maintainers
 
 1. **Should this guard scan only tracked files?** `git ls-files` instead of

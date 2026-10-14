@@ -45,6 +45,17 @@ import re
 import sys
 from pathlib import Path
 
+# MEASURING THIS LINTER: do not reimplement the extraction.
+#
+# `references()` below deliberately strips code comments and string literals
+# before looking for type names. A copy that skips that step reports tokens from
+# prose and from string values — including one Telegram bot token, which held a
+# baselined entry until the string-literal extraction was fixed.
+#
+# Compare against `scripts/lint-rfc-type-refs-baseline.txt` and read this
+# linter's output rather than a reimplementation of it.
+# See mission `call-the-tools-own-functions-before-measuring-them`.
+
 ROOT = Path(__file__).resolve().parent.parent
 RFC_ROOT = ROOT / "rfcs"
 CRATES_ROOT = ROOT / "crates"

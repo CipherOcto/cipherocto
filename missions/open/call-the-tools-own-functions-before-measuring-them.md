@@ -80,10 +80,24 @@ name their corpus and their counters. A one-line pointer in
 same `grep`" — would put the tool in reach at the moment someone is about to
 reimplement it.
 
-**Done in the same change.** `scripts/lint_no_vh_accepted.sh` now carries a
-header comment naming the classifier, stating the measured discrepancy, and
-saying not to reimplement the rule in order to measure it. The guard's output
-is unchanged; only the comment block was added.
+**Done.** Three of the four guards that lack a pointer now carry one:
+
+- `scripts/lint_no_vh_accepted.sh` names the classifier, states the measured
+  discrepancy, and says not to reimplement the rule in order to measure it.
+- `scripts/lint-rfc-anchors.py` names `measure_anchor_lint.py` and cites the
+  four-wrong-numbers precedent, where a copy of its resolution loop reported
+  1237 findings against the linter's 599.
+- `scripts/lint-rfc-type-refs.py` names the string-literal extraction its
+  comment-stripping does, and the bot token that held a baselined entry until
+  that step existed.
+
+All three outputs are unchanged; only comment blocks were added.
+
+The remaining guards need no pointer because they already have one by another
+name: `scripts/mutation-verify-doc-guards.sh` drives eight of them from fixture
+corpora and asserts each can fail, which is the same need expressed as a
+re-runnable harness rather than an ad-hoc measurement. Checking for that before
+building a measuring tool is itself an instance of the rule.
 
 ## Related
 

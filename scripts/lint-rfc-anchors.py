@@ -30,6 +30,17 @@ import re
 import sys
 from pathlib import Path
 
+# MEASURING THIS LINTER: use the tool that already exists.
+#
+# `scripts/measure_anchor_lint.py` imports this linter as a module and calls its
+# own functions. Do not copy the resolution loop into a scratch script to
+# measure it: four proposals in this repository's history did exactly that, and
+# all four numbers were wrong. Two copies dropped the numeric-anchor gate and
+# discarded the bidirectional word-boundary fallback, reporting 1237 findings
+# where this linter reports 599 on the same tree.
+#
+# See mission `call-the-tools-own-functions-before-measuring-them`.
+
 ROOT = Path(__file__).resolve().parent.parent
 RFC_ROOT = ROOT / "rfcs"
 BASELINE_PATH = Path(__file__).resolve().parent / "lint-rfc-anchors-baseline.txt"

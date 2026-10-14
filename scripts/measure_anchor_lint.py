@@ -296,9 +296,30 @@ def main() -> int:
 
     gated = sorted(m.RFC_ROOT.rglob("*.md")) + [ROOT / "CLAUDE.md"]
     gated = [p for p in gated if p.is_file()]
-    print(f"headings indexed: {len(known)}")
+    # The headline describes the index, and the index is the linter's own — the
+    # gated tree. It is not the union of whatever trees this run scans, so say
+    # so whenever a target falls outside it.
+    #
+    # Under --all this run reads 1933 files across three trees while the figure
+    # below describes an index built from rfcs and one top-level file. Every
+    # finding in docs and missions is resolved against that index, so a section
+    # that exists in those documents still reads as dangling. That is precisely
+    # what makes the counts a measurement of the coverage gap — but a reader
+    # taking 34399 as the union would draw the opposite conclusion, and would
+    # draw it from the one line that looks like a total.
+    off_gated = bool(args.all) or (bool(args.tree) and args.tree != "rfcs")
+    if off_gated:
+        print(f"headings indexed: {len(known)} (gated tree only: rfcs + CLAUDE.md)")
+    else:
+        print(f"headings indexed: {len(known)}")
     print(f"project RFC numbers: {len(numbers)}")
     print(f"baseline entries: {len(base)}")
+    if off_gated:
+        print("")
+        print("NOTE: that index contains no headings from the other trees measured")
+        print("      below. A section that exists in those documents still reads as")
+        print("      dangling. These counts measure the coverage gap, not the state")
+        print("      of each tree.")
 
     # Pick the targets once, and label each one with what it is. An earlier
     # version reused a single `paths` variable across branches and labelled a

@@ -358,6 +358,32 @@ EOF
 # output marking the gap. The count a maintainer reads to decide what is
 # covered came from the narrow list, so "8 guards, 13 cases" was itself a
 # figure produced by the instrument underreporting.
+CASE_FUNCTIONS=0
+CASE_UNREPORTED=0
+
+# Every case function must move a counter.
+#
+# The inventory check below catches a case that runs without naming itself.
+# This catches the other half: a case that runs and names itself but whose body
+# returns before reporting anything. Neither its pass nor its fail is recorded,
+# it prints no row, and the run still exits 0 — so a case that silently stopped
+# testing anything is indistinguishable from a case that passed.
+#
+# The skip path counts as a report, because a filtered run is expected to say
+# so rather than go quiet.
+run_case_fn() {
+    local fn="$1"
+    local before_p=$PASS before_f=$FAIL before_s=$SKIP
+    CASE_FUNCTIONS=$((CASE_FUNCTIONS + 1))
+    "$fn"
+    if [ "$PASS" -eq "$before_p" ] && [ "$FAIL" -eq "$before_f" ] \
+        && [ "$SKIP" -eq "$before_s" ]; then
+        CASE_UNREPORTED=$((CASE_UNREPORTED + 1))
+        printf '%-34s %-8s %s\n' "${fn#case_}" "silent" \
+            "executed but reported nothing — it counted neither a pass nor a fail"
+    fi
+}
+
 case_ids() {
     grep -oE '"[a-z_]+/[a-z-]+"' "${BASH_SOURCE[0]}" | tr -d '"' | sort -u
 }
@@ -1324,28 +1350,28 @@ types_guard() {
     python3 scripts/lint-rfc-type-refs.py --root "$FIX" --baseline "$FIX/baseline.txt"
 }
 
-case_section_cites
-case_section_cites_overdeep
-case_section_cites_quoted
-case_section_cites_coverage
-case_status_vh
-case_status_vh_signed_heading
-case_status_vh_reconciles
-case_no_vh
-case_no_vh_signed_heading
-case_vh_heading_all_shapes
-case_no_vh_bullets
-case_no_vh_population
-case_no_vh_reconciles
-case_population_coverage
-case_plan_yaml
-case_plan_buckets
-case_cites
-case_frontmatter
-case_frontmatter_reconciles
-case_anchors
-case_baseline_coverage
-case_type_refs
+run_case_fn case_section_cites
+run_case_fn case_section_cites_overdeep
+run_case_fn case_section_cites_quoted
+run_case_fn case_section_cites_coverage
+run_case_fn case_status_vh
+run_case_fn case_status_vh_signed_heading
+run_case_fn case_status_vh_reconciles
+run_case_fn case_no_vh
+run_case_fn case_no_vh_signed_heading
+run_case_fn case_vh_heading_all_shapes
+run_case_fn case_no_vh_bullets
+run_case_fn case_no_vh_population
+run_case_fn case_no_vh_reconciles
+run_case_fn case_population_coverage
+run_case_fn case_plan_yaml
+run_case_fn case_plan_buckets
+run_case_fn case_cites
+run_case_fn case_frontmatter
+run_case_fn case_frontmatter_reconciles
+run_case_fn case_anchors
+run_case_fn case_baseline_coverage
+run_case_fn case_type_refs
 
 # The inventory must describe the run that produced this result.
 #
@@ -1357,7 +1383,11 @@ case_type_refs
 # Counted before the summary prints, so a mismatch is visible in the same
 # block as the pass and fail counts it contradicts.
 _id_count=$(case_ids | wc -l | tr -d ' ')
-_run_count=$(grep -cE '^case_[a-z_]+$' "${BASH_SOURCE[0]}")
+# Counted as they run, by the wrapper, rather than by grepping the run list for
+# bare `case_*` lines. The wrapper replaced those lines, so the grep found none
+# and reported a mismatch on the first run — which is the invariant working, on
+# a count that described the file's former shape rather than the run.
+_run_count=$CASE_FUNCTIONS
 if [ "$_id_count" -ne "$_run_count" ]; then
     # Deliberately NOT printed in the `guard/case  phase  result` shape used by
     # cases. A case id is a `guard/case` literal, and `case_ids` counts those —
@@ -1367,6 +1397,16 @@ if [ "$_id_count" -ne "$_run_count" ]; then
     # not a case in it.
     printf '%s\n' "INVARIANT FAIL: $_run_count case(s) executed but $_id_count named"
     printf '%s\n' "  --help lists $_id_count cases; the listing does not describe the run"
+    FAIL=$((FAIL + 1))
+fi
+
+# And every case that ran must have said something. Counted against the number
+# of functions actually invoked, which the wrapper counts as it goes rather
+# than by grepping the file — so a case removed from the run list cannot leave
+# this satisfied by a count that no longer describes the run.
+if [ "$CASE_UNREPORTED" -gt 0 ]; then
+    printf '%s\n' "INVARIANT FAIL: $CASE_UNREPORTED of $CASE_FUNCTIONS executed case(s) reported nothing"
+    printf '%s\n' "  a case that counts neither pass nor fail is not a case that passed"
     FAIL=$((FAIL + 1))
 fi
 

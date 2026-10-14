@@ -296,30 +296,27 @@ def main() -> int:
 
     gated = sorted(m.RFC_ROOT.rglob("*.md")) + [ROOT / "CLAUDE.md"]
     gated = [p for p in gated if p.is_file()]
-    # The headline describes the index, and the index is the linter's own — the
-    # gated tree. It is not the union of whatever trees this run scans, so say
-    # so whenever a target falls outside it.
-    #
-    # Under --all this run reads 1933 files across three trees while the figure
-    # below describes an index built from rfcs and one top-level file. Every
-    # finding in docs and missions is resolved against that index, so a section
-    # that exists in those documents still reads as dangling. That is precisely
-    # what makes the counts a measurement of the coverage gap — but a reader
-    # taking 34399 as the union would draw the opposite conclusion, and would
-    # draw it from the one line that looks like a total.
-    off_gated = bool(args.all) or (bool(args.tree) and args.tree != "rfcs")
-    if off_gated:
-        print(f"headings indexed: {len(known)} (gated tree only: rfcs + CLAUDE.md)")
-    else:
-        print(f"headings indexed: {len(known)}")
+    # The headline is a count of the INDEX, which is not the same set as the
+    # files the linter SCANS. The index covers every tree; the scan covers rfcs
+    # and one top-level file. Naming which is which is the whole point of this
+    # tool, so the labels are read from the linter's own constants rather than
+    # written here — an earlier version asserted the index was rfcs-only and
+    # was wrong, inferred from a headline that happened to sit near the rfcs
+    # count.
+    index_desc = ", ".join(
+        f"{pathlib.Path(s).name}/" if pathlib.Path(s).is_dir()
+        else pathlib.Path(s).name
+        for s in getattr(m, "INDEX_SOURCES", [])
+    ) or "unknown"
+    print(f"headings indexed: {len(known)} (from {index_desc})")
     print(f"project RFC numbers: {len(numbers)}")
     print(f"baseline entries: {len(base)}")
-    if off_gated:
-        print("")
-        print("NOTE: that index contains no headings from the other trees measured")
-        print("      below. A section that exists in those documents still reads as")
-        print("      dangling. These counts measure the coverage gap, not the state")
-        print("      of each tree.")
+
+    scan_desc = ", ".join(
+        f"{pathlib.Path(s).name}/" if pathlib.Path(s).is_dir()
+        else pathlib.Path(s).name
+        for s in list(getattr(m, "SCAN_SOURCES", [])) + list(getattr(m, "SCAN_FILES", []))
+    ) or "unknown"
 
     # Pick the targets once, and label each one with what it is. An earlier
     # version reused a single `paths` variable across branches and labelled a
@@ -337,6 +334,13 @@ def main() -> int:
         targets.append(("gated tree (rfcs + CLAUDE.md), as CI runs it", gated))
 
     for label, paths in targets:
+        if not label.startswith("gated tree") and label != "rfcs":
+            print("")
+            print(f"NOTE before {label}: the index covers {index_desc}.")
+            print(f"      What CI scans for dangling references is narrower — {scan_desc}.")
+            print("      Headings cited here already resolve, because this tree's own")
+            print("      headings are indexed. The counts for it are what WOULD be")
+            print("      reported if it were scanned, which is the coverage gap.")
         report(m, label, paths, known, numbers, base, qualifier=args.qualifier)
         if args.terminator:
             print(f"  -- with the ) and : terminator --")

@@ -15,6 +15,11 @@ SCANNED=0
 IN_SYNC=0
 OUT_OF_SYNC_OLDER=0
 OUT_OF_SYNC_NEWER=0
+# Attributes of compared files whose Status version was recovered by guessing —
+# a Status line naming several versions, or the frontmatter `version:` fallback.
+# Not part of the partition below; bounded by CHECKED.
+STATUS_MULTI_TOKEN=0
+STATUS_FROM_FRONTMATTER=0
 NO_STATUS_VERSION=0
 NO_VH=0
 NO_VH_VERSION=0
@@ -205,19 +210,52 @@ while IFS= read -r -d '' rfc_file; do
     # the real cases: `Accepted (v2.0 — ...)` and `spec elaboration closed
     # (v1.3)` are both bare tokens and both still match.
     status_version=""
+    status_tokens=""
+    status_token_count=0
+    status_source="status-line"
     if [ -n "$status_line" ]; then
         # Drop tokens that are the version half of an `RFC-NNNN-vX` reference.
-        status_version=$(python3 - "$status_line" <<'PY' 2>/dev/null || true
+        #
+        # Every remaining token is emitted, not just the first, and the first is
+        # still the one compared. Which token is "this document's version" is
+        # not decidable from the line alone: these Status blocks are prose, and
+        # 18 of them name more than one version. RFC-0862 narrates its own
+        # history in the Status line — "Updated v1.1.0 (2026-06-21): ... Updated
+        # v1.2.0 (2026-06-25): ..." — so the first token is the older of the two
+        # and the guard compared v1.1.0 against a history whose latest row is
+        # 1.2.0, reporting drift in a file that is in sync.
+        #
+        # Taking the last token instead is not the fix, and the reason is
+        # measurable rather than stylistic: mutated to compare the last token,
+        # this guard repairs RFC-0862 and breaks nine others, taking the drift
+        # count on this tree from 9 to 17. The lines disagree about their own
+        # direction — RFC-0963 descends (`v3.1`, then `v2.0`, then `v3.1`) while
+        # RFC-0206-v40 opens with the oldest version it mentions (`v0.1.0`,
+        # `v1.0`, `v1.0`) — so no ordering rule holds across both shapes, and a
+        # second guess would have traded one class of wrong verdict for another.
+        # The count is reported on the finding instead: the guard shows which
+        # token it compared and what else the line said, rather than presenting
+        # one pick as the document's version.
+        status_scan=$(python3 - "$status_line" <<'PY' 2>/dev/null || true
 import re, sys
 line = sys.argv[1]
+toks = []
 for m in re.finditer(r'v[0-9]+(?:\.[0-9]+)*', line):
     pre = line[:m.start()]
     if re.search(r'RFC-[0-9]+(-[a-z0-9]+)?-$', pre, re.IGNORECASE):
         continue  # version of a different RFC, cited on this line
-    print(m.group(0)[1:])  # strip the leading `v`; the report line re-adds it
-    break
+    toks.append(m.group(0)[1:])  # strip the leading `v`; the report line re-adds it
+# Count and list on separate single lines. Emitting one token per line made a
+# finding that names five versions wrap across five lines of the report, so the
+# `OUT_OF_SYNC_` line and the line after it no longer belonged together.
+print(len(toks))
+print(", ".join(toks))
 PY
 )
+        status_token_count=$(head -1 <<< "$status_scan" 2>/dev/null || true)
+        [ -n "$status_token_count" ] 2>/dev/null || status_token_count=0
+        status_tokens=$(sed -n '2p' <<< "$status_scan" 2>/dev/null || true)
+        status_version=$(cut -d, -f1 <<< "$status_tokens" 2>/dev/null | tr -d ' ' || true)
     fi
 
     # If no ## Status block, try inline Status field in YAML frontmatter
@@ -225,6 +263,7 @@ PY
         yaml_status_version=$(awk '/^---$/{c++; next} c==1 && /^version:/ {print $2; exit}' "$rfc_file" 2>/dev/null || true)
         if [ -n "$yaml_status_version" ]; then
             status_version="${yaml_status_version#v}"
+            status_source="frontmatter"
         fi
     fi
 
@@ -381,6 +420,28 @@ PY
         # population statement rather than leaving the reader to subtract.
         CHECKED=$((CHECKED + 1))
         touched=1
+        #
+        # Two of the shapes that make CHECKED a number worth distrusting are
+        # counted rather than left to be inferred from the findings. Both are
+        # cases where the guard compared a version it recovered by guessing:
+        # a Status line that names several versions, where the first was taken
+        # on the evidence that the rest of the corpus ascends, and the
+        # frontmatter `version:` fallback, which reads a field the RFC template
+        # does not define (rfcs/draft/process/0000-template.md writes no
+        # frontmatter at all) against a history table it does not reliably
+        # track — 11 of the 36 RFCs carrying that key disagree with their own
+        # latest VH row once `-r7`-style review markers are normalised away.
+        #
+        # They are attributes of compared files, not categories of them, so they
+        # sit outside the reconciliation below and are bounded by CHECKED.
+        status_provenance=""
+        if [ "$status_token_count" -gt 1 ] 2>/dev/null; then
+            status_provenance="; Status line names $status_token_count versions [$status_tokens], compared the first"
+            STATUS_MULTI_TOKEN=$((STATUS_MULTI_TOKEN + 1))
+        elif [ "$status_source" = "frontmatter" ]; then
+            status_provenance="; Status version read from frontmatter version:, not the ## Status block"
+            STATUS_FROM_FRONTMATTER=$((STATUS_FROM_FRONTMATTER + 1))
+        fi
         if [ "$(pad3 "$status_version")" = "$(pad3 "$vh_latest")" ]; then
             IN_SYNC=$((IN_SYNC + 1))
         else
@@ -392,11 +453,11 @@ PY
 
             if [ "$status_major" -lt "$vh_major" ] 2>/dev/null || \
                { [ "$status_major" -eq "$vh_major" ] && [ "$status_minor" -lt "$vh_minor" ] 2>/dev/null; }; then
-                echo "OUT_OF_SYNC_STATUS_OLDER: $rfc_file (Status=v$status_version, VH latest=v$vh_latest)"
+                echo "OUT_OF_SYNC_STATUS_OLDER: $rfc_file (Status=v$status_version, VH latest=v$vh_latest$status_provenance)"
                 OUT_OF_SYNC_OLDER=$((OUT_OF_SYNC_OLDER + 1))
                 EXIT_CODE=1
             else
-                echo "OUT_OF_SYNC_STATUS_NEWER: $rfc_file (Status=v$status_version, VH latest=v$vh_latest)"
+                echo "OUT_OF_SYNC_STATUS_NEWER: $rfc_file (Status=v$status_version, VH latest=v$vh_latest$status_provenance)"
                 OUT_OF_SYNC_NEWER=$((OUT_OF_SYNC_NEWER + 1))
                 EXIT_CODE=1
             fi
@@ -416,6 +477,19 @@ echo "         NO_VH_VERSION=$NO_VH_VERSION (dated rows, no version column; not 
 echo "         DUAL_VH=$DUAL_VH (informational only, e.g., RFC-0126)"
 echo "         NOT_RFC=$NOT_RFC (CHANGELOG/README/INDEX; scanned but not RFC content)"
 echo "         CLASSIFIED=$CLASSIFIED UNCLASSIFIED=$UNCLASSIFIED (every scanned file, once)"
+echo "         STATUS_MULTI_TOKEN=$STATUS_MULTI_TOKEN (Status line named several versions; first compared)"
+echo "         STATUS_FROM_FRONTMATTER=$STATUS_FROM_FRONTMATTER (version read from frontmatter, not the Status block)"
+#
+# Both of the above describe files inside CHECKED, so neither may exceed it. A
+# counter that can outrun the population it is a subset of is the same defect as
+# the derived-remainder counter `lint_no_vh_accepted.sh` carried: it reports a
+# number that cannot be true.
+if [ $((STATUS_MULTI_TOKEN + STATUS_FROM_FRONTMATTER)) -gt "$CHECKED" ]; then
+    echo "FAIL: guessed-version counters exceed the compared population:"
+    echo "      STATUS_MULTI_TOKEN=$STATUS_MULTI_TOKEN + STATUS_FROM_FRONTMATTER=$STATUS_FROM_FRONTMATTER"
+    echo "      is $((STATUS_MULTI_TOKEN + STATUS_FROM_FRONTMATTER)), but CHECKED=$CHECKED."
+    EXIT_CODE=1
+fi
 #
 # The three counters above must add back up to the population. They are counts
 # of files that reached at least one category, so a file landing in two is

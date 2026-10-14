@@ -19,6 +19,11 @@ Open, and it is predictive rather than historical: the failure has not reached
 CI yet because the linter has not been pushed. Extending the baseline is a
 maintainer decision and has not been done here.
 
+This mission records the corpus divergence and the fourteen anchors. Why the
+linter resolves them the way it does — including two gaps that make some of them
+linter defects rather than citation defects — is consolidated in
+`the-anchor-linter-checks-that-a-section-exists-somewhere-not-in-the-rfc-it-cites`.
+
 ## The measurement
 
 Same commit, two environments:

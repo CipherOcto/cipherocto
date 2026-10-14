@@ -112,32 +112,31 @@ the pattern corrected, that class is **3 findings**, not 561.
 all 339 `PHANTOM` findings and false: **0** match inside a word. The regex is
 applied per line and reports the offset within it.
 
-## Two fixture mistakes, both of which looked like linter bugs
+## One fixture mistake, which looked like a linter bug
 
-The repaired reader was tested against a fixture RFC numbered `0001` and then
-`0900`, each placed in a temp directory. Both times the run reported **no
-finding**, which reads as the repair having failed.
+The repaired reader was first tested against a fixture Version History holding
+`1.0` and `2.0`, citing `v1.0` and expecting a stale-pin finding. The run
+reported nothing, which reads as the repair having failed.
 
-Neither was the repair. `0001` and `0900` are real RFC numbers in this
-repository, and the citation resolver walked up from the repository root and
-found the _real_ file — `rfcs/draft/process/0001-mission-lifecycle.md` and
-`rfcs/accepted/economics/0900-ai-quota-marketplace.md` — while the temp fixture
-sat unused beside it. The resolver was reading the repository, not the fixture.
+**The repair was fine and the fixture was wrong.** `v1.0` is a row in that
+table, so the correct verdict is that the pin is not stale. The test needed a
+pin the table never carried — `v1.5` — and it then reported
+`cited v1.5, latest v2.0` and exited 1, which is the finding the repair exists
+to produce.
 
-The trace that settled it printed `rfc_path=` on its own line, naming the
-repository file. Nothing in the summary said which document had been checked.
+Two further wrong turns are worth recording because both produced the same
+false conclusion. A fixture numbered `0001`, and one numbered `0900`, were both
+believed to have resolved to a real repository document instead of the fixture,
+on the theory that the resolver walked up from the repository root. Traced
+directly, `RFC_ROOT` is honoured exactly: `rfc_path` came back as the fixture
+in every case. The theory was wrong and no repository file was ever consulted.
 
-A second fixture then made the opposite mistake: it cited `v1.0` against a
-Version History containing `1.0` and `2.0`, and expected a stale-pin finding.
-`v1.0` **is** a row in that table, so not reporting it is correct. The test
-needed a pin the table never had, not one it did.
+That is three consecutive wrong conclusions from the same symptom — a run that
+did not report an expected finding — and all three were resolved the same way:
+by reading what the code actually touched, rather than reasoning about what it
+should have touched.
 
-The lesson is the same one the mutation harness exists to enforce, applied to
-fixtures: a test that fails for a reason other than the defect under test will
-send you repairing the wrong thing. Both times the failure was resolvable only
-by reading what the code actually touched, not what it was asked to touch.
-
-## What remains for a maintainer
+## What remains for a maintainer## What remains for a maintainer
 
 The 1028 genuine findings need the author-intent decision the whole citation
 backlog needs: bump the pin, or accept that the pin refers to the version whose

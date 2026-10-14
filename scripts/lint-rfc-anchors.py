@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -255,6 +256,15 @@ def main() -> int:
         "--baseline",
         help="read and write this baseline file instead of the repository's",
     )
+    parser.add_argument(
+        "--corpus",
+        action="store_true",
+        help=(
+            "report how many references resolve only to files git does not "
+            "track. Reporting only: findings, the baseline and the exit code "
+            "are unchanged, so this cannot turn a gate red or green."
+        ),
+    )
     args = parser.parse_args()
 
     # Point the module-level paths at the requested root. They are read from
@@ -420,6 +430,8 @@ def main() -> int:
 
     if args.strict and by_name:
         print(f"\n--strict: {len(by_name)} distinct dangling anchor name(s) outstanding.")
+        if args.corpus:
+            corpus_report()
         return 1
 
     if new_findings:
@@ -430,7 +442,134 @@ def main() -> int:
         return 1
 
     print("\nno new dangling anchors.")
+    if args.corpus:
+        corpus_report()
     return 0
+
+
+def corpus_report() -> int:
+    """How many references resolve only to files git does not track.
+
+    Reporting only. This never touches `unresolved`, the baseline or the exit
+    code, so `--corpus` cannot change what CI rejects. It exists because the
+    number could not be measured from outside: every attempt reimplemented the
+    population and disagreed with this linter by more than three times, since
+    the gates are subtle — single non-numeric tokens are dropped, numeric
+    anchors are evaluated only on lines that also cite a project RFC, and
+    numeric anchors are tested unnormalised.
+
+    Doing it here means the population is this linter's, by construction, and
+    the answer is available to whoever needs to size the work.
+    """
+    origin: dict[str, set[str]] = {}
+    for source in INDEX_SOURCES:
+        if source.is_file() and source.suffix == ".md":
+            paths = [source]
+        elif source.is_dir():
+            paths = list(source.rglob("*.md"))
+        else:
+            paths = []
+        for p in paths:
+            try:
+                names = heading_names(p)
+            except Exception:
+                continue
+            for n in names:
+                origin.setdefault(n, set()).add(str(p))
+
+    try:
+        listed = subprocess.run(
+            ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True
+        ).stdout.splitlines()
+        tracked = {str(ROOT / t) for t in listed if t}
+    except Exception:
+        tracked = set()
+    if not tracked:
+        print("  (not a git checkout, so tracked/untracked cannot be compared)")
+        return 0
+
+    # Keys grouped by first word, so the heading-prefix arm can be reached
+    # without scanning every indexed heading for every reference.
+    by_first: dict[str, set[str]] = {}
+    for key in origin:
+        by_first.setdefault(key.split(" ", 1)[0], set()).add(key)
+
+    def providers(name: str) -> set[str]:
+        """Files whose heading satisfies `name`, per this linter's `resolves`.
+
+        The candidate set is derived from the three arms the linter implements
+        so the search is not a full scan, then each candidate is checked with
+        `resolves` itself rather than re-judged here. An earlier version of
+        this helper implemented the exact and heading-prefix arms and omitted
+        the word-prefix backoff, so a reference resolving through the backoff
+        was attributed to the wrong file. That is the reimplementation mistake
+        this module's header warns about, made inside the linter rather than
+        outside it.
+        """
+        forms = candidates(name)
+        words = forms[-1].split() if forms else []
+
+        cands: set[str] = set(forms)
+        for f in forms:
+            first = f.split(" ", 1)[0]
+            cands |= {k for k in by_first.get(first, set()) if k.startswith(f + " ")}
+        for cut in range(len(words) - 1, 1, -1):
+            prefix = " ".join(words[:cut])
+            cands.add(prefix)
+            cands |= origin.get(prefix, set())
+
+        hits: set[str] = set()
+        for k in cands:
+            if k in origin and resolves(name, {k}):
+                hits |= origin[k]
+        return hits
+
+    numbers = project_rfc_numbers()
+    local_only: dict[tuple[str, str], set[str]] = {}
+    inside = 0
+    for path in sorted(RFC_ROOT.rglob("*.md")):
+        rel = str(path.relative_to(ROOT))
+        for line in path.read_text(encoding="utf-8").splitlines():
+            refs = [(normalize(a), True) for a in ANCHOR.findall(line)]
+            if any(n in numbers for n in PROJECT_RFC_CITATION.findall(line)):
+                refs += [(raw, False) for raw in NUMBERED_ANCHOR.findall(line)]
+            for name, normalised in refs:
+                if not name or not is_section_anchor(name):
+                    continue
+                prov = providers(name)
+                if not prov:
+                    continue  # reported as a dangling finding instead
+                if prov <= tracked:
+                    inside += 1
+                else:
+                    key = (rel, name if normalised else f"{name} (numeric)")
+                    local_only.setdefault(key, set()).update(
+                        p.rsplit("/", 1)[-1] for p in prov - tracked
+                    )
+
+    named = {k: v for k, v in local_only.items() if not k[1].endswith("(numeric)")}
+    numeric = {k: v for k, v in local_only.items() if k[1].endswith("(numeric)")}
+
+    print(f"\ncorpus report (reporting only; findings and exit code unchanged)")
+    print(f"  references resolving inside the tracked tree    : {inside}")
+    print(f"  resolving ONLY in untracked files, named sections: {len(named)}")
+    print(f"  resolving ONLY in untracked files, bare numbers : {len(numeric)}")
+    if named:
+        print()
+        print("  Named sections are the meaningful group: a section a reader is told")
+        print("  to consult, which exists only in a file this checkout does not track.")
+        print("  Bare numbers are a weak match by construction: any heading")
+        print("  beginning with that number satisfies them. Counted, not called")
+        print("  findings.")
+        for (f, n), where in sorted(named.items()):
+            print(f"  §{n}")
+            print(f"      cited in {f}")
+            shown = sorted(where)[:3]
+            more = f" (+{len(where) - 3} more files)" if len(where) > 3 else ""
+            print(f"      found only in {', '.join(shown)}{more}")
+    return 0
+
+
 
 
 if __name__ == "__main__":

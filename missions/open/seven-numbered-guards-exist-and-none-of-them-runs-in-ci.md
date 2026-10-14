@@ -1,6 +1,6 @@
 ---
 name: seven-numbered-guards-exist-and-none-of-them-runs-in-ci
-description: "The repository defines seven numbered guards, each naming itself Guard N and citing the same long-horizon plan. Only two document checks run in CI, and neither is one of the seven. The operator guide documents a pre-commit guard that cannot work: it gives validate_cites.sh a 30 second timeout, that script takes over 120 seconds, and timeout returns 124, which under the guard's own set -euo pipefail aborts every commit. No pre-commit hook is installed at all, and Guard 3 names two different things."
+description: "The repository defines seven numbered guards, each naming itself Guard N and citing the same long-horizon plan. Only two document checks run in CI, and neither is one of the seven. The operator guide documents a pre-commit guard that cannot work: it gives validate_cites.sh a 30 second timeout, that script takes about four minutes, and timeout returns 124, which under the guard's own set -euo pipefail aborts every commit. No pre-commit hook is installed at all, and Guard 3 names two different things."
 metadata:
   node_type: mission
   type: implementation
@@ -61,8 +61,21 @@ cargo clippy --all-targets -- -D warnings
 
 Three problems, each verified rather than inferred.
 
-**The timeout is shorter than the command by a factor of four.** The script
+**The timeout is shorter than the command by a factor of eight.** The script
 exceeded a 120-second `timeout` on two separate runs this session, exiting 124. It completes in under 280 seconds.
+
+**Correction to the figure in this entry's description.** The description said
+"over 120 seconds", which is true but understated it by roughly half, and a
+description is what a reader sees before deciding whether to open the file.
+Measured on this machine: **245 seconds wall**, against a documented 30-second
+timeout — eight times over, not four. The range in this section was the accurate
+one; only the summary line was loose.
+
+That measurement carries a caveat worth stating: this machine's disk is full,
+and the script is I/O-bound across roughly 1267 tracked markdown files, so the
+figure is an upper bound for a healthy disk. It does not weaken the finding —
+the script is two orders of magnitude past any plausible pre-commit budget —
+but the direction of the error is known rather than guessed.
 
 **A `timeout` that fires fails the commit.** Verified directly:
 

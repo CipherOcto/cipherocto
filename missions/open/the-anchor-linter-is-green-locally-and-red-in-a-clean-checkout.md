@@ -137,6 +137,28 @@ Three of the fourteen are malformed in that way, where the linter read a
 sentence as a section name: `§error envelope (canonical`, `§cross-rfc
 harmonization (2026-08-24`, and both `§trust level` forms.
 
+## Two of them are the linter, not the citation
+
+Of the fourteen, two are sections that exist in a **tracked** RFC and that the
+linter cannot see, because the heading carries a numbering prefix and the
+citation does not:
+
+| Anchor                       | Heading in a tracked RFC           | What the linter has  |
+| ---------------------------- | ---------------------------------- | -------------------- |
+| `§coverage gap`              | `b. coverage gap` in RFC-0008      | `b. coverage gap`    |
+| `§error envelope (canonical` | `6.3 error envelope` in RFC-0015-a | `6.3 error envelope` |
+
+`normalize` strips trailing punctuation and a leading section sign. It does not
+strip a leading `B. ` or `6.3 `, so a citation written as `§Coverage Gap` — which
+is how RFC-0008 refers to its own appendix B — cannot match its own heading. The
+corpus finding and this one compound: the gitignored heading satisfied the
+citation first, so nobody saw that the tracked one was invisible too.
+
+This is why the earlier framing of the twelve as "genuine citation defects" was
+too confident. Two of them are the linter looking at a section that is right
+there. The remaining twelve do not resolve against any tracked file even after a
+numbering prefix is stripped, which is the narrower and checkable claim.
+
 ## Decisions for maintainers
 
 1. **Extend the baseline by the 31 name-site pairs** the clean checkout reports,
@@ -158,10 +180,13 @@ harmonization (2026-08-24`, and both `§trust level` forms.
    complete heading rather than any two-word prefix. On this corpus that changes
    which findings exist, so it belongs with the baseline decision rather than
    beside it.
-5. **The cheapest real work is the twelve that resolve to a real heading.** Each
-   names a section absent from the repository and cites an RFC while resolving to
-   an unrelated working document. That is a genuine defect in the RFC text, and
-   it is what a reader would actually hit.
+5. **The twelve are not all citation work, and the split is checkable.** Two
+   are the linter failing to see a tracked heading behind a numbering prefix.
+   The other twelve name a section absent from the tracked tree while citing an
+   RFC, resolving only against a working document. Fixing the prefix handling
+   first would reclassify those two and change which findings the other twelve
+   are measured against, so the linter changes and the citation changes do not
+   commute.
 
 ## What a push would actually do
 

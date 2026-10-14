@@ -290,6 +290,30 @@ mutations: 38/73  red: 38  vacuous: 0  bad-mutation: 0  bad-anchor: 0
 Zero vacuous and zero bad-mutation across 38 entries. The remaining 35 are
 `rebuild`-tier and were not run.
 
+## A counter case needs an accept-direction assertion
+
+The eleventh case pins the population counters of `lint_status_vh_sync.sh`,
+which reported `CHECKED=247` for 74 files actually compared — a summary whose
+gap reads as unexamined work rather than a skipped population.
+
+It is expressed as an ACCEPT assertion, not a `run_case`, and it took three
+attempts to get right:
+
+1. Written as a `run_case`, it **passed against the regressed counter**. A
+   counter that lies is not a defect the guard detects — the guard is green
+   precisely when it is lying, so the planted-defect phase never fires.
+2. Rewritten to forbid the literal string `COVERAGE=100%`, it still passed. A
+   counter that inflates `CHECKED` past `SCANNED` never produces `100%`; it
+   produces `150%`. **An assertion written against a value the broken code
+   cannot produce detects nothing.**
+3. The assertion is numeric: coverage must not exceed 100, and must be under
+   100 for a fixture containing an uncomparable file. Reverting the counter now
+   reports `COVERAGE=166%` and the case fails with exit 1.
+
+This is the first guard case in this suite that is not a defect-detection case,
+and it needed a different assertion shape because a miscounting guard and a
+detecting guard cannot both be red for the same input.
+
 ## Follow-ups
 
 - No guard runs in CI. See

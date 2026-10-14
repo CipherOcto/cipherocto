@@ -11,6 +11,7 @@ set -euo pipefail
 RFC_ROOT="${RFC_ROOT:-rfcs}"
 EXIT_CODE=0
 CHECKED=0
+SCANNED=0
 IN_SYNC=0
 OUT_OF_SYNC_OLDER=0
 OUT_OF_SYNC_NEWER=0
@@ -64,7 +65,7 @@ echo "RFC root: $RFC_ROOT"
 echo ""
 
 while IFS= read -r -d '' rfc_file; do
-    CHECKED=$((CHECKED + 1))
+    SCANNED=$((SCANNED + 1))
 
     # Skip non-content files (CHANGELOG-only, README, etc.)
     basename=$(basename "$rfc_file")
@@ -310,6 +311,20 @@ PY
     # which is the failure mode of a check that cannot tell a difference from a
     # spelling.
     if [ -n "$status_version" ]; then
+        # This is the only place a Status version and a Version History row are
+        # put side by side, so this is where CHECKED increments.
+        #
+        # CHECKED used to increment once per markdown file found, so the summary
+        # read `CHECKED=247 IN_SYNC=65` — a whole-corpus count beside a
+        # compared-only count. The gap looked like unexamined work rather than a
+        # silently skipped population, and nothing in the output said so.
+        # Measured on the current tree: 74 files are actually compared, 12 have
+        # rows but no version column, and 160 carry no Status version at all.
+        # The old figure overstated coverage by more than six times.
+        #
+        # SCANNED now carries the corpus total, and the summary reports the
+        # population statement rather than leaving the reader to subtract.
+        CHECKED=$((CHECKED + 1))
         if [ "$(pad3 "$status_version")" = "$(pad3 "$vh_latest")" ]; then
             IN_SYNC=$((IN_SYNC + 1))
         else
@@ -334,13 +349,26 @@ PY
 done < <(find "$RFC_ROOT" -type f -name '*.md' -print0 2>/dev/null || true)
 
 echo ""
-echo "Summary: CHECKED=$CHECKED IN_SYNC=$IN_SYNC"
+echo "Summary: SCANNED=$SCANNED files, CHECKED=$CHECKED Status/VH pairs compared"
+echo "         IN_SYNC=$IN_SYNC"
 echo "         OUT_OF_SYNC_STATUS_OLDER=$OUT_OF_SYNC_OLDER"
 echo "         OUT_OF_SYNC_STATUS_NEWER=$OUT_OF_SYNC_NEWER"
-echo "         NO_STATUS_VERSION=$NO_STATUS_VERSION"
+echo "         NO_STATUS_VERSION=$NO_STATUS_VERSION (nothing to compare a VH row against)"
 echo "         NO_VH=$NO_VH"
 echo "         NO_VH_VERSION=$NO_VH_VERSION (dated rows, no version column; not comparable)"
 echo "         DUAL_VH=$DUAL_VH (informational only, e.g., RFC-0126)"
+#
+# CHECKED counts files where a Status version and a Version History row were
+# actually put side by side. SCANNED counts markdown files found. The
+# difference is the population this guard cannot decide anything about, and it
+# is large: most RFCs in this corpus write no version in their Status block at
+# all, so a summary reading only `CHECKED` would overstate coverage several
+# times over.
+if [ "$SCANNED" -gt 0 ] && [ "$CHECKED" -eq 0 ]; then
+    echo "         COVERAGE=0% of $SCANNED scanned files were comparable"
+elif [ "$SCANNED" -gt 0 ]; then
+    echo "         COVERAGE=$((CHECKED * 100 / SCANNED))% of $SCANNED scanned files were comparable"
+fi
 
 # A lint that examined no files has verified nothing, and must not report that
 # its corpus is clean. Each of these scripts takes its corpus root from the

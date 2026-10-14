@@ -76,6 +76,37 @@ assert_clean() {
     return 0
 }
 
+# assert_contains <name> <guard> <substring> <must NOT contain>
+# An ACCEPT-direction assertion: the guard must exit 0 AND its output must
+# contain the first substring while omitting the second.
+#
+# This exists because `run_case` can only assert a planted defect, and a counter
+# that lies about its own population is not a defect the guard detects — the
+# guard is green precisely when it is lying. A population case expressed as a
+# run_case passes against the regressed counter, which was verified by doing
+# exactly that.
+assert_contains() {
+    local name="$1" guard_fn="$2" want="$3" forbid="$4"
+    local out
+    if ! out="$("$guard_fn" 2>&1)"; then
+        printf '%-34s %-8s %s\n' "$name" "accept" "expected exit 0 on a clean fixture"
+        FAIL=$((FAIL + 1))
+        return 1
+    fi
+    if ! grep -qF "$want" <<< "$out"; then
+        printf '%-34s %-8s %s\n' "$name" "accept" "output did not contain '$want'"
+        FAIL=$((FAIL + 1))
+        return 1
+    fi
+    if [ -n "$forbid" ] && grep -qF "$forbid" <<< "$out"; then
+        printf '%-34s %-8s %s\n' "$name" "accept" "output claimed '$forbid' it must not"
+        FAIL=$((FAIL + 1))
+        return 1
+    fi
+    printf '%-34s %-8s %s\n' "$name" "accept" "ok"
+    return 0
+}
+
 # assert_red <name> <guard> <expected substring>
 # The guard must go red AND name the specific finding. Checking only the exit
 # code would accept a guard that failed for the wrong reason — which is how
@@ -424,6 +455,80 @@ Accepted (v3.0) — promoted 2026-02-01
 EOF
 }
 
+# The population counters must describe what was COMPARED, not what was found.
+# This is an assertion on the guard's own output rather than on a planted
+# defect, because the defect this catches is a counter that reports success.
+#
+# `lint_status_vh_sync.sh` used to increment CHECKED once per markdown file, so
+# its summary read CHECKED=247 against 74 files actually compared. A fixture
+# where one file is comparable and one is not pins the relationship.
+write_population_mix() {
+    cat >"$FIX/rfcs/0003-comparable.md" <<'EOF'
+# RFC-0003 Comparable
+
+## Status
+
+Accepted (v1.0.0)
+
+## Version History
+
+| 1.0.0 | x |
+EOF
+    cat >"$FIX/rfcs/0004-uncomparable.md" <<'EOF'
+# RFC-0004 Uncomparable
+
+## Status
+
+Draft
+
+## Body
+
+No version is declared in this Status block, so there is nothing to compare.
+EOF
+}
+
+case_population_coverage() {
+    if [ -n "$FILTER" ] && [[ "status_vh/population-coverage" != *"$FILTER"* ]]; then
+        SKIP=$((SKIP + 1))
+        return 0
+    fi
+    local own="$WORK/case-population"
+    rm -rf "$own"
+    mkdir -p "$own/rfcs"
+    FIX="$own"
+    write_base_fixture
+    write_population_mix
+    # Must report a coverage figure, and it must be a PLAUSIBLE one.
+    #
+    # The first version of this assertion forbade the literal string
+    # "COVERAGE=100%". That passed against the regressed counter, because a
+    # counter that inflates CHECKED past SCANNED never produces 100% — it
+    # produces 150%. An assertion written against a value the broken code cannot
+    # produce detects nothing.
+    #
+    # So the assertion is numeric: coverage must not exceed 100, and must be
+    # under 100 here because one of the two files carries no Status version and
+    # so nothing about it was compared.
+    local out cov
+    out="$(status_vh_guard 2>&1)"
+    cov="$(grep -oE 'COVERAGE=[0-9]+%' <<< "$out" | grep -oE '[0-9]+' || echo "")"
+    if [ -z "$cov" ]; then
+        printf '%-34s %-8s %s\n' "status_vh/population-coverage" "accept" "no COVERAGE figure reported"
+        FAIL=$((FAIL + 1))
+    elif [ "$cov" -gt 100 ]; then
+        printf '%-34s %-8s %s\n' "status_vh/population-coverage" "accept" \
+            "COVERAGE=${cov}% exceeds the files scanned — the counter is not describing the population"
+        FAIL=$((FAIL + 1))
+    elif [ "$cov" -ge 100 ]; then
+        printf '%-34s %-8s %s\n' "status_vh/population-coverage" "accept" \
+            "claimed 100% coverage of a corpus with an uncomparable file"
+        FAIL=$((FAIL + 1))
+    else
+        printf '%-34s %-8s %s\n' "status_vh/population-coverage" "accept" "ok (COVERAGE=${cov}%)"
+    fi
+    PASS=$((PASS + 1))
+}
+
 case_no_vh_bullets() {
     prepare_case() { write_bullet_vh; }
     run_case "no_vh_accepted/bullet-history" no_vh_guard "MISSING_VH"
@@ -597,6 +702,7 @@ case_section_cites_overdeep
 case_status_vh
 case_no_vh
 case_no_vh_bullets
+case_population_coverage
 case_plan_yaml
 case_cites
 case_frontmatter

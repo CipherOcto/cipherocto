@@ -131,6 +131,7 @@ def main() -> int:
 
     scanned = 0
     with_frontmatter = 0
+    without_frontmatter = 0
     parsed = 0
     failures: list[tuple[str, str]] = []
 
@@ -148,6 +149,13 @@ def main() -> int:
                 return 2
             block = frontmatter_of(text)
             if block is None:
+                # Counted, not skipped. A document with no frontmatter block is
+                # legitimately outside this guard's subject, so it needs no
+                # finding — but it is still a document that was read, and a
+                # summary reading SCANNED beside WITH_FRONTMATTER leaves the
+                # reader to subtract and hope. The two figures are not
+                # supposed to match: most RFCs carry no frontmatter at all.
+                without_frontmatter += 1
                 continue
             with_frontmatter += 1
             try:
@@ -159,8 +167,31 @@ def main() -> int:
 
     print(f"SCANNED           {scanned}")
     print(f"WITH_FRONTMATTER  {with_frontmatter}")
+    print(f"NO_FRONTMATTER    {without_frontmatter} (read, and none is required of them)")
     print(f"PARSED            {parsed}")
     print(f"FAILED            {len(failures)}")
+
+    # Every document read lands in exactly one of the two groups, and every
+    # document with frontmatter is either parsed or a failure. Stated rather
+    # than left to the reader to subtract: a guard that examined 1933 documents
+    # and checked 255 can otherwise not be told apart from one that stopped
+    # early on an unreadable tree.
+    if scanned != with_frontmatter + without_frontmatter:
+        print(
+            f"FAIL: population does not reconcile: WITH_FRONTMATTER={with_frontmatter}"
+            f" + NO_FRONTMATTER={without_frontmatter} is"
+            f" {with_frontmatter + without_frontmatter}, but SCANNED={scanned}."
+            f" A document was read and placed in no group.",
+            file=sys.stderr,
+        )
+        return 2
+    if with_frontmatter != parsed + len(failures):
+        print(
+            f"FAIL: WITH_FRONTMATTER={with_frontmatter} is not PARSED={parsed}"
+            f" + FAILED={len(failures)}.",
+            file=sys.stderr,
+        )
+        return 2
 
     # A run that examined nothing must not report success. Four scripts in this
     # repository once did, and the counter that hid it was the one being

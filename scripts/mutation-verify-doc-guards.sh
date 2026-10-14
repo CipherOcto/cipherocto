@@ -1074,6 +1074,66 @@ write_frontmatter_defect() {
     printf -- '---\nname: broken: value\n---\n\n# Does not parse\n' >"$FIX/docs/fm-bad.md"
 }
 
+# Every document this guard reads must land in exactly one of two groups.
+#
+# A document with no frontmatter block is legitimately outside the guard's
+# subject and needs no finding, but it is still a document that was read. The
+# summary printed the scanned count beside the with-frontmatter count and left
+# the reader to subtract: on this repository that is 1933 against 255, and the
+# two are not supposed to match because most RFCs carry no frontmatter at all.
+# Nothing said so, so the gap read as work the guard never reached.
+#
+# The fixture holds one document with frontmatter and one without, so the two
+# groups differ and the arithmetic has something to distinguish. A fixture of
+# only frontmatter documents would reconcile under a guard that never counted
+# the rest at all.
+case_frontmatter_reconciles() {
+    if [ -n "$FILTER" ] && [[ "frontmatter/population-reconciles" != *"$FILTER"* ]]; then
+        SKIP=$((SKIP + 1))
+        return 0
+    fi
+    local own="$WORK/case-frontmatter-recon"
+    rm -rf "$own"
+    mkdir -p "$own/docs"
+    FIX="$own"
+    cat >"$own/docs/0001-with.md" <<'EOF'
+---
+status: draft
+---
+
+# With frontmatter
+
+Body.
+EOF
+    cat >"$own/docs/0002-without.md" <<'EOF'
+# Without frontmatter
+
+Body, with no leading block at all.
+EOF
+    local out scanned with_ without
+    out="$(frontmatter_guard 2>&1)"
+    scanned="$(grep -oE '^SCANNED +[0-9]+' <<< "$out" | grep -oE '[0-9]+' || true)"
+    with_="$(grep -oE '^WITH_FRONTMATTER +[0-9]+' <<< "$out" | grep -oE '[0-9]+' || true)"
+    without="$(grep -oE '^NO_FRONTMATTER +[0-9]+' <<< "$out" | grep -oE '[0-9]+' || true)"
+    if [ -z "$without" ] || [ -z "$with_" ] || [ -z "$scanned" ]; then
+        printf '%-34s %-8s %s\n' "frontmatter/population-reconciles" "accept" \
+            "no group counters reported — the population cannot be checked"
+        FAIL=$((FAIL + 1))
+    elif [ "$without" -lt 1 ]; then
+        printf '%-34s %-8s %s\n' "frontmatter/population-reconciles" "accept" \
+            "NO_FRONTMATTER=0 while the fixture holds a document without frontmatter"
+        FAIL=$((FAIL + 1))
+    elif [ $((with_ + without)) -ne "$scanned" ]; then
+        printf '%-34s %-8s %s\n' "frontmatter/population-reconciles" "accept" \
+            "$with_ + $without = $((with_ + without)) against SCANNED=$scanned"
+        FAIL=$((FAIL + 1))
+    else
+        printf '%-34s %-8s %s\n' "frontmatter/population-reconciles" "accept" \
+            "ok ($with_ + $without = SCANNED=$scanned)"
+    fi
+    PASS=$((PASS + 1))
+}
+
 case_frontmatter() {
     prepare_case() { prepare_frontmatter_clean; }
     write_defect() { write_frontmatter_defect; }
@@ -1214,6 +1274,7 @@ case_population_coverage
 case_plan_yaml
 case_cites
 case_frontmatter
+case_frontmatter_reconciles
 case_anchors
 case_baseline_coverage
 case_type_refs

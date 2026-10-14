@@ -34,7 +34,32 @@ workflow.
 | `verify_canonical_blobs.py` | no    | 0          | RFC-mandated, independently verified by mutation |
 | `mutation-verify-guards.sh` | no    | not re-run | 5 guards; recompiles, so not re-run at 3.6G free |
 
-**Re-measured.** Every exit code above was run, not carried forward from the
+## One of these was locale-dependent, and the class is bounded
+
+`projection_inflation_metric.sh` computed its rates with an awk printf, which
+honours the locale's decimal separator. Under a comma-decimal locale the rates
+came out as `100,0` rather than `100.0`, feeding them back as a string, and the
+comparison silently became lexicographic. The guard reported a perfect
+realization rate as FAIL, in a message that said the same value was below the
+threshold three lines after printing it.
+
+The other guards were checked for the same dependence rather than assumed clear,
+because `[0-9]` ranges in a regular expression are collation-dependent in a
+UTF-8 locale and several of these programs lean on them. Run under `C`,
+`pt_BR.UTF-8` and `de_DE.UTF-8`, the section-cite linter, the accepted-history
+guard and the Status/VH guard all report identical counts. The Python linters do
+not consult the locale for these patterns at all.
+
+So the class is one script wide, and it was found by running the two checks
+nobody had run rather than by auditing for it.
+
+Two scripts in this census had never been executed at all before this pass:
+the token-list test suite, which is 56 pass and 0 fail, and the projection
+metric, which is the one that was broken. Neither was reachable from the exits
+recorded here, because one takes arguments and the other is a fixture runner.
+
+## Re-measured Every exit code above was run, not carried forward from the
+
 original census. Four rows had moved:
 
 | Row                      | Then           | Now                  |

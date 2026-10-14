@@ -86,7 +86,12 @@ with an assertion bounding their sum by `CHECKED`. Verdict counts are unchanged:
 
 The disclosures are mutation-verified. Zeroing the token count, blanking the
 frontmatter provenance, and mutating the comparison to the last token each
-change the report in the way the comment predicts.
+change the report in the way the comment predicts. Two accept-direction cases
+in `mutation-verify-doc-guards.sh` pin them:
+`status_vh/discloses-ambiguous-status-line` and
+`status_vh/discloses-frontmatter-source`. Each was confirmed to fail against the
+guard with its own disclosure removed, and to pass against the guard with only
+the _other_ disclosure removed — so neither case can be satisfied by the other.
 
 ## The second cause: a field the template does not define
 

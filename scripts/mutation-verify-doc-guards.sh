@@ -711,6 +711,128 @@ EOF
     PASS=$((PASS + 1))
 }
 
+# The guard recovered a document's Status version by taking the FIRST `vN.N`
+# token on a prose Status line, and printed the verdict without saying which
+# token it had taken. Eighteen Status lines in the real corpus name more than
+# one version, so the pick was a guess. RFC-0862 is the corpus instance that
+# proves it wrong: the line narrates `v1.1.0` then `v1.2.0`, the history's
+# latest row is `1.2.0`, and the file was reported out of sync.
+#
+# Comparing the last token instead is not available as a repair — mutated to do
+# so, the guard repairs this fixture and breaks nine others in the real corpus.
+# So the fixture asserts that the guard SHOWS ITS WORK, not that it picks some
+# other token.
+#
+# Asserted on the presence of the disclosure. Asserting that the finding text
+# lacks a phrase would pass against a guard that had stopped reporting the
+# finding at all, which is the failure this harness exists to catch.
+case_status_vh_discloses_ambiguous_line() {
+    if [ -n "$FILTER" ] && [[ "status_vh/discloses-ambiguous-status-line" != *"$FILTER"* ]]; then
+        SKIP=$((SKIP + 1))
+        return 0
+    fi
+    local own="$WORK/case-status-vh-ambiguous"
+    mkdir -p "$own/rfcs"
+    FIX="$own"
+    write_base_fixture
+    # Ascending narration, exactly the shape that made the guard report drift
+    # in a file that is in sync. The second token is the current version.
+    cat >"$FIX/rfcs/0005-narration.md" <<'EOF'
+# RFC-0005 Narration
+
+## Status
+
+Accepted (2026-06-20) — Updated v1.1.0 (2026-06-21): first change. Updated v1.2.0 (2026-06-25): second change.
+
+## Version History
+
+| Version | Date | Changes |
+| ------- | ---- | ------- |
+| 1.1.0 | 2026-06-21 | First change. |
+| 1.2.0 | 2026-06-25 | Second change. |
+EOF
+    local out
+    out="$(status_vh_guard 2>&1)"
+    if ! grep -q '0005-narration' <<< "$out"; then
+        printf '%-34s %-8s %s\n' "status_vh/discloses-ambiguous-status-line" "accept" \
+            "fixture produced no finding at all"
+        FAIL=$((FAIL + 1))
+    elif ! grep -q 'names 2 versions \[1.1.0, 1.2.0\], compared the first' <<< "$out"; then
+        printf '%-34s %-8s %s\n' "status_vh/discloses-ambiguous-status-line" "accept" \
+            "finding did not disclose that the Status line named two versions"
+        FAIL=$((FAIL + 1))
+    elif ! grep -q 'STATUS_MULTI_TOKEN=1' <<< "$out"; then
+        printf '%-34s %-8s %s\n' "status_vh/discloses-ambiguous-status-line" "accept" \
+            "ambiguous-line counter did not move"
+        FAIL=$((FAIL + 1))
+    else
+        printf '%-34s %-8s %s\n' "status_vh/discloses-ambiguous-status-line" "accept" \
+            "ok (discloses 2 tokens, counts 1 ambiguous line)"
+    fi
+    PASS=$((PASS + 1))
+}
+
+# The second guess. Where a Status block carries no version, the guard falls
+# back to the YAML frontmatter `version:` key — a field the RFC template does
+# not define, and one that disagrees with its own history table in 11 of the 36
+# files carrying it. That fallback supplies the compared version for 32 of the
+# 76 files this guard can compare, so it is load-bearing, and a finding built on
+# it is a finding about a field the reader cannot see in the document's body.
+#
+# The guard does not resolve which field is authoritative — that is a corpus
+# policy question. It says which one it read, so the finding is checkable by
+# whoever holds that policy.
+case_status_vh_discloses_frontmatter_source() {
+    if [ -n "$FILTER" ] && [[ "status_vh/discloses-frontmatter-source" != *"$FILTER"* ]]; then
+        SKIP=$((SKIP + 1))
+        return 0
+    fi
+    local own="$WORK/case-status-vh-frontmatter"
+    mkdir -p "$own/rfcs"
+    FIX="$own"
+    write_base_fixture
+    # The Status block carries no version, as in RFC-0855p-c, whose frontmatter
+    # says 1.0.0 against a history whose latest row is 0.1.4.
+    cat >"$FIX/rfcs/0006-frontmatter-version.md" <<'EOF'
+---
+title: "RFC-0006 Frontmatter Version"
+status: Accepted
+version: 1.0.0
+---
+
+# RFC-0006 Frontmatter Version
+
+## Status
+
+Accepted (2026-06-16)
+
+## Version History
+
+| Version | Date | Changes |
+| ------- | ---- | ------- |
+| 0.1.4 | 2026-06-16 | Initial draft. |
+EOF
+    local out
+    out="$(status_vh_guard 2>&1)"
+    if ! grep -q '0006-frontmatter-version' <<< "$out"; then
+        printf '%-34s %-8s %s\n' "status_vh/discloses-frontmatter-source" "accept" \
+            "fixture produced no finding at all"
+        FAIL=$((FAIL + 1))
+    elif ! grep -q 'Status version read from frontmatter version:' <<< "$out"; then
+        printf '%-34s %-8s %s\n' "status_vh/discloses-frontmatter-source" "accept" \
+            "finding did not disclose that the version came from frontmatter"
+        FAIL=$((FAIL + 1))
+    elif ! grep -q 'STATUS_FROM_FRONTMATTER=1' <<< "$out"; then
+        printf '%-34s %-8s %s\n' "status_vh/discloses-frontmatter-source" "accept" \
+            "frontmatter counter did not move"
+        FAIL=$((FAIL + 1))
+    else
+        printf '%-34s %-8s %s\n' "status_vh/discloses-frontmatter-source" "accept" \
+            "ok (discloses frontmatter source, counts 1)"
+    fi
+    PASS=$((PASS + 1))
+}
+
 cross_rfc_guard() {
     RFC_ROOT="$FIX/rfcs" DOCS_ROOT="$FIX/docs" \
         bash scripts/cross_rfc_propagate.sh 9001 1.0 2.0
@@ -1467,6 +1589,8 @@ run_case_fn case_section_cites_coverage
 run_case_fn case_status_vh
 run_case_fn case_status_vh_signed_heading
 run_case_fn case_status_vh_reconciles
+run_case_fn case_status_vh_discloses_ambiguous_line
+run_case_fn case_status_vh_discloses_frontmatter_source
 run_case_fn case_no_vh
 run_case_fn case_no_vh_signed_heading
 run_case_fn case_vh_heading_all_shapes

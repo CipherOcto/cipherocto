@@ -414,6 +414,47 @@ case_section_cites() {
     run_case "section_cites/phantom-token" section_cites_guard "REJECT [phantom-token]"
 }
 
+# The QUOTED citation name, `§"Roles and Authorities"`. 264 sections are cited
+# this way in the corpus and the extraction matched none of them, so a file
+# containing only quoted citations reported EXAMINED=0 and printed "none
+# contained a cite token" — a clean result produced by examining nothing.
+#
+# The fixture deliberately contains NOTHING else, because a fixture with one
+# unquoted cite would still pass while the quoted arm was broken. The count is
+# the assertion: EXAMINED must equal the number of quoted citations.
+write_quoted_cites_only() {
+    cat >"$FIX/rfcs/0005-quoted.md" <<'EOF'
+# RFC-0005 Quoted
+
+## 1. Scope
+
+See §"Roles and Authorities" and §"Slash Reason Codes" for the normative rules.
+EOF
+}
+
+case_section_cites_quoted() {
+    if [ -n "$FILTER" ] && [[ "section_cites/quoted-names" != *"$FILTER"* ]]; then
+        SKIP=$((SKIP + 1))
+        return 0
+    fi
+    local own="$WORK/case-quoted"
+    rm -rf "$own"
+    mkdir -p "$own/rfcs"
+    FIX="$own"
+    write_quoted_cites_only
+    local out n
+    out="$(section_cites_guard 2>&1)"
+    n="$(grep -oE 'EXAMINED=[0-9]+' <<< "$out" | grep -oE '[0-9]+' || echo 0)"
+    if [ "$n" -eq 2 ]; then
+        printf '%-34s %-8s %s\n' "section_cites/quoted-names" "extract" "ok (both quoted names read)"
+    else
+        printf '%-34s %-8s %s\n' "section_cites/quoted-names" "extract" \
+            "examined $n of 2 quoted citations — the quoted-name rendering is invisible"
+        FAIL=$((FAIL + 1))
+    fi
+    PASS=$((PASS + 1))
+}
+
 case_section_cites_overdeep() {
     prepare_case() { :; }
     write_defect() { write_section_cites_overdeep_defect; }
@@ -699,6 +740,7 @@ types_guard() {
 
 case_section_cites
 case_section_cites_overdeep
+case_section_cites_quoted
 case_status_vh
 case_no_vh
 case_no_vh_bullets

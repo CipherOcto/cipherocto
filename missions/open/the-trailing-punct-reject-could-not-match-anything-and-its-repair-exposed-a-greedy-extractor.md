@@ -102,18 +102,50 @@ A rejection rule that cannot reject is worse than no rule, because it reads as
 coverage. An assertion that fails loudly when its invariant breaks is the honest
 form of the same check.
 
-## Why this is the third instance
+## A second rendering the extraction never matched
 
-The same shape, three times over:
+Repairing the extractor was not the end of it. The corrected pattern still did
+not match the **quoted** citation name:
+
+```markdown
+See §"Roles and Authorities" for the normative rules.
+```
+
+Measured over the corpus: **264 cited sections are written this way, and the
+guard extracted none of them.** A file containing only two quoted citations
+reported
+
+```
+EXAMINED=0 cite tokens
+NOTE: 1 file(s) scanned, none contained a §cite token.
+PASS: 0 cite hygiene violations.
+```
+
+That is the failure this whole line of work exists to catch, produced by the
+guard itself: a clean result, and a note claiming the corpus held no citations
+while two sat in the file unread. The `EXAMINED=0` guard further down the script
+exists precisely to catch an empty run — and it did not, because the run was not
+empty, it had two citations the extractor could not name.
+
+The pattern now reads a quoted name to its closing quote. `EXAMINED` moved from
+10276 to **10536**, which is the 260 quoted names the corpus contains outside the
+four counted during measurement, and rejections stayed at zero.
+
+## Why this is the fourth instance
+
+The same shape, four times over:
 
 1. `lint_status_vh_sync.sh` read the Status version off a heading line that
    never carries one, skipping 210 of 247 files and still reporting PASS.
 2. `lint_no_vh_accepted.sh` counted every markdown file against an
    Accepted-only total, so the gap looked like unexamined work.
 3. Here, a reject rule that matched nothing produced a clean-looking summary.
+4. And the extractor that rule examined could not read a quoted citation name,
+   so 264 cited sections produced no token and no finding.
 
-All three reported a result that described a population the guard never
-examined.
+All four reported a result that described a population the guard never
+examined. The fourth is the sharpest, because the guard printed a note saying
+the file contained no citations while two sat in it unread.
 
 ## Follow-ups
 

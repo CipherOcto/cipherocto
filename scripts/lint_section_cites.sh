@@ -57,13 +57,25 @@ while IFS= read -r -d '' rfc_file; do
     # by trailing punctuation alone, and all 1431 were prose: the closing
     # paren in `(per RFC-0104 §3.2)`, the colon in `§9c):`, the period in
     # `§Algorithms.`
+    #
+    # One rendering was invisible to every one of those patterns: the QUOTED
+    # name, `§"Roles and Authorities"`. Measured over the corpus, 264 cited
+    # sections are written that way and **none of them were extracted**. A
+    # fixture containing only two quoted citations reported `EXAMINED=0` and
+    # printed "none contained a §cite token" — a clean result produced by
+    # examining nothing, which is the failure this whole suite exists to catch.
+    #
+    # The alternative arm above reads a quoted name to its closing quote. It is
+    # matched second so a bare name still wins when both could start at the same
+    # position, and a quoted name is kept whole rather than truncated at its
+    # first space.
     # A name may also START with `/`, because this corpus cites API paths as
     # sections — `§/v1/realtime` in RFC-0846 is a real endpoint, not a
     # punctuation slip. Requiring an alphanumeric first character dropped it,
     # and the only evidence was a single-token drop in the examined count
     # (10276 to 10275), which is exactly the kind of quiet undercount a total
     # is supposed to expose.
-    matches=$(grep -nEo '§/?[A-Za-z0-9]+([._/][A-Za-z0-9]+)*' "$rfc_file" 2>/dev/null || true)
+    matches=$(grep -nEo '§/?[A-Za-z0-9]+([._/][A-Za-z0-9]+)*|§"[^"]+"' "$rfc_file" 2>/dev/null || true)
     [ -z "$matches" ] && continue
 
     while IFS= read -r match; do

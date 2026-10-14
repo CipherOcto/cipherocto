@@ -173,6 +173,32 @@ The concentration is `docs/research`, holding 23 of the 54 files. Fifteen
 occurrences sit in `rfcs/`, which are the ones that would matter most if the
 rule is read as covering normative documents.
 
+### The same shape outside markdown
+
+The 863 figure counts git-tracked markdown only, because the rule is written
+about prose and prose is where prose lives. A reader deciding whether the rule
+should reach code comments and docstrings needs to know what is on the other
+side of that boundary, so it was measured too:
+
+| Corpus                    | Occurrences |
+| ------------------------- | ----------- |
+| tracked `*.md`            | 863         |
+| tracked `*.py` and `*.sh` | 5           |
+
+Five, across 88 files — the markdown corpus is about 99.4 percent of the
+tracked population, so widening the rule to comments would not change the size
+of the work by any amount worth deciding differently over. It would change
+which files need reading.
+
+Of the five, one is a worked example inside the detector's own comment, showing
+the shape it exists to find. That one has to stay: a detector that cannot
+illustrate what it detects is harder to trust than one that can. The other four
+are in a single file, in comments pointing at where two discriminant values are
+defined in a Rust source file. They are accurate today and will silently rot.
+
+`.rs` files are not measured. Rust source carries line references in ordinary
+use and including them would swamp the question rather than inform it.
+
 ### The tracked audit scratch directories
 
 The disposition table above records the `docs/audits/` concentration as
@@ -188,6 +214,11 @@ local-only disposition does not reach them.
       tracked occurrences against the 27 reachable of the other shape, so the
       answer decides whether this is a bounded fix or a sweep of every
       technical note in `docs/research`.
+- [ ] Decide whether the rule reaches code comments and docstrings. Five
+      occurrences sit outside markdown across 88 tracked scripts, one of which
+      is the detector's own worked example and must stay. Small enough that it
+      does not change the shape of the work, but it is a boundary the rule does
+      not currently draw.
 - [ ] Decide whether a check should reject line-suffixed section references, or
       whether the rule applies only to prose and not to diagram labels and
       audit tables.

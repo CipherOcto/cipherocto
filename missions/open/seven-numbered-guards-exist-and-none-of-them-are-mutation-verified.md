@@ -355,6 +355,17 @@ detecting guard cannot both be red for the same input.
   clean: **38 red, 0 vacuous, 0 bad-mutation, 0 bad-anchor**. It needs no
   recompile, so it is affordable on a constrained disk and there was no reason
   for it to have waited behind the expensive half.
-- The `rebuild` tier of `mutate-zk-guards.py` (35 of 73 entries) was not run:
-  it recompiles the workspace, and the disk is at 100%. Run it when there is
-  room, or on a machine that is not disk-constrained.
+- The `rebuild` tier of `mutate-zk-guards.py` (35 of 73 entries) was recorded
+  for a long time as unaffordable: it recompiles, and the disk sits at 100%. That
+  was an assumption, and it was wrong. The tier runs a _targeted_
+  `cargo test -p <crate>`, and with 294 GB of compiled dependencies already in
+  `target/` the incremental build needs no meaningful new space. Run in full:
+  **73 of 73 red, 0 vacuous, 0 bad-mutation, 0 bad-anchor**, in 175 seconds at
+  1.79 GB peak resident, with free disk unchanged before and after and the tree
+  clean afterwards.
+  Nothing was verified about the zk guards until this run, so for that period
+  every statement about them rested on the 38 free entries alone. The lesson is
+  the one this mission keeps arriving at from different directions: a cost
+  estimated rather than measured is a claim about a condition nobody examined,
+  and this one sat in a mission for hours asserting a blocker that was not
+  there.

@@ -18,6 +18,9 @@ OUT_OF_SYNC_NEWER=0
 NO_STATUS_VERSION=0
 NO_VH=0
 NO_VH_VERSION=0
+NOT_RFC=0
+CLASSIFIED=0
+UNCLASSIFIED=0
 
 # The Version History heading is written in four shapes across this corpus:
 # bare, numbered (`## 6. Version History`), and each of those with a leading
@@ -30,7 +33,18 @@ NO_VH_VERSION=0
 # all — it reported nothing for the file because it did not read it, which is
 # the same defect as a lint that reports success on an empty corpus, and this
 # script already carries a guard for that at the end of the file.
-VH_HEADING='^##+ ([0-9]+(\.[0-9]+)*\.? )?(Version History|Changelog|§Version History|§Changelog)'
+# The section sign may come before the number as well as after it. The previous
+# alternation listed `§Version History` beside `6. Version History` and so
+# recognized three of the four shapes its own comment above names: it had no arm
+# for `§6 Version History`, where the sign leads. Two files in this corpus write
+# that form, and neither had its Version History read by this guard at all —
+# they fell past the NO_VH branch, which counts only Accepted files, and reached
+# a `continue` having incremented nothing. The population reconciliation added
+# below is what surfaced them, as six files this guard read and could not place.
+#
+# Both signs are now optional and independent, so every shape the comment names
+# is matched, and no shape that matched before stops matching.
+VH_HEADING='^##+ (§)?([0-9]+(\.[0-9]+)*\.? )?(§)?(Version History|Changelog)'
 
 # Normalise a version to three numeric components so that `2.14` and `2.14.0`
 # compare equal. Missing components are zero, which is what they mean in every
@@ -64,13 +78,48 @@ echo "Status/VH sync linter — Guard 3 (M37 NEW P3)"
 echo "RFC root: $RFC_ROOT"
 echo ""
 
+# Every file this loop reads must land in a category, and the categories must
+# add back up to the population.
+#
+# They did not. Three paths placed a scanned file in no counter at all, so the
+# summary described a corpus it had only partly accounted for. On this tree
+# SCANNED=247 while CHECKED=74, NO_STATUS_VERSION=160 and NO_VH_VERSION=12
+# — 246, and not even that, because six files are counted in two categories at
+# once. The residual was seven files the guard read and reported nothing about,
+# which is the same shape as the defects this script already carries comments
+# about: a number beside a population it does not describe.
+#
+# The silent paths were a basename skip that incremented SCANNED and continued,
+# and a file holding a Status version but no Version History heading that is not
+# Accepted — which falls past the NO_VH branch, because that branch only counts
+# Accepted files, and reaches its `continue` having incremented nothing.
+#
+# `tally` closes both. A file that set `touched` reached at least one category
+# and is counted once; one that did not is counted as UNCLASSIFIED, which is a
+# finding about this guard rather than about the corpus.
+tally() {
+    if [ "$touched" -eq 1 ]; then
+        CLASSIFIED=$((CLASSIFIED + 1))
+    else
+        # Named, like every other category. A count of files this guard read
+        # and could not place, with nothing to identify them, is the same
+        # defect one level up.
+        echo "UNCLASSIFIED: $rfc_file (read, but no category applies)"
+        UNCLASSIFIED=$((UNCLASSIFIED + 1))
+    fi
+}
+
 while IFS= read -r -d '' rfc_file; do
     SCANNED=$((SCANNED + 1))
+    touched=0
 
     # Skip non-content files (CHANGELOG-only, README, etc.)
     basename=$(basename "$rfc_file")
     case "$basename" in
-        CHANGELOG.md|README.md|INDEX.md) continue ;;
+        CHANGELOG.md|README.md|INDEX.md)
+            NOT_RFC=$((NOT_RFC + 1))
+            continue
+            ;;
     esac
 
     # Find ## Status block
@@ -183,6 +232,7 @@ PY
     if [ -z "$status_version" ]; then
         echo "NO_STATUS_VERSION: $rfc_file (no ## Status version found)"
         NO_STATUS_VERSION=$((NO_STATUS_VERSION + 1))
+        touched=1
         # Continue to check VH even if no Status
     fi
 
@@ -209,6 +259,7 @@ PY
             NO_VH=$((NO_VH + 1))
             EXIT_CODE=1
         fi
+        tally
         continue
     fi
 
@@ -269,6 +320,8 @@ PY
     if [ -z "$vh_has_rows" ]; then
         echo "NO_VH_ROWS: $rfc_file (## Version History exists but no data rows)"
         NO_VH=$((NO_VH + 1))
+        touched=1
+        tally
         continue
     fi
 
@@ -299,6 +352,8 @@ PY
     if [ -z "$vh_latest" ]; then
         echo "NO_VH_VERSION: $rfc_file (Version History has dated rows but no version column to compare)"
         NO_VH_VERSION=$((NO_VH_VERSION + 1))
+        touched=1
+        tally
         continue
     fi
 
@@ -325,6 +380,7 @@ PY
         # SCANNED now carries the corpus total, and the summary reports the
         # population statement rather than leaving the reader to subtract.
         CHECKED=$((CHECKED + 1))
+        touched=1
         if [ "$(pad3 "$status_version")" = "$(pad3 "$vh_latest")" ]; then
             IN_SYNC=$((IN_SYNC + 1))
         else
@@ -346,6 +402,7 @@ PY
             fi
         fi
     fi
+    tally
 done < <(find "$RFC_ROOT" -type f -name '*.md' -print0 2>/dev/null || true)
 
 echo ""
@@ -357,6 +414,19 @@ echo "         NO_STATUS_VERSION=$NO_STATUS_VERSION (nothing to compare a VH row
 echo "         NO_VH=$NO_VH"
 echo "         NO_VH_VERSION=$NO_VH_VERSION (dated rows, no version column; not comparable)"
 echo "         DUAL_VH=$DUAL_VH (informational only, e.g., RFC-0126)"
+echo "         NOT_RFC=$NOT_RFC (CHANGELOG/README/INDEX; scanned but not RFC content)"
+echo "         CLASSIFIED=$CLASSIFIED UNCLASSIFIED=$UNCLASSIFIED (every scanned file, once)"
+#
+# The three counters above must add back up to the population. They are counts
+# of files that reached at least one category, so a file landing in two is
+# still counted once and the arithmetic is exact — which is what makes a
+# residual visible instead of something a reader has to notice is missing.
+if [ $((NOT_RFC + CLASSIFIED + UNCLASSIFIED)) -ne "$SCANNED" ]; then
+    echo "FAIL: population does not reconcile: NOT_RFC=$NOT_RFC + CLASSIFIED=$CLASSIFIED"
+    echo "      + UNCLASSIFIED=$UNCLASSIFIED is $((NOT_RFC + CLASSIFIED + UNCLASSIFIED)),"
+    echo "      but SCANNED=$SCANNED. A file was read and placed in no category."
+    EXIT_CODE=1
+fi
 #
 # CHECKED counts files where a Status version and a Version History row were
 # actually put side by side. SCANNED counts markdown files found. The

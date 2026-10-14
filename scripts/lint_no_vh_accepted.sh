@@ -94,7 +94,7 @@ while IFS= read -r -d '' rfc_file; do
     #
     # The number is optional, not required, so this only ever recognizes more.
     # Verified across the whole tree: 14 files newly recognized, none lost.
-    if ! grep -qE '^##+ ([0-9]+(\.[0-9]+)*\.? )?(Version History|Changelog|§Version History|§Changelog)' "$rfc_file" 2>/dev/null; then
+    if ! grep -qE '^##+ (§)?([0-9]+(\.[0-9]+)*\.? )?(§)?(Version History|Changelog)' "$rfc_file" 2>/dev/null; then
         echo "MISSING_VH: $rfc_file (Accepted but no ## Version History / ## Changelog)"
         MISSING_VH=$((MISSING_VH + 1))
         FAIL=$((FAIL + 1))
@@ -127,7 +127,7 @@ while IFS= read -r -d '' rfc_file; do
     # The bullet alternative is kept to a single line and uses no multi-line
     # regex: an earlier attempt spanned lines with an em-dash inside a bracket
     # expression and silently matched nothing, turning the whole linter red.
-    vh_has_rows=$(awk '/^##+ ([0-9]+(\.[0-9]+)*\.? )?(Version History|Changelog|§Version History|§Changelog)/{found=1; next} /^\| v?[0-9]+/ {if (found) {print; exit}} /^[ \t]*[-*][ \t]+\*\*v[0-9]/ {if (found) {print; exit}} /^[ \t]*[-*][ \t]+v?[0-9]+\.[0-9]+/ {if (found) {print; exit}} /^[ \t]*[-*][ \t]+[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ {if (found) {print; exit}}' "$rfc_file" 2>/dev/null || true)
+    vh_has_rows=$(awk '/^##+ (§)?([0-9]+(\.[0-9]+)*\.? )?(§)?(Version History|Changelog)/{found=1; next} /^\| v?[0-9]+/ {if (found) {print; exit}} /^[ \t]*[-*][ \t]+\*\*v[0-9]/ {if (found) {print; exit}} /^[ \t]*[-*][ \t]+v?[0-9]+\.[0-9]+/ {if (found) {print; exit}} /^[ \t]*[-*][ \t]+[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ {if (found) {print; exit}}' "$rfc_file" 2>/dev/null || true)
     if [ -z "$vh_has_rows" ]; then
         echo "MISSING_VH_ROWS: $rfc_file (## Version History exists but no data rows)"
         MISSING_VH=$((MISSING_VH + 1))

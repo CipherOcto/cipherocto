@@ -575,6 +575,116 @@ case_section_cites_overdeep() {
     run_case "section_cites/over-deep" section_cites_guard "REJECT [over-deep]"
 }
 
+# The Version History heading may carry a section sign BEFORE its number, as in
+# `## §6 Version History`. The guard's alternation named `§Version History`
+# beside `6. Version History` and had no arm for the combination, so a file
+# written that way had its Version History skipped entirely: `vh_line_num` came
+# back empty, the NO_VH branch counted only Accepted files, and the loop reached
+# its `continue` having incremented nothing. Two files in this corpus write that
+# form, and the guard compared neither.
+#
+# This is a detect-direction case, because the defect's whole effect is silence.
+# A fixture whose Status and Version History disagree is reported only if the
+# heading was recognised at all.
+write_signed_vh_clean() {
+    cat >"$FIX/rfcs/0003-signed.md" <<'EOF'
+# RFC-0003 Signed Heading
+
+## Status
+
+Accepted (v2.0.0) — promoted 2026-02-01
+
+## §6 Version History
+
+| Version | Date | Changes |
+| --- | --- | --- |
+| 1.0.0 | 2026-01-01 | Initial |
+| 2.0.0 | 2026-02-01 | Second |
+EOF
+}
+
+write_signed_vh_drift() {
+    cat >"$FIX/rfcs/0003-signed.md" <<'EOF'
+# RFC-0003 Signed Heading
+
+## Status
+
+Accepted (v1.0.0) — promoted 2026-01-01
+
+## §6 Version History
+
+| Version | Date | Changes |
+| --- | --- | --- |
+| 1.0.0 | 2026-01-01 | Initial |
+| 2.0.0 | 2026-02-01 | Second |
+EOF
+}
+
+case_status_vh_signed_heading() {
+    prepare_case() { write_signed_vh_clean; }
+    write_defect() { write_signed_vh_drift; }
+    run_case "status_vh/signed-numbered-heading" status_vh_guard "OUT_OF_SYNC_STATUS_OLDER"
+}
+
+# Every file the guard reads must land in a category, and the categories must
+# add back up to the population it scanned.
+#
+# This is the counterweight to a guard that reports a total beside a narrower
+# population. Before this, three paths in the loop incremented nothing: a
+# basename skip, a Status-version file with no Version History heading that is
+# not Accepted, and two `continue`s that set a counter without tallying the file.
+# On the real tree SCANNED=247 while the reported categories accounted for 240
+# and a half, and the residual was invisible.
+case_status_vh_reconciles() {
+    if [ -n "$FILTER" ] && [[ "status_vh/population-reconciles" != *"$FILTER"* ]]; then
+        SKIP=$((SKIP + 1))
+        return 0
+    fi
+    local own="$WORK/case-status-vh-recon"
+    rm -rf "$own"
+    mkdir -p "$own/rfcs"
+    FIX="$own"
+    write_base_fixture
+    write_signed_vh_clean
+    # A Version History written as dated bullets. The row reader accepts this
+    # shape while the latest-version reader reads only pipe rows, so the file
+    # lands on the NO_VH_VERSION path. This is the fixture that shape has to
+    # come from: a date-column TABLE is rejected earlier as NO_VH_ROWS, and a
+    # fixture reaching the wrong branch would pass against a guard with this
+    # tally removed.
+    cat >"$FIX/rfcs/0004-date-column.md" <<'EOF'
+# RFC-0004 Date Column
+
+## Status
+
+Draft
+
+## Version History
+
+- 2026-01-01 — Initial
+- 2026-02-01 — Second
+EOF
+    local out scanned nrc cls unc
+    out="$(status_vh_guard 2>&1)"
+    scanned="$(grep -oE 'SCANNED=[0-9]+' <<< "$out" | head -1 | grep -oE '[0-9]+' || true)"
+    nrc="$(grep -oE 'NOT_RFC=[0-9]+' <<< "$out" | head -1 | grep -oE '[0-9]+' || true)"
+    cls="$(grep -oE 'CLASSIFIED=[0-9]+' <<< "$out" | head -1 | grep -oE '[0-9]+' || true)"
+    unc="$(grep -oE 'UNCLASSIFIED=[0-9]+' <<< "$out" | head -1 | grep -oE '[0-9]+' || true)"
+    if [ -z "$nrc" ] || [ -z "$cls" ] || [ -z "$unc" ] || [ -z "$scanned" ]; then
+        printf '%-34s %-8s %s\n' "status_vh/population-reconciles" "accept" \
+            "no reconciliation counters reported — the population cannot be checked"
+        FAIL=$((FAIL + 1))
+    elif [ $((nrc + cls + unc)) -ne "$scanned" ]; then
+        printf '%-34s %-8s %s\n' "status_vh/population-reconciles" "accept" \
+            "$nrc + $cls + $unc = $((nrc + cls + unc)) against SCANNED=$scanned"
+        FAIL=$((FAIL + 1))
+    else
+        printf '%-34s %-8s %s\n' "status_vh/population-reconciles" "accept" \
+            "ok ($nrc + $cls + $unc = SCANNED=$scanned)"
+    fi
+    PASS=$((PASS + 1))
+}
+
 case_status_vh() {
     write_defect() { write_status_vh_defect; }
     run_case "status_vh/out-of-sync" status_vh_guard "OUT_OF_SYNC_STATUS_OLDER"
@@ -857,6 +967,8 @@ case_section_cites_overdeep
 case_section_cites_quoted
 case_section_cites_coverage
 case_status_vh
+case_status_vh_signed_heading
+case_status_vh_reconciles
 case_no_vh
 case_no_vh_bullets
 case_no_vh_population

@@ -171,12 +171,20 @@ whether it belongs in CI at all.
 
 ### The harness is worth wiring even though it is not a gate
 
-`scripts/mutation-verify-doc-guards.sh` currently runs 14 cases across 8
-guards and exits 0. Wiring it as a gating step is the one addition that changes
+`scripts/mutation-verify-doc-guards.sh` runs a set of cases across 8 guards and
+exits 0. Its current count is whatever `--help` prints, and that listing is
+self-maintaining: the run asserts that the number of named cases equals the
+number of case functions executed, so the two cannot drift apart. Wiring it as
+a gating step is the one addition that changes
 what CI can catch rather than merely adding a gate that already passes: without
 it, a guard can be silently broken and the three gating steps above would still
 be green, because a broken guard that reports nothing looks exactly like a
 clean corpus.
+
+An earlier version of this section restated the count as a number here, which
+guaranteed it would go stale: the figure has needed correcting three times, and
+each correction was a separate piece of work for a fact that is already
+self-reporting. Nothing in this mission should quote a live count again.
 
 It costs seconds. It touches no tracked file. It is the direct answer to this
 mission's own thesis.
@@ -193,13 +201,17 @@ no `~/.claude`, no build, and no local state:
 | `bash scripts/lint_section_cites.sh`         | 0                           |
 | `bash scripts/mutation-verify-doc-guards.sh` | 0 — 10 cases at that commit |
 
-The 10 there is what the clone produced when this was validated. The harness has
-since grown to 14 cases, because its own case listing counted only the cases
-written in one call form and omitted the four that assert on a guard's output
-instead of planting a defect for it to catch. The step still exits 0; the figure
-moved because the count was underreporting, not because the harness began
-examining something else. The blind result below is likewise a record of that
-run rather than a current one.
+The 10 there is what the clone produced when this was validated, and it is
+kept rather than updated: a historical measurement is not made truer by editing
+it. The harness has grown several cases since, for two separate reasons. Its
+case listing counted only the cases written in one call form and omitted those
+that assert on a guard's output instead of planting a defect for it to catch.
+Cases were then added for defects found afterwards — a population that did not
+reconcile, a heading shape neither guard read, and two baselined linters that
+did not say what their baselines were doing. The step still exits 0; the count
+moved because the harness covers more, not because it began examining something
+it had not. The blind result below is likewise a record of that run rather than
+a current one.
 
 The harness was then shown to still bite in that environment: blinding
 `lint_section_cites.sh`'s phantom-token rule inside the clone produced

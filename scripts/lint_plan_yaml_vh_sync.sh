@@ -210,6 +210,32 @@ if [ "$CHECKED" -eq 0 ]; then
     exit 1
 fi
 
+# ...and a lint that compared no pair has verified no sync, which `CHECKED`
+# does not stand in for. CHECKED counts plans read; COMPARED counts the YAML
+# version and the Version History row actually put side by side, and the
+# OUT_OF_SYNC_ verdicts are about that second number alone.
+#
+# The guard above tests CHECKED, so this run passed with COMPARED=0: three
+# short plans, none carrying a Version History, all classified KEEP_AS_IS, and
+# `PASS: plan YAML/VH sync clean.` printed over a population that was never
+# examined. Files were read, so this was not silence — it was a verdict about a
+# comparison the guard had not made. IN_SYNC and both OUT_OF_SYNC_ counters
+# read 0 there, which is indistinguishable from six plans that all agreed.
+#
+# The sibling guard fails closed on the same condition, keyed to the population
+# it actually describes — the compared pairs rather than the files read.
+if [ "$COMPARED" -eq 0 ]; then
+    echo ""
+    echo "FAIL: no YAML/VH pair was compared (SCANNED=$CHECKED, COMPARED=0)."
+    echo "This lint verified no plan version sync. The $CHECKED plan(s) read were"
+    echo "classified — NO_VH_NO_YAML=$NO_VH_NO_YAML NO_VH=$NO_VH NO_YAML=$NO_YAML"
+    echo "KEEP_AS_IS=$KEEP_AS_IS — but no YAML version was set beside a Version"
+    echo "History row, so every sync counter above is an absence of comparisons"
+    echo "rather than a result. Point PLAN_ROOT at a corpus holding comparable"
+    echo "plans before treating a pass as meaningful."
+    exit 1
+fi
+
 if [ "$EXIT_CODE" -ne 0 ]; then
     echo ""
     echo "FAIL: plan YAML/VH sync drift detected."

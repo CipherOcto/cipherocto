@@ -1349,6 +1349,71 @@ case_plan_buckets() {
     PASS=$((PASS + 1))
 }
 
+case_plan_refuses_empty_pass() {
+    if [ -n "$FILTER" ] && [[ "plan_yaml/refuses-to-pass-when-nothing-compared" != *"$FILTER"* ]]; then
+        SKIP=$((SKIP + 1))
+        return 0
+    fi
+    local own="$WORK/case-plan-empty-pass"
+    mkdir -p "$own/plans"
+    FIX="$own"
+    # Three short plans, none carrying a Version History. All three classify as
+    # KEEP_AS_IS, so files are read and the guard is not silent — but no YAML
+    # version is ever set beside a VH row, so the comparison it is named for
+    # never happens.
+    printf '# Short One\n\n## Plan\n\nDo a thing.\n' >"$FIX/plans/one.md"
+    printf '# Short Two\n\n## Plan\n\nDo a thing.\n' >"$FIX/plans/two.md"
+    printf '# Short Three\n\n## Plan\n\nDo a thing.\n' >"$FIX/plans/three.md"
+
+    local out rc bad=""
+    out="$(plan_guard 2>&1)"; rc=$?
+    # Asserted on the presence of the refusal. Asserting that the output lacks
+    # the word PASS alone would also be satisfied by a guard that crashed.
+    if ! grep -q 'no YAML/VH pair was compared' <<< "$out"; then
+        bad="a run that compared nothing did not say so"
+    elif grep -q '^PASS:' <<< "$out"; then
+        bad="reported PASS with COMPARED=0"
+    elif [ "$rc" -eq 0 ]; then
+        bad="exited 0 with COMPARED=0"
+    else
+        # The accept direction, in the same case: adding one comparable plan
+        # must restore the pass, so the refusal cannot be satisfied by simply
+        # refusing everything.
+        cat >"$FIX/plans/comparable.md" <<'EOF'
+---
+title: Comparable Plan
+version: 1.0.0
+---
+
+# Comparable Plan
+
+## Plan
+
+Do a thing.
+
+## Version History
+
+| Version | Date | Changes |
+| ------- | ---- | ------- |
+| 1.0.0 | 2026-01-01 | Initial. |
+EOF
+        out="$(plan_guard 2>&1)"; rc=$?
+        if [ "$rc" -ne 0 ]; then
+            bad="refused a corpus holding a comparable, in-sync pair"
+        elif ! grep -q 'COMPARED=1 pair' <<< "$out"; then
+            bad="did not report COMPARED=1 once a comparable plan was present"
+        fi
+    fi
+    if [ -n "$bad" ]; then
+        printf '%-34s %-8s %s\n' "plan_yaml/refuses-to-pass-when-nothing-compared" "accept" "$bad"
+        FAIL=$((FAIL + 1))
+    else
+        printf '%-34s %-8s %s\n' "plan_yaml/refuses-to-pass-when-nothing-compared" "accept" \
+            "ok (refuses COMPARED=0, passes COMPARED=1)"
+    fi
+    PASS=$((PASS + 1))
+}
+
 case_plan_yaml() {
     prepare_case() {
         mkdir -p "$FIX/plans"
@@ -1600,6 +1665,7 @@ run_case_fn case_no_vh_reconciles
 run_case_fn case_population_coverage
 run_case_fn case_plan_yaml
 run_case_fn case_plan_buckets
+run_case_fn case_plan_refuses_empty_pass
 run_case_fn case_inflation_locale
 run_case_fn case_cross_rfc_corpus
 run_case_fn case_cites

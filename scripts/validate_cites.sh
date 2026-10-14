@@ -376,11 +376,56 @@ echo ""
 # that is a maintainer decision; making the omission visible is not.
 SCOPE_ALL=$(git ls-files '*.md' 2>/dev/null | grep -vc '^\.claude/worktrees/' || true)
 SCOPE_IN=$(git ls-files '*.md' 2>/dev/null | grep -v '^\.claude/worktrees/' | grep -cE "^(rfcs|docs)/" || true)
+
+# The other blind spot, and the one this run created for itself: the line above
+# counts TRACKED files, but the walk reads the FILESYSTEM. Those are not the
+# same corpus here.
+#
+# `docs/reviews/`, `docs/audits/` and `docs/plans/` are gitignored on purpose —
+# local review and audit scratchpads that are never committed. So a run on a
+# developer's machine walks 1133 markdown files and a run in a clean clone walks
+# 422, and the two do not agree: the same guard at the same commit reports 1300
+# INVALID and 1028 STALE locally against 972 and 460 in a clone. Every finding
+# count this guard prints is a statement about a corpus that a CI runner cannot
+# reproduce, and nothing in the summary said so.
+#
+# Not fixed by scanning only tracked files: that changes what this rejects, which
+# is a maintainer decision. What is stated is the size of the difference and its
+# consequence, which is the part that is not a decision.
+WALKED=0
+WALKED_UNTRACKED=""
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    WALKED_LIST=$(find "$RFC_ROOT" "$DOCS_ROOT" -maxdepth "$CITE_MAXDEPTH" -type f -name '*.md' 2>/dev/null || true)
+    # `|| true`, not `|| echo 0`. `grep -c` prints the count it found and then
+    # exits 1 when that count is zero, so a `|| echo 0` fallback appends a
+    # second zero to the one grep already printed. The variable then held "0\n0"
+    # and the arithmetic below failed on it, which took the whole CORPUS block
+    # down with it.
+    #
+    # The repository run did not show this: 711 of 1133 files are untracked, so
+    # the count is nonzero and the double zero never happens. Only a fixture
+    # whose every file is untracked reaches zero, which is why the check passed
+    # against the real corpus and failed against a two-file temporary one.
+    WALKED=$(grep -c . <<< "$WALKED_LIST" 2>/dev/null || true)
+    [ -n "$WALKED" ] 2>/dev/null || WALKED=0
+    WALKED_TRACKED=$(grep -xF -f <(git ls-files '*.md' 2>/dev/null | grep -v '^\.claude/worktrees/') \
+        <<< "$WALKED_LIST" 2>/dev/null | grep -c . || true)
+    [ -n "$WALKED_TRACKED" ] 2>/dev/null || WALKED_TRACKED=0
+    WALKED_UNTRACKED=$((WALKED - WALKED_TRACKED))
+fi
+
+echo "Summary: CHECKED=$CHECKED VALID=$VALID PHANTOM=$PHANTOM INVALID=$INVALID STALE=$STALE"
 if [ -n "$SCOPE_ALL" ] && [ "$SCOPE_ALL" -gt 0 ] 2>/dev/null; then
-    echo "Summary: CHECKED=$CHECKED VALID=$VALID PHANTOM=$PHANTOM INVALID=$INVALID STALE=$STALE"
     echo "         SCOPE (repository layout, not this run's corpus): $SCOPE_IN of $SCOPE_ALL tracked markdown files lie under (rfcs docs); $((SCOPE_ALL - SCOPE_IN)) unexamined"
-else
-    echo "Summary: CHECKED=$CHECKED VALID=$VALID PHANTOM=$PHANTOM INVALID=$INVALID STALE=$STALE"
+fi
+if [ -n "$WALKED_UNTRACKED" ]; then
+    if [ "$WALKED_UNTRACKED" -gt 0 ] 2>/dev/null; then
+        echo "         CORPUS (what this run walked): $WALKED markdown files under (rfcs docs), of which $WALKED_UNTRACKED are not tracked by git"
+        echo "         and are absent from a clean clone. The counts above are for this machine's corpus"
+        echo "         and will not reproduce in CI."
+    else
+        echo "         CORPUS (what this run walked): $WALKED markdown files under (rfcs docs), all tracked by git"
+    fi
 fi
 
 # A lint that examined no citations has verified nothing, and must not report

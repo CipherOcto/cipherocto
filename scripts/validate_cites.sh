@@ -1,9 +1,20 @@
 #!/usr/bin/env bash
 # scripts/validate_cites.sh
-# Guard 2: Pre-commit § cite validation hook (per long-horizon plan v1.3 Phase 2 §Guard 2; R37 P3)
-# Behavior: For each RFC-XXXX §section cite in changed files, verify §section exists in cited RFC.
-# Coverage: Cite instances across all RFCs + research doc + mission YAMLs.
-# Blocking on commit: YES.
+#
+# USER-INITIATED ONLY. This script is never run automatically — not by a hook,
+# not by a workflow, not by CI, not by another script or harness, and not by an
+# agent during a routine check. It runs when a person asks for it. The rule and
+# the reasons it is easy to break are in CLAUDE.md, under
+# "`validate_cites.sh` is user-initiated only".
+#
+# An earlier version of this header described the script as "Guard 2: pre-commit
+# cite validation hook" with "Blocking on commit: YES". It was not installed as
+# a hook, and under the rule above it must not be. The header described an
+# enforcement that did not exist.
+#
+# For each RFC-XXXX §section cite in changed files, verify §section exists in
+# the cited RFC. Coverage: cite instances across all RFCs, the research doc, and
+# mission YAMLs.
 
 set -euo pipefail
 

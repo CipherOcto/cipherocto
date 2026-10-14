@@ -46,6 +46,20 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
+# `scripts/validate_cites.sh` is USER-INITIATED ONLY, by standing instruction.
+# It is never invoked automatically by this harness, by any other script, by
+# any hook, or by CI. It walks a large corpus and exits non-zero by design in
+# this repository, which makes it noisy to run without being asked.
+#
+# Its three cases are therefore opt-in. They are skipped by default AND the
+# skip is announced: a silent skip would let the summary read "passed=N
+# failed=0" over a population three cases short of the one it claims.
+ALLOW_CITES=0
+if [ "${1:-}" = "--with-cites" ]; then
+    ALLOW_CITES=1
+    shift
+fi
+
 FILTER="${1:-}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT INT TERM
@@ -394,7 +408,12 @@ case_ids() {
 # verification of zero guards. An unmatched filter now fails loudly; `--help`
 # is the one argument that is meant to match nothing.
 if [ "$FILTER" = "-h" ] || [ "$FILTER" = "--help" ]; then
-    echo "Usage: scripts/mutation-verify-doc-guards.sh [case-name-substring]"
+    echo "Usage: scripts/mutation-verify-doc-guards.sh [--with-cites] [case-name-substring]"
+    echo ""
+    echo "Options:"
+    echo "  --with-cites  also run the three validate_cites cases. Omitted by"
+    echo "                default: validate_cites.sh is user-initiated only and"
+    echo "                is never run automatically, including by this harness."
     echo ""
     echo "Cases:"
     case_ids | sed 's/^/  /'
@@ -1435,6 +1454,10 @@ case_cites_refuses_empty_corpus() {
         SKIP=$((SKIP + 1))
         return 0
     fi
+    if [ "$ALLOW_CITES" -eq 0 ]; then
+        skip_cites_policy
+        return 0
+    fi
     local own="$WORK/case-cites-empty"
     mkdir -p "$own/rfcs" "$own/docs"
     FIX="$own"
@@ -1498,6 +1521,10 @@ case_cites_honours_both_roots() {
         SKIP=$((SKIP + 1))
         return 0
     fi
+    if [ "$ALLOW_CITES" -eq 0 ]; then
+        skip_cites_policy
+        return 0
+    fi
     local own="$WORK/case-cites-roots"
     mkdir -p "$own/rfcs" "$own/docs"
     FIX="$own"
@@ -1529,7 +1556,22 @@ case_cites_honours_both_roots() {
     PASS=$((PASS + 1))
 }
 
+# Announced once, counted per case. See the ALLOW_CITES note above.
+CITES_SKIP_ANNOUNCED=0
+skip_cites_policy() {
+    SKIP=$((SKIP + 1))
+    if [ "$CITES_SKIP_ANNOUNCED" -eq 0 ]; then
+        CITES_SKIP_ANNOUNCED=1
+        printf '%-34s %-8s %s\n' "validate_cites (3 cases)" "skipped" \
+            "user-initiated only; run with --with-cites"
+    fi
+}
+
 case_cites() {
+    if [ "$ALLOW_CITES" -eq 0 ]; then
+        skip_cites_policy
+        return 0
+    fi
     # The cites corpus is not part of the base fixture, because it is the only
     # case that needs `docs/` to exist as a separate root. Writing the clean
     # pair here (correct cite only) and letting write_defect add the dangling
@@ -1842,7 +1884,18 @@ fi
 
 if [ "$SKIP" -gt 0 ]; then
     echo ""
-    echo "NOTE: $SKIP case(s) skipped by filter '$FILTER'."
+    if [ "$ALLOW_CITES" -eq 0 ]; then
+        # Name the cause. "skipped by filter ''" attributes the three
+        # policy skips to a filter that was never given, which is the same
+        # class of defect as reporting a result about a population the run
+        # did not examine.
+        echo "NOTE: $SKIP case(s) skipped."
+        echo "      The 3 validate_cites cases are opt-in: validate_cites.sh is"
+        echo "      user-initiated only and is never run automatically."
+        echo "      Pass --with-cites to include them."
+    else
+        echo "NOTE: $SKIP case(s) skipped by filter '$FILTER'."
+    fi
 fi
 
 exit 0

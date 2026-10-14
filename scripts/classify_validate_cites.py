@@ -133,7 +133,11 @@ Classifies the findings a validate_cites.sh run printed, grouping them by
 whether each is a genuine defect or a shape the guard reports without one.
 
     bash scripts/validate_cites.sh > /tmp/cites.txt
-    python3 scripts/classify_validate_cites.py /tmp/cites.txt"""
+    python3 scripts/classify_validate_cites.py /tmp/cites.txt
+
+This script reads the saved output; it never runs the validator. Running the
+validator is user-initiated only and is never automatic — see the
+`validate_cites.sh is user-initiated only` section in CLAUDE.md."""
 
 
 def main() -> int:

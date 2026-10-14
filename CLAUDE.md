@@ -126,6 +126,29 @@ Trust emerges from:
 
 Every participant stakes both OCTO (global alignment) + Role Token (local specialization) to prevent role tourism.
 
+## `validate_cites.sh` is user-initiated only
+
+**`scripts/validate_cites.sh` is never run automatically.** Not by a hook, not
+by a workflow, not by CI, not by another script, not by a harness, and not by
+an agent as part of a routine check. It runs only when the user asks for it.
+
+This is a standing instruction, not a preference.
+
+| Rule                                                                             | Why it is easy to break              |
+| -------------------------------------------------------------------------------- | ------------------------------------ |
+| Never add it to a `.github/workflows/` file                                      | A workflow step looks like free CI.  |
+| Never call it from another script or harness                                     | It is one line and looks harmless.   |
+| Never include it in a routine or battery check an agent runs without being asked | It is the slowest check in the tree. |
+| Never install it as a hook                                                       | Hooks run with no human present.     |
+
+If a check needs it, ask first. The three `validate_cites/*` cases in
+`scripts/mutation-verify-doc-guards.sh` are opt-in behind `--with-cites` for
+this reason, and the harness announces that they were skipped.
+
+`scripts/classify_validate_cites.py` is unaffected: it reads a saved output file
+and never runs the validator itself. Using it still requires a human to have run
+the validator deliberately.
+
 ## RFC Process
 
 RFCs follow the process defined in `docs/BLUEPRINT.md`. Key stages:

@@ -1423,6 +1423,112 @@ case_plan_yaml() {
     run_case "plan_yaml/version-drift" plan_guard "OUT_OF_SYNC_YAML_OLDER"
 }
 
+# The commit-gate cite linter printed `PASS: all cites valid.` on a run that
+# read no citations at all. Every counter stayed at zero, which is exactly what
+# a corpus where all 29273 cites resolved looks like, and the difference
+# between those two states was the whole point of the check.
+#
+# Called with both roots named rather than through `cites_guard`, which passes
+# an explicit file argument and so never exercises the corpus roots at all.
+case_cites_refuses_empty_corpus() {
+    if [ -n "$FILTER" ] && [[ "validate_cites/refuses-empty-corpus" != *"$FILTER"* ]]; then
+        SKIP=$((SKIP + 1))
+        return 0
+    fi
+    local own="$WORK/case-cites-empty"
+    mkdir -p "$own/rfcs" "$own/docs"
+    FIX="$own"
+    # The RFC file is located by its FILENAME — `find_rfc_path` globs
+    # `${rfc_num}*.md` — so the number must not appear in the body. A title
+    # reading `# RFC-9001 Fixture` is itself a citation, and the pre-filter
+    # keeps the file on that basis alone: CHECKED came back 1 from a fixture
+    # meant to hold none.
+    printf '# Alpha Spec\n\n## Status\n\nDraft\n\n## Alpha\n\nSection body.\n' >"$FIX/rfcs/9001-fixture.md"
+    # Prose carrying no RFC citation: the file is skipped by the pre-filter, and
+    # with nothing else to read the run examines zero cites.
+    printf '# Note\n\nNo citations here at all.\n' >"$FIX/docs/note.md"
+
+    local out rc bad=""
+    out="$(env RFC_ROOT="$FIX/rfcs" DOCS_ROOT="$FIX/docs" bash scripts/validate_cites.sh 2>&1)"; rc=$?
+    # Asserted on the presence of the refusal, not on the absence of PASS: a
+    # guard that crashed would also fail to print PASS.
+    if ! grep -q 'no citations were examined' <<< "$out"; then
+        bad="a run that examined no citations did not say so"
+    elif [ "$rc" -eq 0 ]; then
+        bad="exited 0 with CHECKED=0"
+    else
+        # Accept direction, same case: one valid citation restores the pass, so
+        # the refusal cannot be met by refusing everything.
+        printf '# Note\n\nSee RFC-9001 §Alpha for details.\n' >"$FIX/docs/note.md"
+        out="$(env RFC_ROOT="$FIX/rfcs" DOCS_ROOT="$FIX/docs" bash scripts/validate_cites.sh 2>&1)"; rc=$?
+        if [ "$rc" -ne 0 ]; then
+            bad="refused a corpus holding a valid citation"
+        elif ! grep -q 'CHECKED=[1-9]' <<< "$out"; then
+            bad="did not report a non-zero CHECKED once a citation was present"
+        fi
+    fi
+    if [ -n "$bad" ]; then
+        printf '%-34s %-8s %s\n' "validate_cites/refuses-empty-corpus" "accept" "$bad"
+        FAIL=$((FAIL + 1))
+    else
+        printf '%-34s %-8s %s\n' "validate_cites/refuses-empty-corpus" "accept" \
+            "ok (refuses CHECKED=0, passes on a valid cite)"
+    fi
+    PASS=$((PASS + 1))
+}
+
+# `docs` was hardcoded beside RFC_ROOT in the corpus walk, so RFC_ROOT
+# controlled half the corpus and a fixture run still scanned the repository's
+# real docs/. The existing file-list case could not see this: it passes an
+# explicit file argument, so the `find` that hardcodes `docs` never runs.
+#
+# Its own case rather than an extra assertion on the one above, because that
+# case short-circuits on its first failure — with the root hardcoded the
+# fixture's citations are not read at all, so it would stop before reaching an
+# isolation check and report the wrong reason for failing.
+#
+# Which assertion carries the detection: reverting the root trips the FIRST
+# one, "no finding named the fixture document", because hardcoding `docs` drops
+# the fixture corpus rather than adding to it. The `docs/`-relative check below
+# is a backstop for the opposite failure — both corpora read — and is not
+# exercised by that mutation. It is left in because it is cheap, but the
+# verified detection is the first assertion, not this one.
+case_cites_honours_both_roots() {
+    if [ -n "$FILTER" ] && [[ "validate_cites/honours-both-corpus-roots" != *"$FILTER"* ]]; then
+        SKIP=$((SKIP + 1))
+        return 0
+    fi
+    local own="$WORK/case-cites-roots"
+    mkdir -p "$own/rfcs" "$own/docs"
+    FIX="$own"
+    printf '# Alpha Spec\n\n## Status\n\nDraft\n\n## Alpha\n\nBody.\n' >"$FIX/rfcs/9001-fixture.md"
+    # One valid citation and one dangling section, so the run both finds work
+    # and reports it. The dangling cite is what proves which corpus was read.
+    printf '# Note\n\nSee RFC-9001 §Alpha, and RFC-9001 §Missing.\n' >"$FIX/docs/note.md"
+
+    local out bad=""
+    out="$(env RFC_ROOT="$FIX/rfcs" DOCS_ROOT="$FIX/docs" bash scripts/validate_cites.sh 2>&1)"
+    if ! grep -q "INVALID \[section missing\]: $FIX/docs/note.md" <<< "$out"; then
+        bad="no finding named the fixture document"
+    elif grep -qE '^(INVALID|PHANTOM|STALE) \[.*\] docs/' <<< "$out"; then
+        # Repository-relative, i.e. the real docs/ was scanned alongside the
+        # fixture. Asserted on the paths the guard reports, which is the only
+        # observable difference: it does the same work, over a corpus the
+        # caller did not choose.
+        bad="findings reference the repository docs/, not the fixture corpus"
+    elif ! grep -q 'RFC_ROOT=' <<< "$out" && grep -q 'CHECKED=[0-9]'; then
+        bad="fixture corpus produced no summary"
+    fi
+    if [ -n "$bad" ]; then
+        printf '%-34s %-8s %s\n' "validate_cites/honours-both-corpus-roots" "accept" "$bad"
+        FAIL=$((FAIL + 1))
+    else
+        printf '%-34s %-8s %s\n' "validate_cites/honours-both-corpus-roots" "accept" \
+            "ok (fixture corpus only, both roots honoured)"
+    fi
+    PASS=$((PASS + 1))
+}
+
 case_cites() {
     # The cites corpus is not part of the base fixture, because it is the only
     # case that needs `docs/` to exist as a separate root. Writing the clean
@@ -1669,6 +1775,8 @@ run_case_fn case_plan_refuses_empty_pass
 run_case_fn case_inflation_locale
 run_case_fn case_cross_rfc_corpus
 run_case_fn case_cites
+run_case_fn case_cites_refuses_empty_corpus
+run_case_fn case_cites_honours_both_roots
 run_case_fn case_frontmatter
 run_case_fn case_frontmatter_reconciles
 run_case_fn case_anchors

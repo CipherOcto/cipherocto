@@ -8,6 +8,19 @@
 set -euo pipefail
 
 RFC_ROOT="${RFC_ROOT:-rfcs}"
+# Second corpus root, overridable for the same reason as RFC_ROOT and with the
+# same default.
+#
+# `docs` was hardcoded beside "$RFC_ROOT" in the `find`, so RFC_ROOT controlled
+# half the corpus. A caller could point it at a fixture and still have the
+# repository's real docs/ scanned — which is how the file-list harness case
+# avoided the problem: it passed an explicit file argument, so the `find` never
+# ran and no case would have noticed the root was not overridable.
+#
+# The default is unchanged, so nothing this rejects changes. What changes is
+# that the corpus can now be chosen, and a fixture can prove the guard sees only
+# the corpus it was pointed at.
+DOCS_ROOT="${DOCS_ROOT:-docs}"
 # Per-command timeout in seconds. Override via CITE_TIMEOUT env.
 # Applied to: find (full tree walks), sort (large lists), grep over big files.
 # Cheap per-cite parsing uses bash builtins ([[ =~ ]]) — no fork, no timeout needed.
@@ -194,7 +207,7 @@ if [ ${#files_to_check[@]} -eq 0 ]; then
             echo "WARN: hit CITE_MAXFILES=$CITE_MAXFILES; truncating file list" >&2
             break
         fi
-    done < <(timeout "$CITE_TIMEOUT" find "$RFC_ROOT" docs -maxdepth "$CITE_MAXDEPTH" -type f -name '*.md' -print0 2>/dev/null \
+    done < <(timeout "$CITE_TIMEOUT" find "$RFC_ROOT" "$DOCS_ROOT" -maxdepth "$CITE_MAXDEPTH" -type f -name '*.md' -print0 2>/dev/null \
         | timeout "$CITE_TIMEOUT" xargs -0 -r grep -lEZ 'RFC-[0-9]+' 2>/dev/null || true)
 fi
 
@@ -346,14 +359,17 @@ for file in "${files_to_check[@]}"; do
 done
 
 echo ""
-# What share of the repository this run actually looked at.
+# Where the markdown corpus lives, for the repository at hand.
 #
-# Stated in files rather than tokens on purpose. CHECKED counts RFC-plus-
-# section cite pairs, which is not the same population as a count of section
-# marks, and dividing one by the other would produce a confident percentage
-# describing nothing. The real blind spot is structural: this linter walks
-# "$RFC_ROOT docs", so every tracked markdown file outside those two roots is
-# unexamined no matter how many cites it carries.
+# Stated as repository layout rather than as this run's corpus, because it is
+# computed from `git ls-files` in the working directory and so does not follow
+# the roots this run was pointed at. A fixture run prints the repository's own
+# counts beside findings drawn from two temporary directories, which reads as a
+# coverage claim about the run when it is a fact about the checkout.
+#
+# The real blind spot is structural: this linter walks two roots, so every
+# tracked markdown file outside them is unexamined no matter how many cites it
+# carries.
 #
 # 789 of the 1256 tracked markdown files are missions, which is the bulk of
 # what goes unseen. Widening the roots changes what this linter rejects, so
@@ -362,9 +378,48 @@ SCOPE_ALL=$(git ls-files '*.md' 2>/dev/null | grep -vc '^\.claude/worktrees/' ||
 SCOPE_IN=$(git ls-files '*.md' 2>/dev/null | grep -v '^\.claude/worktrees/' | grep -cE "^(rfcs|docs)/" || true)
 if [ -n "$SCOPE_ALL" ] && [ "$SCOPE_ALL" -gt 0 ] 2>/dev/null; then
     echo "Summary: CHECKED=$CHECKED VALID=$VALID PHANTOM=$PHANTOM INVALID=$INVALID STALE=$STALE"
-    echo "         SCOPE: $SCOPE_IN of $SCOPE_ALL tracked markdown files lie under (rfcs docs); $((SCOPE_ALL - SCOPE_IN)) unexamined"
+    echo "         SCOPE (repository layout, not this run's corpus): $SCOPE_IN of $SCOPE_ALL tracked markdown files lie under (rfcs docs); $((SCOPE_ALL - SCOPE_IN)) unexamined"
 else
     echo "Summary: CHECKED=$CHECKED VALID=$VALID PHANTOM=$PHANTOM INVALID=$INVALID STALE=$STALE"
+fi
+
+# A lint that examined no citations has verified nothing, and must not report
+# that its corpus is clean.
+#
+# It printed `PASS: all cites valid.` on an empty run. This is the guard other
+# checks in this repository already refuse to make: the `find` yields nothing
+# when either corpus root is missing — which is what happens on a CI runner,
+# where the paths a developer relies on are not present — and every counter
+# stays at zero, which is indistinguishable from a corpus where all 29273
+# cites resolved.
+if [ "$CHECKED" -eq 0 ]; then
+    echo ""
+    echo "FAIL: no citations were examined (CHECKED=0)."
+    echo "This lint verified nothing. VALID, PHANTOM, INVALID and STALE are all"
+    echo "zero because no cite was read, not because every cite resolved."
+    echo "Check that both corpus roots exist and hold markdown:"
+    echo "  RFC_ROOT=$RFC_ROOT DOCS_ROOT=$DOCS_ROOT"
+    exit 1
+fi
+
+# Every citation must land in exactly one bucket.
+#
+# CHECKED increments once per cite before any of them is classified, and each
+# of PHANTOM, INVALID and STALE ends in a `continue`, so the buckets are
+# disjoint by construction and VALID is the fall-through. That makes the sum an
+# assertion rather than a coincidence — and it is an assertion worth making,
+# because the classification reads `timeout`-wrapped commands, and a cite lost
+# to a timeout would otherwise leave CHECKED counting it with no bucket
+# claiming it. The run would still print four totals and a verdict.
+#
+# Measured on the current tree: 26606 + 339 + 1300 + 1028 = 29273 = CHECKED.
+if [ $((VALID + PHANTOM + INVALID + STALE)) -ne "$CHECKED" ]; then
+    echo ""
+    echo "FAIL: citations do not reconcile: VALID=$VALID + PHANTOM=$PHANTOM"
+    echo "      + INVALID=$INVALID + STALE=$STALE is"
+    echo "      $((VALID + PHANTOM + INVALID + STALE)), but CHECKED=$CHECKED."
+    echo "A citation was counted as read but classified as nothing."
+    EXIT_CODE=1
 fi
 
 if [ "$EXIT_CODE" -ne 0 ]; then

@@ -345,6 +345,23 @@ EOF
 # cases
 # ---------------------------------------------------------------------------
 
+# The case inventory, derived from every case-name literal in this file.
+#
+# It used to be `grep 'run_case "..."'`, which finds only the cases written in
+# that one style. The accept-direction cases print their id directly instead,
+# because they assert on the guard's own output rather than planting a defect
+# and expecting the guard to notice — so four cases were missing from the
+# listing, and `--help` described 10 of the 14 cases the harness actually ran.
+#
+# That is the same defect class this harness exists to detect, in the harness:
+# reporting a population narrower than the one examined, with nothing in the
+# output marking the gap. The count a maintainer reads to decide what is
+# covered came from the narrow list, so "8 guards, 13 cases" was itself a
+# figure produced by the instrument underreporting.
+case_ids() {
+    grep -oE '"[a-z_]+/[a-z-]+"' "${BASH_SOURCE[0]}" | tr -d '"' | sort -u
+}
+
 # -h/--help lists the cases instead of being treated as a name filter.
 # `mutation-verify-guards.sh` had this defect: any argument was a substring
 # filter, so `--help` matched nothing and the run reported a successful
@@ -354,8 +371,8 @@ if [ "$FILTER" = "-h" ] || [ "$FILTER" = "--help" ]; then
     echo "Usage: scripts/mutation-verify-doc-guards.sh [case-name-substring]"
     echo ""
     echo "Cases:"
-    grep -oE 'run_case "[a-z_]+/[a-z-]+"' "${BASH_SOURCE[0]}" \
-        | sed -E 's/run_case "//; s/"$//' | sed 's/^/  /'
+    case_ids | sed 's/^/  /'
+    printf '  (%s total)\n' "$(case_ids | wc -l | tr -d ' ')"
     exit 0
 fi
 
@@ -849,6 +866,29 @@ case_cites
 case_frontmatter
 case_anchors
 case_type_refs
+
+# The inventory must describe the run that produced this result.
+#
+# One id per executed case is the invariant. A case that runs without naming
+# itself, or names itself without running, leaves the two counts apart, and
+# the apart-ness is invisible in the output — a reported total beside a
+# narrower population, in the tool whose entire purpose is to catch that.
+#
+# Counted before the summary prints, so a mismatch is visible in the same
+# block as the pass and fail counts it contradicts.
+_id_count=$(case_ids | wc -l | tr -d ' ')
+_run_count=$(grep -cE '^case_[a-z_]+$' "${BASH_SOURCE[0]}")
+if [ "$_id_count" -ne "$_run_count" ]; then
+    # Deliberately NOT printed in the `guard/case  phase  result` shape used by
+    # cases. A case id is a `guard/case` literal, and `case_ids` counts those —
+    # so naming this violation `harness/self-inventory` would add a fifteenth
+    # id that no `case_*` function ever runs, and the invariant would report
+    # itself as its own first violation. It is an assertion about the harness,
+    # not a case in it.
+    printf '%s\n' "INVARIANT FAIL: $_run_count case(s) executed but $_id_count named"
+    printf '%s\n' "  --help lists $_id_count cases; the listing does not describe the run"
+    FAIL=$((FAIL + 1))
+fi
 
 printf '%s\n' "------------------------------------------------------------"
 printf 'passed=%d failed=%d skipped=%d\n' "$PASS" "$FAIL" "$SKIP"

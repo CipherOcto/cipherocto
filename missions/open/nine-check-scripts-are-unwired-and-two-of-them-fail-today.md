@@ -32,7 +32,30 @@ workflow.
 | `lint_section_cites.sh`     | no    | 0          | was exit 1 with 58 false positives               |
 | `validate_cites.sh`         | no    | 1          | 1300 INVALID / 339 PHANTOM / 1028 STALE          |
 | `verify_canonical_blobs.py` | no    | 0          | RFC-mandated, independently verified by mutation |
-| `mutation-verify-guards.sh` | no    | not re-run | 5 guards; recompiles, so not re-run at 3.6G free |
+| `mutation-verify-guards.sh` | no    | 0          | 5 guards, 10 cases, 26 s, 1.0 GB peak            |
+
+## Two rows above said "not re-run" for a blocker that was not there
+
+`mutation-verify-guards.sh` and the rebuild tier of `mutate-zk-guards.py` were
+both recorded as unaffordable, on the reasoning that they recompile and the disk
+sat at 100 percent with 3.6 GB free. Neither had been run to find that out.
+
+Both were run:
+
+| Script                         | Result                                          | Cost                | Disk      |
+| ------------------------------ | ----------------------------------------------- | ------------------- | --------- |
+| `mutation-verify-guards.sh`    | 10 of 10 passed, 5 guards red and restored      | 26 s, 1.0 GB peak   | unchanged |
+| `mutate-zk-guards.py` (all 73) | 73 red, 0 vacuous, 0 bad-mutation, 0 bad-anchor | 175 s, 1.79 GB peak | unchanged |
+
+The reason the cost is so low is that both drive a _targeted_ `cargo test` for
+one package, and this repository already holds 294 GB of compiled dependencies
+in `target/`. An incremental build against that needs no meaningful new space.
+The 35 mutation entries nobody had run were verified red in under three minutes.
+
+This is the same shape as the rest of this mission set: a cost estimated rather
+than measured is a claim about a condition nobody examined. Two rows of this
+table asserted a blocker, and it was in the table long enough to be quoted from
+elsewhere — the sibling mission repeated it. Both rows are now measurements.
 
 ## One of these was locale-dependent, and the class is bounded
 

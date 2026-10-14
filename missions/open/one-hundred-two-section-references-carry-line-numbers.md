@@ -183,18 +183,25 @@ side of that boundary, so it was measured too:
 | Corpus                    | Occurrences |
 | ------------------------- | ----------- |
 | tracked `*.md`            | 863         |
-| tracked `*.py` and `*.sh` | 5           |
+| tracked `*.py` and `*.sh` | 6           |
 
-Five, across 88 files — the markdown corpus is about 99.4 percent of the
+Six, across 88 files — the markdown corpus is about 99.4 percent of the
 tracked population, so widening the rule to comments would not change the size
 of the work by any amount worth deciding differently over. It would change
 which files need reading.
 
-Of the five, one is a worked example inside the detector's own comment, showing
+Of the six, one is a worked example inside the detector's own comment, showing
 the shape it exists to find. That one has to stay: a detector that cannot
-illustrate what it detects is harder to trust than one that can. The other four
-are in a single file, in comments pointing at where two discriminant values are
-defined in a Rust source file. They are accurate today and will silently rot.
+illustrate what it detects is harder to trust than one that can. Four are in a
+single file, in comments pointing at where two discriminant values are defined
+in a Rust source file, and one is inside a message that script prints. They are
+accurate today and will silently rot.
+
+The first count used a pattern that required a file extension before the line
+number, so it missed the other common spelling: a bare RFC number followed by
+the word line. That form occurs once in code and once in markdown. It is why
+the code figure moved from five to six when the pattern was widened — the
+population was measured by a pattern narrower than the rule it was measuring.
 
 `.rs` files are not measured. Rust source carries line references in ordinary
 use and including them would swamp the question rather than inform it.

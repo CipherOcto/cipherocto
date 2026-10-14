@@ -24,15 +24,36 @@ workflow.
 
 | Script                      | In CI | Exit today | Notes                                            |
 | --------------------------- | ----- | ---------- | ------------------------------------------------ |
-| `lint-rfc-anchors.py`       | yes   | 0          | 590-entry baseline                               |
-| `lint-rfc-type-refs.py`     | yes   | 0          | 729-entry baseline                               |
-| `lint_no_vh_accepted.sh`    | no    | 1          | 51 real findings after the detection fix         |
-| `lint_status_vh_sync.sh`    | no    | 1          | 1 real finding after the fix below               |
-| `lint_plan_yaml_vh_sync.sh` | no    | 1          | lints a path outside the repository              |
-| `lint_section_cites.sh`     | no    | 1          | 58 findings, all false positives                 |
-| `validate_cites.sh`         | no    | 1          | 1,323 unique findings, several defect classes    |
+| `lint-rfc-anchors.py`       | yes   | 0          | 588-entry baseline                               |
+| `lint-rfc-type-refs.py`     | yes   | 0          | 652-entry baseline                               |
+| `lint_no_vh_accepted.sh`    | no    | 0          | was exit 1 with 51 findings                      |
+| `lint_status_vh_sync.sh`    | no    | 1          | 9 findings                                       |
+| `lint_plan_yaml_vh_sync.sh` | no    | 1          | lints a path outside the repository; 6 findings  |
+| `lint_section_cites.sh`     | no    | 0          | was exit 1 with 58 false positives               |
+| `validate_cites.sh`         | no    | 1          | 1300 INVALID / 339 PHANTOM / 1028 STALE          |
 | `verify_canonical_blobs.py` | no    | 0          | RFC-mandated, independently verified by mutation |
-| `mutation-verify-guards.sh` | no    | 0          | 10/10 pass — companion to the mutation harness   |
+| `mutation-verify-guards.sh` | no    | not re-run | 5 guards; recompiles, so not re-run at 3.6G free |
+
+**Re-measured.** Every exit code above was run, not carried forward from the
+original census. Four rows had moved:
+
+| Row                      | Then           | Now                  |
+| ------------------------ | -------------- | -------------------- |
+| `lint_no_vh_accepted.sh` | 1, 51 findings | 0                    |
+| `lint_section_cites.sh`  | 1, 58 findings | 0                    |
+| `lint_status_vh_sync.sh` | 1, 1 finding   | 1, 9 findings        |
+| `validate_cites.sh`      | 1, 1323        | 1, 1300 / 339 / 1028 |
+
+Both baselines shrank as debt was retired, not as suppression was added: the
+anchors baseline is 588 and the type-reference baseline is 652, and each guard
+now states how much of its current findings the baseline covers.
+
+This entry's own title says "two of them fail today". Three do. The census was
+accurate when written and the guards changed underneath it, which is the
+ordinary way a hand-kept table goes stale — and this repository has already
+had a run of those. Nothing here is now maintained by hand: the mutation
+harness derives its own coverage from its own table, and the two figures most
+likely to move again are the ones a reader can re-run.
 
 Two scripts named in this census turned out not to be gates and are excluded:
 `cross_rfc_propagate.sh` is a maintenance automation tool that emits a diff for

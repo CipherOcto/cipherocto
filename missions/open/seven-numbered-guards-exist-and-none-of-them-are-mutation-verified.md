@@ -1,7 +1,7 @@
 ---
 name: seven-numbered-guards-exist-and-none-of-them-are-mutation-verified
 description: >-
-  Seven numbered document guards live in scripts/. None was mutation-verified, so "this guard catches its defect" was a process claim no reviewer could re-run. A guard that cannot report its finding passes an exit-code-only test. Measured directly: silencing only a guard's echo, leaving EXIT_CODE=1, left the harness reporting 3 of 4 cases green against guards that could no longer name anything they detect. Five of the seven numbered guards were uncovered and are now driven by scripts/mutation-verify-doc-guards.sh from temp fixture corpora, writing no tracked file. Guard 5 joined them once its corpus override was repaired, so six of the seven numbered guards are covered, along with three unnumbered linters — nine guards in all. Guard 6 is the remaining numbered guard and takes no corpus parameter at all. Every assertion requires the guard to name its specific finding, not merely to exit non-zero. Covering them exposed a ValueError crash, an UnboundLocalError that exited 0 while printing a traceback, and two guards with no corpus override.
+  Seven numbered document guards live in scripts/. None was mutation-verified, so "this guard catches its defect" was a process claim no reviewer could re-run. A guard that cannot report its finding passes an exit-code-only test. Measured directly: silencing only a guard's echo, leaving EXIT_CODE=1, left the harness reporting 3 of 4 cases green against guards that could no longer name anything they detect. Five of the seven numbered guards were uncovered and are now driven by scripts/mutation-verify-doc-guards.sh from temp fixture corpora, writing no tracked file. Guard 5 joined them once its corpus override was repaired, and Guard 6 joined once it was recognised that a guard taking inputs rather than a corpus can still be driven by a case. All seven numbered guards are covered, along with three unnumbered linters — ten guards in all. Every assertion requires the guard to name its specific finding, not merely to exit non-zero. Covering them exposed a ValueError crash, an UnboundLocalError that exited 0 while printing a traceback, and two guards with no corpus override.
 metadata:
   node_type: mission
   type: tooling
@@ -329,11 +329,17 @@ detecting guard cannot both be red for the same input.
   still read the repository's real documentation tree. The override controlled
   half the corpus and said nothing about the other half. A second root is now
   overridable, with the default unchanged, and the guard has a case.
-- Guard 6 remains uncovered and cannot be covered as written. It takes a
-  projection string and has no corpus parameter, so there is nothing to point
-  at a fixture. That is consistent with the sibling mission's reading of it as
-  a metric a human runs rather than a gate, but it is a capability gap rather
-  than a settled decision.
+- Guard 6 was uncovered for a reason that looked permanent. It takes a projection
+  string and has no corpus parameter, so there was nothing to point at a fixture.
+  It is now covered anyway, because the absence of a corpus parameter is not the
+  absence of an input: the case drives the guard directly with chosen projections
+  under a comma-decimal locale and requires the verdicts to be the ones it gives
+  under a dot-decimal one — a 100 percent realization rate passes and a 35 percent
+  rate fails — plus a check that the output never carries a comma decimal
+  separator. That is the case that would have caught the locale-dependent verdict
+  this metric actually shipped, where a `100,0` realization percentage came back
+  as a string and compared lexicographically. The reasoning error was assuming a
+  corpus-scanning guard was the only kind a harness can drive.
 - Every accept-direction case in the harness has been mutation-verified. That
   is a rule rather than a count, because counts go stale: a case is not
   verified because it was written carefully, it is verified because a known

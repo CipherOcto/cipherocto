@@ -711,6 +711,68 @@ EOF
     PASS=$((PASS + 1))
 }
 
+cross_rfc_guard() {
+    RFC_ROOT="$FIX/rfcs" DOCS_ROOT="$FIX/docs" \
+        bash scripts/cross_rfc_propagate.sh 9001 1.0 2.0
+}
+
+# Guard 5's corpus override controlled only half its corpus.
+#
+# It read RFC_ROOT from the environment, which made it look fixture-drivable,
+# and then scanned a hardcoded `docs` alongside it. A caller pointing RFC_ROOT
+# at a fixture therefore still got the repository's real docs/ scanned — so the
+# guard could not be isolated, could not be given a case, and could not be
+# checked at all without reading the live corpus.
+#
+# The assertion is on the paths the guard reports, not on its findings. Against
+# the old code the real docs/ files appear in its output and this fails, which
+# is the only observable difference: the guard still does the same work, it
+# just did it over a corpus the caller had not chosen.
+case_cross_rfc_corpus() {
+    if [ -n "$FILTER" ] && [[ "cross_rfc/fixture-corpus-only" != *"$FILTER"* ]]; then
+        SKIP=$((SKIP + 1))
+        return 0
+    fi
+    local own="$WORK/case-cross-rfc"
+    rm -rf "$own"
+    mkdir -p "$own/rfcs" "$own/docs"
+    FIX="$own"
+    cat >"$FIX/rfcs/9001-source.md" <<'EOF'
+# RFC-9001 Source
+
+## 1. Alpha
+
+The section a cross-RFC citation points at.
+EOF
+    cat >"$FIX/docs/9001-citer.md" <<'EOF'
+# Doc
+
+See RFC-9001 v1.0 §Alpha for the definition.
+EOF
+    local out
+    out="$(cross_rfc_guard 2>&1)"
+    # The fixture's docs/ file is the only place in this repository where a
+    # v1.0 cite of section Alpha exists, so finding it proves the second tree
+    # was actually scanned.
+    #
+    # An earlier version of this case asserted the opposite direction — that no
+    # live-corpus path leaks into the output — and it passed against the
+    # regressed guard. Real docs/ files only appear when they match the
+    # fixture's cite, which they never do, so the leak is unobservable and the
+    # assertion proved nothing. Asserting on what the guard FINDS in the
+    # fixture is observable in both directions.
+    if ! grep -qF "$FIX/docs/9001-citer.md" <<< "$out"; then
+        printf '%-34s %-8s %s\n' "cross_rfc/fixture-corpus-only" "detect" \
+            "did not scan the fixture docs tree — only RFC_ROOT is honoured"
+        printf '%s\n' "$(grep -E '^(Summary|PROPAGATE)' <<< "$out" | head -3)" | sed 's/^/      /'
+        FAIL=$((FAIL + 1))
+    else
+        printf '%-34s %-8s %s\n' "cross_rfc/fixture-corpus-only" "detect" \
+            "ok (both fixture trees scanned)"
+    fi
+    PASS=$((PASS + 1))
+}
+
 case_status_vh() {
     write_defect() { write_status_vh_defect; }
     run_case "status_vh/out-of-sync" status_vh_guard "OUT_OF_SYNC_STATUS_OLDER"
@@ -1366,6 +1428,7 @@ run_case_fn case_no_vh_reconciles
 run_case_fn case_population_coverage
 run_case_fn case_plan_yaml
 run_case_fn case_plan_buckets
+run_case_fn case_cross_rfc_corpus
 run_case_fn case_cites
 run_case_fn case_frontmatter
 run_case_fn case_frontmatter_reconciles

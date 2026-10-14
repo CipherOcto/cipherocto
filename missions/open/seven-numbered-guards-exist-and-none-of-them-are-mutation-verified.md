@@ -1,7 +1,7 @@
 ---
 name: seven-numbered-guards-exist-and-none-of-them-are-mutation-verified
 description: >-
-  Seven numbered document guards live in scripts/. None was mutation-verified, so "this guard catches its defect" was a process claim no reviewer could re-run. A guard that cannot report its finding passes an exit-code-only test. Measured directly: silencing only a guard's echo, leaving EXIT_CODE=1, left the harness reporting 3 of 4 cases green against guards that could no longer name anything they detect. All seven are now covered by scripts/mutation-verify-doc-guards.sh, which drives them from temp fixture corpora and writes no tracked file. Every assertion requires the guard to name its specific finding, not merely to exit non-zero. Covering them exposed a ValueError crash, an UnboundLocalError that exited 0 while printing a traceback, and two guards with no corpus override.
+  Seven numbered document guards live in scripts/. None was mutation-verified, so "this guard catches its defect" was a process claim no reviewer could re-run. A guard that cannot report its finding passes an exit-code-only test. Measured directly: silencing only a guard's echo, leaving EXIT_CODE=1, left the harness reporting 3 of 4 cases green against guards that could no longer name anything they detect. Five of the seven numbered guards were uncovered and are now driven by scripts/mutation-verify-doc-guards.sh from temp fixture corpora, writing no tracked file. Guard 5 joined them once its corpus override was repaired, so six of the seven numbered guards are covered, along with three unnumbered linters — nine guards in all. Guard 6 is the remaining numbered guard and takes no corpus parameter at all. Every assertion requires the guard to name its specific finding, not merely to exit non-zero. Covering them exposed a ValueError crash, an UnboundLocalError that exited 0 while printing a traceback, and two guards with no corpus override.
 metadata:
   node_type: mission
   type: tooling
@@ -323,6 +323,17 @@ detecting guard cannot both be red for the same input.
   One verified rule is not the same as a verified guard, and the count of cases
   should not be read as coverage. `lint_section_cites.sh` has an over-deep case
   and `lint_no_vh_accepted.sh` has the bullet-rendered Version History.
+- Guard 5 was uncoverable for a reason that looked like coverage. It reads
+  `RFC_ROOT` from the environment, which made it appear fixture-drivable, and
+  then scanned a hardcoded `docs` alongside it — so pointing it at a fixture
+  still read the repository's real documentation tree. The override controlled
+  half the corpus and said nothing about the other half. A second root is now
+  overridable, with the default unchanged, and the guard has a case.
+- Guard 6 remains uncovered and cannot be covered as written. It takes a
+  projection string and has no corpus parameter, so there is nothing to point
+  at a fixture. That is consistent with the sibling mission's reading of it as
+  a metric a human runs rather than a gate, but it is a capability gap rather
+  than a settled decision.
 - The `rebuild` tier of `mutate-zk-guards.py` (35 of 73 entries) was not run:
   it recompiles the workspace, and the disk is at 100%. Run it when there is
   room, or on a machine that is not disk-constrained.

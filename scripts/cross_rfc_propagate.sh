@@ -9,6 +9,14 @@
 set -euo pipefail
 
 RFC_ROOT="${RFC_ROOT:-rfcs}"
+# The scan walks two trees, not one. `docs` used to be a literal here, so
+# RFC_ROOT controlled only half the corpus: a caller pointing it at a fixture
+# still got the repository's real docs/ scanned, which is why this guard could
+# not be driven from a fixture at all and was left uncovered by the harness
+# while appearing to take a corpus override.
+#
+# The default is unchanged. A caller that wants both trees redirected sets both.
+DOCS_ROOT="${DOCS_ROOT:-docs}"
 EXIT_CODE=0
 
 usage() {
@@ -118,7 +126,7 @@ while IFS= read -r -d '' file; do
         echo "    NEW: $new_line"
         propagated=$((propagated + 1))
     done < <(awk '{ printf "%d:%s\n", NR, $0 }' "$file" 2>/dev/null)
-done < <(find "$RFC_ROOT" docs -type f -name '*.md' -print0 2>/dev/null || true)
+done < <(find "$RFC_ROOT" "$DOCS_ROOT" -type f -name '*.md' -print0 2>/dev/null || true)
 
 echo ""
 echo "Summary: PROPAGATE=$propagated STALE=$stale SKIPPED=$skipped"

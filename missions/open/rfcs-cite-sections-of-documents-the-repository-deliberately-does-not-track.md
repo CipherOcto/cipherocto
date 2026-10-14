@@ -57,13 +57,32 @@ At least 14 references of two explicit shapes across 6 tracked RFC files:
 
 That is a **floor, not a total.** RFC-0960 also cites `§20.3` at least once
 without the word "review" attached, so the labelled patterns undercount by
-construction. A first attempt to enumerate every instance by scanning the
-linter's own anchor extractor returned nothing for the `§20.x` family, because
-those anchors begin with a digit and are matched by the numeric pattern rather
-than the general one — the same trap as measuring line references with a
-pattern narrower than the rule it measures. The count above comes from
-searching the tracked RFC text directly, and the honest statement is that the
-true number is higher.
+construction.
+
+### The total was attempted three times and could not be measured
+
+Worth recording, because the next person will try it too.
+
+1. Enumerating through the linter's own anchor extractor returned **nothing**
+   for the `§20.x` family: those anchors begin with a digit, so they are matched
+   by the numeric pattern and never by the general one.
+2. Counting every section reference whose line mentions review, plan or audit
+   returned **997**, which is nonsense — nearly every Version History row in this
+   corpus says "R9 review findings applied" and then cites its own sections.
+3. Classifying every reference by whether the heading that satisfies it is
+   tracked returned **2006 references that would dangle in a clean checkout**,
+   against the **619** the linter actually reports there.
+
+The third is the instructive one, because it looks like the right method. It is
+off by more than three times because the population is not "every section
+reference": the linter drops single non-numeric tokens, evaluates numeric
+anchors only on lines that also cite a project RFC, tests numeric anchors in
+their unnormalised form, and records findings as `(name, site)` pairs rather
+than names. Matching it means reimplementing it.
+
+So no total is published. The floor above is measured directly and stands. A
+correct count is obtainable by adding an instrumented mode to the linter, which
+is a change to a CI gate and therefore a decision rather than a measurement.
 
 ## Why it matters beyond the finding count
 

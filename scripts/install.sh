@@ -32,7 +32,8 @@
 # Exit codes:
 #   0   success (including dry-run and "nothing to do")
 #   1   prerequisite missing (jq absent, unrecoverable)
-#   2   install failed (binary copy, JSON write, permission)
+#   2   usage error (unknown flag) or install failed (binary copy, JSON
+#       write, permission)
 #
 # Operator notes:
 #   - All file writes are atomic (temp file + mv).
@@ -88,7 +89,13 @@ log_error() {
   if [[ ${DRY_RUN:-0} -eq 1 ]]; then
     printf '%s [error] %s\n'  "$($LOG_TS)" "$*" >&2
   else
-    printf '%s [error] %s\n'  "$($LOG_TS)" "$*" | tee -a "$LOG_FILE" >&2
+    # This function is reachable from the flag parser, which runs BEFORE
+    # log_init creates $STATE_DIR. The tee then wrote into a directory that did
+    # not exist, and under `set -euo pipefail` that killed the installer —
+    # which is the only reason an unknown flag appeared to be rejected.
+    # Ensure the directory first, and never let logging decide the exit code.
+    mkdir -p "$STATE_DIR" 2>/dev/null || true
+    printf '%s [error] %s\n'  "$($LOG_TS)" "$*" | tee -a "$LOG_FILE" >&2 || true
   fi
 }
 log_step() {
@@ -109,6 +116,7 @@ SKIP_BINARY=0
 DRY_RUN=0
 UNINSTALL=0
 PRINT_HELP=0
+BAD_FLAG=0
 
 usage() {
   sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" \
@@ -123,13 +131,18 @@ while [[ $# -gt 0 ]]; do
     --skip-binary) SKIP_BINARY=1 ;;
     --uninstall)   UNINSTALL=1 ;;
     -h|--help)     PRINT_HELP=1 ;;
-    *) log_error "unknown flag: $1"; PRINT_HELP=1 ;;
+    *) log_error "unknown flag: $1"; PRINT_HELP=1; BAD_FLAG=1 ;;
   esac
   shift
 done
 
 if [[ $PRINT_HELP -eq 1 ]]; then
   usage
+  # An unknown flag used to fall into the same branch as --help and exit 0.
+  # On any machine that had run the installer once, `--sikp-binary` therefore
+  # installed nothing, dropped every other flag on the same command line, and
+  # reported success. A typo has to be loud.
+  [[ $BAD_FLAG -eq 1 ]] && exit 2
   exit 0
 fi
 

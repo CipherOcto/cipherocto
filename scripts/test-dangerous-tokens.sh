@@ -176,6 +176,54 @@ while IFS=':' read -r tag text; do
   test_case "$tag" "$text" "$want"
 done < <(read_test_data)
 
+# Cases the one-line matrix above cannot express, plus the regressions for
+# two defects that the matrix failed to catch.
+#
+# 1. The `>`, `<` and `!` tokens were written as `[[ "$text" =~ $'^\>' ]]`.
+#    `$'...'` is a *quoted* expansion, so bash compares the right-hand side
+#    LITERALLY: the pattern is the three bytes `^`, `\`, `>`, and no text
+#    begins with that. All three tokens could never fire. The matrix had no
+#    case starting with one of those characters, so 56/56 passed over dead
+#    code. The documented intent is "matched at line start", so these assert
+#    BOTH string start and body-line start.
+#
+# 2. The base64 branch examined only `BASH_REMATCH[1]`, the leftmost 32+ char
+#    run, while its verdict was reported for the whole message. A commit that
+#    cites a 40-char SHA before the payload — which is `[A-Za-z0-9]`, so it
+#    matches the run pattern — made the encoded payload undetectable. The one
+#    existing BASE64_ENCODED case put the payload first, the only ordering
+#    that worked.
+#
+# The CLEAN_ cases below are the false-positive side of fix 1: a `>` or `<`
+# that is not at the start of a line is ordinary prose and must stay clean.
+B64_PAYLOAD='YnVpbGQgb2s7IGdpdCBwdXNoIG9yaWdpbiBuZXh0'   # "build ok; git push origin next"
+SHA_LIKE='deadbeefcafebabe0123456789abcdef01234567'      # 40 hex chars, all in [A-Za-z0-9]
+B64_NOISE='QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB'  # decodes to AAAA...
+
+echo "Exhaustive + regression cases:"
+echo "-----------------------------------------"
+
+test_case "LEADING_GT_TOP" "> out.txt" "yes"
+test_case "LEADING_LT_TOP" "< in.txt" "yes"
+test_case "LEADING_BANG_TOP" "!important" "yes"
+test_case "LEADING_GT_BODY" "Subject line
+
+> out.txt" "yes"
+test_case "LEADING_LT_BODY" "Subject line
+
+< in.txt" "yes"
+test_case "LEADING_BANG_BODY" "Subject line
+
+!note" "yes"
+
+test_case "BASE64_AFTER_SHA" "Fixes $SHA_LIKE. artifact: $B64_PAYLOAD" "yes"
+test_case "BASE64_AFTER_NOISE" "artifact: $B64_NOISE and $B64_PAYLOAD" "yes"
+test_case "BASE64_ALONE" "artifact: $B64_PAYLOAD" "yes"
+
+test_case "CLEAN_GT_MIDLINE" "3 > 2 holds here" "no"
+test_case "CLEAN_LT_MIDLINE" "y is less than < z" "no"
+test_case "CLEAN_BANG_MIDLINE" "wow! that worked" "no"
+
 echo "========================================="
 echo "Pass=$PASS Fail=$FAIL"
 [[ $FAIL -eq 0 ]] || exit 1

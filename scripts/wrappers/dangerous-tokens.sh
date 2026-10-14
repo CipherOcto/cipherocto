@@ -151,13 +151,13 @@ dangerous_present() {
             [[ "$text" =~ [[:space:]]\|[[:space:]] ]] && hit+=("pipe")
             ;;
           '>')
-            [[ "$text" =~ $'^\>' ]] && hit+=("leading>")
+            [[ "$text" =~ (^|$'\n')\> ]] && hit+=("leading>")
             ;;
           '<')
-            [[ "$text" =~ $'^\<' ]] && hit+=("leading<")
+            [[ "$text" =~ (^|$'\n')\< ]] && hit+=("leading<")
             ;;
           '!')
-            [[ "$text" =~ $'^\!' ]] && hit+=("leading!")
+            [[ "$text" =~ (^|$'\n')\! ]] && hit+=("leading!")
             ;;
           '\')
             [[ "$text" == *'\'* ]] && hit+=("backslash")
@@ -211,13 +211,47 @@ dangerous_present() {
 
   # === Base64/hex encoded payloads (Gap I) ===
   # If text contains a 32+ char base64-looking blob, decode + re-scan.
-  if [[ "$text" =~ ([A-Za-z0-9+/=]{32,}) ]]; then
-    local blob="${BASH_REMATCH[1]}"
+  #
+  # EVERY 32+ run is examined, not just the leftmost. This used to read a
+  # single `BASH_REMATCH[1]` while reporting a verdict for the whole
+  # message, so a commit that cited a 40-char SHA before the payload made
+  # the payload invisible. A 40-char hex SHA is pure [A-Za-z0-9] and
+  # matches the run pattern, so the common "Fixes <sha>" shape disabled
+  # the branch entirely.
+  #
+  # The loop is bounded because each candidate costs a `base64` fork and
+  # the candidate count is attacker-controlled: without a bound, a message
+  # with 20 000 long runs forks 40 000 processes and hangs every commit.
+  # Measured across all 554 commit messages in this repository, the longest
+  # [A-Za-z0-9+/=] run is 28 characters, so NO real commit produces even
+  # one candidate and the budget is never approached.
+  #
+  # Exceeding the budget fails CLOSED. A bound that silently stopped
+  # examining would reintroduce exactly the defect above one line up.
+  #
+  # Candidates are extracted by ONE `grep -o` fork rather than by walking
+  # the string in bash. Two bash-only walks were measured and rejected:
+  # `${rest#*"$blob"}` builds a GLOB whose matcher is quadratic in the
+  # blob, and `^(.*)([A-Za-z0-9+/=]{32,})` makes the POSIX matcher
+  # backtrack. Both took a single 1 MB run past 60s where the pre-fix
+  # library took 4.3s. `grep -oE` is linear.
+  local b64_budget=64
+  local blob=""
+  local -a b64_blobs=()
+  mapfile -t b64_blobs < <(printf '%s' "$text" | grep -oE '[A-Za-z0-9+/=]{32,}')
+  local b64_seen=0
+  for blob in ${b64_blobs[@]+"${b64_blobs[@]}"}; do
+    if (( b64_seen >= b64_budget )); then
+      hit+=("too-many-base64-candidates")
+      break
+    fi
+    b64_seen=$((b64_seen + 1))
     if [[ "$blob" =~ [A-Z] ]] && [[ "$blob" =~ [a-z] ]] \
        && (echo "$blob" | base64 -d 2>/dev/null | grep -qE '`|\$\(|;|&&|\|\|'); then
       hit+=("base64-encoded-payload")
+      break
     fi
-  fi
+  done
 
   if [[ ${#hit[@]} -gt 0 ]]; then
     printf '%s\n' "${hit[@]}"

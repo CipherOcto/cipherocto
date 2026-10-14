@@ -8,6 +8,20 @@
 
 set -euo pipefail
 
+# MEASURING THIS GUARD: use the tool that already exists.
+#
+# `scripts/classify_validate_cites.py` classifies this repository's citation
+# findings using the exact command `get_rfc_sections` runs, rather than a
+# reimplementation of it. A python reimplementation of the Accepted-detection
+# logic below counted 148 RFCs where this script counts 155: the difference is
+# seven files that write `## Status: Accepted` with the status on the heading
+# rather than below it, which this script sees and the reimplementation did not.
+#
+# So: call `grep -A5` as written here, or call the classifier. Do not
+# reimplement the rule in order to measure it. A reimplementation that disagrees
+# is more expensive than no measurement, because it produces a confident wrong
+# number that then has to be traced.
+
 RFC_ROOT="${RFC_ROOT:-rfcs}"
 EXIT_CODE=0
 SCANNED=0

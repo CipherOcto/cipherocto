@@ -36,6 +36,7 @@ NO_VH_NO_YAML=0
 NO_VH=0
 NO_YAML=0
 KEEP_AS_IS=0
+COMPARED=0
 
 echo "Plan YAML/VH sync linter — Guard 7 (P39 NEW-PATTERN)"
 echo "Plan root: $PLAN_ROOT"
@@ -126,7 +127,12 @@ while IFS= read -r -d '' plan_file; do
         else
             # YAML version exists, no VH on long plan = also a gap
             echo "NO_VH: $plan_file (long plan, YAML v$yaml_version but no ## Version History)"
-            NO_VH_NO_YAML=$((NO_VH_NO_YAML + 1))
+            # Counted under NO_VH, not NO_VH_NO_YAML. Both branches below
+            # incremented the combined counter, so NO_VH and NO_YAML were
+            # declared, never incremented, and never printed — three distinct
+            # diagnoses reported under one name, so a reader could not tell a
+            # plan with no Version History from one with no YAML version.
+            NO_VH=$((NO_VH + 1))
             EXIT_CODE=1
             continue
         fi
@@ -135,12 +141,19 @@ while IFS= read -r -d '' plan_file; do
     # No YAML version on long plan with VH = governance issue
     if [ -z "$yaml_version" ]; then
         echo "NO_YAML: $plan_file (long plan, VH v$vh_latest but no YAML version)"
-        NO_VH_NO_YAML=$((NO_VH_NO_YAML + 1))
+        NO_YAML=$((NO_YAML + 1))
         EXIT_CODE=1
         continue
     fi
 
     # Compare YAML version vs VH latest
+    #
+    # COMPARED increments here and nowhere else, so it counts pairs actually
+    # put side by side. CHECKED counts plan files read. They are different
+    # populations and the summary used to print only the first beside
+    # comparison outcomes, so a run that examined six plans and compared none
+    # of them read as CHECKED=6 with IN_SYNC=0 — six comparisons, none in sync.
+    COMPARED=$((COMPARED + 1))
     if [ "$yaml_version" = "$vh_latest" ]; then
         IN_SYNC=$((IN_SYNC + 1))
     else
@@ -164,12 +177,24 @@ while IFS= read -r -d '' plan_file; do
 done < <(find "$PLAN_ROOT" -maxdepth 2 -type f -name '*.md' -print0 2>/dev/null || true)
 
 echo ""
-echo "Summary: CHECKED=$CHECKED"
+echo "Summary: SCANNED=$CHECKED plan file(s) read, COMPARED=$COMPARED pair(s)"
 echo "         IN_SYNC=$IN_SYNC"
 echo "         OUT_OF_SYNC_YAML_OLDER=$OUT_OF_SYNC_OLDER"
 echo "         OUT_OF_SYNC_YAML_NEWER=$OUT_OF_SYNC_NEWER"
-echo "         NO_VH_NO_YAML=$NO_VH_NO_YAML"
+echo "         NO_VH_NO_YAML=$NO_VH_NO_YAML (neither Version History nor YAML version)"
+echo "         NO_VH=$NO_VH (YAML version present, no Version History)"
+echo "         NO_YAML=$NO_YAML (Version History present, no YAML version)"
 echo "         KEEP_AS_IS (short plans, no VH required)=$KEEP_AS_IS"
+#
+# Every plan read lands in exactly one outcome bucket. The three no-version
+# buckets used to be one, so this could not have failed; now that they are
+# counted separately it can, which is the point of separating them.
+if [ $((IN_SYNC + OUT_OF_SYNC_OLDER + OUT_OF_SYNC_NEWER + NO_VH_NO_YAML + NO_VH + NO_YAML + KEEP_AS_IS)) -ne "$CHECKED" ]; then
+    echo "FAIL: population does not reconcile: the outcome buckets sum to"
+    echo "      $((IN_SYNC + OUT_OF_SYNC_OLDER + OUT_OF_SYNC_NEWER + NO_VH_NO_YAML + NO_VH + NO_YAML + KEEP_AS_IS)),"
+    echo "      but SCANNED=$CHECKED. A plan was read and placed in no bucket."
+    EXIT_CODE=1
+fi
 
 # A lint that examined no files has verified nothing. Its default PLAN_ROOT
 # is a path outside the repository, so on a CI runner it resolves to a

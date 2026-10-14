@@ -1024,6 +1024,73 @@ version: 2.0
 EOF
 }
 
+# The three no-version buckets must be distinguishable.
+#
+# NO_VH and NO_YAML were declared in the plan guard, never incremented, and
+# never printed: both of their branches incremented the combined
+# NO_VH_NO_YAML counter instead, so a plan with no Version History and a plan
+# with no YAML version were reported under one name. Two diagnostics, one
+# number, and a reader with no way to tell which condition was found.
+#
+# Detect-direction, because the defect was a name that lied rather than a
+# finding that went missing. The first plan is long enough not to be excused as
+# a short plan, which is the other way its finding could be absorbed.
+write_plan_yaml_no_vh() {
+    {
+        printf -- '---\nversion: 1.0\n---\n\n# Plan R\n\n## Body\n\n'
+        for i in $(seq 1 60); do
+            printf 'Filler line %s, long enough to exceed the short-plan threshold.\n' "$i"
+        done
+    } >"$FIX/plans/r-yaml-no-vh.md"
+}
+
+write_plan_vh_no_yaml() {
+    cat >"$FIX/plans/s-vh-no-yaml.md" <<'EOF'
+# Plan S
+
+## Version History
+
+| Version | Date |
+| --- | --- |
+| 2.0 | a |
+EOF
+}
+
+case_plan_buckets() {
+    if [ -n "$FILTER" ] && [[ "plan_yaml/distinct-no-version-buckets" != *"$FILTER"* ]]; then
+        SKIP=$((SKIP + 1))
+        return 0
+    fi
+    local own="$WORK/case-plan-buckets"
+    rm -rf "$own"
+    mkdir -p "$own/plans"
+    FIX="$own"
+    write_plan_yaml_no_vh
+    write_plan_vh_no_yaml
+    local out nv ny nvn bad=""
+    out="$(plan_guard 2>&1)"
+    nv="$(grep -oE '^ +NO_VH=[0-9]+' <<< "$out" | grep -oE '[0-9]+' || true)"
+    ny="$(grep -oE '^ +NO_YAML=[0-9]+' <<< "$out" | grep -oE '[0-9]+' || true)"
+    nvn="$(grep -oE '^ +NO_VH_NO_YAML=[0-9]+' <<< "$out" | grep -oE '[0-9]+' || true)"
+    if [ -z "$nv" ] || [ -z "$ny" ]; then
+        bad="NO_VH and NO_YAML are not reported, so the buckets cannot be told apart"
+    elif [ "$nv" -ne 1 ]; then
+        bad="NO_VH=$nv where one plan has a YAML version and no Version History"
+    elif [ "$ny" -ne 1 ]; then
+        bad="NO_YAML=$ny where one plan has a Version History and no YAML version"
+    elif [ "$nvn" -ne 0 ]; then
+        bad="NO_VH_NO_YAML=$nvn where neither plan lacks both — the combined bucket absorbed them"
+    fi
+    if [ -n "$bad" ]; then
+        printf '%-34s %-8s %s\n' "plan_yaml/distinct-no-version-buckets" "detect" "$bad"
+        FAIL=$((FAIL + 1))
+    else
+        printf '%-34s %-8s %s\n' "plan_yaml/distinct-no-version-buckets" "detect" \
+            "ok (NO_VH=1 NO_YAML=1 NO_VH_NO_YAML=0)"
+    fi
+    PASS=$((PASS + 1))
+}
+
 case_plan_yaml() {
     prepare_case() {
         mkdir -p "$FIX/plans"
@@ -1272,6 +1339,7 @@ case_no_vh_population
 case_no_vh_reconciles
 case_population_coverage
 case_plan_yaml
+case_plan_buckets
 case_cites
 case_frontmatter
 case_frontmatter_reconciles

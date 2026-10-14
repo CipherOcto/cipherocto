@@ -690,6 +690,125 @@ case_status_vh() {
     run_case "status_vh/out-of-sync" status_vh_guard "OUT_OF_SYNC_STATUS_OLDER"
 }
 
+# The same heading shape, seen from the other guard.
+#
+# The alternation is written in three places and the sign-before-number form
+# was missing from all three, so both guards were blind to the same files and
+# neither could report the other's blindness. This case pins the no-VH guard's
+# copy: an Accepted RFC whose Version History heading carries a leading section
+# sign before its number must not be reported as having none.
+#
+# The clean phase is the assertion. With the three-shape alternation it fails,
+# because the guard emits MISSING_VH for a file that has a populated Version
+# History. The defect phase removes the section entirely, so the case also
+# proves it is not passing vacuously.
+write_no_vh_signed_heading() {
+    cat >"$FIX/rfcs/0005-signed-heading.md" <<'EOF'
+---
+status: accepted
+---
+
+# RFC-0005 Signed Heading
+
+## Status
+
+Accepted — promoted 2026-02-01
+
+## §6 Version History
+
+| Version | Date | Changes |
+| --- | --- | --- |
+| 1.0.0 | 2026-02-01 | Initial |
+EOF
+}
+
+write_no_vh_heading_absent() {
+    cat >"$FIX/rfcs/0005-signed-heading.md" <<'EOF'
+---
+status: accepted
+---
+
+# RFC-0005 Signed Heading
+
+## Status
+
+Accepted — promoted 2026-02-01
+
+## Rationale
+
+This RFC has no Version History section at all.
+EOF
+}
+
+case_no_vh_signed_heading() {
+    prepare_case() { write_no_vh_signed_heading; }
+    write_defect() { write_no_vh_heading_absent; }
+    run_case "no_vh_accepted/signed-numbered-heading" no_vh_guard "MISSING_VH"
+}
+
+# Every heading shape the corpus uses, in one fixture, asserted against BOTH
+# guards that carry a copy of the alternation.
+#
+# The per-shape cases above pin the shape that regressed. This one is the
+# general form: it does not care which shape a future heading takes, only that
+# a corpus using all four is read by both guards. A shape added to one copy and
+# not the other shows up here, which is the disagreement the duplicated pattern
+# has no other way to reveal.
+write_vh_all_shapes() {
+    local n=0 h
+    for h in '## Version History' '## 6. Version History' '## §Version History' '## §6 Version History'; do
+        n=$((n + 1))
+        cat >"$FIX/rfcs/00$((n + 10))-shape.md" <<EOF
+---
+status: accepted
+---
+
+# RFC-00$((n + 10)) Shape
+
+## Status
+
+Accepted (v1.0.0) — promoted 2026-02-01
+
+$h
+
+| Version | Date | Changes |
+| --- | --- | --- |
+| 1.0.0 | 2026-02-01 | Initial |
+EOF
+    done
+}
+
+case_vh_heading_all_shapes() {
+    if [ -n "$FILTER" ] && [[ "vh_heading/all-four-shapes" != *"$FILTER"* ]]; then
+        SKIP=$((SKIP + 1))
+        return 0
+    fi
+    local own="$WORK/case-vh-all-shapes"
+    rm -rf "$own"
+    mkdir -p "$own/rfcs"
+    FIX="$own"
+    write_vh_all_shapes
+    local novh svh bad=""
+    novh="$(no_vh_guard 2>&1)"
+    if grep -q 'MISSING_VH: ' <<< "$novh"; then
+        bad="no-VH guard reported a populated Version History as missing"
+    fi
+    svh="$(status_vh_guard 2>&1)"
+    if grep -q 'UNCLASSIFIED: ' <<< "$svh"; then
+        bad="${bad:+$bad; }status guard could not place a file using a known heading shape"
+    elif ! grep -qE 'CHECKED=4 ' <<< "$svh"; then
+        bad="${bad:+$bad; }status guard did not compare all four"
+    fi
+    if [ -n "$bad" ]; then
+        printf '%-34s %-8s %s\n' "vh_heading/all-four-shapes" "accept" "$bad"
+        FAIL=$((FAIL + 1))
+    else
+        printf '%-34s %-8s %s\n' "vh_heading/all-four-shapes" "accept" \
+            "ok (all four shapes read by both guards)"
+    fi
+    PASS=$((PASS + 1))
+}
+
 case_no_vh() {
     write_defect() { write_no_vh_defect; }
     run_case "no_vh_accepted/missing-vh" no_vh_guard "MISSING_VH"
@@ -970,6 +1089,8 @@ case_status_vh
 case_status_vh_signed_heading
 case_status_vh_reconciles
 case_no_vh
+case_no_vh_signed_heading
+case_vh_heading_all_shapes
 case_no_vh_bullets
 case_no_vh_population
 case_population_coverage

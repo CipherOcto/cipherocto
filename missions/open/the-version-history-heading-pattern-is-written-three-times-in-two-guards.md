@@ -57,17 +57,22 @@ prevent it.
 
 ## Acceptance criteria
 
+- [x] A case that fails when the copies disagree. `vh_heading/all-four-shapes`
+      writes one Accepted RFC per heading shape into a single fixture and
+      asserts that both guards read all four. Reverting either guard's copy
+      alone makes it fail, in both directions, which is verified by mutation.
+      It is deliberately not shape-specific: it does not enumerate the shapes,
+      so a shape neither guard has seen yet still has to be readable for the
+      case to pass.
+- [x] The shared fixture covers all four shapes in one corpus. The per-shape
+      cases remain alongside it, because the all-shapes case reports that a
+      shape failed without saying which, and a guard that can read three of
+      four is easier to diagnose from a named case.
 - [ ] One definition of the alternation, sourced by both guards rather than
       written three times. It must cover the four shapes the corpus uses, and
-      the comment that names them lives with it.
-- [ ] A case that fails when the copies disagree. A mutation harness already
-      drives both guards from fixture corpora; what is missing is a case
-      asserting that every heading shape in a shared fixture is recognised by
-      both. That single case would have caught this defect without either guard
-      reporting anything.
-- [ ] The shared fixture covers all four shapes in one corpus, so a future
-      shape is added in one place and the disagreement case detects a guard
-      that did not pick it up.
+      the comment that names them lives with it. The disagreement is now
+      detectable rather than silent, which lowers the cost of leaving the
+      duplication in place but does not remove the three edits.
 - [ ] `lint_no_vh_accepted.sh` reports its unplaced files rather than absorbing
       them. Its population already reconciles, but by derivation:
       `NOT_ACCEPTED` is computed as the remainder of the scanned count, so any

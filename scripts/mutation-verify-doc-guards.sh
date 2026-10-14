@@ -773,6 +773,54 @@ EOF
     PASS=$((PASS + 1))
 }
 
+inflation_guard() {
+    LC_ALL="${1:-}" bash scripts/projection_inflation_metric.sh "${@:2}"
+}
+
+# Guard 6's verdict depended on the operator's locale.
+#
+# awk's printf honours LC_NUMERIC, so under a comma-decimal locale the rates
+# came out as "100,0" instead of "100.0". Feeding that back with -v made it a
+# string, and the comparison silently became lexicographic — so a 100%
+# realization rate, the best possible outcome, was reported as FAIL, in a
+# message that said "100,0% < 50%" three lines after printing 100,0%.
+#
+# The first fix pinned LC_NUMERIC, which is wrong whenever the caller has LC_ALL
+# set, because LC_ALL overrides every other category including that one. Only
+# testing across locales caught it: C, de_DE and en_US passed while an inherited
+# LC_ALL=pt_BR still failed. LC_ALL is what has to be set.
+#
+# Both assertions are here because the locale alone is not enough: the case also
+# requires that the script's own output never carries a comma decimal separator,
+# which holds whatever the ambient locale is and fails the moment the pinning is
+# removed from a machine that uses commas.
+case_inflation_locale() {
+    if [ -n "$FILTER" ] && [[ "projection_metric/locale-independent" != *"$FILTER"* ]]; then
+        SKIP=$((SKIP + 1))
+        return 0
+    fi
+    local out bad=""
+    out="$(inflation_guard pt_BR.UTF-8 1 1 2>&1)"
+    if ! grep -q 'Result: PASS' <<< "$out"; then
+        bad="a 100% realization rate is rejected under a comma-decimal locale"
+    fi
+    if grep -qE '[0-9],[0-9]' <<< "$out"; then
+        bad="${bad:+$bad; }output carries a comma decimal separator"
+    fi
+    out="$(inflation_guard pt_BR.UTF-8 200 70 2>&1)"
+    if ! grep -q 'Result: FAIL' <<< "$out"; then
+        bad="${bad:+$bad; }a 35% realization rate is accepted"
+    fi
+    if [ -n "$bad" ]; then
+        printf '%-34s %-8s %s\n' "projection_metric/locale-independent" "accept" "$bad"
+        FAIL=$((FAIL + 1))
+    else
+        printf '%-34s %-8s %s\n' "projection_metric/locale-independent" "accept" \
+            "ok (verdict identical under a comma-decimal locale)"
+    fi
+    PASS=$((PASS + 1))
+}
+
 case_status_vh() {
     write_defect() { write_status_vh_defect; }
     run_case "status_vh/out-of-sync" status_vh_guard "OUT_OF_SYNC_STATUS_OLDER"
@@ -1428,6 +1476,7 @@ run_case_fn case_no_vh_reconciles
 run_case_fn case_population_coverage
 run_case_fn case_plan_yaml
 run_case_fn case_plan_buckets
+run_case_fn case_inflation_locale
 run_case_fn case_cross_rfc_corpus
 run_case_fn case_cites
 run_case_fn case_frontmatter

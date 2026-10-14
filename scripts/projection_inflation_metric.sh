@@ -46,6 +46,33 @@ if [ "$projection" -eq 0 ]; then
     exit 0
 fi
 
+# Decimal arithmetic must not depend on the operator's locale.
+#
+# awk's printf honours LC_NUMERIC. This machine runs pt_BR.UTF-8, where the
+# decimal separator is a comma, so the rates below came out as "100,0" instead
+# of "100.0". Passing that back into awk with -v makes it a STRING, not a
+# number, and the comparison silently became lexicographic: "100,0" >= "50" is
+# false because "1" sorts before "5".
+#
+# The visible symptom was a guard reporting
+#
+#     Realization rate: 100,0%
+#     Result: FAIL
+#     FAIL: projection inflation > 50% (realization rate 100,0% < 50%).
+#
+# which contradicts itself in the same three lines. A perfect realization rate
+# — the best possible outcome — was rejected, on a machine whose locale nobody
+# chose for this purpose. Under LC_ALL=C the same input passed.
+#
+# Pinning LC_NUMERIC here made the verdict the same everywhere EXCEPT when the
+# caller has LC_ALL set, because LC_ALL overrides every other category including
+# this one. Testing across locales is what caught it: under an inherited
+# LC_ALL=pt_BR.UTF-8 the 100% case still failed, while C, de_DE and en_US all
+# passed. LC_ALL is the only variable that wins over everything, so it is the
+# one to set.
+LC_ALL=C
+export LC_ALL
+
 # Compute realization rate (state_audit / projection)
 realization=$(awk -v p="$projection" -v s="$state_audit" 'BEGIN { printf "%.1f", (s / p) * 100 }')
 inflation=$(awk -v p="$projection" -v s="$state_audit" 'BEGIN { printf "%.1f", ((p - s) / p) * 100 }')

@@ -80,9 +80,33 @@ anchors only on lines that also cite a project RFC, tests numeric anchors in
 their unnormalised form, and records findings as `(name, site)` pairs rather
 than names. Matching it means reimplementing it.
 
-So no total is published. The floor above is measured directly and stands. A
-correct count is obtainable by adding an instrumented mode to the linter, which
-is a change to a CI gate and therefore a decision rather than a measurement.
+So no total was published at that point, and the floor above stands.
+
+### It was then measured, by the linter itself
+
+The obstacle turned out to be a category error rather than a real limit. An
+instrumented mode that _reports_ does not change what the linter rejects, so it
+is not a change to a CI gate — the same distinction as adding a corpus line to
+`validate_cites.sh`. Making the omission visible was never a decision.
+
+`lint-rfc-anchors.py --corpus` now prints it, delegating to the linter's own
+resolution rather than reimplementing it:
+
+```
+corpus report (reporting only; findings and exit code unchanged)
+  references resolving inside the tracked tree    : 2475
+  resolving ONLY in untracked files, named sections: 548
+  resolving ONLY in untracked files, bare numbers : 556
+```
+
+**548 named sections** — a section a reader is told to consult, which exists
+only in a file this checkout does not track. The 548 is a `(file, section)`
+pair count, matching how the linter records findings, so a section cited from
+three RFCs counts three times.
+
+The bare-number group is reported separately and deliberately not called
+findings: `§2` is satisfied by any heading beginning with the digit 2, so those
+556 are weak matches by construction rather than citations to a document.
 
 ## Why it matters beyond the finding count
 

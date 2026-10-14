@@ -85,73 +85,83 @@ index is built outside the tree it gates.
 The 31 pairs are 14 distinct anchors. Classifying them decides how much of the
 work is fixing citations and how much is fixing the linter.
 
-The first attempt at this was done by hand, with `git grep` over tracked files,
-and it was wrong in detail: it sorted headings into categories they do not belong
-to, because it guessed at a matching rule the linter does not use. That rule is
-threefold — a citation resolves when its name matches a heading exactly, when one
-of its progressive forms does (which drops a trailing parenthetical), or when a
-heading begins with the name followed by a space. Reimplementing it from memory
-gave a different answer than the linter gives.
+It was first attempted by hand, with `git grep` over tracked files, and came out
+wrong in detail. A second attempt reimplemented the matching rule from memory and
+came out wrong too. The rule has three arms, not two: an exact match; a heading
+beginning with the name plus a space; and a **word-prefix backoff** that retries
+the citation truncated to fewer and fewer words until something matches. Only the
+third explains the two anchors that behaved most strangely.
 
-Asked directly, through the linter's own `normalize`, `candidates` and `resolves`
-against this working tree's index, the fourteen fall into exactly two groups.
+Asked through the linter's own `normalize`, `candidates` and `resolves`, all
+fourteen fall into one group, and it is the uncomfortable one: **every one of them
+is supplied by a gitignored document.** None resolves against a tracked heading.
 
-**Twelve resolve here, and every heading that satisfies them is in a gitignored
-document.** Not one resolves against a tracked heading:
+| Anchor                                            | Resolved by                                                                          | Match arm                                  | File                                       |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------ | ------------------------------------------ |
+| `§20.3.1`, `§20.3.2`, `§20.6.1`, `§20.7`          | a heading of that number                                                             | exact                                      | `docs/reviews/` storage-layer analysis     |
+| `§error envelope (canonical`                      | `Error Envelope`                                                                     | exact, via the parenthetical-stripped form | `docs/audits/` RFC-0011 spec cycle         |
+| `§replay defense`                                 | `Replay Defense`                                                                     | exact                                      | `docs/audits/` developer guidelines        |
+| `§appendix c`, `§appendix d`                      | `Appendix C — backward compatibility`, `Appendix D — daemon.api.version progression` | heading-prefix                             | `docs/plans/` WhatsApp phase 2             |
+| `§coverage gap`                                   | `Coverage Gap — octo-market crate`                                                   | heading-prefix                             | `docs/plans/` storage-layer execution plan |
+| `§cross-rfc harmonization`, and its dated variant | `Cross-RFC Harmonization plan — 2026-08-24`                                          | heading-prefix                             | `docs/plans/` cross-rfc harmonization plan |
+| `§layer c`                                        | `Layer C — http proxy + python sdk`                                                  | heading-prefix                             | `docs/audits/` developer guidelines        |
+| `§trust level canonical uuids); must` and `; not` | `Trust Level`                                                                        | **word-prefix backoff**                    | `docs/audits/` developer guidelines mesh   |
 
-| Anchor                                            | Satisfied by                                  | Lives in                                   |
-| ------------------------------------------------- | --------------------------------------------- | ------------------------------------------ |
-| `§20.3.1`, `§20.3.2`, `§20.6.1`, `§20.7`          | a heading of that number                      | `docs/reviews/` storage-layer analysis     |
-| `§appendix c`                                     | `Appendix C — backward compatibility`         | `docs/plans/` whatsapp phase 2.5           |
-| `§appendix d`                                     | `Appendix D — daemon.api.version progression` | `docs/plans/` whatsapp phase 2             |
-| `§coverage gap`                                   | `Coverage Gap — octo-market crate`            | `docs/plans/` storage-layer execution plan |
-| `§layer c`                                        | `Layer C — http proxy + python sdk`           | `docs/audits/` developer guidelines        |
-| `§replay defense`                                 | `Replay Defense`                              | `docs/audits/` developer guidelines        |
-| `§error envelope (canonical`                      | `Error Envelope`, via the stripped form       | `docs/audits/` RFC-0011 spec cycle         |
-| `§cross-rfc harmonization`, and its dated variant | `Cross-RFC Harmonization plan`                | gitignored                                 |
+So the local index is not inflating a count. Each of these is a citation pointing
+at a section that exists only in review notes, audit scratchpads and execution
+plans nobody else holds, while the citations themselves name RFCs. A reader
+following `RFC-0960 §20.3.1` would be sent to a heading present in exactly one
+person's uncommitted notes.
 
-**Two resolve nowhere at all**, here or in a checkout — `§trust level canonical
-uuids); must` and `§trust level canonical uuids); not`. These dangle on this
-machine too; the local index never supplied them.
+## The backoff can resolve to two generic words
 
-So the local index is not merely inflating a count. Every one of the twelve is a
-citation pointing at a section that exists **only in review notes and execution
-plans nobody else holds**, and the sections it finds are working documents — a
-WhatsApp CLI plan, a storage-layer execution plan — rather than the RFCs the
-citations name. A reader following `RFC-0960 §20.3.1` would be sent to a heading
-present in exactly one person's uncommitted notes.
+The last row is a defect in its own right, independent of the corpus.
 
-Three of the fourteen are additionally malformed in the citation itself, the
-linter having read a sentence as a section name: `§error envelope (canonical`,
-`§cross-rfc harmonization (2026-08-24`, and the two `§trust level` forms. Those
-are terminator defects whichever way the corpus question is settled.
+The backoff is guarded by its own comment: _"Only word-prefixes of two or more
+words are tried, so this cannot resolve an anchor down to a single common
+word."_ But `§Trust Level Canonical UUIDs); must` is five words, and the retry
+sequence is `trust level canonical uuids);` → `trust level canonical` →
+**`trust level`**. The third is two words, so it passes the guard, and the
+malformed citation resolves against a heading reading `Trust Level` in an audit
+document about something else entirely.
+
+Two common words is not meaningfully longer than one. The guard raises the floor
+from one word to two, which is enough to stop `§the` matching a heading `The`,
+and not enough to stop `§Trust Level Canonical UUIDs); must` matching `Trust
+Level`. The backoff is doing exactly what it was added to do for the cases it was
+written for — `§Implementation Phases Phase 1` against a `## Implementation
+Phases` heading — and it is also absorbing citations that are simply malformed,
+which is the more common case in this corpus.
+
+Three of the fourteen are malformed in that way, where the linter read a
+sentence as a section name: `§error envelope (canonical`, `§cross-rfc
+harmonization (2026-08-24`, and both `§trust level` forms.
 
 ## Decisions for maintainers
 
 1. **Extend the baseline by the 31 name-site pairs** the clean checkout reports,
    and re-record it from a clean checkout rather than from a working tree, so
    the baseline describes the environment CI runs in. This changes a CI gate.
-2. **Or make the index read only tracked files**, which removes the divergence
-   at its source and makes a local run and a CI run the same corpus. It would
-   also stop citations from resolving against headings that exist only on one
-   developer's machine — which is the more correct outcome, since a section a
-   reader cannot reach is a section that does not exist. Same trade-off as
-   `validate_cites.sh`, and the same decision.
+2. **Or make the index read only tracked files**, which removes the divergence at
+   its source and makes a local run and a CI run the same corpus. It would also
+   stop citations resolving against headings that exist only on one developer's
+   machine, which is the more correct outcome, since a section a reader cannot
+   reach does not exist. Same trade-off as `validate_cites.sh`, and the same
+   decision.
 3. **Extending the baseline with all 31 banks a working document as a spec.**
-   Every one of the twelve resolvable anchors resolves to a heading in
-   `docs/reviews`, `docs/audits` or `docs/plans` — a WhatsApp CLI plan, a
-   storage-layer execution plan, a developer-guidelines audit — and to nothing
-   tracked. Recording those as accepted would enshrine, as the standard, that an
-   RFC's section is a heading in one person's uncommitted plan. Two of the
-   fourteen (`§trust level canonical uuids); must` and `; not`) dangle here too,
-   so they are not a corpus artifact at all and should not be baselined as one.
-   If the baseline is extended, the terminator artifacts — the three whose
-   citation text is a sentence — are worth separating first, since they are a
-   linter defect rather than a citation one.
-4. **The cheapest real work is the twelve.** Each names a section that does not
-   exist in the repository, and each citation points at an RFC while resolving to
+   Every one of the fourteen resolves to a heading in `docs/reviews`,
+   `docs/audits` or `docs/plans` — a WhatsApp CLI plan, a storage-layer
+   execution plan, a developer-guidelines audit — and to nothing tracked.
+   Recording those as accepted would enshrine, as the standard, that an RFC's
+   section is a heading in one person's uncommitted plan.
+4. **Raise the backoff floor**, or require the truncated prefix to be a
+   complete heading rather than any two-word prefix. On this corpus that changes
+   which findings exist, so it belongs with the baseline decision rather than
+   beside it.
+5. **The cheapest real work is the twelve that resolve to a real heading.** Each
+   names a section absent from the repository and cites an RFC while resolving to
    an unrelated working document. That is a genuine defect in the RFC text, and
-   it is the part a reader would actually hit.
+   it is what a reader would actually hit.
 
 ## Note on what was not done
 

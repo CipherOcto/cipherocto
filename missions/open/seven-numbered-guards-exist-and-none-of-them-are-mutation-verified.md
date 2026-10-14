@@ -345,6 +345,10 @@ detecting guard cannot both be red for the same input.
   they were guarding against was unobservable in the fixture. Both now assert
   that the guard finds something that only exists in the fixture, which is
   observable in both directions.
+- The free tier of `mutate-zk-guards.py` (38 of 73 entries) is now run and
+  clean: **38 red, 0 vacuous, 0 bad-mutation, 0 bad-anchor**. It needs no
+  recompile, so it is affordable on a constrained disk and there was no reason
+  for it to have waited behind the expensive half.
 - The `rebuild` tier of `mutate-zk-guards.py` (35 of 73 entries) was not run:
   it recompiles the workspace, and the disk is at 100%. Run it when there is
   room, or on a machine that is not disk-constrained.

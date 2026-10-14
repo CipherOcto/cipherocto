@@ -25,7 +25,19 @@ Usage: python3 scripts/mutate-zk-guards.py [--only SUBSTRING] [--cheap] [--list]
 `--list` prints each entry with what it costs to run and derives the coverage
 figure from this table, so the count of guarded guards is never a hand-kept
 number in prose.
+
+An argument this script does not recognise is refused rather than interpreted.
+The default here used to be the full table, which is expensive enough on a
+constrained disk to matter.
 """
+USAGE = """Usage: python3 scripts/mutate-zk-guards.py [--only SUBSTRING] [--cheap] [--list] [--help]
+
+  --list           print every entry with what it costs to run, plus coverage
+  --cheap          run only the entries that need no recompile
+  --only SUBSTRING run entries whose label contains SUBSTRING
+  --help           print this message and run nothing
+
+Unrecognised arguments are refused. They used to run the entire table."""
 import os
 import pathlib
 import re
@@ -1485,6 +1497,31 @@ def main():
     selected = MUTATIONS
     cheap_only = False
     args = sys.argv[1:]
+    # An unrecognised argument used to fall through every branch above and run
+    # the entire table. Asking for `--help` mutated the workspace and ran the
+    # full suite, because help was simply not handled — and the sibling
+    # document-guard harness had already shipped with the same shape of defect,
+    # where an unknown flag was treated as a filter that matched nothing and the
+    # run reported a successful verification of zero guards. Here the default is
+    # worse than doing nothing: it is the expensive path.
+    #
+    # So an unrecognised argument is refused rather than interpreted, and help
+    # is answered from the same usage string the module docstring carries.
+    known = {"--list", "--cheap", "--only", "--help", "-h"}
+    if args and args[0] not in known:
+        print(f"unknown argument {args[0]!r}", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        print(
+            "Nothing was run. Passing an argument this script does not recognise "
+            "used to run the entire table.",
+            file=sys.stderr,
+        )
+        release_lock()
+        return 2
+    if args and args[0] in {"--help", "-h"}:
+        print(USAGE)
+        release_lock()
+        return 0
     if args and args[0] == "--list":
         closure = octo_cli_closure(ROOT)
         for entry in MUTATIONS:

@@ -740,6 +740,68 @@ This RFC has no Version History section at all.
 EOF
 }
 
+# Every file the guard reads must land in exactly one group.
+#
+# The non-Accepted figure used to be derived as a remainder of the scanned
+# count, which reconciles by construction and therefore cannot detect anything:
+# a file skipped by a path that increments nothing is absorbed into it and
+# reported as an ordinary non-Accepted Draft. It is counted directly now, and
+# this is the assertion that makes the counted figure worth having.
+#
+# The fixture holds one Accepted RFC and one Draft, so the two groups differ
+# and the arithmetic has something to distinguish. A fixture of only Accepted
+# files would reconcile under a guard that never counted Drafts at all.
+case_no_vh_reconciles() {
+    if [ -n "$FILTER" ] && [[ "no_vh_accepted/population-reconciles" != *"$FILTER"* ]]; then
+        SKIP=$((SKIP + 1))
+        return 0
+    fi
+    local own="$WORK/case-no-vh-recon"
+    rm -rf "$own"
+    mkdir -p "$own/rfcs"
+    FIX="$own"
+    write_base_fixture
+    cat >"$FIX/rfcs/0006-draft.md" <<'EOF'
+---
+status: draft
+---
+
+# RFC-0006 Draft
+
+## Status
+
+Draft
+
+## Body
+
+A Draft RFC needs no Version History, and this file is here so the fixture has
+a file in the group the guard must count rather than skip silently.
+EOF
+    local out scanned sk ch na
+    out="$(no_vh_guard 2>&1)"
+    scanned="$(grep -oE 'SCANNED=[0-9]+' <<< "$out" | head -1 | grep -oE '[0-9]+' || true)"
+    sk="$(grep -oE 'SKIPPED_BY_NAME=[0-9]+' <<< "$out" | head -1 | grep -oE '[0-9]+' || true)"
+    ch="$(grep -oE 'CHECKED=[0-9]+' <<< "$out" | head -1 | grep -oE '[0-9]+' || true)"
+    na="$(grep -oE 'NOT_ACCEPTED=[0-9]+' <<< "$out" | head -1 | grep -oE '[0-9]+' || true)"
+    if [ -z "$na" ] || [ -z "$sk" ] || [ -z "$ch" ] || [ -z "$scanned" ]; then
+        printf '%-34s %-8s %s\n' "no_vh_accepted/population-reconciles" "accept" \
+            "no group counters reported — the population cannot be checked"
+        FAIL=$((FAIL + 1))
+    elif [ "$na" -lt 1 ]; then
+        printf '%-34s %-8s %s\n' "no_vh_accepted/population-reconciles" "accept" \
+            "NOT_ACCEPTED=0 while the fixture holds a Draft — a remainder, not a count"
+        FAIL=$((FAIL + 1))
+    elif [ $((sk + ch + na)) -ne "$scanned" ]; then
+        printf '%-34s %-8s %s\n' "no_vh_accepted/population-reconciles" "accept" \
+            "$sk + $ch + $na = $((sk + ch + na)) against SCANNED=$scanned"
+        FAIL=$((FAIL + 1))
+    else
+        printf '%-34s %-8s %s\n' "no_vh_accepted/population-reconciles" "accept" \
+            "ok ($sk + $ch + $na = SCANNED=$scanned)"
+    fi
+    PASS=$((PASS + 1))
+}
+
 case_no_vh_signed_heading() {
     prepare_case() { write_no_vh_signed_heading; }
     write_defect() { write_no_vh_heading_absent; }
@@ -1093,6 +1155,7 @@ case_no_vh_signed_heading
 case_vh_heading_all_shapes
 case_no_vh_bullets
 case_no_vh_population
+case_no_vh_reconciles
 case_population_coverage
 case_plan_yaml
 case_cites

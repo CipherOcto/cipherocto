@@ -27,6 +27,7 @@ EXIT_CODE=0
 SCANNED=0
 SKIPPED_BY_NAME=0
 CHECKED=0
+NOT_ACCEPTED=0
 PASS=0
 FAIL=0
 MISSING_VH=0
@@ -73,7 +74,19 @@ while IFS= read -r -d '' rfc_file; do
     fi
 
     # Skip non-Accepted RFCs
-    [ "$is_accepted" -eq 0 ] && continue
+    #
+    # Counted here rather than derived from the remainder in the summary. As a
+    # remainder it was `SCANNED - CHECKED - SKIPPED_BY_NAME`, which reconciles
+    # by construction and therefore cannot detect anything: a file skipped by
+    # a path that increments nothing is absorbed into it and reported as an
+    # ordinary non-Accepted Draft. That is the same invisibility that hid six
+    # unplaceable files in the sibling status guard until it counted its own
+    # residual. Counting the path directly and asserting the partition below
+    # makes the claim checkable instead of tautological.
+    if [ "$is_accepted" -eq 0 ]; then
+        NOT_ACCEPTED=$((NOT_ACCEPTED + 1))
+        continue
+    fi
 
     # CHECKED counts Accepted RFCs actually examined. It used to increment once
     # per markdown file found, so the summary compared a whole-corpus count
@@ -149,12 +162,25 @@ echo "         PASS=$PASS FAIL=$FAIL MISSING_VH=$MISSING_VH"
 # two numbers without saying the gap was a skipped population, which reads as
 # unexamined work rather than as a rule.
 #
-# Stating it costs nothing and makes the scope auditable: 155 plus 91 is 246,
-# and every file in the corpus lands in exactly one of those two groups.
+# The comment here previously read "155 plus 91 is 246, and every file in the
+# corpus lands in exactly one of those two groups". Both halves were wrong: the
+# corpus is 247, and one file lands in neither group because it is skipped by
+# name. A comment asserting a reconciliation is not the reconciliation.
 if [ "$SCANNED" -gt 0 ]; then
-    echo "         NOT_ACCEPTED=$((SCANNED - CHECKED - SKIPPED_BY_NAME)) (this is a promotion gate, so a non-Accepted RFC needs no Version History)"
+    echo "         NOT_ACCEPTED=$NOT_ACCEPTED (this is a promotion gate, so a non-Accepted RFC needs no Version History)"
     echo "         SKIPPED_BY_NAME=$SKIPPED_BY_NAME (CHANGELOG/README/INDEX)"
     echo "         COVERAGE=$((CHECKED * 100 / SCANNED))% of scanned files are Accepted and in scope"
+fi
+#
+# Every file read must land in exactly one group. Checked rather than assumed,
+# and it is the assertion that makes the directly counted NOT_ACCEPTED figure
+# worth having: were the figure derived from the remainder, this could not fail.
+if [ $((SKIPPED_BY_NAME + CHECKED + NOT_ACCEPTED)) -ne "$SCANNED" ]; then
+    echo "FAIL: population does not reconcile: SKIPPED_BY_NAME=$SKIPPED_BY_NAME"
+    echo "      + CHECKED=$CHECKED + NOT_ACCEPTED=$NOT_ACCEPTED is"
+    echo "      $((SKIPPED_BY_NAME + CHECKED + NOT_ACCEPTED)), but SCANNED=$SCANNED."
+    echo "      A file was read and placed in no group."
+    EXIT_CODE=1
 fi
 
 # A lint that examined no files has verified nothing, and must not report that

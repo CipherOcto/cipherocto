@@ -73,14 +73,16 @@ prevent it.
       the comment that names them lives with it. The disagreement is now
       detectable rather than silent, which lowers the cost of leaving the
       duplication in place but does not remove the three edits.
-- [ ] `lint_no_vh_accepted.sh` reports its unplaced files rather than absorbing
-      them. Its population already reconciles, but by derivation:
-      `NOT_ACCEPTED` is computed as the remainder of the scanned count, so any
-      file skipped by a path that increments nothing would be counted as a
-      non-Accepted RFC and look entirely legitimate. That is precisely how the
-      status guard's six unplaceable files stayed invisible. Deriving the
-      remainder is a reasonable choice, provided the remainder is also checked
-      against a directly counted figure.
+- [x] `lint_no_vh_accepted.sh` reports its unplaced files rather than absorbing
+      them. `NOT_ACCEPTED` is counted on the path that skips non-Accepted RFCs
+      rather than derived as a remainder of the scanned count, and the summary
+      asserts that the three groups add back up to the population. A file
+      skipped by a path that increments nothing can no longer be absorbed into
+      an ordinary non-Accepted Draft. The comment standing beside the summary
+      claimed a reconciliation that did not hold — it read "155 plus 91 is
+      246, and every file in the corpus lands in exactly one of those two
+      groups" against a corpus of 247 with one file in a third group — and is
+      corrected to say why the assertion is there.
 
 ## Notes
 

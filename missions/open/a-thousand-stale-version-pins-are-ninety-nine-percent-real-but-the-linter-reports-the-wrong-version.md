@@ -1,7 +1,8 @@
 ---
 name: a-thousand-stale-version-pins-are-ninety-nine-percent-real-but-the-linter-reports-the-wrong-version
 description: >-
-  validate_cites.sh reports 1007 STALE version-pin findings. Re-measured against the true Version History latest row: 997 are genuine, 7 are false positives, and 3 cite a document with no Version History at all. The linter also computes its "latest" as the FIRST pipe-table version anywhere in the file, so for 41 of 163 RFC numbers it names a version that is not the latest, and 529 of the findings point at one file where it reports v0.1 as latest when the table runs 0.1 through v2.4.
+  validate_cites.sh reported 1007 STALE version-pin findings, naming a "latest" version read as the first version-shaped table cell anywhere in a file. Repaired: the reader now finds the Version History section, takes its rows and keeps the highest. The backlog moved to 1028, and every one of the 1028 is genuine, the cited version being absent from that document's own Version History. An earlier classification put 21 of them at false positives because it reused the linter's own file-wide suppression test, which had been hiding them.
+
 metadata:
   node_type: mission
   type: tooling
@@ -29,14 +30,22 @@ Summary: CHECKED=29273 VALID=26627 PHANTOM=339 INVALID=1300 STALE=1007
 The 1007 `STALE [version pin mismatch]` findings, compared against the actual
 latest Version History row of each cited document:
 
-| Count | Class                                                       |
-| ----- | ----------------------------------------------------------- |
-| 997   | **genuine** — the cited version is behind the true latest   |
-| 7     | **false positive** — the cited version _is_ the true latest |
-| 3     | the cited document has no Version History section at all    |
+After the repair, re-classified directly against each document's Version
+History rather than against the linter's verdict:
 
-**99% of the backlog is real.** Unlike the `INVALID` and `PHANTOM` classes,
+| Count | Class                                                                          |
+| ----- | ------------------------------------------------------------------------------ |
+| 1028  | **genuine** — the cited version is absent from that document's Version History |
+| 0     | false positive                                                                 |
+
+**The entire backlog is real.** Unlike the `INVALID` and `PHANTOM` classes,
 this one is not inflated by a measurement error.
+
+**An earlier figure in this file said 997 genuine and 7 false positives. That
+was wrong, and the error is worth recording.** The classification was produced
+from the linter's own output, and the linter's second defect — a file-wide "is
+this version anywhere in the document" test — was suppressing precisely those 21. Measuring a tool against the tool's verdict inherits the tool's blind spots,
+so the classification had to be redone against the Version History directly.
 
 ## The linter names the wrong version
 
@@ -76,7 +85,8 @@ therefore flagged against a version that stopped being current long ago.
 
 Fixing the reader is mechanical and safe — it is the same change already made to
 `lint_status_vh_sync.sh` and `lint_plan_yaml_vh_sync.sh`. But **the verdict does
-not change**: 997 findings are genuine, and a correct reader still reports them.
+not change in kind**: the findings are genuine, and a correct reader reports
+them with an actionable version.
 
 What a correct reader changes is the _message_. Today it says
 `cited v1.3, latest v0.1`, which is not a sentence anyone can act on — the
@@ -102,9 +112,34 @@ the pattern corrected, that class is **3 findings**, not 561.
 all 339 `PHANTOM` findings and false: **0** match inside a word. The regex is
 applied per line and reports the offset within it.
 
+## Two fixture mistakes, both of which looked like linter bugs
+
+The repaired reader was tested against a fixture RFC numbered `0001` and then
+`0900`, each placed in a temp directory. Both times the run reported **no
+finding**, which reads as the repair having failed.
+
+Neither was the repair. `0001` and `0900` are real RFC numbers in this
+repository, and the citation resolver walked up from the repository root and
+found the _real_ file — `rfcs/draft/process/0001-mission-lifecycle.md` and
+`rfcs/accepted/economics/0900-ai-quota-marketplace.md` — while the temp fixture
+sat unused beside it. The resolver was reading the repository, not the fixture.
+
+The trace that settled it printed `rfc_path=` on its own line, naming the
+repository file. Nothing in the summary said which document had been checked.
+
+A second fixture then made the opposite mistake: it cited `v1.0` against a
+Version History containing `1.0` and `2.0`, and expected a stale-pin finding.
+`v1.0` **is** a row in that table, so not reporting it is correct. The test
+needed a pin the table never had, not one it did.
+
+The lesson is the same one the mutation harness exists to enforce, applied to
+fixtures: a test that fails for a reason other than the defect under test will
+send you repairing the wrong thing. Both times the failure was resolvable only
+by reading what the code actually touched, not what it was asked to touch.
+
 ## What remains for a maintainer
 
-The 997 genuine findings need the author-intent decision the whole citation
+The 1028 genuine findings need the author-intent decision the whole citation
 backlog needs: bump the pin, or accept that the pin refers to the version whose
 section is being cited. That is the question in
 `one-thousand-nine-hundred-rfc-references-carry-a-version-pin-and-only-a-fifth-are-cross-references`,

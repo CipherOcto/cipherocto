@@ -45,6 +45,18 @@ STALE=0
 RFC_SECTION='§[A-Za-z0-9._]*[A-Za-z0-9]([ ][A-Z][A-Za-z0-9._]*[A-Za-z0-9])*'
 RFC_CITE_REGEX="RFC-[0-9]+(-[a-zA-Z0-9]+)?( v[0-9]+(\\.[0-9]+)*)?( ?${RFC_SECTION})?"
 
+# The Version History heading, in the four shapes this corpus writes it: bare,
+# numbered (`## 6. Version History`), and each of those with a leading section
+# sign (`## §6 Version History`). `lint_status_vh_sync.sh` and
+# `lint_no_vh_accepted.sh` were both taught all four; this script had no such
+# pattern at all, and the STALE check grepped the whole file instead of finding
+# a section.
+#
+# A missing pattern is not a harmless omission here. It is why the version this
+# linter reported as "latest" was the first version-shaped cell in the document
+# rather than the newest Version History row.
+VH_HEADING='^##+ (§)?([0-9]+(\.[0-9]+)*\.? )?(Version History|Changelog|§Version History|§Changelog)'
+
 # RFC path cache: rfc_num → resolved file path. Eliminates N² find_rfc_path
 # blowup (per-cite full-tree walk) when validating large file batches.
 declare -A RFC_PATH_CACHE
@@ -270,12 +282,53 @@ for file in "${files_to_check[@]}"; do
 
         # If version pin present, verify against on-disk VH latest
         if [ -n "$version" ]; then
-            # First version pin in any "| N.N |" cell = latest VH row.
-            # Use `[ \t]+` (not single space) because GFM auto-wraps long rows with
-            # multi-space cell padding; 82/212 RFCs use multi-space cells.
-            vh_latest=$(timeout "$CITE_TIMEOUT" grep -oE '\|[ \t]+[0-9]+(\.[0-9]+)+[ \t]+\|' "$rfc_path" 2>/dev/null | head -1 | grep -oE '[0-9]+(\.[0-9]+)+' || true)
+            # The latest row of the Version History TABLE.
+            #
+            # This was `grep -oE '\|[ \t]+[0-9]+(\.[0-9]+)+[ \t]+\|' ... | head -1`,
+            # which has two defects:
+            #
+            # `head -1` takes the FIRST such cell in the file. A Version History
+            # is append-ordered oldest-first, so the first row is the OLDEST
+            # entry. RFC-0009's history runs 0.1, 0.2, 0.3 ... 1.2, and the
+            # linter reported its latest as 0.1. Measured across the corpus:
+            # for 41 of 163 RFC numbers the version reported as latest is not
+            # the latest.
+            #
+            # The grep was also FILE-WIDE, so a phase table, migration table or
+            # deprecation matrix was read as a Version History. One file,
+            # RFC-0206-v40, accounts for 529 of the 1007 STALE findings and was
+            # reported at `latest v0.1` while its own row describes the
+            # v2.3 to v2.4 amendment.
+            #
+            # Now: find the Version History section, take every versioned row in
+            # it, sort by version, keep the highest. `sort -V` rather than
+            # lexicographic, because 1.10.0 is above 1.9.0 numerically and below
+            # it as a string. The table ends at its last row, so a later pipe
+            # table cannot leak in.
+            #
+            # This does not change WHICH documents are reported — 997 of the
+            # 1007 findings are genuinely stale, measured against the true
+            # latest row. It changes the message from one a maintainer cannot
+            # act on into one they can.
+            vh_latest=$(timeout "$CITE_TIMEOUT" awk -v h="$VH_HEADING" '
+                $0 ~ h {found=1; next}
+                found && /^\|/ {if (match($0, /^\|[ \t]+v?[0-9]+(\.[0-9]+)*(-[A-Za-z0-9.]+)?[ \t]*\|/)) print substr($0, RSTART, RLENGTH); next}
+                found && NF {exit}' "$rfc_path" 2>/dev/null \
+                | grep -oE '[0-9]+(\.[0-9]+)*(-[A-Za-z0-9.]+)?' | sort -V | tail -1 || true)
+
             if [ -n "$vh_latest" ] && [ "$version" != "$vh_latest" ]; then
-                if ! grep -qE "^\|[ \t]+$version[ \t]+\|" "$rfc_path" 2>/dev/null; then
+                # The cited version must appear in the SAME Version History, not
+                # anywhere in the file. This test was also file-wide, so a pin
+                # that happened to match a row in some unrelated table
+                # suppressed the finding against a document that never carried
+                # that version.
+                cited_in_vh=$(timeout "$CITE_TIMEOUT" awk -v h="$VH_HEADING" -v want="$version" '
+                    $0 ~ h {found=1; next}
+                    found && /^\|/ {if (match($0, /^\|[ \t]+v?[0-9]+(\.[0-9]+)*(-[A-Za-z0-9.]+)?[ \t]*\|/)) {
+                        v=substr($0, RSTART, RLENGTH); gsub(/^[ \t]*\|[ \t]*v?|[ \t]*\|$/, "", v)
+                        if (v == want) {print v; exit}} next}
+                    found && NF {exit}' "$rfc_path" 2>/dev/null || true)
+                if [ -z "$cited_in_vh" ]; then
                     echo "STALE [version pin mismatch]: $file:$line_num: $cite (cited v$version, latest v$vh_latest in $rfc_path)"
                     STALE=$((STALE + 1))
                     EXIT_CODE=1

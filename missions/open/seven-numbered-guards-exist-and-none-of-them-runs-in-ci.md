@@ -184,8 +184,9 @@ whether it belongs in CI at all.
 
 ### The harness is worth wiring even though it is not a gate
 
-`scripts/mutation-verify-doc-guards.sh` runs a set of cases across 8 guards and
-exits 0. Its current count is whatever `--help` prints, and that listing is
+`scripts/mutation-verify-doc-guards.sh` runs a set of cases across every guard
+covered by `seven-numbered-guards-exist-and-none-of-them-are-mutation-verified`,
+and exits 0. Its case count is whatever `--help` prints, and that listing is
 self-maintaining: the run asserts that the number of named cases equals the
 number of case functions executed, so the two cannot drift apart. Wiring it as
 a gating step is the one addition that changes
@@ -198,6 +199,14 @@ An earlier version of this section restated the count as a number here, which
 guaranteed it would go stale: the figure has needed correcting three times, and
 each correction was a separate piece of work for a fact that is already
 self-reporting. Nothing in this mission should quote a live count again.
+
+That rule was written for the case count and then broken two paragraphs later,
+by a different live count: the number of guards the harness drives. No part of
+the harness reports it, so it has no self-maintaining source the way the case
+count has, and it was already wrong here. The number is gone rather than
+corrected, because correcting it is the third correction of a fact that will go
+stale again. Which guards are covered is a question for the sibling mission,
+which is where coverage is tracked.
 
 It costs seconds. It touches no tracked file. It is the direct answer to this
 mission's own thesis.

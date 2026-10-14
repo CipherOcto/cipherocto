@@ -67,13 +67,15 @@ references rather than review-finding ids:
 | Tree        | Section anchors |
 | ----------- | --------------- |
 | `rfcs/`     | 3,752           |
-| `docs/`     | 2,452           |
-| `missions/` | 3,667           |
-| `CLAUDE.md` | 10              |
+| `docs/`     | 2,454           |
+| `missions/` | 3,676           |
+| `CLAUDE.md` | 6               |
 
-**6,119 anchors sit outside the checked tree.** `missions/` is the second
+**6,130 anchors sit outside the checked tree.** `missions/` is the second
 largest population and is written by exactly the agents this repository's
 process is built for.
+
+**Re-measured.** `rfcs/` is unchanged at 3,752. The other three moved: docs and missions grew by 2 and 9, and `CLAUDE.md` fell from 10 to 6. The last one is not a measurement error and not a silent drift — commit `22e3e66b` fixed three dangling anchors in that file on 2026-10-13, after this table was written. A figure that moved because the corpus was fixed is the figure behaving correctly.
 
 Counted with the linter's own `ANCHOR` and `is_section_anchor` via
 `scripts/measure_anchor_lint.py`, not with a loose grep for a capitalised word

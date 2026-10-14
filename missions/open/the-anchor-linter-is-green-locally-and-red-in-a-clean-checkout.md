@@ -80,6 +80,52 @@ of RFC code blocks rather than headings across the tree, so it does not read
 `docs/` and is not exposed to this. The exposure is specific to a linter whose
 index is built outside the tree it gates.
 
+## Classifying the fourteen
+
+The 31 pairs are 14 distinct anchors. Classifying them decides how much of the
+work is fixing citations and how much is fixing the linter.
+
+The first attempt at this was done by hand, with `git grep` over tracked files,
+and it was wrong in detail: it sorted headings into categories they do not belong
+to, because it guessed at a matching rule the linter does not use. That rule is
+threefold — a citation resolves when its name matches a heading exactly, when one
+of its progressive forms does (which drops a trailing parenthetical), or when a
+heading begins with the name followed by a space. Reimplementing it from memory
+gave a different answer than the linter gives.
+
+Asked directly, through the linter's own `normalize`, `candidates` and `resolves`
+against this working tree's index, the fourteen fall into exactly two groups.
+
+**Twelve resolve here, and every heading that satisfies them is in a gitignored
+document.** Not one resolves against a tracked heading:
+
+| Anchor                                            | Satisfied by                                  | Lives in                                   |
+| ------------------------------------------------- | --------------------------------------------- | ------------------------------------------ |
+| `§20.3.1`, `§20.3.2`, `§20.6.1`, `§20.7`          | a heading of that number                      | `docs/reviews/` storage-layer analysis     |
+| `§appendix c`                                     | `Appendix C — backward compatibility`         | `docs/plans/` whatsapp phase 2.5           |
+| `§appendix d`                                     | `Appendix D — daemon.api.version progression` | `docs/plans/` whatsapp phase 2             |
+| `§coverage gap`                                   | `Coverage Gap — octo-market crate`            | `docs/plans/` storage-layer execution plan |
+| `§layer c`                                        | `Layer C — http proxy + python sdk`           | `docs/audits/` developer guidelines        |
+| `§replay defense`                                 | `Replay Defense`                              | `docs/audits/` developer guidelines        |
+| `§error envelope (canonical`                      | `Error Envelope`, via the stripped form       | `docs/audits/` RFC-0011 spec cycle         |
+| `§cross-rfc harmonization`, and its dated variant | `Cross-RFC Harmonization plan`                | gitignored                                 |
+
+**Two resolve nowhere at all**, here or in a checkout — `§trust level canonical
+uuids); must` and `§trust level canonical uuids); not`. These dangle on this
+machine too; the local index never supplied them.
+
+So the local index is not merely inflating a count. Every one of the twelve is a
+citation pointing at a section that exists **only in review notes and execution
+plans nobody else holds**, and the sections it finds are working documents — a
+WhatsApp CLI plan, a storage-layer execution plan — rather than the RFCs the
+citations name. A reader following `RFC-0960 §20.3.1` would be sent to a heading
+present in exactly one person's uncommitted notes.
+
+Three of the fourteen are additionally malformed in the citation itself, the
+linter having read a sentence as a section name: `§error envelope (canonical`,
+`§cross-rfc harmonization (2026-08-24`, and the two `§trust level` forms. Those
+are terminator defects whichever way the corpus question is settled.
+
 ## Decisions for maintainers
 
 1. **Extend the baseline by the 31 name-site pairs** the clean checkout reports,
@@ -91,14 +137,21 @@ index is built outside the tree it gates.
    developer's machine — which is the more correct outcome, since a section a
    reader cannot reach is a section that does not exist. Same trade-off as
    `validate_cites.sh`, and the same decision.
-3. **The 14 anchors themselves name sections that do not exist in the
-   repository.** Three of them read like genuine defects in the RFCs rather than
-   index artifacts — `§coverage gap`, `§cross-rfc harmonization`,
-   `§trust level canonical uuids); must` — where the citation carries a
-   qualifier the linter's terminator cuts at the wrong place. Whether those are
-   citation defects or a terminator defect is the open question, and it overlaps
-   the terminator decision already recorded in
-   `the-only-ci-wired-anchor-linter-checks-rfcs-but-indexes-headings-from-the-whole-tree`.
+3. **Extending the baseline with all 31 banks a working document as a spec.**
+   Every one of the twelve resolvable anchors resolves to a heading in
+   `docs/reviews`, `docs/audits` or `docs/plans` — a WhatsApp CLI plan, a
+   storage-layer execution plan, a developer-guidelines audit — and to nothing
+   tracked. Recording those as accepted would enshrine, as the standard, that an
+   RFC's section is a heading in one person's uncommitted plan. Two of the
+   fourteen (`§trust level canonical uuids); must` and `; not`) dangle here too,
+   so they are not a corpus artifact at all and should not be baselined as one.
+   If the baseline is extended, the terminator artifacts — the three whose
+   citation text is a sentence — are worth separating first, since they are a
+   linter defect rather than a citation one.
+4. **The cheapest real work is the twelve.** Each names a section that does not
+   exist in the repository, and each citation points at an RFC while resolving to
+   an unrelated working document. That is a genuine defect in the RFC text, and
+   it is the part a reader would actually hit.
 
 ## Note on what was not done
 

@@ -247,6 +247,22 @@ def main() -> int:
         for ex in examples[verdict]:
             print(f"           {ex}")
     print()
+    # Every finding increments exactly one verdict, so the buckets partition the
+    # input by construction. Stating it is not ceremony: reading this output
+    # without it, the eight bucket lines sum to 1300 only if you add them
+    # yourself, and nothing on the page says they are exhaustive. Summing the
+    # first four gives 1172, and the remaining 128 sit at a slightly different
+    # column because the field is right-aligned — which reads as a nested
+    # breakdown rather than four more buckets. That is exactly the wrong
+    # conclusion I drew from this output while auditing it.
+    accounted = sum(verdicts.values())
+    if accounted == total:
+        print(f"all {total} findings are in the buckets above "
+              f"({len(verdicts)} verdicts, one per finding)")
+    else:
+        print(f"MISMATCH: the buckets above hold {accounted} of {total} "
+              f"findings read; {total - accounted} were not classified.")
+    print()
     print(f"genuinely missing, by citing file (top 10 of "
           f"{len(genuine_by_file)} files):")
     for path, n in genuine_by_file.most_common(10):

@@ -342,6 +342,7 @@ def main() -> int:
 
     wildcard = {n for n, site in baseline if site == "*"}
     new_findings = sorted(f for f in findings - baseline if f[0] not in wildcard)
+    baselined_count = len(findings & baseline)
     fixed = len({f for f in baseline if f not in findings and f[1] != "*"})
 
     print(f"symbols indexed: {len(resolved)}")
@@ -350,6 +351,16 @@ def main() -> int:
     if wildcard:
         print(f"note: {len(wildcard)} name(s) in the baseline are still name-only "
               f"and cannot see a new site — re-run with --write-baseline")
+    # Always printed, not only when there is something to say. This linter
+    # previously reported the unresolved count and then went straight to "no new
+    # unresolved type references", so a reader could not tell whether the
+    # baseline was holding or had been abandoned — the exact ambiguity the
+    # sibling anchors linter already documents in its own comment, reached from
+    # the other direction. The stale count is on the same line rather than
+    # below it, because a gate whose baseline is drifting is the case worth
+    # seeing without having to infer anything.
+    print(f"baselined: {baselined_count} of {len(findings)} finding(s); "
+          f"stale baseline entries: {fixed}")
     if fixed:
         print(f"baselined references now resolved: {fixed} — shrink with --write-baseline")
 

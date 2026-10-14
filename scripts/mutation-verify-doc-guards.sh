@@ -1099,6 +1099,60 @@ write_anchors_defect() {
         >>"$FIX/rfcs/0001-anchor.md"
 }
 
+# A baseline is a population the reader cannot otherwise see, and a linter that
+# prints nothing about it looks identical to a linter with no baseline at all.
+#
+# Both of these report their unresolved counts and then, on a healthy run, say
+# only "no new findings". The anchors linter printed a coverage figure but
+# guarded the stale count behind a non-zero test, and the type-refs linter
+# printed no coverage figure whatsoever — so the case that matters, an
+# abandoned or drifting baseline, is the one both stayed silent about.
+#
+# The fixture uses an EMPTY baseline over a corpus with one real finding, so
+# every count is zero-or-one and the stale count is genuinely zero. That is the
+# state the old conditionals swallowed.
+case_baseline_coverage() {
+    if [ -n "$FILTER" ] && [[ "baselines/report-coverage" != *"$FILTER"* ]]; then
+        SKIP=$((SKIP + 1))
+        return 0
+    fi
+    local own="$WORK/case-baseline-coverage"
+    rm -rf "$own"
+    mkdir -p "$own/rfcs"
+    FIX="$own"
+    : >"$FIX/baseline.txt"
+    cat >"$FIX/rfcs/0001-debt.md" <<'EOF'
+# RFC-0001 Debt
+
+## Body
+
+See §Invented Anchor for a citation that resolves to nothing here.
+
+```rust
+let x: TotallyUndeclaredType = y;
+```
+EOF
+    local a t bad=""
+    a="$(anchors_guard 2>&1)"
+    t="$(types_guard 2>&1)"
+    if ! grep -q 'stale baseline entries: 0' <<< "$a"; then
+        bad="anchors linter omits the stale count when it is zero"
+    fi
+    if ! grep -q 'stale baseline entries: 0' <<< "$t"; then
+        bad="${bad:+$bad; }type-refs linter reports no baseline coverage at all"
+    elif ! grep -qE 'baselined: [0-9]+ of [0-9]+ finding' <<< "$t"; then
+        bad="${bad:+$bad; }type-refs linter gives no baselined-of-total figure"
+    fi
+    if [ -n "$bad" ]; then
+        printf '%-34s %-8s %s\n' "baselines/report-coverage" "accept" "$bad"
+        FAIL=$((FAIL + 1))
+    else
+        printf '%-34s %-8s %s\n' "baselines/report-coverage" "accept" \
+            "ok (both linters state coverage and staleness at zero)"
+    fi
+    PASS=$((PASS + 1))
+}
+
 case_anchors() {
     prepare_case() { prepare_anchors_clean; }
     write_defect() { write_anchors_defect; }
@@ -1161,6 +1215,7 @@ case_plan_yaml
 case_cites
 case_frontmatter
 case_anchors
+case_baseline_coverage
 case_type_refs
 
 # The inventory must describe the run that produced this result.

@@ -393,9 +393,17 @@ def main() -> int:
     if wildcard:
         print(f"note: {len(wildcard)} name(s) in the baseline are still name-only "
               f"and cannot see a new site — re-run with --write-baseline")
-    print(f"dangling: {len(unresolved)} reference(s) over {len(by_name)} distinct name(s)")
-    print(f"baselined: {baselined_count} of {len(findings)} current reference(s) "
-          f"are recorded as known")
+    print(f"dangling: {len(unresolved)} occurrence(s) over {len(by_name)} distinct name(s)")
+    # Two units, printed next to each other. `unresolved` is a list, one entry
+    # per citation, so a line citing the same name twice counts twice. The
+    # baseline records (name, site) PAIRS, which collapse those. The two
+    # numbers are not meant to match — 597 occurrences over 588 pairs is the
+    # normal shape — but printed adjacently with no label, 597 against 588
+    # reads as nine unaccounted references, which is the same confusion this
+    # block already documents once above.
+    print(f"findings: {len(findings)} distinct (name, site) pair(s) — the unit the baseline records")
+    print(f"baselined: {baselined_count} of {len(findings)} finding(s); "
+          f"stale baseline entries: {stale}")
     if stale:
         print(f"  -> {stale} baseline entry(ies) no longer match a finding; "
               f"shrink with --write-baseline")

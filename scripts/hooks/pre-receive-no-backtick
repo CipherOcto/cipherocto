@@ -3,8 +3,16 @@
 # Refuses incoming commits whose message contains dangerous tokens.
 #
 # Install (self-hosted Git server: Gitea, Forgejo, Gitolite, cgit):
+#   mkdir -p /path/to/repo.git/wrappers
+#   cp scripts/wrappers/dangerous-tokens.sh /path/to/repo.git/wrappers/
 #   cp scripts/hooks/pre-receive-no-backtick /path/to/repo.git/hooks/pre-receive
 #   chmod +x /path/to/repo.git/hooks/pre-receive
+#
+# The wrappers directory is REQUIRED, not optional. This hook resolves its
+# token list as "$HOOK_DIR/../wrappers/dangerous-tokens.sh", so copying only
+# the hook file leaves the library missing, `source` fails under `set -e`, and
+# the hook declines EVERY push with "No such file or directory". That was the
+# documented install command until it was run and the push was rejected.
 #
 # GitHub: GitHub does NOT support server-side pre-receive hooks.
 # For GitHub, use Layer 6 (CI gate in .github/workflows/) which
@@ -22,11 +30,17 @@ HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
 source "$HOOK_DIR/../wrappers/dangerous-tokens.sh"
 
-while read -r oldrev newrev refname; do
+scanned_refs=0
+scanned_commits=0
+skipped_present=0
+
+while read -r oldrev newrev refname || [[ -n "$newrev" ]]; do
   # Branch/tag deletion or creation of an unborn branch — ignore.
   if [[ "$newrev" == "$ZERO" ]]; then
     continue
   fi
+
+  scanned_refs=$((scanned_refs + 1))
 
   # List of new commits being introduced by this push.
   if [[ "$oldrev" == "$ZERO" ]]; then
@@ -35,7 +49,16 @@ while read -r oldrev newrev refname; do
     revs=$(git rev-list "$oldrev..$newrev")
   fi
 
+  # A ref whose revisions are all already present on the server yields an
+  # empty list. That is legitimate -- those messages were vetted when they
+  # first arrived -- but it is indistinguishable from having examined
+  # nothing, so it is counted and reported rather than passing in silence.
+  if [[ -z "$revs" ]]; then
+    skipped_present=$((skipped_present + 1))
+  fi
+
   for rev in $revs; do
+    scanned_commits=$((scanned_commits + 1))
     msg=$(git log -1 --format='%B' "$rev")
     offenders=$(dangerous_present "$msg" || true)
     if [[ -n "$offenders" ]]; then
@@ -71,5 +94,18 @@ EOF
     fi
   done
 done
+
+# Report the population that was actually examined. A hook that prints
+# nothing on success cannot be told apart from one that examined nothing,
+# and every other guard in this framework now states its coverage.
+if (( scanned_refs == 0 )); then
+  echo "pre-receive: no ref updates to examine" >&2
+elif (( scanned_commits == 0 )); then
+  echo "pre-receive: ${scanned_refs} ref(s), 0 new commits" \
+       "(${skipped_present} already present on this server)" >&2
+else
+  echo "pre-receive: scanned ${scanned_commits} commit(s)" \
+       "across ${scanned_refs} ref(s), no dangerous tokens" >&2
+fi
 
 exit 0

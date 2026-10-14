@@ -163,6 +163,39 @@ harmonization (2026-08-24`, and both `§trust level` forms.
    an unrelated working document. That is a genuine defect in the RFC text, and
    it is what a reader would actually hit.
 
+## What a push would actually do
+
+The prediction above was checked rather than left standing. Every step of the
+Lint workflow that can fail the job was run in the clean clone, because the
+workflow gives most of its steps a `|| true` suffix and only three lack it:
+
+| Step                                             | Can fail the job | Result in a clean clone    |
+| ------------------------------------------------ | ---------------- | -------------------------- |
+| Rust format check                                | yes              | pass                       |
+| Lint GitHub Actions workflows (actionlint 1.7.7) | yes              | pass                       |
+| Rust clippy                                      | no, `            |                            | true` | not run |
+| Run Prettier                                     | no, `            |                            | true` | not run |
+| Lint RFC section anchors                         | yes              | **fails, 31 new findings** |
+| Lint RFC type references                         | yes              | pass                       |
+| Python format checks                             | no, `            |                            | true` | not run |
+
+So exactly one step goes red, and it is the one this mission is about. The
+actionlint run needed the container to run as the invoking user, since a
+temporary directory is created mode 0700 and the image reads as another user;
+with that corrected it reports nothing.
+
+`commit-message-lint.yml` is the other workflow whose result is knowable without
+building. All 544 commit messages in the range were run through the shipped
+`dangerous_present` — whole messages, not lines — and none is flagged, which is
+what the commit hook enforced at write time.
+
+The remaining seven workflows triggered by a push to `next` build Rust or run
+the test suites. They were not verified: the volume this repository sits on has
+about 3.6 GB free, which is not enough to compile, and that is the same
+constraint blocking the rebuild tier of the mutation harness. So the honest
+statement is that the Lint and commit-message workflows were checked and that
+the rest are unverified rather than assumed green.
+
 ## Note on what was not done
 
 The baseline was not extended and the index was not changed to read tracked

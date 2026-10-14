@@ -37,6 +37,7 @@ import collections
 import importlib.util
 import pathlib
 import re
+import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -70,6 +71,34 @@ def index(m) -> set[str]:
             for path in source.rglob("*.md"):
                 known |= m.heading_names(path)
     return known
+
+
+def index_corpus(m) -> tuple[int, int]:
+    """How many files the index walked, and how many git does not track.
+
+    `INDEX_SOURCES` is walked with `rglob`, so the index is built from the
+    filesystem rather than from the tracked tree. In this repository that is a
+    real difference rather than a theoretical one: `docs/reviews`, `docs/audits`
+    and `docs/plans` are gitignored, so a working tree indexes hundreds of
+    markdown files a clean checkout has never seen.
+
+    It changes the numbers. The same linter, at the same commit, indexed 34419
+    headings in a working tree and 20952 in a clean clone, and the gap is why
+    it reports 0 findings here and 31 there. A measuring tool that prints the
+    heading count without saying which corpus produced it is the last place that
+    divergence should be invisible.
+    """
+    walked: set[pathlib.Path] = set()
+    for source in getattr(m, "INDEX_SOURCES", []):
+        p = pathlib.Path(source)
+        if p.is_file() and p.suffix == ".md":
+            walked.add(p)
+        elif p.is_dir():
+            walked.update(p.rglob("*.md"))
+
+    res = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True)
+    tracked = {ROOT / t for t in res.stdout.split("\n") if t}
+    return len(walked), sum(1 for p in walked if p not in tracked)
 
 
 def scan_occurrences(m, paths, known, numbers, rx=None) -> int:
@@ -309,6 +338,19 @@ def main() -> int:
         for s in getattr(m, "INDEX_SOURCES", [])
     ) or "unknown"
     print(f"headings indexed: {len(known)} (from {index_desc})")
+    walked_n, untracked_n = index_corpus(m)
+    if untracked_n:
+        print(
+            f"index corpus: {walked_n} markdown files walked, "
+            f"{untracked_n} not tracked by git"
+        )
+        print(
+            "             and absent from a clean clone. The figures below are"
+            " for this"
+        )
+        print("             machine's corpus and will not reproduce in CI.")
+    else:
+        print(f"index corpus: {walked_n} markdown files walked, all tracked by git")
     print(f"project RFC numbers: {len(numbers)}")
     print(f"baseline entries: {len(base)}")
 

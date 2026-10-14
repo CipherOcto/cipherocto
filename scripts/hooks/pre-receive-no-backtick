@@ -25,7 +25,13 @@ set -euo pipefail
 
 ZERO="0000000000000000000000000000000000000000"
 
-HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Resolve through any symlink so the hook works both as a real file installed
+# at repo.git/hooks/pre-receive and as a symlink created by
+# scripts/install-hooks.sh. This previously used plain `dirname "$0"`, which
+# under the symlink install pointed at .git/hooks and could not find the
+# library at all. commit-msg-no-backtick has always used readlink -f; the two
+# hooks now agree.
+HOOK_DIR="$(dirname "$(readlink -f "$0")")"
 # shellcheck source=scripts/wrappers/dangerous-tokens.sh
 # shellcheck disable=SC1091
 source "$HOOK_DIR/../wrappers/dangerous-tokens.sh"

@@ -455,6 +455,103 @@ case_section_cites_quoted() {
     PASS=$((PASS + 1))
 }
 
+# A coverage figure must describe the population the run actually examined.
+#
+# `lint_section_cites.sh` divides EXAMINED — counted from RFC_ROOT — by a
+# repository-wide `git ls-files` total. On the real tree those are the same
+# corpus and the figure is meaningful. Against a fixture they are not: a
+# fixture whose every citation was read reported COVERAGE=0%, which reads as
+# "nothing was examined". That is the exact misreading the figure was added to
+# prevent, reproduced by the figure itself.
+#
+# This is an accept-direction assertion. The defect is a number that reports,
+# not a defect that goes unreported, so planting one will never provoke it. The
+# assertion is on the guard's own output for a run that examined a whole
+# fixture — a population it can describe completely, and decline to.
+case_section_cites_coverage() {
+    if [ -n "$FILTER" ] && [[ "section_cites/coverage-suppressed" != *"$FILTER"* ]]; then
+        SKIP=$((SKIP + 1))
+        return 0
+    fi
+    local own="$WORK/case-section-cites-coverage"
+    rm -rf "$own"
+    mkdir -p "$own/rfcs"
+    FIX="$own"
+    write_base_fixture
+    local out
+    out="$(section_cites_guard 2>&1)"
+    # A numeric figure on this run is a denominator drawn from a corpus the
+    # run did not read, presented as a measurement of the one it did.
+    if grep -qE 'COVERAGE=[0-9]+%' <<< "$out"; then
+        printf '%-34s %-8s %s\n' "section_cites/coverage-suppressed" "accept" \
+            "printed a numeric coverage figure for a corpus it shared no denominator with"
+        FAIL=$((FAIL + 1))
+    elif ! grep -q 'COVERAGE not reported' <<< "$out"; then
+        printf '%-34s %-8s %s\n' "section_cites/coverage-suppressed" "accept" \
+            "coverage figure dropped without saying why — silent suppression reads as no measurement"
+        FAIL=$((FAIL + 1))
+    else
+        printf '%-34s %-8s %s\n' "section_cites/coverage-suppressed" "accept" \
+            "ok (suppressed, with reason)"
+    fi
+    PASS=$((PASS + 1))
+}
+
+# Every guard that examines a subset must SAY so. The dominant defect class in
+# this repository has been a guard reporting a total beside a result computed
+# over a narrower population, with nothing in the output marking the gap.
+#
+# These assertions are accept-direction: a guard that quietly drops the
+# population statement is not a guard that fails, so a planted defect cannot
+# detect it.
+case_no_vh_population() {
+    if [ -n "$FILTER" ] && [[ "no_vh_accepted/population-statement" != *"$FILTER"* ]]; then
+        SKIP=$((SKIP + 1))
+        return 0
+    fi
+    local own="$WORK/case-nvhpop"
+    rm -rf "$own"
+    mkdir -p "$own/rfcs"
+    FIX="$own"
+    write_base_fixture
+    # One Accepted and one Draft, so the two populations differ and the
+    # arithmetic has something to check.
+    cat >"$FIX/rfcs/0006-draft.md" <<'EOF'
+---
+status: draft
+---
+
+# RFC-0006 Draft
+
+## Status
+
+Draft
+
+## Body
+
+No Version History, and none is required of a Draft.
+EOF
+    local out n
+    out="$(no_vh_guard 2>&1)"
+    # The non-Accepted file must be named, and the count must match it.
+    if ! grep -q 'NOT_ACCEPTED=' <<< "$out"; then
+        printf '%-34s %-8s %s\n' "no_vh_accepted/population-statement" "accept" \
+            "no NOT_ACCEPTED line: the guard does not say what it skipped"
+        FAIL=$((FAIL + 1))
+    else
+        n="$(grep -oE 'NOT_ACCEPTED=[0-9]+' <<< "$out" | grep -oE '[0-9]+')"
+        if [ "$n" -ge 1 ]; then
+            printf '%-34s %-8s %s\n' "no_vh_accepted/population-statement" "accept" \
+                "ok (NOT_ACCEPTED=${n})"
+        else
+            printf '%-34s %-8s %s\n' "no_vh_accepted/population-statement" "accept" \
+                "NOT_ACCEPTED=0 while the fixture holds a Draft"
+            FAIL=$((FAIL + 1))
+        fi
+    fi
+    PASS=$((PASS + 1))
+}
+
 case_section_cites_overdeep() {
     prepare_case() { :; }
     write_defect() { write_section_cites_overdeep_defect; }
@@ -741,9 +838,11 @@ types_guard() {
 case_section_cites
 case_section_cites_overdeep
 case_section_cites_quoted
+case_section_cites_coverage
 case_status_vh
 case_no_vh
 case_no_vh_bullets
+case_no_vh_population
 case_population_coverage
 case_plan_yaml
 case_cites

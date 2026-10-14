@@ -187,14 +187,61 @@ echo ""
 # The count is over git-tracked markdown and takes about 30ms, so it is not
 # worth omitting. Widening RFC_ROOT is a maintainer decision because it changes
 # what this linter rejects; making the blind spot visible is not.
-CORPUS_TOTAL=$(git ls-files '*.md' 2>/dev/null | grep -v '^\.claude/worktrees/' | xargs grep -o '§' 2>/dev/null | wc -l | tr -d ' ')
-if [ -z "$CORPUS_TOTAL" ] || [ "$CORPUS_TOTAL" -eq 0 ] 2>/dev/null; then
-    CORPUS_TOTAL=0
+# The denominator is the REPOSITORY's total, so a run against a fixture corpus
+# reports COVERAGE=0% no matter how many citations the fixture holds: the
+# numerator is drawn from RFC_ROOT and the denominator from `git ls-files`.
+#
+# That is harmless on the real tree, where the two are the same corpus, and it
+# is misleading on every other run. A fixture whose entire content was examined
+# reports 0% coverage, which reads as "nothing was examined" — the exact
+# confusion this figure exists to prevent.
+#
+# So the figure is suppressed when the corpus root is not the repository, and
+# the summary says why. On the real tree it is printed exactly as before.
+#
+# The test is a comparison of resolved physical paths, not a list of accepted
+# spellings. A spelling list is open-ended, and a spelling that is missing from
+# it silently produces the wrong answer rather than an error — the first
+# version of this gate matched `rfcs`, `./rfcs` and `$REPO_ROOT/rfcs`, where
+# `REPO_ROOT` is never defined in this script, so on any corpus that did not
+# match the first pattern `set -u` aborted the run before the summary printed.
+# It passed on the real tree because the real tree matched the first pattern.
+# Only a run against a fixture ever reached the second pattern, and the harness
+# is what supplies those runs — so the gate stayed unexercised until the harness
+# was pointed at a fixture, at which point three section_cites cases failed
+# because the guard aborted before printing a summary at all.
+#
+# Both paths below are CWD-relative, matching the `git ls-files` denominator,
+# so the comparison and the figure cannot disagree about which tree is meant.
+# An unresolvable RFC_ROOT fails closed to "not the repository".
+_corpus_phys=""
+if [ -d "$RFC_ROOT" ]; then
+    _corpus_phys=$(cd "$RFC_ROOT" && pwd -P) || _corpus_phys=""
+fi
+_repo_rfcs=""
+if [ -d "rfcs" ]; then
+    _repo_rfcs=$(cd "rfcs" && pwd -P) || _repo_rfcs=""
+fi
+CORPUS_IS_REPO=0
+if [ -n "$_corpus_phys" ] && [ "$_corpus_phys" = "$_repo_rfcs" ]; then
+    CORPUS_IS_REPO=1
+fi
+
+# Not computed at all when the figure cannot be printed: an unused denominator
+# over the whole tree is ~30ms spent on a number that would be discarded.
+CORPUS_TOTAL=0
+if [ "$CORPUS_IS_REPO" -eq 1 ]; then
+    CORPUS_TOTAL=$(git ls-files '*.md' 2>/dev/null | grep -v '^\.claude/worktrees/' | xargs grep -o '§' 2>/dev/null | wc -l | tr -d ' ')
+    if [ -z "$CORPUS_TOTAL" ] || [ "$CORPUS_TOTAL" -eq 0 ] 2>/dev/null; then
+        CORPUS_TOTAL=0
+    fi
 fi
 
 echo "Summary: SCANNED=$SCANNED files, EXAMINED=$EXAMINED cite tokens"
 echo "         ACCEPTED=$ACCEPTED NON_CANONICAL=$NON_CANONICAL REJECTED=$REJECTED"
-if [ "$CORPUS_TOTAL" -gt 0 ]; then
+if [ "$CORPUS_IS_REPO" -eq 0 ]; then
+    echo "         COVERAGE not reported: RFC_ROOT=$RFC_ROOT is not this repository's rfcs/"
+elif [ "$CORPUS_TOTAL" -gt 0 ]; then
     CORPUS_PCT=$((EXAMINED * 100 / CORPUS_TOTAL))
     if [ "$EXAMINED" -lt "$CORPUS_TOTAL" ]; then
         echo "         COVERAGE=$CORPUS_PCT% of $CORPUS_TOTAL tracked section references"

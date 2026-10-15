@@ -1,4 +1,12 @@
-//! Cipherocto-side DAO for the `settlement_events` table (RFC-0959 §Event Sourcing).
+//! Cipherocto-side DAO for the `settlement_events` table.
+//!
+//! Note on the RFC reference: earlier revisions of this line cited
+//! "RFC-0959 §Event Sourcing". That section does not exist — the string
+//! does not appear in RFC-0959. The RFC mentions `settlement_events`
+//! once, in §Wire Format v2.0, as the source of legacy v1.0 rows. See
+//! mission `the-settlement-audit-trail-is-never-written`, which also
+//! records that this DAO's write path has no production caller.
+//!
 //!
 //! Persists `SettlementEvent` records (RFC-0959 §Data Structures) into the
 //! canonical event log. Each row is a router-signed attestation of a settlement

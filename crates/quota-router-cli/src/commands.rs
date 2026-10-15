@@ -627,7 +627,13 @@ pub fn settle_replay_repo(
     }
 }
 
-/// List persisted settlement events for an asker (RFC-0959 §Event Sourcing).
+/// List persisted settlement events for an asker (RFC-0959 §Wire
+/// Format v2.0).
+///
+/// The earlier citation "§Event Sourcing" named a section that does not
+/// exist in RFC-0959. Nothing writes `settlement_events` in production,
+/// so this reports zero events for any real database. See mission
+/// `the-settlement-audit-trail-is-never-written`.
 pub fn settle_list(asker_did: &str, db_path: Option<&str>) -> Result<()> {
     let repo =
         quota_router_storage::settlement_event_repo::SettlementEventRepository::open(db_path)
@@ -1218,7 +1224,7 @@ network_id = "0202020202020202020202020202020202020202020202020202020202020202"
         assert_eq!(repo.len().unwrap(), 1, "no new rows after rejection");
     }
 
-    // Settle-list CLI surface (RFC-0959 §Event Sourcing).
+    // Settle-list CLI surface.
     #[test]
     fn settle_list_with_no_persisted_events_returns_empty() {
         // Empty in-memory DB returns 0 events for any asker.

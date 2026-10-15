@@ -119,7 +119,14 @@ pub enum Commands {
         db_path: Option<String>,
     },
 
-    /// List persisted settlement events for an asker (RFC-0959 §Event Sourcing).
+    /// List persisted settlement events for an asker (RFC-0959 §Wire
+    /// Format v2.0).
+    ///
+    /// The earlier citation "§Event Sourcing" named a section that does
+    /// not exist in RFC-0959. Note also that nothing writes this table
+    /// in production, so this command reports zero events for any real
+    /// database. See mission
+    /// `the-settlement-audit-trail-is-never-written`.
     ///
     /// Queries the `settlement_events` table for all events matching
     /// `--asker-did`, ordered by `settled_at_unix` ASC. Each row is

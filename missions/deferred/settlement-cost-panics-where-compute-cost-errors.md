@@ -5,7 +5,7 @@ metadata:
   node_type: mission
   type: research
   created: 2026-10-15T00:00:00.000Z
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0959
     - RFC-0900
@@ -20,6 +20,11 @@ Deferred — `settlement_cost` returning `Dqa` rather than `Result` is a
 public signature change, and its call sites span two crates. No behaviour
 changed; the finding is documented at the site. Measurement probe
 removed, tree matches its prior state.
+
+**v1.1** adds a second panic point one call deeper: `cost_for` aborts on
+the per-axis multiplication, so the exposure is the whole pricing chain
+rather than its final accumulation. It also records one guard in that
+function that was checked and found sound.
 
 ## Finding
 
@@ -144,6 +149,47 @@ wrong number**. Every other marketplace finding in this audit degrades
 to a wrong-but-quiet result. This one aborts the process, which in a
 node serving other requests means losing the whole node, not just
 mispricing one listing.
+
+## v1.1: the panic is not only in the accumulation
+
+v1.0 located the panic in `settlement_cost`'s running sum. It is in the
+**per-axis product** as well, one call deeper — and `cost_for` is also
+unable to report it.
+
+```rust
+// cost_for, crates/quota-router-storage/src/ask.rs
+let blocks = units.div_ceil(1000);
+let blocks_dqa = Dqa::new(i64::try_from(blocks).expect("units"), 0).expect("non-overflow");
+let cost = blocks_dqa.multiply(rate).expect("non-overflow");   // <- panics
+Some(cost)
+```
+
+`cost_for` returns `Option<Dqa>`, where `None` means "unknown model", so
+an overflow has no representable outcome there either.
+
+Measured, with a listing carrying `rate_per_1k = i64::MAX` consumed at
+1,000,000 units (1,000 blocks):
+
+```text
+MEASURE cost_for_panicked=true
+  thread panicked at crates/quota-router-storage/src/ask.rs:474:46
+```
+
+So every marketplace price computation has **two** abort points on the
+path `settlement_cost` → `cost_for` → `dqa_mul`, and neither function's
+signature can carry an overflow. Reaching it needs no malformed input —
+only a large legal rate, since nothing bounds `rate_per_1k`.
+
+### One guard in that function is sound, and was checked
+
+The `i64::try_from(blocks).expect("units")` two lines above is
+**provably unreachable**: `blocks` is `u64.div_ceil(1000)`, so its
+maximum is `18_446_744_073_709_552`, against an `i64::MAX` of
+`9_223_372_036_854_775_807`. Every representable `units` fits.
+
+Recorded so it is not re-audited, and because the contrast is the point:
+within four lines of each other sit one expect that cannot fail and one
+that can, both written the same way.
 
 ## What the RFC owner needs to decide
 

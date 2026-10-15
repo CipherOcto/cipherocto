@@ -127,6 +127,10 @@ pub fn dqa_add(a: Dqa, b: Dqa) -> Dqa {
     octo_determin::dqa_add(a, b).expect("Dqa addition overflow")
 }
 
+/// Sibling of [`dqa_add`], with the same unbounded-input problem: callers
+/// in this crate multiply caller-supplied quantities, and `cost_for` aborts
+/// through this when a listing carries a very large rate. See mission
+/// `settlement-cost-panics-where-compute-cost-errors`.
 #[inline]
 pub fn dqa_mul(a: Dqa, b: Dqa) -> Dqa {
     octo_determin::dqa_mul(a, b).expect("Dqa multiplication overflow")
@@ -460,6 +464,20 @@ impl ModelRateTable {
     }
 
     /// Compute cost for a (model, axis_id, units) tuple. Returns `None` if model unknown.
+    ///
+    /// # Panics
+    ///
+    /// Aborts if `blocks * rate_per_1k` exceeds `i64::MAX`. `rate_per_1k` is
+    /// caller-supplied and unbounded, and this function returns `Option<Dqa>`
+    /// — where `None` means "unknown model" — so an overflow has no
+    /// representable outcome. Measured: a rate of `i64::MAX` consumed at
+    /// 1,000,000 units panics on the `multiply` below.
+    ///
+    /// The `i64::try_from(blocks)` expect two lines down is *not* reachable:
+    /// `blocks` is at most `u64::MAX / 1000`, far inside `i64`. It is left
+    /// as-is only because the two expects read identically.
+    ///
+    /// See mission `settlement-cost-panics-where-compute-cost-errors`.
     #[must_use]
     pub fn cost_for(&self, axis_id: &str, units: u64, axes: &[PricingAxis]) -> Option<Dqa> {
         let rate = self

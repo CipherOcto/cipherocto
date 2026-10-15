@@ -935,3 +935,78 @@ async fn unmeasured_provider_still_wins_on_price_when_cheapest() {
         "async path agrees: cold-start providers are not locked out"
     );
 }
+
+/// A listing whose `asker_did` cannot be parsed must not take down the
+/// async selection path.
+///
+/// `Ask::new` rejects only an *empty* `asker_did`, so any non-empty
+/// string could be listed. The async gate and latency read both parsed
+/// every candidate DID, so a single such listing returned `Err` for the
+/// entire model while the sync path carried on — listing content became
+/// a denial-of-service on the canonical path.
+///
+/// Measured before the fix: with `asker_did = "not-a-canonical-did"`,
+/// `cheapest` returned that listing, and with the breaker enabled
+/// `cheapest_with_ranking_async` failed with `recorder did malformed`.
+///
+/// An unparseable DID now means "no recorded reputation", which is
+/// exactly what it is — nothing to exclude and no latency observation.
+/// `record_outcome_async` still rejects such a DID, so reputation can
+/// never be *written* under one.
+#[tokio::test]
+async fn unparseable_listing_did_does_not_fail_the_async_selection_path() {
+    use quota_router_core::marketplace::scoring::LatencyRanking;
+    use quota_router_core::marketplace::Marketplace;
+
+    let m = Marketplace::open_in_memory().expect("open");
+    let good = sample_did(81);
+    let malformed = "not-a-canonical-did";
+
+    m.put(&make_ask(&good, "openai/gpt-4", 90_000, 1_900_000_000))
+        .expect("put good");
+    m.put(&make_ask(malformed, "openai/gpt-4", 1_000, 1_900_000_000))
+        .expect("put malformed");
+
+    // Breaker off: sync selects the cheaper listing.
+    let sync_off = m.cheapest("openai/gpt-4").expect("some");
+    assert_eq!(sync_off.asker_did, malformed, "sync picks the cheaper one");
+
+    // Breaker on. This used to return Err for the whole model.
+    m.set_min_reputation(0.5);
+    let sync_on = m.cheapest("openai/gpt-4").expect("some");
+    let async_on = m
+        .cheapest_with_ranking_async("openai/gpt-4", LatencyRanking::cheapest())
+        .await
+        .expect("async path must not fail on listing content")
+        .expect("some ask");
+    assert_eq!(
+        async_on.asker_did, sync_on.asker_did,
+        "async and sync must agree, not merely both survive"
+    );
+
+    // The latency-weighted path takes the same route and must survive too.
+    m.cheapest_with_ranking_async("openai/gpt-4", LatencyRanking::prefer_latency())
+        .await
+        .expect("latency-weighted async path must not fail either")
+        .expect("some ask");
+
+    // Strictness is preserved where it belongs: no reputation can be
+    // written under an unparseable DID.
+    let err = m
+        .record_outcome_async(
+            malformed,
+            true,
+            50,
+            blake3_runtime(GOV_PUBKEY),
+            1_700_000_000,
+        )
+        .await
+        .expect_err("record must still reject an unparseable DID");
+    assert!(
+        matches!(
+            err,
+            octo_reputation::error::ReputationError::RecorderDidMalformed { .. }
+        ),
+        "expected RecorderDidMalformed, got {err:?}"
+    );
+}

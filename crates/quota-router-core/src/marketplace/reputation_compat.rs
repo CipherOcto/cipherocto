@@ -147,6 +147,16 @@ impl<S: ReputationStore> ProviderReputationRegistryCompat<S> {
     /// 0 ms completion — and 0 is the best value the scale admits. Callers
     /// that rank on latency need the distinction, so it is exposed here.
     pub async fn observed_latency_ms(&self, did: &str) -> Result<Option<u64>, ReputationError> {
+        // A DID that cannot be parsed has no aggregate and therefore no
+        // latency observation — the same position as an unknown canonical
+        // DID, which the legacy registry also reports as "no score". This
+        // is not propagated: doing so let a single unparseable listing
+        // return `Err` from the whole async selection path. Store faults
+        // still propagate below, so a connectivity blip is never
+        // misreported as "no data".
+        if parse_canonical_did(did).is_err() {
+            return Ok(None);
+        }
         match self.read_latency_aggregate(did).await {
             Ok(agg) => Ok(Some(agg.score_ewma.to_f64().max(0.0) as u64)),
             // Absence only. Other errors propagate, so a connectivity
@@ -257,11 +267,39 @@ impl<S: ReputationStore> ProviderReputationRegistryCompat<S> {
     /// decides exclusion under the configured threshold. Non-finite
     /// `success_rate` (NaN, ±Inf) fail-CLOSES: corrupted aggregates
     /// cannot bypass the breaker.
+    ///
+    /// A DID that cannot be parsed is treated as having **no recorded
+    /// reputation** — the same position as an unknown canonical DID, and
+    /// therefore not excluded. It is deliberately *not* propagated.
+    ///
+    /// Propagating it made listing content a denial-of-service on this
+    /// whole path: `Ask::new` rejects only an *empty* `asker_did`, so any
+    /// non-empty string could be listed, and one such listing turned
+    /// `cheapest_with_ranking_async` into `Err` for the entire model
+    /// while the sync path kept working. Measured with
+    /// `asker_did = "not-a-canonical-did"`: `cheapest` returned that
+    /// listing, and the async call failed with `recorder did malformed`.
+    ///
+    /// Not excluding keeps this gate consistent with the sync
+    /// [`crate::marketplace::scoring::ProviderReputationRegistry::is_excluded`],
+    /// which also treats an unknown provider as un-excluded.
+    ///
+    /// Strictness is preserved where it belongs: [`Self::record_with_now`]
+    /// still rejects an unparseable DID, so reputation can never be
+    /// *written* under one. Whether listings should require a canonical
+    /// DID at all is a separate question — see deferred mission
+    /// `marketplace-accepts-a-listing-whose-did-cannot-be-parsed`.
     pub async fn is_excluded_async(&self, asker_did: &str) -> Result<bool, ReputationError> {
         let min = self.min_reputation();
         if min <= 0.0 {
             return Ok(false);
         }
+        // Distinguish "this DID is not a DID" from "the store is down":
+        // only the former means there is nothing to exclude.
+        if parse_canonical_did(asker_did).is_err() {
+            return Ok(false);
+        }
+
         let outcome = self.read_outcome(asker_did).await?;
         if !outcome.success_rate.is_finite() {
             return Ok(true);

@@ -86,13 +86,11 @@ same inputs:
 ## This is the root cause of the recorded parity divergence
 
 Mission `dual-read-parity-asserts-a-divergence-bound-it-never-measures`
-measured this divergence and attributed it to "two EWMA formulas with slightly
-different shapes". That description is wrong, and this mission corrects it:
-one side is a decayed EWMA, the other is a running mean. They are different
-statistics, not different parameterisations of the same one.
-
-The parity suite's own module header carries the same wrong description. It is
-corrected as part of the parity mission; this mission records why.
+measured this divergence. It correctly observed that compat returns a plain
+ratio rather than an EWMA, but attributed the _suite's_ original description
+— _"the two paths compute EWMA with slightly different formulas"_ — to a
+parameter mismatch. That header text describes two parameterisations of one
+statistic; what actually runs is two different statistics.
 
 ## Why deferred
 

@@ -166,6 +166,17 @@ enum AskOp {
         jurisdiction: Vec<String>,
         /// 32-hex-character nonce (16 bytes). Defaults to BLAKE3("ask-nonce:v1")
         /// for deterministic test fixtures; pass explicit hex for production.
+        ///
+        /// **The shipped default does not satisfy this contract.** The literal
+        /// below is 64 hex chars (32 bytes); validation requires 32 hex chars
+        /// (16 bytes). Running `ask publish` without `--nonce-hex` therefore
+        /// fails: `nonce must be 16 bytes (32 hex chars), got 32`. Measured on
+        /// the built binary. Every test in `ask_publish_cli.rs` passes
+        /// `--nonce-hex` explicitly, so the default is never exercised.
+        ///
+        /// Also unbounded: `--axes <id>:<rate>` accepts up to `i64::MAX`, and
+        /// such a rate publishes and signs successfully. See mission
+        /// `ask-publish-fails-with-its-own-default-nonce`.
         #[arg(
             long,
             default_value = "8c3e6f4b2a1d9e7c5f8b3a6d9c2e5f8b1a4d7c0e3f6b9a2d5c8e1f4b7a0d3c6f"

@@ -178,7 +178,10 @@ MEASURE cost_for_panicked=true
 So every marketplace price computation has **two** abort points on the
 path `settlement_cost` → `cost_for` → `dqa_mul`, and neither function's
 signature can carry an overflow. Reaching it needs no malformed input —
-only a large legal rate, since nothing bounds `rate_per_1k`.
+only a large legal rate. That the rate is genuinely unbounded is now measured
+end to end: `octo-wallet ask publish --axes input_tokens_per_1k:9223372036854775807`
+succeeds and the `i64::MAX` rate appears in the signed artifact. See
+`ask-publish-fails-with-its-own-default-nonce`.
 
 ### One guard in that function is sound, and was checked
 

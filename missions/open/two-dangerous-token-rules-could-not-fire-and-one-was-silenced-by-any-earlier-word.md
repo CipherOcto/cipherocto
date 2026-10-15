@@ -148,6 +148,33 @@ still missed, because the run includes the prefix and no longer decodes. Fixing
 that changes matching semantics and risks false positives; it is recorded, not
 attempted.
 
+## A documentation table recorded the dead rule as passing
+
+Found later, and it belongs here rather than in its own entry: this mission
+concluded that the canonical suite was sound and its corpus incomplete. A
+second artefact made the same false claim.
+
+`scripts/wrappers/safe-commit-skill.md` carried a ten-row verification table
+with a **Got** column reading `OK` on every row, introduced as "Verified 10/10
+cases pass". Row H was:
+
+| #   | Input                | Want   | Got (as written) | Actual, pre-fix |
+| --- | -------------------- | ------ | ---------------- | --------------- |
+| H   | `> redirect attempt` | refuse | OK               | **allowed**     |
+
+Every row was re-run against the pre-fix library. **Nine were honest; exactly
+one was false**, and it was row H — the rule this mission is about. A
+verification table had recorded a pass for a behaviour that could not occur.
+
+The table now names the suites that actually exercise each row, cites
+`LEADING_GT_TOP` for row H, and states plainly that the row was untrue until
+the fix. It previously pointed at a "Layer 3 harness" that did not exist;
+`scripts/test-safe-commit.sh` is the first, and it covers argument handling
+rather than these rows.
+
+The same shape as the original finding, one level up: a report of a result
+about a check that was never run.
+
 ## A latent fail-open that is NOT reachable, tested rather than assumed
 
 The commit-msg hook reads the library as `dangerous_present "$TEXT" || true`,

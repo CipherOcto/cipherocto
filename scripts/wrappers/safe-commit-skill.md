@@ -85,17 +85,29 @@ agree on.
 
 ## Test coverage
 
-Verified 10/10 cases pass (Layer 3 harness):
+These cases are exercised by two suites, both runnable by hand:
 
-| #   | Input                               | Want   | Got |
-| --- | ----------------------------------- | ------ | --- |
-| A   | `fix: `echo HI``                    | refuse | OK  |
-| B   | `fix: clean body`                   | accept | OK  |
-| C   | `fix: has $(date)`                  | refuse | OK  |
-| D   | `fix: a && b`                       | refuse | OK  |
-| E   | `fix: a \|\| b`                     | refuse | OK  |
-| F   | `fix: a \| b`                       | refuse | OK  |
-| G   | `fix: per RFC-0011-c §Roles`        | accept | OK  |
-| H   | `> redirect attempt`                | refuse | OK  |
-| I   | `fix: update docs`                  | accept | OK  |
-| J   | `fix: crates/octo-cli/src/commands` | accept | OK  |
+| Suite                              | What it covers                                      |
+| ---------------------------------- | --------------------------------------------------- |
+| `scripts/test-dangerous-tokens.sh` | the token library these cases go through (68)       |
+| `scripts/test-safe-commit.sh`      | how this wrapper recognises a message argument (10) |
+
+| #   | Input                               | Want   | Covered by       | Got  |
+| --- | ----------------------------------- | ------ | ---------------- | ---- |
+| A   | ``fix: `echo HI` ``                 | refuse | token suite      | pass |
+| B   | `fix: clean body`                   | accept | token suite      | pass |
+| C   | `fix: has $(date)`                  | refuse | token suite      | pass |
+| D   | `fix: a && b`                       | refuse | token suite      | pass |
+| E   | `fix: a \|\| b`                     | refuse | token suite      | pass |
+| F   | `fix: a \| b`                       | refuse | token suite      | pass |
+| G   | `fix: per RFC-0011-c §Roles`        | accept | token suite      | pass |
+| H   | `> redirect attempt`                | refuse | `LEADING_GT_TOP` | pass |
+| I   | `fix: update docs`                  | accept | token suite      | pass |
+| J   | `fix: crates/octo-cli/src/commands` | accept | token suite      | pass |
+
+Row H is worth a note. This table previously recorded it as passing, and it
+was not: the `>`, `<` and `!` rules were written with a quoted right-hand side,
+which bash compares literally, so they could never match anything. Row H was a
+recorded verification of a behaviour that did not exist. The rules were fixed
+and `LEADING_GT_TOP` added to the token suite, and the row is honest only from
+that point on.

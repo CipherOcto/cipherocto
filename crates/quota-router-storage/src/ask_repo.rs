@@ -1036,6 +1036,7 @@ mod negative_rate_tests {
         // A free Ask is legitimate (there is an existing test asserting it
         // wins cheapest). The check must not reject zero.
         let repo = StoolapAskRepository::open_in_memory().expect("open");
-        repo.put(&ask_with_rate(0)).expect("zero rate must be accepted");
+        repo.put(&ask_with_rate(0))
+            .expect("zero rate must be accepted");
     }
 }

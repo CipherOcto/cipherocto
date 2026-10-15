@@ -88,7 +88,7 @@ pub enum Commands {
         strict_deprecation: bool,
     },
 
-    /// Compute settlement hash from a partial envelope JSON (RFC-0959 §CLI).
+    /// Compute settlement hash from a partial envelope JSON (RFC-0959 §Roles).
     ///
     /// Reads a JSON `SettlementEnvelope` from `--from` (or stdin via `-`),
     /// recomputes `settlement_hash` via `SettlementEnvelope::compute_settlement_hash()`,
@@ -99,7 +99,7 @@ pub enum Commands {
         from: String,
     },
 
-    /// Verify a settlement envelope against replay defense (RFC-0959 §CLI).
+    /// Verify a settlement envelope against replay defense (RFC-0959 §Roles).
     ///
     /// Reads a JSON `SettlementEnvelope` (with `settlement_hash` filled)
     /// from `--from` (or stdin via `-`), recomputes the hash, checks it

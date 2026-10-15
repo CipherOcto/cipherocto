@@ -1,4 +1,4 @@
-//! CLI integration test for `octo-wallet ask publish` (RFC-0959 §CLI).
+//! CLI integration test for `octo-wallet ask publish` (RFC-0959 §Roles).
 //!
 //! Verifies end-to-end: shell out to the binary, drive a publish, and assert
 //! the resulting signed Ask JSON deserializes through `AskSigned::verify`.

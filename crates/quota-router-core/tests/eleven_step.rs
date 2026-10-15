@@ -185,7 +185,7 @@ fn step8_provider_response(sim: &ProviderSim, body: &[u8]) -> EgressResponse {
 ///
 /// R1 carryover M-4 fix: now delegates to the canonical
 /// `quota_router_core::ingress::OpenAiIngress` (RFC-0957 §Attenuation
-/// ↔ RFC-0959 §Cache classification). This replaces the prior
+/// ↔ RFC-0959 §Adversary Analysis (A5)). This replaces the prior
 /// `body_str.find("\"prompt_tokens\":")` hand-walk with a proper
 /// serde_json-driven parse. The test no longer maintains a private
 /// parser — the same `Ingress` impl is what the production

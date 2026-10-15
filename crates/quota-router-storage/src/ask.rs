@@ -1037,7 +1037,7 @@ pub enum AxisRegistryError {
     Duplicate(String),
 }
 
-/// Cache classification by cache_key_hash (RFC-0959 §Cache Classification).
+/// Cache classification by cache_key_hash (RFC-0959 §Data Structures).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CacheClassification {
     /// BLAKE3 hash of the request body.
@@ -1292,9 +1292,7 @@ pub enum SettlementError {
         declared: Vec<String>,
         actual: Vec<String>,
     },
-    #[error(
-        "cached axis consumed but cache_key_hash not provided (RFC-0959 §Cache Classification)"
-    )]
+    #[error("cached axis consumed but cache_key_hash not provided (RFC-0959 §Data Structures)")]
     CacheStrategyRequired,
     #[error("overflow in compute_cost for axis `{axis_id}` (partial sum = {partial_sum:?})")]
     Overflow { axis_id: String, partial_sum: Dqa },
@@ -1338,7 +1336,7 @@ pub enum SettlementError {
 pub struct AxesConsumed {
     /// Axis ID → units consumed (BTreeMap for canonical ordering).
     pub axes: std::collections::BTreeMap<String, TokenCount>,
-    /// BLAKE3 hash of the prompt tokens (RFC-0959 §Cache Classification).
+    /// BLAKE3 hash of the prompt tokens (RFC-0959 §Data Structures).
     /// Required iff any cached axis (e.g., `cached_input_tokens_per_1k`)
     /// appears in `axes`. None for fully non-cache settlements.
     pub cache_key_hash: Option<[u8; 32]>,
@@ -1452,8 +1450,8 @@ pub fn compute_settlement_hash(event: &SettlementEvent) -> Result<[u8; 32], serd
 /// Compute settlement cost (RFC-0959 §Compute cost).
 ///
 /// `cost = Σ ceil(tokens/1000) * rate[axis]` (u128 throughout, integer-only).
-/// Rejects cached axes without `cache_key_hash` per RFC-0959 §Cache
-/// Classification.
+/// Rejects cached axes without `cache_key_hash` per RFC-0959
+/// §Data Structures.
 ///
 /// # Deviation from RFC-0959
 ///

@@ -59,7 +59,14 @@ enum Cmd {
         op: VaultOp,
     },
 
-    /// Ask marketplace operations (RFC-0959 §CLI).
+    /// Ask marketplace operations (RFC-0959 §Roles).
+    ///
+    /// Note on the RFC reference: this and the other CLI surfaces in
+    /// these crates were previously cited as "RFC-0959 §CLI". RFC-0959
+    /// has no such section. Its only normative statement of the CLI
+    /// surface is the `CLI Operator` row in the §Roles and Authorities
+    /// coverage table, which is where these citations now point. See
+    /// mission `rfc-citations-in-rust-source-name-sections-that-do-not-exist`.
     Ask {
         #[command(subcommand)]
         op: AskOp,
@@ -112,14 +119,14 @@ enum VaultOp {
     List,
 }
 
-/// Ask marketplace subcommands (RFC-0959 §CLI).
+/// Ask marketplace subcommands (RFC-0959 §Roles).
 ///
 /// `publish` builds a signed `AskSigned` from CLI args + the wallet seed
 /// and emits the JSON envelope to stdout. The signer is the Ed25519 key
 /// derived from `--seed` (same as `init`).
 #[derive(Debug, Subcommand)]
 enum AskOp {
-    /// Publish a signed Ask (RFC-0959 §CLI; mission 0959-a AC).
+    /// Publish a signed Ask (RFC-0959 §Roles; mission 0959-a AC).
     ///
     /// Reads the wallet seed from `--seed`, builds an `AskUnsignedPayload`
     /// from the CLI args, signs via `AskSigned::sign`, and emits the
@@ -296,7 +303,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-/// Build + sign an Ask, emit JSON to stdout (RFC-0959 §CLI).
+/// Build + sign an Ask, emit JSON to stdout (RFC-0959 §Roles).
 #[allow(clippy::too_many_arguments)]
 fn ask_publish(
     node_type: CliNodeType,

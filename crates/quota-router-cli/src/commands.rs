@@ -482,7 +482,7 @@ fn print_outcome(
     }
 }
 
-/// Compute settlement hash from a partial envelope JSON (RFC-0959 §CLI).
+/// Compute settlement hash from a partial envelope JSON (RFC-0959 §Roles).
 ///
 /// Input: JSON serialized `SettlementEnvelope` (the `settlement_hash` field is
 /// ignored/overwritten). Output: JSON with `settlement_hash` filled in by
@@ -513,7 +513,7 @@ pub fn settle_from_json(envelope_json: &str) -> Result<String> {
     Ok(out)
 }
 
-/// Verify a settlement envelope against replay defense (RFC-0959 §CLI).
+/// Verify a settlement envelope against replay defense (RFC-0959 §Roles).
 ///
 /// Input: JSON `SettlementEnvelope` (with `settlement_hash` already filled).
 /// Steps:
@@ -1115,7 +1115,7 @@ network_id = "0202020202020202020202020202020202020202020202020202020202020202"
         assert_eq!(peer.endpoint, "10.0.0.1:9200".parse().unwrap());
     }
 
-    // RFC-0959 §CLI: settle + settle-replay round-trip tests.
+    // RFC-0959 §Roles: settle + settle-replay round-trip tests.
     use quota_router_storage::ask::ModelRef;
 
     fn sample_envelope_json() -> String {

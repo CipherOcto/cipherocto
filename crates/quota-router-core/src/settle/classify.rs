@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::receipt::CacheClassifyMeta;
 
-/// Provider cache class (RFC-0959 §Cache classification).
+/// Provider cache class (RFC-0959 §Adversary Analysis (A5)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CacheClass {
@@ -32,7 +32,7 @@ impl CacheClass {
     }
 }
 
-/// Provider cache hit indicator (RFC-0959 §Cache classification approach).
+/// Provider cache hit indicator (RFC-0959 §Adversary Analysis (A5)).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CacheHit {
     pub class: CacheClass,

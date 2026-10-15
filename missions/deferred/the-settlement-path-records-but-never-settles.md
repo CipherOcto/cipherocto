@@ -5,7 +5,7 @@ metadata:
   node_type: mission
   type: research
   created: 2026-10-15T00:00:00.000Z
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0959
     - RFC-0900
@@ -19,6 +19,11 @@ Deferred — this is a synthesis, not a new defect. It exists so the four
 settlement findings can be read as one state of the system rather than
 four separate alarms, and so their real severity is stated rather than
 inferred. No code changed, no measurement probes left behind.
+
+**v1.1** records why the calibration is structural: the served router
+has no dependency edge to the marketplace at all, while the CLI has the
+edge and makes no marketplace calls. The v1.0 wording left that open to
+misreading.
 
 ## Why this document exists
 
@@ -110,6 +115,32 @@ Reversing 1 and 4 produces a canonical record of an unverified
 settlement, which is worse than no record: it gives the defect somewhere
 authoritative to live.
 
+## The calibration is structural, not accidental
+
+Worth stating precisely, because the dependency graph invites the wrong
+conclusion:
+
+- `octo-network` — which provides `QuotaRouterNode`, the type the
+  network-exposed `quota-router serve` mode runs — declares **no
+  dependency at all** on `quota-router-core` or `quota-router-storage`.
+  The served router cannot reach the marketplace or the settlement
+  crates; there is no edge to traverse.
+- `quota-router-cli` **does** declare a dependency on both. So the
+  dependency edge exists and the calls do not: `grep` for
+  `Marketplace`, `cheapest`, `scoring` and `ProviderReputation` across
+  `crates/quota-router-cli/src/` returns nothing.
+
+That second point is a trap for the next auditor. Seeing
+`quota-router-core` in the CLI's `Cargo.toml` is easy to read as "the
+marketplace is wired into the CLI". It is not. The CLI reaches
+`quota-router-storage` for settlement — which is exactly why the
+settlement findings in this audit are live — and reaches
+`quota-router-core` for quota and pricing, not for the marketplace.
+
+So the split observed across these findings is structural: the
+settlement record is reachable from a command line, and the marketplace
+is not reachable from anywhere.
+
 ## What the RFC owner needs to decide
 
 - Is this ordering right, or does the owner intend the event trail first?
@@ -141,6 +172,14 @@ grep -rn 'produce_settlement' --include=*.rs crates/ \
 # the marketplace never reaches token movement
 grep -rn 'produce_burn|produce_settlement|TransferEventLog' \
   --include=*.rs crates/quota-router-core/src/marketplace/
+
+# the structural split (v1.1) — no dependency edge at all
+grep -c 'quota-router' crates/octo-network/Cargo.toml
+
+# ...but the CLI has the edge and makes no marketplace calls
+grep -n 'quota-router-core\|quota-router-storage' crates/quota-router-cli/Cargo.toml
+grep -rn 'Marketplace|cheapest|scoring|ProviderReputation' \
+  --include=*.rs crates/quota-router-cli/src/
 
 # the four findings' own reproduction blocks
 # missions/deferred/settlement-hash-does-not-bind-the-cost.md

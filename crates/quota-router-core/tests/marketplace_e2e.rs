@@ -1,4 +1,32 @@
-//! End-to-end integration tests for the marketplace (Gap 5 Task 5.4).
+//! Behaviour tests for the marketplace components (Gap 5 Task 5.4).
+//!
+//! ## What these tests actually exercise
+//!
+//! Scenarios 1-5 below drive `OrderBook`, `Escrow` and `SlashingLedger`
+//! **directly**. They construct each component, call its methods by hand,
+//! and assert on its state. They are component-behaviour tests, not
+//! end-to-end tests of the marketplace: no `Marketplace` method
+//! participates in any of them, because the facade does not drive the
+//! escrow.
+//!
+//! Exactly one test in this file — `stale_view_after_restart_sees_writes` —
+//! goes through the real facade (`Marketplace::open_path`, `put`,
+//! `cheapest`).
+//!
+//! ## What the escrow scenarios do not cover
+//!
+//! The scenario captions below describe marketplace *intent*. Two gaps
+//! between that intent and the code, both recorded in mission
+//! `marketplace-escrow-is-not-wired-into-the-marketplace-facade`:
+//!
+//! 1. **Escrow performs no fund movement.** `Escrow` is a pure state
+//!    machine (`Pending` -> `Locked` -> `Settled | Disputed`, then
+//!    `Slashed | Settled`). "Settlement releases funds" names RFC-0900
+//!    §Escrow Flow step 4, not anything this code executes — there is no
+//!    ledger entry and no transfer on any transition.
+//! 2. **`DisputeOutcome::Partial` has no implementation.** RFC-0900
+//!    §Dispute Resolution specifies Valid / Invalid / Partial. The Rust
+//!    escrow offers only `resolve_valid` and `resolve_invalid`.
 //!
 //! Scenarios covered:
 //!
@@ -743,9 +771,13 @@ fn partial_fill_exact_boundary_no_qty_loss() {
 
 #[test]
 fn stale_view_after_restart_sees_writes() {
-    // Process A writes an ask; process B opens a marketplace on the
-    // same file. B's order book must include A's ask per the
-    // load-on-open contract (mission marketplace-book-load-on-open).
+    // Two independent handles in the SAME process: handle A writes two
+    // asks and is dropped, then handle B opens the same file. This is a
+    // close/reopen hydration check, NOT a cross-process check — the
+    // comments below say "scope", not "process", deliberately. True
+    // cross-process restart recovery is explicitly deferred by mission
+    // `marketplace-subprocess-restart-recovery` (CI-flake cost vs
+    // marginal coverage over this test).
     use quota_router_core::marketplace::Marketplace;
     use std::env;
     let dir = env::temp_dir().join(format!(
@@ -758,7 +790,7 @@ fn stale_view_after_restart_sees_writes() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("m.db");
     let dsn = path.to_string_lossy().to_string();
-    // Process A: open, write 2 asks, drop.
+    // Scope A: open, write 2 asks, drop the handle.
     {
         let m = Marketplace::open_path(&dsn).expect("open A");
         m.put(&quota_router_storage::ask::Ask {
@@ -790,12 +822,12 @@ fn stale_view_after_restart_sees_writes() {
         })
         .expect("put A2");
     }
-    // Process B: open against same file, verify both asks visible.
+    // Scope B: open against same file, verify both asks visible.
     let m2 = Marketplace::open_path(&dsn).expect("open B");
     let winner = m2.cheapest("openai/gpt-4").expect("some");
     assert_eq!(winner.asker_did, sample_did(50));
     let alice_asks = m2.list_by_asker(&sample_did(50)).expect("list_by_asker");
-    assert_eq!(alice_asks.len(), 1, "process B must see A's writes");
+    assert_eq!(alice_asks.len(), 1, "reopened handle must see the earlier write");
     let bob_asks = m2.list_by_asker(&sample_did(60)).expect("list_by_asker");
     assert_eq!(bob_asks.len(), 1);
     let _ = std::fs::remove_dir_all(&dir);

@@ -429,6 +429,22 @@ pub struct ModelRateTable {
 }
 
 impl ModelRateTable {
+    /// Returns the first axis rate with a negative `rate_per_1k`, if any.
+    ///
+    /// A negative rate is never legitimate: it would credit the buyer
+    /// instead of charging them, and it wins every "cheapest" comparison
+    /// and every budget-ceiling filter by construction. Nothing else in
+    /// the pricing path rejects one — `cost_for` and `settlement_cost`
+    /// faithfully propagate the sign.
+    ///
+    /// Enforced at the storage boundary in `TryFrom<AskRow> for Ask`, and
+    /// separately by `Marketplace::put` on the in-memory path. See mission
+    /// `the-marketplace-facade-has-no-production-caller`.
+    #[must_use]
+    pub fn first_negative_rate(&self) -> Option<&AxisRate> {
+        self.rates.iter().find(|r| r.rate_per_1k.value < 0)
+    }
+
     /// Compute cost for a (model, axis_id, units) tuple. Returns `None` if model unknown.
     #[must_use]
     pub fn cost_for(&self, axis_id: &str, units: u64, axes: &[PricingAxis]) -> Option<Dqa> {

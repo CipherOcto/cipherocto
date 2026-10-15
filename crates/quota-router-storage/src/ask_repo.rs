@@ -51,6 +51,14 @@ pub enum RepoError {
     /// `marketplace-put-panics-or-wraps-on-unrepresentable-settlement-cost`.
     #[error("settlement cost not representable as a book price: scale={scale}, value={value} (expected scale=0 and value >= 0)")]
     InvalidSettlementCost { scale: u8, value: i64 },
+    /// An Ask was read back with a negative per-axis rate. A negative rate
+    /// credits the buyer rather than charging them and wins every
+    /// cheapest-comparison by construction, so it is refused at the
+    /// storage boundary rather than propagated into the pricing path.
+    ///
+    /// See mission `the-marketplace-facade-has-no-production-caller`.
+    #[error("ask rate must be non-negative: axis={axis}, rate_per_1k={value}")]
+    InvalidAskRate { axis: String, value: i64 },
 }
 
 /// Persisted row mirror of the `asks` table.
@@ -103,6 +111,14 @@ impl TryFrom<AskRow> for Ask {
         }
         let rates: ModelRateTable = serde_json::from_slice(&row.rates_json)
             .map_err(|e| RepoError::Serde(format!("rates: {e}")))?;
+        // Fail closed on a negative rate, alongside the existing ask_id /
+        // nonce length checks. Nothing downstream rejects one.
+        if let Some(bad) = rates.first_negative_rate() {
+            return Err(RepoError::InvalidAskRate {
+                axis: bad.axis.clone(),
+                value: bad.rate_per_1k.value,
+            });
+        }
         let mut ask_id = [0u8; 32];
         ask_id.copy_from_slice(&row.ask_id);
         let mut nonce = [0u8; 16];
@@ -257,6 +273,15 @@ impl StoolapAskRepository {
     /// # Errors
     /// Returns `RepoError::Db` on stoolap failure (begin, query, execute, commit).
     pub fn put(&self, ask: &Ask) -> Result<(), RepoError> {
+        // Reject on write as well as on read: the read-side check protects
+        // against rows written by another writer or an older build, this
+        // one stops bad data entering storage in the first place.
+        if let Some(bad) = ask.rates.first_negative_rate() {
+            return Err(RepoError::InvalidAskRate {
+                axis: bad.axis.clone(),
+                value: bad.rate_per_1k.value,
+            });
+        }
         let row = AskRow::try_from(ask)?;
         let mut tx = self
             .db
@@ -954,5 +979,63 @@ mod tests {
         let repo: std::sync::Arc<DynAskRepository> = std::sync::Arc::new(InMemoryMockRepo::new());
         let missing = [0xee; 32];
         assert!(repo.get(&missing).expect("get").is_none());
+    }
+}
+
+#[cfg(test)]
+mod negative_rate_tests {
+    use super::*;
+    use crate::ask::AxisRate;
+
+    fn ask_with_rate(rate: i64) -> Ask {
+        Ask {
+            asker_did: octo_ident::test_helpers::sample_did(41),
+            model: ModelRef::from("openai/gpt-4"),
+            rates: ModelRateTable {
+                model: ModelRef::from("openai/gpt-4"),
+                rates: vec![AxisRate {
+                    axis: "input_tokens_per_1k".to_owned(),
+                    rate_per_1k: octo_determin::Dqa::new(rate, 0).expect("non-overflow"),
+                }],
+            },
+            nonce: [0x42; 16],
+            expires_at_unix: 1_900_000_000,
+        }
+    }
+
+    #[test]
+    fn put_rejects_negative_rate_on_write() {
+        let repo = StoolapAskRepository::open_in_memory().expect("open");
+        let err = repo
+            .put(&ask_with_rate(-5_000))
+            .expect_err("negative rate must be refused at write");
+        assert!(
+            matches!(err, RepoError::InvalidAskRate { .. }),
+            "expected InvalidAskRate, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn get_rejects_negative_rate_written_by_another_writer() {
+        // The write-side check only protects rows this process wrote. A row
+        // inserted directly — by an older build or a different writer — must
+        // still be refused on read.
+        let bad = ask_with_rate(-5_000);
+        // Serialisation bypasses the write-side check, which is the point:
+        // a row can reach storage from another writer or an older build.
+        let row = AskRow::try_from(&bad).expect("serialise");
+        let err = Ask::try_from(row).expect_err("negative rate must be refused on read");
+        assert!(
+            matches!(err, RepoError::InvalidAskRate { .. }),
+            "expected InvalidAskRate, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn zero_rate_is_still_accepted() {
+        // A free Ask is legitimate (there is an existing test asserting it
+        // wins cheapest). The check must not reject zero.
+        let repo = StoolapAskRepository::open_in_memory().expect("open");
+        repo.put(&ask_with_rate(0)).expect("zero rate must be accepted");
     }
 }

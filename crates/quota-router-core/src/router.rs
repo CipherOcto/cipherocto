@@ -427,7 +427,7 @@ impl CooldownTracker {
 }
 
 // =============================================================================
-// LatencyTracker — RFC-0917 §LatencyTracker
+// LatencyTracker — RFC-0917 §Shared Router
 // Integer microseconds for deterministic latency tracking (no floating point)
 // =============================================================================
 

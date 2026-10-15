@@ -5,7 +5,7 @@ metadata:
   node_type: mission
   type: research
   created: 2026-10-15T00:00:00.000Z
-  v: "1.1"
+  v: "1.2"
   depends_on:
     - RFC-0959
     - RFC-0900
@@ -20,9 +20,14 @@ commit; the underlying gap — that Rust doc comments are never checked
 against the RFCs they cite — is a check-script decision and is not the
 auditor's to make.
 
-**v1.1** withdraws an overstated coverage claim in the Method section,
-and records a phantom citation this audit introduced in its own
-missions rather than only in the source tree.
+**v1.1** withdrew an overstated coverage claim in the Method section
+and recorded a phantom citation this audit introduced in its own
+missions.
+
+**v1.2** runs the fuller sweep v1.1 proposed. It corrects five further
+phantoms and records that the classifier used to find candidates was
+untrustworthy in both directions — twice reporting valid citations as
+absent — so the residue stays unverified rather than counted.
 
 This mission supersedes nothing. It is the concrete, measured
 counter-example to mission `the-section-cite-linter-never-reads-rust-source`,
@@ -136,6 +141,64 @@ on this exact class of error depends on disclosing its own instances. An
 audit that reports other people's phantom citations while carrying its
 own is worth less than one that does not.
 
+## The sweep: done, and the scanner was not trustworthy
+
+The v1.1 note said a fuller sweep was worth doing. It was run. The
+finding is not a count — it is that **automated classification of these
+citations is not reliable**, and the reason is worth recording.
+
+Extraction across the four marketplace crates yields **239 distinct
+named citations**. Matching each against the cited RFC's headings left
+a large residue that was, on inspection, mostly _not_ phantom:
+
+| Legitimate form             | Example                                | Why a scanner misreads it                                   |
+| --------------------------- | -------------------------------------- | ----------------------------------------------------------- |
+| heading + trailing prose    | `§Data Structures R1 fix`              | the extra words are not part of the section name            |
+| table-row reference         | `§Adversary A5`                        | A5 is a row id under §Adversary Analysis, not a heading     |
+| abbreviated heading         | `§Roles` for §Roles and Authorities    | citation shorter than heading                               |
+| heading inside a code fence | `§Security Note — No Field Delimiters` | written as `/// # Security Note`, so a `^##` scan misses it |
+| type name used as a section | `§PricingModel`                        | `PricingModel` is a struct, not a section                   |
+
+Three attempts were made at a classifier before it was abandoned. It was
+wrong each time, in both directions:
+
+- First pass missed fenced headings, and **reported `RFC-0909 §Error
+Handling` and `§Determinism Requirements` as absent. Both exist.**
+  Publishing that would have been a false finding in the audit's own
+  voice.
+- Second pass inverted the prefix test, which broke on abbreviations and
+  re-flagged 135 previously-clean citations including `RFC-0959 §Roles`
+  at 14 sites.
+- Third pass still flagged legitimate prose fragments.
+
+This is the third time this session that building a measurement tool
+produced a result that had to be discarded, after the §-citation
+extractor and the naive-fix prediction. The rule was already written
+down: **never reimplement a linter to measure it.** The sweep confirms
+it rather than refining it.
+
+### What hand-verification actually found
+
+Five genuine phantoms, all corrected in this commit, each replacement
+anchor confirmed to exist as a real heading first:
+
+| Was                                 | Sites | Now                                                                          |
+| ----------------------------------- | ----- | ---------------------------------------------------------------------------- |
+| `RFC-0909 §PricingModel`            | 1     | `§Deterministic Pricing Tables` — the struct lives there                     |
+| `RFC-0909 §Event Identity`          | 1     | `§Event ID Hashing`                                                          |
+| `RFC-0910 §On-Demand Population`    | 2     | `§Tokenizer Database Schema` — the phrase does not appear in RFC-0910 at all |
+| `RFC-0917 §LatencyTracker`          | 1     | `§Shared Router`                                                             |
+| `RFC-0862 §Cross-process atomicity` | 1     | `§StoolapSpendLedger substrate`                                              |
+
+One candidate was checked and **cleared**: `RFC-0909 §Security Note — No
+Field Delimiters` is a real heading written inside a code fence. The
+first scanner pass called it absent.
+
+**The rest of the 239 remain individually unverified.** This is stated
+rather than dressed up: the sweep produced candidates, not verdicts, and
+hand-reading 239 citations is not something an audit turn should
+pretend to have done.
+
 ## Why none of this was caught
 
 `scripts/run-local-checks.sh` runs a `section cites` guard over the
@@ -160,9 +223,9 @@ were plausible.
 - Should RFC-0959 gain a CLI section? Ten citations across two binaries
   and a test file assumed one existed. If the CLI surface is meant to be
   specified, it is currently only an implementation-phase checklist item.
-- Are there phantom citations in the slice that was not checked? The
-  Method section now says plainly that only the highest-frequency RFC-0959
-  citations were opened, so the rest are unverified rather than clean.
+- The other ~230 citations remain unverified. Classifying them needs a
+  human reading each one against its RFC; automated matching was tried
+  and produced false positives in both directions.
 - Are there phantom citations outside the marketplace crates? Only the
   marketplace crates were searched. The frequency of `RFC-0959 §CLI`
   across the tree suggests a wider sweep is worth doing.

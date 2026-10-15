@@ -258,7 +258,7 @@ pub struct RevokeKeyRequest {
     pub reason: Option<String>,
 }
 
-/// Pricing model for cost computation per RFC-0909 §PricingModel.
+/// Pricing model for cost computation per RFC-0909 §Deterministic Pricing Tables.
 ///
 /// Contains per-token micro-unit pricing. TOKEN_SCALE = 1000 (micro-units per token).
 /// Truncation error is bounded at <2 micro-units per event.

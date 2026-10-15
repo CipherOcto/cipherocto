@@ -749,7 +749,7 @@ impl KeyStorage for StoolapKeyStorage {
             .map_err(|e| KeyError::Storage(e.to_string()))?;
 
         // 3. On-demand population: ensure tokenizer exists in tokenizers table
-        // when token_source is CanonicalTokenizer (per RFC-0910 §On-Demand Population).
+        // when token_source is CanonicalTokenizer (per RFC-0910 §Tokenizer Database Schema).
         // This is idempotent — if the tokenizer already exists, ensure_tokenizer is a no-op.
         if event.token_source == TokenSource::CanonicalTokenizer {
             if let Some(ref version) = event.tokenizer_version {
@@ -930,7 +930,7 @@ impl KeyStorage for StoolapKeyStorage {
             .map_err(|e| KeyError::Storage(e.to_string()))?;
 
         // 5. On-demand population: ensure tokenizer exists in tokenizers table
-        // when token_source is CanonicalTokenizer (per RFC-0910 §On-Demand Population).
+        // when token_source is CanonicalTokenizer (per RFC-0910 §Tokenizer Database Schema).
         // This is idempotent — if the tokenizer already exists, ensure_tokenizer is a no-op.
         if event.token_source == TokenSource::CanonicalTokenizer {
             if let Some(ref version) = event.tokenizer_version {

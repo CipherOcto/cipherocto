@@ -214,7 +214,7 @@ pub struct StoolapSpendLedger {
     /// `StoolapSpendLedger` instances on the SAME file from
     /// DIFFERENT processes serialize their SELECT-then-UPDATE
     /// critical section via this lock (per mission 0862-c3,
-    /// RFC-0862 §Cross-process atomicity). On Linux/Unix the lock
+    /// RFC-0862 §StoolapSpendLedger substrate). On Linux/Unix the lock
     /// is `flock(2)` (advisory); on Windows it is `LockFileEx`
     /// (mandatory).
     #[allow(dead_code)] // held for OS-level lock lifetime; released on Drop

@@ -329,6 +329,26 @@ where
     /// `0.0` (or any negative value) disables the breaker — every
     /// provider remains eligible. Positive values activate the breaker.
     ///
+    /// **Non-finite values are not handled and make the two surfaces
+    /// disagree.** `NaN` satisfies neither `min <= 0.0` nor `min > 0.0`,
+    /// so the two paths fall through differently:
+    ///
+    /// - sync `cheapest` calls `is_excluded`, where
+    ///   `success_rate >= NaN` is false, so the provider is **excluded**
+    ///   (fail-closed);
+    /// - `cheapest_with_ranking_async` gates on `min > 0.0`, which is
+    ///   false for `NaN`, so it skips the exclusion call entirely and
+    ///   **selects** the provider (fail-open).
+    ///
+    /// Measured with a 20x-failing provider and `min_reputation = NaN`:
+    /// sync returned the healthy provider at 90_000, async returned the
+    /// failing one at 1_000.
+    ///
+    /// This is the fourth public marketplace setter that cannot reject a
+    /// value it should refuse, because it returns `()` rather than
+    /// `Result`. See deferred mission
+    /// `marketplace-nan-reputation-threshold-disables-only-the-async-breaker`.
+    ///
     /// Sets **both** the legacy shadow and the RFC-0968 compat registry.
     /// The two read paths consult different registries — the sync
     /// `cheapest` reads the legacy one, `cheapest_with_ranking_async`

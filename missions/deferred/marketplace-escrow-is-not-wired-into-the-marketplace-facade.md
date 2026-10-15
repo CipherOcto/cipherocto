@@ -128,7 +128,44 @@ unset arbitrators reject all `resolve_*` calls"), and it is the correct
 default — but it means `TaskEscrow::new` callers inherit an unresolvable
 dispute path unless they opt into `with_arbitrator`.
 
-No test pins this. Worth a guard test either way.
+No test pins this. Worth a guard test either way. _(Since filed:
+`escrow_without_arbitrator_dispute_is_permanently_stuck` in
+`marketplace_e2e.rs` pins it, with a positive control.)_
+
+## The locked amount is unvalidated — deliberately not fixed here
+
+`Escrow::new` and `Escrow::with_arbitrator` both accept
+`amount_micro_octo_w: Dqa` with **no validation at all** — no scale check, no
+sign check. A survey of the Dqa-accepting surface found this is one of nine
+unguarded public entry points in the marketplace + storage boundary:
+
+| API                                                               | Guard                                              |
+| ----------------------------------------------------------------- | -------------------------------------------------- |
+| `SlashingLedger::register`                                        | non-negative                                       |
+| `SlashingLedger::withdraw_stake` / `can_withdraw`                 | positive                                           |
+| `stoolap_spend_ledger::seed` / `try_deduct`                       | inline sign check                                  |
+| `Marketplace::put`                                                | representability (`InvalidSettlementCost`)         |
+| **`Escrow::new` / `with_arbitrator`**                             | **none**                                           |
+| `select_ask` (`budget_ceiling`)                                   | none (benign — a negative ceiling selects nothing) |
+| `dqa_add` / `dqa_mul` / `dqa_cmp` / `dqa_to_bytes` / `from_micro` | none (correctly sign-agnostic)                     |
+
+A negative or fractional-scale locked amount is accepted.
+
+**Not fixed here, on purpose.** Three reasons:
+
+1. The field is currently **inert**. `Escrow` performs no arithmetic on
+   `amount_micro_octo_w` — every reference is storage, clone, or snapshot.
+   There is no present harm.
+2. The escrow is unwired, so the marketplace cannot even reach this
+   constructor today (see the main finding above).
+3. A correct fix means changing `Escrow::new` / `with_arbitrator` to return
+   `Result`, which is a **breaking public API change** across 17 call sites —
+   real churn for an inert field in an unreachable module.
+
+The validation belongs with the wiring work. Once escrow is connected and the
+amount starts doing arithmetic (refunds, the `Partial` dispute outcome), it
+must be `scale=0` and non-negative, matching what `Marketplace::put` and
+`SlashingLedger::register` already enforce.
 
 ## What the RFC owner needs to decide
 

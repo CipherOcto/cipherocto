@@ -190,13 +190,14 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt
 ```
 
-### Documentation Script
+### Documentation
 
-```bash
-scripts/init-docs.sh
-```
-
-Creates the documentation directory structure in `/docs`.
+The `/docs` tree is already in the repository. There is **no** scaffolding
+script: an earlier version of this file documented `scripts/init-docs.sh`,
+which has never existed in this history. New documents go in the numbered
+directory for their topic, and the conventions that govern them — naming,
+required sections, decomposition thresholds, deferral rules — live in
+`docs/BLUEPRINT.md`.
 
 ## Repository Conventions
 

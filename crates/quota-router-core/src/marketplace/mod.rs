@@ -709,17 +709,27 @@ where
     /// faster-but-pricier provider can outrank a slower-but-cheaper
     /// one.
     ///
-    /// Cost: O(N) over the model's ask set; for the documented
-    /// ≤1k-provider target (Gap 5 perf note) this is well under any
-    /// per-request budget. If the marketplace grows beyond that,
-    /// swap the implementation for a heap-indexed ranking.
+    /// Cost: O(N) over the model's ask set, which is well under any
+    /// per-request budget at marketplace scale. If the ask set grows
+    /// large enough for that to stop holding, swap the implementation for
+    /// a heap-indexed ranking.
     ///
-    /// When no latency observations exist for a provider, its
-    /// latency contribution defaults to `0` (i.e., the "no data"
-    /// provider is treated as the fastest candidate in the min-max
-    /// normalization). Operators can avoid this bias by recording at
-    /// least one outcome per provider before enabling
-    /// `prefer_latency`.
+    /// This note previously justified the cost by citing "the documented
+    /// ≤1k-provider target (Gap 5 perf note)". That citation does not
+    /// exist: RFC-0900 has no provider-count target, no performance
+    /// section, and no "Gap 5 perf note". The O(N) claim above is about
+    /// the algorithm, not an RFC-sanctioned ceiling.
+    ///
+    /// When a provider has **no** latency observation, its latency
+    /// contribution is the **worst observed** in the candidate set, not
+    /// `0`. This previously defaulted to `0`, which is the fastest value
+    /// the scale admits, so an unmeasured provider scored a perfect
+    /// latency component and won `prefer_latency` outright — measured, a
+    /// provider quoting 90_000 with no history beat a proven 50 ms
+    /// provider quoting 1_000. Absent data must not outrank measured
+    /// data. See [`scoring::resolve_ranking_latencies`] and deferred
+    /// mission `marketplace-unknown-latency-is-encoded-as-zero-ms`, which
+    /// also records why midpoint and exclusion were not chosen.
     ///
     /// Circuit-breaker behavior matches `cheapest()`: providers below
     /// `min_reputation` are excluded before ranking runs.

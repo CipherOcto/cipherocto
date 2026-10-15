@@ -194,9 +194,27 @@ pub trait AskRead: Send + Sync {
     /// Returns `RepoError::Db` on query failure.
     fn get(&self, ask_id: &[u8; 32]) -> Result<Option<Ask>, RepoError>;
 
-    /// List all non-expired Asks for `model`, sorted by computed cost
-    /// ascending. `axes` supplies the standard pricing axes for cost
-    /// computation.
+    /// Cheapest non-expired Ask for `model`, **approximate**: only the
+    /// candidates the implementation chose to fetch are compared.
+    /// `axes` supplies the standard pricing axes for cost computation.
+    ///
+    /// This doc previously read "List all non-expired Asks for `model`,
+    /// sorted by computed cost ascending", which the implementation does
+    /// not do. `StoolapAskRepository` fetches at most
+    /// `CHEAPEST_CANDIDATE_LIMIT` rows **ordered by `expires_at_unix
+    /// DESC`**, then sorts those locally by computed cost. Cost cannot be
+    /// ordered in SQL because it lives in the per-axis `rates_json`.
+    ///
+    /// Measured with 1001 asks for one model, where the genuinely
+    /// cheapest (rate 1) also expires soonest and therefore sorts *last*
+    /// under that ordering: `cheapest` returned a rate-50_000 ask and
+    /// never considered the rate-1 one — a 50_000x miss, returned as
+    /// `Ok` with no indication that it was approximate.
+    ///
+    /// Callers must not treat this as exact. Whether the cap stays, and
+    /// whether the method should be renamed to say so, is recorded in
+    /// deferred mission
+    /// `ask-repo-cheapest-silently-ignores-asks-outside-its-candidate-limit`.
     /// # Errors
     /// Returns `RepoError::Db` on query failure, `RepoError::Serde` on
     /// row decode failure.
@@ -417,11 +435,14 @@ impl StoolapAskRepository {
         }
     }
 
-    /// List all non-expired Asks for `model`, sorted by computed cost ascending.
+    /// Cheapest non-expired Ask for `model`, **approximate** — see
+    /// [`AskRead::cheapest`].
     ///
     /// Cost computation happens in Rust (the rates_json contains per-axis
-    /// rates; the SQL query can't easily compute them). We fetch a bounded
-    /// number of candidates and sort locally.
+    /// rates; the SQL query can't easily compute them), so this fetches a
+    /// bounded number of candidates ordered by `expires_at_unix DESC` and
+    /// sorts those locally by computed cost. An Ask outside that window is
+    /// never considered, however cheap it is.
     ///
     /// `now_unix` is the cutoff for `expires_at_unix > now_unix`.
     /// `axes` supplies the standard pricing axes for cost computation.

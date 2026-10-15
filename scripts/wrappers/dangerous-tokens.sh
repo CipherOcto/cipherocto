@@ -8,6 +8,14 @@
 # the 2026-09-08 incident was caused by inconsistent coverage between
 # hook and wrapper. See [[no-backtick-in-commit-messages]].
 #
+# A note on the "must block" phrases below. They describe each layer's job,
+# not a measurement of whether that layer is currently running. The Layer 7
+# guard is a separately installed script that sources this file; it only
+# takes effect while the agent runtime has it configured as a PreToolUse
+# hook. Every in-repo layer (2, 3, 5, 6) is a file in this repository; Layer 7
+# is not, and its absence from a runtime's configuration cannot be detected
+# from here.
+#
 # Usage:
 #   source /path/to/dangerous-tokens.sh
 #   if dangerous_present "$text"; then ...; fi

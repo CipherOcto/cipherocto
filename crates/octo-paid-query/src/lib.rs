@@ -186,6 +186,12 @@ pub enum PaidQueryRejectionReason {
 /// remaining balance (or a `PaidQueryError`). This is the single
 /// entry point so persistence can be retrofitted without touching
 /// call sites.
+///
+/// The retrofit has not happened: the only `SpendLedger` implementation
+/// is `InMemorySpendLedger`, so no backend can be swapped in today. The
+/// Stoolap-backed ledger written for this does not implement the trait.
+/// See mission
+/// `the-persistent-spend-ledger-cannot-be-injected-so-production-runs-in-memory`.
 #[derive(Clone, Debug)]
 pub struct RateLimitBudget {
     ledger: Arc<dyn SpendLedger>,

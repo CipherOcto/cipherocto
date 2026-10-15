@@ -80,9 +80,14 @@ impl PaidQueryVerifyHandler {
         Self::with_ledger(Arc::new(octo_paid_query::InMemorySpendLedger::new()))
     }
 
-    /// Construct a handler backed by an injected `SpendLedger`. Used
-    /// by production deployments (Stoolap-backed) and by tests that
-    /// supply a custom backend.
+    /// Construct a handler backed by an injected `SpendLedger`.
+    ///
+    /// The only implementation of the trait is `InMemorySpendLedger`, so
+    /// today this is the same backend as [`Self::new`]. The Stoolap-backed
+    /// ledger this was written for does not implement `SpendLedger` and
+    /// cannot be injected yet. The production node uses `new()`.
+    /// See mission
+    /// `the-persistent-spend-ledger-cannot-be-injected-so-production-runs-in-memory`.
     #[must_use]
     pub fn with_ledger(ledger: Arc<dyn SpendLedger>) -> Self {
         Self { ledger }

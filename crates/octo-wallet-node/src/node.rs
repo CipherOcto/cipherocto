@@ -191,6 +191,14 @@ impl WalletNode {
             k if k == octo_paid_query::PAID_QUERY_VERIFY => {
                 let req = PaidQueryVerifyRequest::from_borsh(&envelope.payload)
                     .map_err(|e| ProtocolError::AuthorizationFailed(format!("{e}")))?;
+                // `new()` installs the IN-MEMORY spend ledger. The persistent backend
+                // this path is documented as wanting cannot be injected today:
+                // StoolapSpendLedger does not implement SpendLedger, and its crate
+                // does not depend on octo-paid-query. Consequence is fail-closed — a
+                // seeded prepaid balance does not survive a restart, so every paid
+                // query errors until the wallet re-seeds.
+                // See mission
+                // `the-persistent-spend-ledger-cannot-be-injected-so-production-runs-in-memory`.
                 PaidQueryVerifyHandler::new().handle(&req)
             }
             _ => Err(ProtocolError::AuthorizationFailed(format!(

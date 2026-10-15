@@ -458,6 +458,29 @@ fn require_integer_scale(d: &octo_determin::Dqa, param: &'static str) -> Result<
     Ok(())
 }
 
+/// Validate that a caller-supplied `Dqa` is a non-negative integer.
+/// Scale=0 plus `value >= 0`.
+///
+/// Zero is deliberately permitted. `register_accepts_scale_zero` pins
+/// `Dqa::new(0, 0)` as the canonical zero, and a provider that stakes no
+/// collateral has nothing to slash — refusing it would be a design
+/// change, not a bug fix. Whether a zero-stake provider *should* be
+/// bannable is a separate open question; see mission
+/// `a-zero-stake-provider-can-never-be-banned`.
+///
+/// Negative is refused: `slash` would then report a negative
+/// *amount lost* and would move the stake upward.
+fn require_non_negative_integer(
+    d: &octo_determin::Dqa,
+    param: &'static str,
+) -> Result<(), SlashError> {
+    require_integer_scale(d, param)?;
+    if d.value < 0 {
+        return Err(SlashError::InvalidAmount(*d));
+    }
+    Ok(())
+}
+
 /// Validate that a caller-supplied `Dqa` is a strictly-positive integer.
 /// Combines the scale=0 invariant with a `value > 0` check — guards
 /// against negative inputs (which `subtract` would happily add to a
@@ -587,15 +610,35 @@ impl SlashingLedger {
     /// the new (or existing) stake row is written through.
     /// # Errors
     /// Returns `SlashError::NonIntegerScale` if `initial_stake_micro_octo_w`
-    /// is not `scale=0` (the MicroOctoW wire invariant). Returning a
-    /// typed error here prevents silent 10^scale truncation at the
-    /// persistence boundary.
+    /// is not `scale=0` (the MicroOctoW wire invariant), or
+    /// `SlashError::InvalidAmount` if it is negative. Returning a typed
+    /// error here prevents silent 10^scale truncation at the persistence
+    /// boundary, and prevents registering a stake the slash path cannot
+    /// reason about.
+    ///
+    /// A **negative** stake is refused. Measured before the fix:
+    /// registering `-1_000_000` then slashing produced
+    /// `SlashOutcome.amount_micro_octo_w = -1_000_000` — a negative
+    /// *amount lost*, which would corrupt any settlement that sums
+    /// slashed amounts — `cumulative_loss_pct = 1.0` from a single
+    /// offense (so `(-1e6)/(-1e6) = 1.0`, instantly banning the
+    /// provider), and moved the stake from `-1_000_000` to `0`, i.e. the
+    /// provider *gained* stake by being slashed.
+    ///
+    /// **Zero** is still accepted — see `require_non_negative_integer`.
+    ///
+    /// There is no add-stake path: `register` is the only way to create an
+    /// entry and its `or_insert_with` never updates an existing one, so a
+    /// rejected registration cannot be worked around by retrying.
+    ///
+    /// See mission
+    /// `slashing-registration-accepted-negative-stakes-the-slash-path-inverted`.
     pub fn register(
         &mut self,
         provider_id: impl Into<String>,
         initial_stake_micro_octo_w: octo_determin::Dqa,
     ) -> Result<&ProviderStake, SlashError> {
-        require_integer_scale(&initial_stake_micro_octo_w, "initial_stake_micro_octo_w")?;
+        require_non_negative_integer(&initial_stake_micro_octo_w, "initial_stake_micro_octo_w")?;
         let provider_id = provider_id.into();
         let entry = self
             .stakes
@@ -1525,5 +1568,83 @@ mod tests {
         assert_eq!(out.amount_micro_octo_w, dqa(100_000));
         assert_eq!(out.new_stake_micro_octo_w, dqa(900_000));
         assert!(!out.banned);
+    }
+}
+
+#[cfg(test)]
+mod stake_registration_bounds {
+    use super::*;
+    use octo_determin::Dqa;
+
+    #[test]
+    fn register_rejects_negative_stake() {
+        // Pre-fix this was accepted and produced a negative *amount lost*.
+        let mut l = SlashingLedger::new();
+        let err = l
+            .register("neg", Dqa::new(-1_000_000, 0).expect("non-overflow"))
+            .expect_err("negative stake must be refused");
+        assert!(
+            matches!(err, SlashError::InvalidAmount(_)),
+            "expected InvalidAmount, got {err:?}"
+        );
+        assert!(l.stake("neg").is_none(), "no entry may be created");
+    }
+
+    #[test]
+    fn register_still_accepts_zero_stake() {
+        // Zero remains accepted: `register_accepts_scale_zero` pins the
+        // canonical zero, and a provider with no collateral has nothing to
+        // slash. Whether such a provider should be bannable is open — see
+        // mission `a-zero-stake-provider-can-never-be-banned`.
+        let mut l = SlashingLedger::new();
+        let zero = Dqa::new(0, 0).expect("non-overflow");
+        let s = l.register("zero", zero).expect("zero stake must be accepted");
+        assert_eq!(s.stake_micro_octo_w, zero);
+    }
+
+    #[test]
+    fn register_still_accepts_a_positive_stake_and_slashes_sanely() {
+        // Positive control. Without it the two tests above could pass
+        // because `register` refuses everything.
+        let mut l = SlashingLedger::new();
+        let s = l
+            .register("ok", Dqa::new(1_000_000, 0).expect("non-overflow"))
+            .expect("positive stake must be accepted");
+        assert_eq!(s.stake_micro_octo_w.value, 1_000_000);
+
+        let out = l
+            .slash("ok", SlashReason::PROVIDER_ERROR, 1.0)
+            .expect("slash must succeed");
+        assert!(
+            out.amount_micro_octo_w.value > 0,
+            "amount lost must be positive, got {}",
+            out.amount_micro_octo_w.value
+        );
+        assert!(
+            (0.0..=1.0).contains(&out.cumulative_loss_pct),
+            "cumulative loss must be a fraction, got {}",
+            out.cumulative_loss_pct
+        );
+        // The ledger invariant, rather than a guessed penalty magnitude:
+        // new stake is exactly the old stake less the amount lost.
+        assert_eq!(
+            out.new_stake_micro_octo_w.value,
+            1_000_000 - out.amount_micro_octo_w.value,
+            "new stake must equal initial stake less the amount lost"
+        );
+        assert!(out.amount_micro_octo_w.value < 1_000_000);
+    }
+
+    #[test]
+    fn register_still_rejects_a_fractional_scale_stake() {
+        // The pre-existing scale check must survive the change.
+        let mut l = SlashingLedger::new();
+        let err = l
+            .register("frac", Dqa::new(1_000_000, 2).expect("non-overflow"))
+            .expect_err("fractional scale must be refused");
+        assert!(
+            matches!(err, SlashError::NonIntegerScale { .. }),
+            "expected NonIntegerScale, got {err:?}"
+        );
     }
 }

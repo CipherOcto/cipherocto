@@ -118,6 +118,29 @@ suites that take seconds are the natural candidate while the zk harness is not.
 
 ## Notes
 
+A flag I shipped without running. The slow path was written, committed, and
+left unexecuted — the same defect as everything else in this work, committed by
+me. It is recorded because the fix is the point.
+
+`--with-slow` runs `verify_canonical_blobs.py` and `mutate-zk-guards.py`, the
+latter peaking around 1.8 GB of build output. Leaving it unrun on a volume at
+100% is reasonable caution, and is also precisely how an unverified path stays
+unverified.
+
+It has now been executed end to end:
+
+```
+slow checks
+  canonical blobs                    ok
+  zk guard mutations                 ok
+=========================================
+11 passed, 0 failed
+```
+
+Disk was sampled every twenty seconds throughout and **did not move**: 3.2 GB
+free before, during and after. The harness cleans up after itself, so the peak
+was transient build output rather than growth. The flag is safe on this volume.
+
 The two slow checks are excluded by default for a reason worth stating: the zk
 mutation harness peaks around 1.8 GB of build output, and this working volume
 sits at 100%. A default that fills someone's disk is not a default.

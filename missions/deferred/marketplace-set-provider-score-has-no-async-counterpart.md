@@ -5,7 +5,7 @@ metadata:
   node_type: mission
   type: research
   created: 2026-10-15T00:00:00.000Z
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0900
     - RFC-0968
@@ -92,6 +92,33 @@ Every reputation write in the public API falls into one of two buckets:
 `set_min_reputation` was the one that had already been repaired. The three
 remaining gaps are the subject of this mission and
 `marketplace-record-outcome-surfaces-require-a-dual-write`.
+
+### Corroborated by a deprecation note that pointed at a method that does not exist
+
+`ProviderReputationRegistry::set_score` carries
+`#[deprecated(note = "... use `ProviderReputationRegistryCompat::set_score`from`octo_reputation`")]`.
+
+That method exists **nowhere**. The only `fn set_score` in the tree is
+the deprecated legacy one itself. So the migration instruction was written
+against an API that was never built — independent evidence that the
+override path was planned and then not implemented, rather than
+deliberately left alone.
+
+The same file has a second wrong note:
+`ProviderReputationRegistry::set_min_reputation` says to route through
+`ProviderReputationRegistryCompat` "from `octo_reputation`", but that type
+lives in `quota_router_core::marketplace::reputation_compat`. `record`'s
+note, by contrast, is accurate: `ReputationStore::record_signal` does
+exist in `octo_reputation`.
+
+All three deprecations use `since = "0.1.0"`, which equals the current
+workspace version, so Rust emits no warning for them at all — the
+markers are inert in-crate and only reach downstream consumers building
+against a later version. Measured: zero `deprecated` diagnostics from a
+full `cargo build -p quota-router-core`.
+
+Both notes were corrected in code. The absent-`set_score` fact is what
+makes this mission an RFC-owner question rather than a one-line fix.
 
 ## Actioned in this mission (documentation and pinning only)
 

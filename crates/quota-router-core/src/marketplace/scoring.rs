@@ -82,10 +82,19 @@ impl ProviderReputationRegistry {
     }
 
     /// Configure the circuit-breaker threshold (`success_rate`).
+    ///
+    /// Migrate to `ProviderReputationRegistryCompat::set_min_reputation`,
+    /// which lives in `quota_router_core::marketplace::reputation_compat`
+    /// — **not** in `octo_reputation`, as this note previously claimed.
+    /// That contrast is the whole point of this deprecation: the two
+    /// registries hold independent thresholds, so
+    /// `Marketplace::set_min_reputation` writes both. Writing only one
+    /// leaves the breaker inert on the other selection path.
     #[deprecated(
         since = "0.1.0",
         note = "DEPRECATED: replaced by 0968-b Phase C; route through \
-                `ProviderReputationRegistryCompat` from `octo_reputation`."
+                `quota_router_core::marketplace::reputation_compat::\
+                 ProviderReputationRegistryCompat::set_min_reputation`."
     )]
     pub fn set_min_reputation(&self, min: f64) {
         *self.min_reputation.lock() = min;
@@ -124,10 +133,25 @@ impl ProviderReputationRegistry {
     }
 
     /// Manual score override (operator / test fixture).
+    ///
+    /// **There is no migration target for this one.** This note
+    /// previously read "use `ProviderReputationRegistryCompat::set_score`
+    /// from `octo_reputation`" — a method that does not exist on that
+    /// type, or anywhere. `ProviderReputationRegistryCompat` has no score
+    /// setter at all: its sole data write is `record_with_now`, which
+    /// appends events, because the store is event-sourced. There is
+    /// nowhere to put an override on the canonical surface.
+    ///
+    /// Consequence: an override set here is invisible to
+    /// `read_reputation_async` and to the async circuit breaker. Pinned
+    /// by `score_override_is_invisible_to_the_async_breaker` in
+    /// `tests/marketplace_reputation_async.rs`; see deferred mission
+    /// `marketplace-set-provider-score-has-no-async-counterpart`.
     #[deprecated(
         since = "0.1.0",
-        note = "DEPRECATED: replaced by 0968-b Phase C; use \
-                `ProviderReputationRegistryCompat::set_score` from `octo_reputation`."
+        note = "DEPRECATED: replaced by 0968-b Phase C; NO canonical \
+                counterpart exists yet. `ProviderReputationRegistryCompat` \
+                has no score setter — see the deferred mission."
     )]
     pub fn set_score(&self, score: ProviderScore) {
         self.inner.lock().insert(score.asker_did.clone(), score);

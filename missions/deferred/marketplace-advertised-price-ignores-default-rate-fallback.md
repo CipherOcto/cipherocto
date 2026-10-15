@@ -1,11 +1,11 @@
 ---
 name: marketplace-advertised-price-ignores-default-rate-fallback
-description: "The order book advertises the sum of an Ask's explicitly listed rates, but settlement charges ModelRateTable::cost_for, which falls back to PricingAxis::default_rate_per_1k for any consumed axis the Ask omits. Two Asks that cost exactly the same at settlement are advertised 7x apart, and the cheaper-advertised one wins every cheapest comparison. Measured: rates [input 10_000] advertises 10_000 and settles 70_000, while rates [input 10_000, output 60_000] advertises 70_000 and settles 70_000."
+description: "The order book advertises the sum of an Ask's explicitly listed rates, but settlement charges ModelRateTable::cost_for, which falls back to PricingAxis::default_rate_per_1k for any consumed axis the Ask omits. Two Asks that cost exactly the same at settlement are advertised 7x apart, and the cheaper-advertised one wins every cheapest comparison. Measured: rates [input 10_000] advertises 10_000 and settles 70_000, while rates [input 10_000, output 60_000] advertises 70_000 and settles 70_000. At v1.1: RFC-0959 requires UnknownAxis for an unpriced consumed axis, so the fallback is a conformance deviation rather than a settled convention."
 metadata:
   node_type: mission
   type: research
   created: 2026-10-15T00:00:00.000Z
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0900
     - RFC-0959
@@ -18,6 +18,10 @@ metadata:
 Deferred — the defect is unambiguous but the _correct_ advertised price is
 an economics decision. Evidence measured; an experimental fix was written
 and reverted. Nothing actioned.
+
+**v1.1** adds the RFC-0959 conformance basis and withdraws two claims from
+v1.0: that the fallback was settled and reasonable, and that removing it
+would make unpriced axes free. Both were wrong.
 
 ## Finding
 
@@ -49,6 +53,11 @@ The fallback is deliberate and documented on `ModelRateTable`:
 "falls back to `PricingAxis::default_rate_per_1k` if axis missing". It
 exists so an unpriced axis is charged at the default rather than being
 free.
+
+> **Corrected at v1.1.** An earlier version of this mission presented the
+> fallback as settled and reasonable, and ruled out removing it as an
+> option. Both were wrong, and the RFC settles it. See §RFC-0959 requires
+> fail-closed below.
 
 The advertised path filters those unpriced axes **out**, so it never sees
 the fallback the buyer will actually be charged.
@@ -132,24 +141,67 @@ rather than a bug fix:
   additions), so this is purely a change to the absolute figure and to what
   the field means.
 
+## RFC-0959 requires fail-closed
+
+This is the part that was missing at v1.0, and it changes the framing of
+the whole decision.
+
+RFC-0959 defines the Ask's signed rate table as `AskUnsignedPayload.axes:
+BTreeMap<String, MicroOCTO_W>`, and §Compute cost resolves a consumed axis
+against **that map**:
+
+```rust
+let rate = ask.payload.axes
+    .get(axis_id)
+    .ok_or_else(|| SettlementError::UnknownAxis(axis_id.clone()))?;
+```
+
+There is no registry default and no second lookup in the RFC's cost path.
+An Ask that does not price a consumed axis is an **error**, not a default.
+§Error Handling treats `UnknownAxis` as recoverable with a publish-time
+remedy ("asker publishes axis in TOML registry first"), and Appendix C
+states the principle directly: "Verifiers reading old TOML reject unknown
+axes (**fail-closed**)."
+
+The implementation substitutes the registry default for the Ask's own rate
+whenever the Ask's map misses, so `UnknownAxis` now fires only when the
+axis is in **neither** the Ask's rate table **nor** the registry.
+
+So the fallback is a conformance deviation, not a deliberate safety net.
+That does not make it obviously wrong — a default is defensible as a
+product decision — but it is a deviation the owner has to make knowingly.
+
 ## The one thing that is not ambiguous
+
+> **Corrected at v1.1.** v1.0 claimed that dropping the fallback would
+> mean "making unpriced axes genuinely free", and used that to rule the
+> option out. That is simply false: removing the fallback does not yield
+> zero, it yields `SettlementError::UnknownAxis` — settlement fails loudly.
+> The RFC-conformant option was incorrectly excluded from the decision.
 
 Whichever convention is chosen, an advertised price **below** the settled
 price is wrong — the two describe the same obligation and are computed
-from the same `Ask` in the same crate. That rules out the obvious
-alternative of dropping the default fallback from settlement (making
-unpriced axes genuinely free), which would match the advertised figure by
-making it under-charge. The free-Ack case stays available by listing an
-explicit `0`.
+from the same `Ask` in the same crate.
 
-So the owner's choice is only about _composition_ — which axes form the
-universal figure — not about whether the two must agree.
+What survives from v1.0 is the genuine free-Ask case: an Ask that
+explicitly lists `rate_per_1k = 0` is legitimately free, and an existing
+test pins that it must be accepted. Omitting an axis and listing it at
+zero are different acts and should stay different.
+
+So the owner's choice is not only about _composition_ — which axes form the
+universal figure — but about whether settlement keeps the registry-default
+fallback at all.
 
 ## What the RFC owner needs to decide
 
+- **Should settlement keep the registry-default fallback at all?** RFC-0959
+  §Compute cost says no: an unpriced consumed axis is `UnknownAxis`. This
+  is the decision that was missing at v1.0, and the advertised-price
+  question cannot be answered independently of it — if the fallback goes,
+  every Ask must price every configured axis or fail to settle.
 - Should the advertised figure price **all** configured axes, with defaults
   filling the gaps? That is the only option measured here that makes the
-  two agree without under-charging.
+  two agree without under-charging, and it presupposes the fallback stays.
 - Or should `cost_per_1k` be redefined as something explicitly _not_ a
   settlement estimate — e.g. a lexicographic sort key over listed rates —
   and the field renamed so callers cannot mistake it for a price?
@@ -179,11 +231,16 @@ grep -rn 'cost_per_1k, 30_000\|best.price, 30_000' crates/quota-router-core/src/
 
 ## Cross-references
 
+- RFC-0959 §Compute cost — the fail-closed lookup the fallback narrows
+- RFC-0959 Appendix C — "reject unknown axes (fail-closed)"
 - RFC-0900 §Settlement Model — the obligation the advertised price
   describes
 - RFC-0900 §Dispute Evidence Challenge — anticipates buyer/seller price
   disagreement as a dispute category
 - RFC-0959 — the Ask and rate-table shape this pricing comes from
+- Mission `ask-axis-ids-are-never-validated-against-the-axis-registry` —
+  the produce-side half; a typo becomes an omission, and the omission is
+  what this fallback silently prices
 - Mission `marketplace-put-panics-or-wraps-on-unrepresentable-settlement-cost`
   — the other `put` pricing defect, fixed; this one is about what the
   price _means_

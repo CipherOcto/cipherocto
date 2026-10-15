@@ -425,6 +425,9 @@ pub struct ModelRateTable {
     /// Model this table applies to (e.g., "openai/gpt-4").
     pub model: ModelRef,
     /// Per-axis rates; falls back to `PricingAxis::default_rate_per_1k` if axis missing.
+    ///
+    /// That fallback is a deviation from RFC-0959, which requires an
+    /// unpriced consumed axis to be `UnknownAxis`. See [`compute_cost`].
     pub rates: Vec<AxisRate>,
 }
 
@@ -1402,13 +1405,32 @@ pub fn compute_settlement_hash(event: &SettlementEvent) -> Result<[u8; 32], serd
     Ok(*blake3::hash(&msg).as_bytes())
 }
 
-/// Compute settlement cost (RFC-0959 §Data Structures `compute_cost`).
+/// Compute settlement cost (RFC-0959 §Compute cost).
 ///
 /// `cost = Σ ceil(tokens/1000) * rate[axis]` (u128 throughout, integer-only).
 /// Rejects cached axes without `cache_key_hash` per RFC-0959 §Cache
 /// Classification.
+///
+/// # Deviation from RFC-0959
+///
+/// The RFC resolves a consumed axis against the Ask's own signed rate
+/// table (`AskUnsignedPayload.axes`) and returns `UnknownAxis` when the
+/// Ask does not price it — fail-closed, per RFC-0959 Appendix C.
+///
+/// This function delegates to [`ModelRateTable::cost_for`], which falls
+/// back to the registry default when the Ask's table misses. So
+/// `UnknownAxis` fires only when the axis is in neither the Ask's rate
+/// table nor the registry, and an Ask that under-specifies its rates is
+/// charged at defaults instead of failing.
+///
+/// That fallback is the subject of a deferred RFC-owner decision, not an
+/// oversight. See missions
+/// `marketplace-advertised-price-ignores-default-rate-fallback` and
+/// `ask-axis-ids-are-never-validated-against-the-axis-registry`.
+///
 /// # Errors
-/// Returns `SettlementError::UnknownAxis` if an axis ID isn't in the registry.
+/// Returns `SettlementError::UnknownAxis` if an axis ID is in neither the
+/// Ask's rate table nor `registry`.
 /// Returns `SettlementError::CacheStrategyRequired` if a cached axis is
 /// consumed without `cache_key_hash`.
 /// Returns `SettlementError::Overflow` if the running sum overflows `u128`.

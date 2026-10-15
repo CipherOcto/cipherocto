@@ -134,6 +134,21 @@ enum AskOp {
         model: String,
         /// Per-axis rate entries as `axis_id:rate_per_1k` pairs, comma-separated.
         /// Example: `--axes input_tokens_per_1k:30,output_tokens_per_1k:60`
+        ///
+        /// **The axis id is taken verbatim and is not validated against a
+        /// registry.** A misspelling is accepted silently and is not an
+        /// error: settlement looks the id up in the Ask's own rate table,
+        /// fails to find it, and falls back to the axis's default rate.
+        /// Measured: publishing `input_tokens_per_1K:90000` (capital K)
+        /// settles at `30_000` — the default — not the `90_000` intended.
+        ///
+        /// So a typo charges the *seller* less than they meant to charge,
+        /// with no error at publish time. `PricingAxisRegistry` and the
+        /// `axis_registry_toml` loader exist to validate these ids but are
+        /// not consulted here, because a deployment may legitimately
+        /// define custom axes via `pricing-axes.toml` / `with_axes`. See
+        /// deferred mission
+        /// `ask-axis-ids-are-never-validated-against-the-axis-registry`.
         #[arg(long, value_delimiter = ',')]
         axes: Vec<String>,
         /// TTL in Unix seconds (Ask is invalid after this).

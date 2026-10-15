@@ -188,6 +188,13 @@ impl SpendLedger for InMemorySpendLedger {
                 cost,
             });
         }
+        // NOTE: the "guarded by dqa_cmp >= 0" justification below is
+        // NOT unconditional. `dqa_cmp` canonicalizes both operands, but
+        // `dqa_sub` feeds raw operands to `align_scales`, and `Dqa::new`
+        // does not canonicalize. So a non-canonical operand can make
+        // `dqa_cmp >= 0` true while `dqa_sub` returns Overflow, and this
+        // expect then panics. Measured end to end through the drain.
+        // See mission `dqa-cmp-and-dqa-sub-disagree-on-canonicalization`.
         *balance = dqa_sub(*balance, cost).expect("guarded by dqa_cmp >= 0");
         Ok(*balance)
     }

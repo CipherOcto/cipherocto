@@ -346,8 +346,13 @@ pub fn verify_paid_query(
         };
     }
 
-    // dqa_sub returns `Result` — for `scale = 0` operands with
-    // `cost <= budget` (guarded by dqa_cmp above) it is always `Ok`.
+    // NOTE: the 'guarded by dqa_cmp' justification below is NOT
+    // unconditional. `dqa_cmp` canonicalizes both operands, but
+    // `dqa_sub` feeds raw operands to `align_scales`, and `Dqa::new`
+    // does not canonicalize. A non-canonical operand can make the
+    // guard true while `dqa_sub` returns Overflow, and this expect
+    // then panics. Measured end to end through the ledger drain.
+    // See mission `dqa-cmp-and-dqa-sub-disagree-on-canonicalization`.
     PaidQueryDecision::Proceed {
         remaining_budget: dqa_sub(caveat.budget, query_cost).expect("guarded by dqa_cmp"),
     }

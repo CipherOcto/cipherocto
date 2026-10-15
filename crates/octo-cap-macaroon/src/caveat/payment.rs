@@ -461,6 +461,14 @@ impl PaymentCaveat {
                 reason: PaymentRejectionReason::CostExceedsBudget,
             };
         }
+        // NOTE: the 'guarded by dqa_cmp' justification below is NOT
+        // unconditional. `dqa_cmp` canonicalizes both operands, but
+        // `dqa_sub` feeds raw operands to `align_scales`, and `Dqa::new`
+        // does not canonicalize. A non-canonical operand can make the
+        // guard true while `dqa_sub` returns Overflow, and this expect
+        // then panics. Measured end to end through the ledger drain.
+        // See mission `dqa-cmp-and-dqa-sub-disagree-on-canonicalization`.
+
         PaymentDecision::Proceed {
             remaining_budget: dqa_sub(self.budget, query_cost).expect("guarded by dqa_cmp"),
         }

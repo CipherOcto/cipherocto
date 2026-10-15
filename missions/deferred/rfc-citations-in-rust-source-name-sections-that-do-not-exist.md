@@ -5,7 +5,7 @@ metadata:
   node_type: mission
   type: research
   created: 2026-10-15T00:00:00.000Z
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0959
     - RFC-0900
@@ -20,18 +20,37 @@ commit; the underlying gap — that Rust doc comments are never checked
 against the RFCs they cite — is a check-script decision and is not the
 auditor's to make.
 
+**v1.1** withdraws an overstated coverage claim in the Method section,
+and records a phantom citation this audit introduced in its own
+missions rather than only in the source tree.
+
 This mission supersedes nothing. It is the concrete, measured
 counter-example to mission `the-section-cite-linter-never-reads-rust-source`,
 which recorded the gap without evidence of what it costs.
 
-## Method
+## Method, and what it does not claim
 
 Hand-verified, deliberately. No checker was built.
 
 Every named `RFC-XXXX §Section` citation was extracted from the
-marketplace crates, deduplicated, and each section name was checked
-against the actual headings in the cited RFC. Roughly 40 distinct
-citations were checked by hand; two failed.
+marketplace crates and deduplicated. Each section name was then checked
+against the actual headings in the cited RFC.
+
+> **Corrected at v1.1.** The v1.0 Method section said "roughly 40
+> distinct citations checked by hand; two failed". That overstated what
+> was done, in the same class of error this audit exists to catch: a
+> document claiming coverage that no work established. Extraction in fact
+> yields on the order of 250 fragments, many of them prose rather than
+> citations, and the sections actually opened and read were roughly ten,
+> all in RFC-0959.
+
+The two failures below were found by checking the highest-frequency
+citations first, which is why they were found at all. **The remaining
+citations are unverified.** That is stated rather than papered over: the
+gap is real and known, and the honest claim is "two found in the slice
+that was checked", not "two exist".
+
+A fuller sweep is listed under what the owner needs to decide.
 
 Building a linter for this was considered and rejected — the same
 reason the §-citation work earlier in this audit was done by hand. A
@@ -97,6 +116,26 @@ sites were not making the same claim.
 
 A blanket repoint would have been wrong at four of the seven sites.
 
+## Finding 3: this audit introduced one of its own
+
+Checking this audit's own missions, rather than only the source tree,
+turned up a phantom citation **written by this audit**:
+
+`missions/deferred/replay-defense-is-a-no-op-in-the-default-cli-configuration.md`
+cited "RFC-0959 §Replay Defense". RFC-0959 has no such heading. The
+replay machinery lives in §Data Structures (`ConsumedReceiptIndex`,
+`SettlementError::ReceiptReplay`) and §Algorithms (`Receipt build`,
+`Verify receipt`), with §Security Considerations covering `Replay
+attacks`.
+
+Corrected in the same commit, with the mission bumped to v1.1 and the
+withdrawal stated in the file rather than quietly edited.
+
+It is recorded here rather than omitted because the audit's credibility
+on this exact class of error depends on disclosing its own instances. An
+audit that reports other people's phantom citations while carrying its
+own is worth less than one that does not.
+
 ## Why none of this was caught
 
 `scripts/run-local-checks.sh` runs a `section cites` guard over the
@@ -121,9 +160,12 @@ were plausible.
 - Should RFC-0959 gain a CLI section? Ten citations across two binaries
   and a test file assumed one existed. If the CLI surface is meant to be
   specified, it is currently only an implementation-phase checklist item.
+- Are there phantom citations in the slice that was not checked? The
+  Method section now says plainly that only the highest-frequency RFC-0959
+  citations were opened, so the rest are unverified rather than clean.
 - Are there phantom citations outside the marketplace crates? Only the
-  marketplace crates were checked here. The frequency of
-  `RFC-0959 §CLI` across the tree suggests a sweep is worth doing.
+  marketplace crates were searched. The frequency of `RFC-0959 §CLI`
+  across the tree suggests a wider sweep is worth doing.
 
 ## Reproduction
 
@@ -131,6 +173,10 @@ were plausible.
 # the two phantom sections, as they were
 grep -rn 'RFC-0959 §CLI' --include=*.rs crates/
 grep -rn 'RFC-0959 §Cache' --include=*.rs crates/
+
+# a third one, introduced by this audit and now corrected
+grep -nE '^#{2,4} .*Replay [Dd]efense' \
+  rfcs/accepted/economics/0959-ask-settlement-chain.md
 
 # neither exists as a heading in the RFC
 grep -nE '^#{2,4} .*CLI' rfcs/accepted/economics/0959-ask-settlement-chain.md

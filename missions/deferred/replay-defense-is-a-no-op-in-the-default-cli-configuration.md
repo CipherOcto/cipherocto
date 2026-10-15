@@ -5,7 +5,7 @@ metadata:
   node_type: mission
   type: research
   created: 2026-10-15T00:00:00.000Z
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0959
 ---
@@ -19,12 +19,25 @@ breaking signature change. Neither is the auditor's to make. Evidence
 measured against the real binary; the measurement probes were removed and
 the tree matches its prior state.
 
+**v1.1** withdraws a phantom section citation this mission introduced.
+See the note in §Finding.
+
 ## Finding
 
-RFC-0959 §Replay Defense exists to stop a settlement envelope being
-accepted twice. The v1.0 status note records that as one of the R3
-criticals: _"no nonce prevents replay without consumed-receipt
+RFC-0959 §Algorithms (Receipt build) exists to stop a settlement
+envelope being accepted twice, and §Data Structures defines the
+`ConsumedReceiptIndex` it uses. The v1.0 status note records that as one
+of the R3 criticals: _"no nonce prevents replay without consumed-receipt
 state."_
+
+> **Corrected at v1.1.** This mission originally cited "RFC-0959
+> §Replay Defense". RFC-0959 has no such section — the string appears in
+> no heading. The replay machinery lives in §Data Structures
+> (`ConsumedReceiptIndex`, `SettlementError::ReceiptReplay`) and
+> §Algorithms (`Receipt build`, `Verify receipt`), plus §Security
+> Considerations under `Replay attacks`. That is a phantom citation
+> introduced by this audit, corrected in
+> `rfc-citations-in-rust-source-name-sections-that-do-not-exist`.
 
 `settle_replay` creates the consumed-receipt state like this:
 
@@ -186,8 +199,9 @@ cargo build -p quota-router-cli --bin quota-router
 
 ## Cross-references
 
-- RFC-0959 §Replay Defense — the `ConsumedReceiptIndex` contract
+- RFC-0959 §Data Structures — the `ConsumedReceiptIndex` contract
 - RFC-0959 §Algorithms — `try_insert` returning `ReceiptReplay`
+- RFC-0959 §Security Considerations — `Replay attacks`
 - Mission `settlement-hash-does-not-bind-the-cost` — the other live
   settlement-integrity finding; both are in the same verification path
 - Mission `marketplace-index-is-a-parallel-unwired-abstraction` — the

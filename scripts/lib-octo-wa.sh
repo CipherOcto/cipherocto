@@ -30,13 +30,30 @@
 
 # === Defaults (overridable via env) =====================================
 
-: "${OCTO_WA_BIN:=/home/mmacedoeu/_w/ai/cipherocto/target/debug/octo-whatsapp}"
+# Resolved from this file's own location rather than an absolute path. The
+# previous default was one developer's workspace checkout, so every script that
+# sourced this library pointed at a binary that exists on exactly one machine.
+# Order: explicit OCTO_WA_BIN, then a debug build in this checkout, then PATH.
+_WA_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_WA_REPO_ROOT="$(cd "$_WA_LIB_DIR/.." && pwd)"
+if [ -z "${OCTO_WA_BIN:-}" ]; then
+    if [ -x "$_WA_REPO_ROOT/target/debug/octo-whatsapp" ]; then
+        OCTO_WA_BIN="$_WA_REPO_ROOT/target/debug/octo-whatsapp"
+    else
+        OCTO_WA_BIN="octo-whatsapp"
+    fi
+fi
 : "${OCTO_WA_NAME:=default}"
 : "${OCTO_WA_SOCKET:=/tmp/octo-wa-run/octo-whatsapp-${OCTO_WA_NAME}.sock}"
 : "${OCTO_WA_SLEEP:=3}"
 : "${OCTO_WA_TIMEOUT:=30}"
 : "${OCTO_WA_RETRIES:=2}"
 : "${OCTO_WA_BACKOFF:=5}"
+
+# The data directory is an OPERATOR setting, not a library constant. This
+# default matches run-octo-whatsapp.sh, and crates/octo-whatsapp's config.rs
+# documents OCTO_WHATSAPP_DATA_DIR as honoured.
+: "${OCTO_WHATSAPP_DATA_DIR:=$HOME/.local/share/octo/whatsapp}"
 
 # === Helpers ============================================================
 
@@ -88,7 +105,7 @@ mcp_call() {
         # valid for completed calls.
         if resp=$(timeout "$OCTO_WA_TIMEOUT" env \
             XDG_RUNTIME_DIR=/tmp/octo-wa-run \
-            OCTO_WHATSAPP_DATA_DIR=/home/mmacedoeu/.local/share/octo/whatsapp \
+            OCTO_WHATSAPP_DATA_DIR="$OCTO_WHATSAPP_DATA_DIR" \
             "$OCTO_WA_BIN" --name "$OCTO_WA_NAME" mcp < "$tmp" 2>/dev/null); then
             rc=0
         else

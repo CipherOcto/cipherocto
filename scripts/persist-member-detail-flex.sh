@@ -99,7 +99,7 @@ if ! [[ "$TABLE" =~ ^[A-Za-z_][A-Za-z0-9_$#]*$ ]]; then
     exit 3
 fi
 
-BIN="${OCTO_WA_BIN:-/home/mmacedoeu/_w/ai/cipherocto/target/debug/octo-whatsapp}"
+BIN="${OCTO_WA_BIN}"
 SLEEP_SECS="${OCTO_WA_SLEEP:-3}"
 NOW_MS="$(date +%s%3N)"
 MAX_RESTARTS="${OCTO_WA_MAX_RESTARTS:-3}"

@@ -42,7 +42,7 @@ sql_exec() {
     printf '%s\n' "$req" > "$tmp"
     RESP=$(env \
         XDG_RUNTIME_DIR=/tmp/octo-wa-run \
-        OCTO_WHATSAPP_DATA_DIR=/home/mmacedoeu/.local/share/octo/whatsapp \
+        OCTO_WHATSAPP_DATA_DIR="$OCTO_WHATSAPP_DATA_DIR" \
         "$OCTO_WA_BIN" --name "$OCTO_WA_NAME" mcp < "$tmp" 2>/dev/null)
     rc=$?
     rm -f "$tmp"
@@ -108,7 +108,7 @@ esc_verify=$(printf '%s' "SELECT COUNT(*) AS cnt FROM $OUT" | python3 -c "import
 vreq="{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"sql.query\",\"arguments\":{\"sql\":$esc_verify}}}"
 vtmp=$(mktemp)
 printf '%s\n' "$vreq" > "$vtmp"
-VRESP=$(env XDG_RUNTIME_DIR=/tmp/octo-wa-run OCTO_WHATSAPP_DATA_DIR=/home/mmacedoeu/.local/share/octo/whatsapp \
+VRESP=$(env XDG_RUNTIME_DIR=/tmp/octo-wa-run OCTO_WHATSAPP_DATA_DIR="$OCTO_WHATSAPP_DATA_DIR" \
     "$OCTO_WA_BIN" --name "$OCTO_WA_NAME" mcp < "$vtmp" 2>/dev/null)
 rm -f "$vtmp"
 echo "$VRESP" | python3 -c "

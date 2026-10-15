@@ -65,7 +65,7 @@ if ! wa_health_check; then
     exit 1
 fi
 
-BIN="${OCTO_WA_BIN:-/home/mmacedoeu/_w/ai/cipherocto/target/debug/octo-whatsapp}"
+BIN="${OCTO_WA_BIN}"
 DETAIL="${OCTO_WA_DETAIL:-$HOME/_w/ai/cipherocto/scripts/persist-member-detail-flex.sh}"
 SLEEP_SECS="${OCTO_WA_SLEEP:-3}"
 

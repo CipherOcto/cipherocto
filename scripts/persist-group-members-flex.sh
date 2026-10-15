@@ -48,7 +48,7 @@ if ! [[ "$TABLE" =~ ^[A-Za-z_][A-Za-z0-9_$#]*$ ]]; then
     exit 3
 fi
 
-BIN="${OCTO_WA_BIN:-/home/mmacedoeu/_w/ai/cipherocto/.worktrees/whatsapp-runtime-cli-mcp/target/debug/octo-whatsapp}"
+BIN="${OCTO_WA_BIN}"
 SOCKET="${OCTO_WA_SOCKET:-/tmp/octo-wa-run/octo-whatsapp-default.sock}"
 NAME="${OCTO_WA_NAME:-default}"
 BATCH="${OCTO_WA_BATCH:-200}"

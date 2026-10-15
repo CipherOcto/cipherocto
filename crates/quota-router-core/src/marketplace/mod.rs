@@ -297,6 +297,22 @@ where
     }
 
     /// Override the pricing-axis set (defaults to `PricingAxis::standard_axes()`).
+    ///
+    /// **An empty `axes` makes every listing free.** Cost is computed by
+    /// summing the configured axes, so with none configured
+    /// `build_unit_consumed` yields nothing and every Ask is priced `0`.
+    /// `cheapest` then returns whichever Ask was placed first rather than
+    /// the cheapest, because all prices tie at zero.
+    ///
+    /// Measured: default axes priced an Ask at 30_000; the same Ask under
+    /// `with_axes(vec![])` priced at `0`, and a 10_000-versus-90_000 pair
+    /// both priced `0` with the winner decided by insertion order.
+    ///
+    /// There is no guard here, because this builder returns `Self` and
+    /// every alternative — returning `Result`, substituting the standard
+    /// axes, or asserting — either changes the signature or fabricates a
+    /// default. Recorded as deferred mission
+    /// `marketplace-empty-axes-prices-every-listing-free`.
     #[must_use]
     pub fn with_axes(mut self, axes: Vec<PricingAxis>) -> Self {
         self.axes = axes;

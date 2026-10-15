@@ -180,8 +180,12 @@ pub struct Escrow {
     pub arbitrator: String,
     /// Escrow amount at integer scale 0 (`Dqa { value, scale: 0 }`).
     /// Mission 0105-x: migrated from `u128` to canonical Layer A
-    /// `octo_determin::Dqa` per RFC-0105 §Numeric Substrate +
-    /// RFC-0862 §StoolapSpendLedger pattern (scale=0 invariant).
+    /// `octo_determin::Dqa` per RFC-0105 §Scale Alignment Rules +
+    /// RFC-0862 §StoolapSpendLedger substrate (scale=0 invariant).
+    ///
+    /// This cited "RFC-0105 §Numeric Substrate", which does not exist —
+    /// RFC-0105 has no section by that name. The scale-0 rule it meant is
+    /// §Scale Alignment Rules.
     pub amount_micro_octo_w: Dqa,
     pub state: EscrowState,
 }

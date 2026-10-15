@@ -5,7 +5,7 @@ metadata:
   node_type: mission
   type: research
   created: 2026-10-15T00:00:00.000Z
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0003
 ---
@@ -62,6 +62,59 @@ Eight dangling citations, all corrected:
 
 Also confirmed **valid** and left alone: `§Escrow Flow`, `§Dispute Resolution`,
 `§Dispute Evidence Challenge`, `§Market Operations`, `§Slashing Model`.
+
+## More hand-verified instances — marketplace core (added at v1.1)
+
+A second hand-verification pass over the marketplace facade found **four**
+further false citations, all in `quota_router_core::marketplace`. These are
+added to the eight above as authoritative findings, in the same way: each
+checked against the real heading list, no extractor involved.
+
+| Was                                                    | Now                                      | Why                                                                                                                                                                                                                                            |
+| ------------------------------------------------------ | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RFC-0105 §Numeric Substrate`                          | `RFC-0105 §Scale Alignment Rules`        | RFC-0105 has no section by that name; its headings are Data Structures, APIs/Interfaces, SQL Integration, Scale Alignment Rules, Arithmetic Algorithms. The scale-0 rule the comment meant is Scale Alignment Rules                            |
+| `RFC-0862 §StoolapSpendLedger pattern`                 | `RFC-0862 §StoolapSpendLedger substrate` | trailing prose dropped; the real heading is `### StoolapSpendLedger substrate (v2.0, additive on v1.4.0)`                                                                                                                                      |
+| `RFC-0965 §3.9`                                        | `RFC-0967 §8`                            | neither RFC-0965 nor RFC-0967 has a §3.9. RFC-0965 numbers 0–8 with 2.1–2.4 and 4.1; RFC-0967 numbers 1–8. `Caveat::PolicyReference` is defined in RFC-0967 §8, and RFC-0965 defines the capability envelope it attaches to                    |
+| "the documented ≤1k-provider target (Gap 5 perf note)" | removed                                  | RFC-0900 contains no provider-count target, no performance section, and no "Gap 5 perf note". Found while auditing the `AskRead::cheapest` candidate limit — see mission `ask-repo-cheapest-silently-ignores-asks-outside-its-candidate-limit` |
+
+Also re-confirmed **valid** in the same pass: `RFC-0862 §StoolapSpendLedger
+substrate`, `RFC-0967 §5` ("## 5. Attenuation: subgraph relation"),
+`RFC-0900 §Escrow Flow`, `§Dispute Resolution`, `§Dispute Evidence Challenge`,
+`§Market Operations`, `§Slashing Model`.
+
+### A caution for whoever automates this: RFC-0862 is two documents
+
+While checking `RFC-0862 §StoolapSpendLedger`, `find rfcs -name "0862*.md"`
+returned a file with no spend-ledger content at all. The reason is worth
+recording on its own, because it is not a glob artefact:
+
+```text
+0862-writer-election-bootstrap-v130.md  "# RFC-0862 v1.4.0 — Writer Election + Bootstrap Integration"
+                                        19 mentions of StoolapSpendLedger
+0862-stoolap-data-sync.md              "# RFC-0862 (Networking): Stoolap Data Sync Protocol"
+                                        0 mentions
+0862p-a-writer-election-bootstrap.md   "# RFC-0862p-a — Writer Election Bootstrap"
+                                        0 mentions
+```
+
+**Two distinct documents are both titled RFC-0862** — one about writer
+election and bootstrap, one about the Stoolap data sync protocol — with no
+discriminator in the number. The `StoolapSpendLedger` section lives in the
+_Writer Election_ document.
+
+So a bare `RFC-0862` citation is ambiguous: a reader following it has a
+coin-flip chance of landing in a document that never mentions the subject.
+Any automated resolver that keys on the numeric prefix will pick
+whichever file sorts first and silently produce a false negative here.
+`0968-A1`, `0957-A`, `0959-A` and similar amendments offer the same trap
+in milder form.
+
+This is worth an owner decision in its own right: either RFC-0862 is two
+RFCs that need distinct numbers, or the data-sync document should be
+renamed to an amendment suffix.
+
+Ten hand-verified findings now: eight from the first pass, four from this
+one, overlapping on none.
 
 ## An order-of-magnitude signal — NOT authoritative
 

@@ -901,9 +901,15 @@ fn current_unix() -> u64 {
 ///
 /// When minting a capability with an org policy, the policy's constraints
 /// are intersected with the cap's own constraints. The resulting capability
-/// carries a `PolicyReference` caveat (RFC-0965 §3.9) pointing at the
+/// carries a `PolicyReference` caveat (RFC-0967 §8) pointing at the
 /// policy's id. At verify time, the verifier fetches the policy and
 /// checks `capability ⊆ policy` (RFC-0967 §5 subgraph relation).
+///
+/// This previously cited the caveat as "RFC-0965 §3.9". Neither RFC-0965
+/// nor RFC-0967 has a §3.9 — RFC-0965 numbers its sections 0–8 with
+/// sub-sections 2.1–2.4 and 4.1, and RFC-0967 numbers 1–8. The caveat is
+/// defined by RFC-0967 §8; RFC-0965 defines the capability envelope it
+/// attaches to.
 ///
 /// This module exposes the registration helper. The actual mint step
 /// happens in `octo-wallet::capability::CapabilityToken::mint` (W1).

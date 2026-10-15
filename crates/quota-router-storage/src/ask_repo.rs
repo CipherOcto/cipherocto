@@ -242,6 +242,23 @@ pub trait AskRead: Send + Sync {
 /// `marketplace-repo-trait-decouple`).
 pub trait AskWrite: Send + Sync {
     /// Insert or replace an Ask.
+    ///
+    /// **This boundary carries no signature.** It takes a bare [`Ask`], which
+    /// has no signature field, and the `asks` table has no signature column
+    /// (migration v001, with no later `ALTER TABLE asks` adding one). The
+    /// `AskSigned` envelope the wallet produces never reaches storage, and
+    /// `AskSigned::verify` has no production caller — so an Ask is stored,
+    /// indexed, priced and selected on the strength of an unsigned
+    /// `asker_did` string.
+    ///
+    /// This is deliberate elsewhere in the same migration family:
+    /// `settlement_events.router_signature` and the policy registry's
+    /// `operator_signature` / `registrant_signature` are `NOT NULL` with
+    /// length checks. Asks are the outlier.
+    ///
+    /// Recorded as deferred mission
+    /// `the-ask-signature-gates-nothing`; carrying a signature here is a
+    /// schema and API change, not a local edit.
     /// # Errors
     /// Returns `RepoError` on stoolap / serialization failure.
     fn put(&self, ask: &Ask) -> Result<(), RepoError>;

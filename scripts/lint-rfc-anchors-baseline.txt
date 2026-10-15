@@ -1,4 +1,15 @@
 145	rfcs/accepted/economics/0960-grand-design-vaults-capabilities-reservations.md:140
+20.3.1	rfcs/accepted/economics/0960-grand-design-vaults-capabilities-reservations.md:1743
+20.3.1	rfcs/accepted/economics/0960-grand-design-vaults-capabilities-reservations.md:920
+20.3.1	rfcs/accepted/economics/0960-grand-design-vaults-capabilities-reservations.md:964
+20.3.2	rfcs/accepted/economics/0960-grand-design-vaults-capabilities-reservations.md:1744
+20.3.2	rfcs/accepted/economics/0960-grand-design-vaults-capabilities-reservations.md:918
+20.3.2	rfcs/accepted/economics/0960-grand-design-vaults-capabilities-reservations.md:965
+20.3.2	rfcs/accepted/process/0010-canonical-did-codec.md:1017
+20.6.1	rfcs/accepted/economics/0957-capability-token-format.md:1138
+20.6.1	rfcs/accepted/economics/0957-capability-token-format.md:553
+20.7	rfcs/accepted/economics/0959-ask-settlement-chain.md:7
+20.7	rfcs/accepted/economics/0959-ask-settlement-chain.md:993
 3.5.7	rfcs/accepted/economics/0959-ask-settlement-chain.md:656
 3.5.7	rfcs/accepted/economics/0959-ask-settlement-chain.md:740
 3.5.7	rfcs/accepted/economics/0959-ask-settlement-chain.md:946
@@ -51,6 +62,14 @@ appendix a + mermaid	rfcs/accepted/process/0016-a-audit-receipt-write-path.md:44
 appendix a) = a's whatsapp	rfcs/accepted/networking/0855p-c-domain-coordinator-role.md:751
 appendix b layer a	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:442
 appendix b; cli	rfcs/accepted/process/0015-wallet-agent-operations.md:475
+appendix c	rfcs/accepted/networking/0851p-a-network-bootstrap.md:228
+appendix c	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:361
+appendix c	rfcs/accepted/process/0011-w-oct-cli-network-slot-91-activation.md:439
+appendix d	rfcs/accepted/networking/0851p-a-network-bootstrap.md:209
+appendix d	rfcs/accepted/process/0011-f-mesh-operations.md:1067
+appendix d	rfcs/accepted/process/0011-f-mesh-operations.md:1392
+appendix d	rfcs/accepted/process/0011-f-mesh-operations.md:1395
+appendix d	rfcs/accepted/process/0011-f-mesh-operations.md:792
 architectural principles: "extension	rfcs/accepted/process/0011-a-audit-subcommands.md:237
 architectural principles: "for	rfcs/accepted/process/0011-a-audit-subcommands.md:858
 architectural principles: layer b (	rfcs/accepted/networking/0855p-c-domain-coordinator-role.md:32
@@ -137,11 +156,18 @@ coordinator lifecycle	rfcs/accepted/process/0011-g-governance-subcommands.md:203
 cost computation	rfcs/accepted/economics/0904-real-time-cost-tracking.md:108
 cost computation	rfcs/accepted/economics/0904-real-time-cost-tracking.md:1112
 cost computation	rfcs/accepted/economics/0910-pricing-table-registry.md:1051
+coverage gap	rfcs/accepted/process/0008-deterministic-ai-execution-boundary.md:373
+coverage gap	rfcs/accepted/process/0008-deterministic-ai-execution-boundary.md:51
 coverage table	rfcs/accepted/economics/0959-ask-settlement-chain.md:745
 cross-domain aggregation	rfcs/accepted/process/0013-governance-substrate.md:603
 cross-layer aggregation	rfcs/accepted/process/0011-b-reputation-subcommands.md:166
 cross-layer aggregation	rfcs/accepted/process/0011-b-reputation-subcommands.md:172
 cross-repo coordination; §implementation phases phase g cross-repo coordination	rfcs/accepted/proof-systems/0958-zk-capability-subclass.md:1084
+cross-rfc harmonization	rfcs/accepted/economics/0959-v27-burn-event-wire-form.md:21
+cross-rfc harmonization	rfcs/accepted/process/0206-v34-value-transfer-canonicalization.md:3
+cross-rfc harmonization (2026-08-24	rfcs/accepted/economics/0959-v27-burn-event-wire-form.md:199
+cross-rfc harmonization (2026-08-24	rfcs/accepted/process/0206-v34-value-transfer-canonicalization.md:183
+cross-rfc harmonization (2026-08-24	rfcs/accepted/process/0206-v34-value-transfer-canonicalization.md:7
 crypto agility	rfcs/accepted/economics/0957-capability-token-format.md:883
 d1 deviation + 0206-008 §d1 deviation	rfcs/accepted/storage/0206-octo-storage-split.md:427
 d1 deviation + 0206-008 §d1 deviation	rfcs/accepted/storage/0206-octo-storage-split.md:674
@@ -177,6 +203,7 @@ dynamic registration	rfcs/accepted/economics/0904-real-time-cost-tracking.md:198
 election algorithm) landed	rfcs/accepted/process/0011-h-oct-cli-network-subcommands.md:164
 encryption keys	rfcs/accepted/economics/0959-a1-market-delivery.md:891
 envelope codec	rfcs/accepted/networking/0871-specialized-node-protocol-envelope.md:310
+error envelope (canonical	rfcs/accepted/process/0016-audit-receipt-api.md:176
 error handling); cli	rfcs/accepted/process/0011-f-mesh-operations.md:826
 event identity	rfcs/accepted/economics/0910-pricing-table-registry.md:145
 execution class a	rfcs/accepted/process/0014-v2-settlement-substrate-amendment.md:311
@@ -269,6 +296,7 @@ kind uuid registry	rfcs/accepted/process/0206-v30-value-transfer-surface.md:143
 kind uuid registry (private	rfcs/accepted/economics/0105-v34-private-asset-namespace.md:112
 layer a/b/c/d/e	rfcs/accepted/process/0011-e-vault-operations.md:1297
 layer a/b/c/d/e	rfcs/accepted/process/0011-e-vault-operations.md:470
+layer c	rfcs/accepted/process/0011-f-mesh-operations.md:1283
 lifecycle time bounds	rfcs/accepted/process/0009-identity-management.md:208
 lock ordering invariant: always	rfcs/accepted/economics/0904-real-time-cost-tracking.md:338
 manifest schema	rfcs/accepted/process/0015-wallet-agent-operations.md:335
@@ -359,6 +387,7 @@ receipt status	rfcs/accepted/process/0011-a-audit-subcommands.md:246
 receipt status	rfcs/accepted/process/0011-a-audit-subcommands.md:862
 redaction layer) must	rfcs/accepted/process/0011-octo-cli-substrate.md:871
 redaction layer; json	rfcs/accepted/process/0011-g-governance-subcommands.md:863
+replay defense	rfcs/accepted/networking/0970-forwarding-hop-auth-envelope.md:828
 request routing algorithm	rfcs/accepted/networking/0870-distributed-quota-router-network.md:1064
 request routing algorithm	rfcs/accepted/networking/0870-distributed-quota-router-network.md:1357
 revocation oracles	rfcs/accepted/economics/0957-capability-token-format.md:689
@@ -556,6 +585,8 @@ transfer flow: pre-flight	rfcs/accepted/process/0011-e-vault-operations.md:985
 transfer flow: pre-flight (transfer	rfcs/accepted/process/0011-e-vault-operations.md:873
 transfer flow: replay	rfcs/accepted/process/0011-e-vault-operations.md:877
 transitionreceipt; cli	rfcs/accepted/process/0015-a-wallet-agent-write-path.md:166
+trust level canonical uuids); must	rfcs/accepted/process/0011-f-mesh-operations.md:366
+trust level canonical uuids); not	rfcs/accepted/process/0011-f-mesh-operations.md:365
 typed uuid	rfcs/accepted/process/0011-c-agent-lifecycle.md:771
 unit system	rfcs/accepted/economics/0904-real-time-cost-tracking.md:1459
 user extensions (forward	rfcs/accepted/process/0011-g-governance-subcommands.md:1266

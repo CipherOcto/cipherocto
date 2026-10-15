@@ -171,6 +171,60 @@ def is_section_anchor(name: str) -> bool:
     return len(name.split()) >= 2 or bool(NUMBERED_ANCHOR.match("§" + name))
 
 
+def tracked_md_under(root: Path, source: Path) -> list[Path] | None:
+    """Git-tracked markdown under `source`, or None when git cannot answer.
+
+    Returns None for a directory that is not inside the checkout, or when git
+    fails. Callers fall back to a filesystem walk in that case, which is what
+    fixture corpora need — the mutation harness points RFC_ROOT at a mktemp
+    directory outside the repository.
+    """
+    try:
+        source.resolve().relative_to(root.resolve())
+    except ValueError:
+        return None
+    try:
+        listing = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z", "--", "*.md"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    except Exception:
+        return None
+    target = source.resolve()
+    hits: list[Path] = []
+    for entry in listing.split("\0"):
+        if not entry:
+            continue
+        candidate = (root / entry).resolve()
+        try:
+            candidate.relative_to(target)
+        except ValueError:
+            continue
+        hits.append(candidate)
+    return hits
+
+
+def index_corpus_files(source: Path) -> list[Path]:
+    """Markdown under an index source, preferring tracked files.
+
+    A filesystem walk includes gitignored local scratchpads. In this
+    repository that is 711 files under `docs/` contributing roughly 13,460
+    headings, so a citation resolves on this machine and resolves nowhere in
+    a clean checkout — and the baseline recorded the larger index, encoding 31
+    resolutions that cannot happen in the environment the gate runs in.
+
+    `lint_section_cites.sh` enumerates with `git ls-files` for the same
+    reason. Sources outside the checkout fall back to the walk so that
+    fixture corpora keep working.
+    """
+    tracked = tracked_md_under(ROOT, source)
+    if tracked is not None:
+        return sorted(tracked)
+    return sorted(source.rglob("*.md"))
+
+
 def heading_names(path: Path) -> set[str]:
     names: set[str] = set()
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -313,7 +367,7 @@ def main() -> int:
         if source.is_file() and source.suffix == ".md":
             known |= heading_names(source)
         elif source.is_dir():
-            for path in source.rglob("*.md"):
+            for path in index_corpus_files(source):
                 known |= heading_names(path)
 
     unresolved: list[tuple[Path, int, str]] = []

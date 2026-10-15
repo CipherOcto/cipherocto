@@ -15,9 +15,50 @@ metadata:
 
 ## Status
 
-Open, and it is predictive rather than historical: the failure has not reached
-CI yet because the linter has not been pushed. Extending the baseline is a
-maintainer decision and has not been done here.
+**Fixed.** The corpus divergence no longer exists: the index is built from
+git-tracked files, so this machine and a clean checkout compute the same
+number. The baseline was regenerated from 588 to 619, and both environments now
+report 619 of 619 baselined and exit 0.
+
+The measurement sections below are kept as the record of what the divergence
+was, and the "correct pattern already exists in a sibling script" section is
+what the fix was built from.
+
+The 31 findings that only a clean checkout could see were **recorded** in the
+baseline, not resolved. That remains open work on the RFCs and is recorded
+below as such; what is fixed is that CI and the working tree now agree about
+which findings exist.
+
+## Resolution
+
+One enumeration site caused the whole divergence, and it was the index rather
+than the scan corpus: `rfcs/` is fully tracked, so the citations it scans were
+never machine-dependent, while the headings they resolve against were built by
+walking `docs/` and `missions/` and so included 711 gitignored local
+scratchpads.
+
+The index now prefers git-tracked files and falls back to the filesystem walk
+only for a source outside the checkout, which is what the mutation harness's
+fixture corpora need.
+
+| Check                                                   | Result                         |
+| ------------------------------------------------------- | ------------------------------ |
+| local, before                                           | 588 findings, exit 0           |
+| tracked-only archive, before                            | 619 findings, exit 1           |
+| local, after                                            | 619 of 619 baselined, exit 0   |
+| tracked-only archive, after                             | 619 of 619 baselined, exit 0   |
+| mutation harness (fixture corpora outside the checkout) | 26 passed, 0 failed, 3 skipped |
+| a newly invented section planted in a tracked RFC       | 620 findings, 1 NEW, exit 1    |
+| same, restored                                          | exit 0                         |
+
+The baseline change is **purely additive**: 588 entries to 619, with zero
+stale and zero removed.
+
+`--strict` and `--corpus` are unchanged. The corpus report still counts what
+the filesystem contains, which remains a valid census of the working tree even
+though the lint no longer depends on it.
+
+## The finding
 
 This mission records the corpus divergence and the fourteen anchors. Why the
 linter resolves them the way it does — including two gaps that make some of them

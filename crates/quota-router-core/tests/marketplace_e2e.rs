@@ -1369,3 +1369,65 @@ fn reputation_score_cannot_represent_a_provider_below_neutral() {
          observed {score}, which cannot express a failing provider"
     );
 }
+
+/// An Ask whose expiry cannot be represented in the `asks` table must be
+/// refused, not written.
+///
+/// `Ask::expires_at_unix` is `u64`; the row column is `i64`, and every
+/// read filters on `expires_at_unix > now_unix`. The write used a bare
+/// `as i64` cast, so `u64::MAX` wrapped to `-1` — the row was written
+/// successfully and then excluded by *every* query, while the in-memory
+/// book, which keeps the `u64`, held it as live and selectable.
+///
+/// Measured before the fix: `put` returned `Ok`, `cheapest` returned the
+/// ask at 30_000, and `list_by_asker` returned zero rows. The listing would
+/// also have vanished on restart, since hydration reads through the same
+/// filter.
+///
+/// Refused at the storage boundary (`AskRow: TryFrom<&Ask>`) rather than in
+/// the facade, so every writer is covered.
+#[test]
+fn put_refuses_an_expiry_that_cannot_be_represented() {
+    use quota_router_core::marketplace::Marketplace;
+    let m = Marketplace::open_in_memory().expect("open");
+    let did = sample_did(50);
+
+    // Boundary control: the largest representable value is accepted, so
+    // the check cannot be passing by refusing everything.
+    let mut at_limit = ask_with_rate(7, 30_000, 0);
+    at_limit.asker_did = did.clone();
+    at_limit.expires_at_unix = i64::MAX as u64;
+    m.put(&at_limit)
+        .expect("i64::MAX is representable and must be accepted");
+    assert_eq!(
+        m.list_by_asker(&did).expect("repo query").len(),
+        1,
+        "the boundary listing round-trips through the repository"
+    );
+
+    // One past the boundary wraps negative under the old cast.
+    let mut overflow = ask_with_rate(7, 30_000, 0);
+    overflow.asker_did = did.clone();
+    overflow.expires_at_unix = i64::MAX as u64 + 1;
+    let err = m
+        .put(&overflow)
+        .expect_err("an unrepresentable expiry must be refused");
+    assert!(
+        matches!(
+            err,
+            quota_router_storage::RepoError::UnrepresentableExpiry { .. }
+        ),
+        "expected UnrepresentableExpiry, got {err:?}"
+    );
+
+    let mut far = ask_with_rate(8, 30_000, 0);
+    far.asker_did = did.clone();
+    far.expires_at_unix = u64::MAX;
+    assert!(
+        matches!(
+            m.put(&far),
+            Err(quota_router_storage::RepoError::UnrepresentableExpiry { .. })
+        ),
+        "u64::MAX must be refused too"
+    );
+}

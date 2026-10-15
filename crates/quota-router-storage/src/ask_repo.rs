@@ -51,6 +51,28 @@ pub enum RepoError {
     /// `marketplace-put-panics-or-wraps-on-unrepresentable-settlement-cost`.
     #[error("settlement cost not representable as a book price: scale={scale}, value={value} (expected scale=0 and value >= 0)")]
     InvalidSettlementCost { scale: u8, value: i64 },
+    /// `Ask::expires_at_unix` cannot be represented in the `asks` table,
+    /// whose `expires_at_unix` column is `i64`.
+    ///
+    /// The row was previously written via a bare `as i64` cast, which
+    /// wrapped silently: `u64::MAX` became `-1`. Every read filters on
+    /// `expires_at_unix > now_unix`, so the row was written successfully
+    /// and then invisible to every query — while the in-memory order
+    /// book, which keeps the `u64`, held the listing as live and
+    /// selectable.
+    ///
+    /// Refused at the storage boundary rather than in the facade so every
+    /// writer is covered. See deferred mission
+    /// `an-unrepresentable-expiry-is-written-then-invisible-to-every-read`.
+    #[error(
+        "expires_at_unix not representable as i64: {expires_at_unix} (max {max_representable})"
+    )]
+    UnrepresentableExpiry {
+        /// The rejected value, verbatim.
+        expires_at_unix: u64,
+        /// The largest value the column can hold.
+        max_representable: u64,
+    },
     /// An Ask was read back with a negative per-axis rate. A negative rate
     /// credits the buyer rather than charging them and wins every
     /// cheapest-comparison by construction, so it is refused at the
@@ -81,13 +103,32 @@ impl TryFrom<&Ask> for AskRow {
     fn try_from(ask: &Ask) -> Result<Self, Self::Error> {
         let rates_json =
             serde_json::to_vec(&ask.rates).map_err(|e| RepoError::Serde(format!("rates: {e}")))?;
+        // `expires_at_unix` is `u64` on `Ask` but `i64` in the row, and
+        // every read filters on `expires_at_unix > now_unix as i64`. A
+        // bare `as i64` cast wrapped silently: `u64::MAX` became `-1`, so
+        // the row was written successfully and then excluded by every
+        // query, while the in-memory book — which keeps the `u64` — held
+        // it as live and selectable.
+        //
+        // Measured: one `put` with `expires_at_unix = u64::MAX` returned
+        // `Ok`, `cheapest` returned the ask, and `list_by_asker` returned
+        // zero rows. It would also have vanished on restart, since
+        // hydration reads through the same filter.
+        //
+        // Refused here, at the representation boundary, so every writer
+        // is covered rather than only the marketplace facade.
+        let expires_at_unix =
+            i64::try_from(ask.expires_at_unix).map_err(|_| RepoError::UnrepresentableExpiry {
+                expires_at_unix: ask.expires_at_unix,
+                max_representable: i64::MAX as u64,
+            })?;
         Ok(Self {
             ask_id: ask.id().to_vec(),
             asker_did: ask.asker_did.clone(),
             model: ask.model.to_wire(),
             rates_json,
             nonce: ask.nonce.to_vec(),
-            expires_at_unix: ask.expires_at_unix as i64,
+            expires_at_unix,
             created_at_unix: now_unix() as i64,
         })
     }

@@ -67,6 +67,35 @@ mechanism is shared: a corpus assembled by `find` from a working tree that
 contains untracked local documents. That mission measures the cite validator's
 version of it. This is the anchor linter's.
 
+## Reproducing this without cloning
+
+The original measurement used a full clone, which costs 1.6 GB. On a working
+volume at 100% that is the difference between a check being possible and not.
+The same comparison is available from a tracked-only archive of the four paths
+the linter actually reads:
+
+```bash
+mkdir -p /tmp/cleanco
+git archive HEAD rfcs docs missions CLAUDE.md | tar -x -C /tmp/cleanco
+python3 scripts/lint-rfc-anchors.py --root /tmp/cleanco
+```
+
+That is 27 MB, and it needs no clone, no fetch and no object database. Re-measured
+on 2026-10-14 after a day of new missions and documents were added:
+
+| Corpus                  | Headings indexed | Findings | Result                       |
+| ----------------------- | ---------------- | -------- | ---------------------------- |
+| tracked-only archive    | 21,033           | 619      | exit 1, 0 of 619 baselined   |
+| full local working tree | 34,493           | 588      | exit 0, 588 of 588 baselined |
+
+The divergence is **stable**: eight new tracked missions added thousands of
+headings to both corpora equally and moved neither number. The gap is still 31
+findings and 13,460 headings, and the ratio is still 1.64.
+
+The three gitignored directories are `docs/reviews/` (409 files),
+`docs/audits/` (197) and `docs/plans/` (105) — 711 in total, matching the count
+recorded above.
+
 ## Why CI is green right now
 
 The linter is new and unpushed. It does not exist at the tip of `origin/next`,

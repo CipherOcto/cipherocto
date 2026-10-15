@@ -1127,3 +1127,106 @@ fn put_rejects_before_the_repo_write_so_nothing_half_lands() {
         stored.len()
     );
 }
+
+#[test]
+fn cheapest_skips_an_ask_that_expired_after_it_was_indexed() {
+    // `put` only gates expiry at insert time. Before this fix the book
+    // stored no expiry, so an Ask indexed while live stayed a candidate
+    // forever — measured: still returned after `expires_at_unix` passed.
+    use quota_router_core::marketplace::Marketplace;
+
+    let m = Marketplace::open_in_memory().expect("open");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let mut live = ask_with_rate(70, 10_000, 0);
+    live.expires_at_unix = now + 3;
+    m.put(&live).expect("put");
+    assert!(
+        m.cheapest("openai/gpt-4").is_some(),
+        "a live ask must be a candidate"
+    );
+
+    std::thread::sleep(std::time::Duration::from_millis(4_000));
+
+    assert!(
+        m.cheapest("openai/gpt-4").is_none(),
+        "an expired ask must stop being a candidate"
+    );
+    assert!(
+        m.cheapest_with_ranking("openai/gpt-4", quota_router_core::marketplace::scoring::LatencyRanking::prefer_latency())
+            .is_none(),
+        "the latency-ranked path must honour expiry too"
+    );
+}
+
+#[test]
+fn cheapest_ignores_expired_entries_but_keeps_live_ones() {
+    // Expiry must filter per entry, not clear the book.
+    use quota_router_core::marketplace::Marketplace;
+
+    let m = Marketplace::open_in_memory().expect("open");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let mut expiring = ask_with_rate(71, 1_000, 0);
+    expiring.expires_at_unix = now + 3;
+    m.put(&expiring).expect("put expiring");
+
+    let mut durable = ask_with_rate(72, 90_000, 0);
+    durable.expires_at_unix = now + 3_600;
+    m.put(&durable).expect("put durable");
+
+    std::thread::sleep(std::time::Duration::from_millis(4_000));
+
+    let best = m.cheapest("openai/gpt-4").expect("durable ask survives");
+    assert_eq!(
+        best.cost_per_1k, 90_000,
+        "only the un-expired ask may be returned"
+    );
+}
+
+#[test]
+fn hydration_rejects_an_unrepresentable_stored_price_instead_of_panicking() {
+    // `open_path_with_store` had the same unchecked assert and `as u128`
+    // cast that were fixed in `put`. Hydration reads *persisted* Asks,
+    // including rows written before the storage guard existed, so it is
+    // strictly more exposed than the write path.
+    use quota_router_core::marketplace::Marketplace;
+    use quota_router_storage::ask_repo::RepoError;
+
+    let dir = std::env::temp_dir().join(format!(
+        "marketplace-hydrate-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("m.db");
+    let dsn = path.to_string_lossy().to_string();
+
+    // Seed a fractional-scale ask directly through the repo, bypassing the
+    // Marketplace write path entirely.
+    {
+        let repo = quota_router_storage::ask_repo::StoolapAskRepository::open_path(&dsn)
+            .expect("open repo");
+        repo.put(&ask_with_rate(73, 10_000, 7)).expect("repo put");
+    }
+
+    let opened = Marketplace::open_path(&dsn);
+    let err = match opened {
+        Ok(_) => panic!("hydration must refuse an unrepresentable stored price"),
+        Err(e) => e,
+    };
+    assert!(
+        matches!(err, RepoError::InvalidSettlementCost { .. }),
+        "expected InvalidSettlementCost, got {err:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

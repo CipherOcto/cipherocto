@@ -172,6 +172,15 @@ pub struct AskSpec {
     pub ask_id: [u8; 32],
     pub asker_did: String,
     pub model: String,
+    /// Expiry carried in the book so `cheapest` can filter on read.
+    ///
+    /// `put` only ever indexes an Ask whose `expires_at_unix` is in the
+    /// future *at insert time*. Without the expiry stored here the book
+    /// cannot tell a still-live Ask from one that has since expired, and
+    /// an expired listing stayed matchable indefinitely. Measured before
+    /// this field existed: an Ask expiring 1s after `put` was still
+    /// returned by `cheapest()` after it expired.
+    pub expires_at_unix: u64,
 }
 
 impl<S> Marketplace<S>
@@ -236,17 +245,25 @@ where
         for ask in &active {
             let consumed = build_unit_consumed(ask, &axes);
             let cost = settlement_cost(ask, &consumed, &axes);
+            // Same representability guard as `put`. Hydration reads
+            // already-persisted Asks, including rows written before the
+            // storage-boundary guard existed or by another writer, so this
+            // path is strictly more exposed than the write path.
+            if cost.scale != 0 || cost.value < 0 {
+                return Err(RepoError::InvalidSettlementCost {
+                    scale: cost.scale,
+                    value: cost.value,
+                });
+            }
             let ask_id = compute_ask_id_static(ask);
             book.place_ask(
                 AskSpec {
                     ask_id,
                     asker_did: ask.asker_did.clone(),
                     model: ask.model.to_wire(),
+                    expires_at_unix: ask.expires_at_unix,
                 },
-                {
-                    assert_eq!(cost.scale, 0, "place_ask: MicroOCTO_W is integer-valued (scale=0); API contract violation");
-                    cost.value as u128
-                },
+                cost.value as u128,
                 1, // qty 1 per Ask; matches write-through
                 ask.asker_did.clone(),
                 now,
@@ -410,6 +427,7 @@ where
                     ask_id,
                     asker_did: ask.asker_did.clone(),
                     model: ask.model.to_wire(),
+                    expires_at_unix: ask.expires_at_unix,
                 },
                 price,
                 1, // qty 1 per Ask; RFC-0900 markets trade 1 prompt per Ask
@@ -616,9 +634,15 @@ where
     ) -> Option<MarketplaceEntry> {
         let book = self.book.lock();
 
-        // Collect candidates matching `model` and not circuit-broken.
+        // Filter expiry at read time. `put` only gates on expiry at
+        // insert, so an Ask indexed while live must stop being a candidate
+        // once `expires_at_unix` passes. Both terms are required: the
+        // model match and the liveness check.
+        let now = current_unix();
+        // Collect candidates matching `model`, not expired, and not
+        // circuit-broken.
         let candidates: Vec<&orderbook::Order<AskSpec>> = book
-            .asks_matching(|spec| spec.model == model)
+            .asks_matching(|spec| spec.model == model && spec.expires_at_unix > now)
             .into_iter()
             .filter(|o| !self.reputation.is_excluded(&o.spec.asker_did))
             .collect();

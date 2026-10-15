@@ -1158,14 +1158,26 @@ pub struct SettlementEnvelope {
     pub cost: Dqa,
     /// Vault row the settlement draws against (RFC-0959 §Wire
     /// Format + review §20.7). `None` for pre-v2.0 settlements (no
-    /// cross-chain reject enforced). When `Some`, the settlement-time
-    /// verifier MUST find a vault row at this id (via `VaultLookup`)
-    /// and that row's `chain_id` MUST match `chain_id` below.
+    /// cross-chain reject enforced). When `Some`, a settlement-time
+    /// verifier is supposed to find a vault row at this id (via
+    /// `VaultLookup`) and require that row's `chain_id` to match
+    /// `chain_id` below.
+    ///
+    /// **That verifier is not wired.** See
+    /// [`crate::settlement_verify::verify_settlement_chain_match`] — it
+    /// implements the check correctly and has no production caller, so
+    /// neither requirement above is enforced today. Measured: an
+    /// envelope naming a nonexistent vault passes `settle-replay` with
+    /// `verify: OK`. See mission
+    /// `the-cross-chain-settlement-reject-is-never-called`.
     pub cost_vault_id: Option<[u8; 32]>,
     /// Chain scope of this settlement (RFC-0959 §Wire Format +
     /// RFC-0010 §ChainId 32-byte addendum). `None` for pre-v2.0
     /// settlements; `Some` carries
     /// `BLAKE3("cipherocto/chain/v1/" || chain_string)`.
+    ///
+    /// Unenforced for the same reason as `cost_vault_id` above: nothing
+    /// on the live path compares it against a vault row.
     pub chain_id: Option<[u8; 32]>,
 }
 

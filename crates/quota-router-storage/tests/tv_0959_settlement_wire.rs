@@ -193,6 +193,20 @@ fn tv_0959_10_dqa_negative_round_trip() {
 // =====================================================================
 // Family 3 — TV-0959-11..15: cost_vault_id derivation cross-ref
 // =====================================================================
+//
+// NOTE: these five do NOT provide the coverage their names claim.
+//
+// Each test assigns `expected.0` into `env.cost_vault_id` and then
+// asserts `env.cost_vault_id == expected.0`. That assertion cannot fail.
+// No production derivation of `cost_vault_id` is called, because none
+// exists in the tree. The comments say the expected bytes were captured
+// at authoring time via a one-shot run, but no byte literal is pinned in
+// this file — change the derivation and all five still pass.
+//
+// Families 4 and 5 below DO exercise the real verifier. See mission
+// `the-cross-chain-settlement-reject-is-never-called`, which also records
+// that the verifier these suites cover has no production caller.
+// =====================================================================
 
 /// TV-0959-11: cost_vault_id MUST equal
 /// `octo_vault::vault_id_unchecked(chain_id, owner_did, asset_id)` for

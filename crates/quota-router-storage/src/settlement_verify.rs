@@ -26,9 +26,33 @@
 //! struct arg would defeat the abstraction. The trait lives in
 //! `octo-cap-macaroon` (Layer B extension); the production adapter
 //! `OctoVaultLookup` lives in `octo-cap-macaroon-vault` (Layer B
-//! substrate adapter glue). The marketplace caller instantiates
+//! substrate adapter glue). A caller instantiates
 //! `OctoVaultLookup::new(substrate)` and passes it as
 //! `&dyn VaultLookup` to this verifier — Layer discipline preserved.
+//!
+//! ## No caller yet
+//!
+//! Earlier revisions of this note read "the marketplace caller wires ..."
+//! in the present tense. That was wrong: this verifier has **no
+//! production caller**. Every call site in the tree is a test — the
+//! `#[cfg(test)]` module below and `tests/tv_0959_settlement_wire.rs`.
+//!
+//! The live settlement path does not reach it.
+//! `ConsumedReceiptRepository::verify_and_insert` recomputes the hash,
+//! checks the nonce, and inserts; `SettlementEnvelope::verify` does hash
+//! and replay. Neither inspects `cost_vault_id` or `chain_id` beyond
+//! hashing them.
+//!
+//! Measured: an envelope whose `cost_vault_id` names a vault that exists
+//! nowhere, with a `chain_id` that could never match, passes
+//! `quota-router settle-replay` with `verify: OK` and exit 0. Wired, step
+//! 2 would reject it as `CostVaultIdMissing`.
+//!
+//! `OctoVaultLookup` is named eight times in this module — all eight are
+//! comments in this file. No code in `quota-router-storage`,
+//! `quota-router-core` or `quota-router-cli` references it.
+//!
+//! See mission `the-cross-chain-settlement-reject-is-never-called`.
 //!
 //! ## 3-step algorithm (RFC-0959 §Settlement-Time Vault Row Lookup)
 //!
@@ -67,8 +91,9 @@ use crate::ask::{SettlementEnvelope, SettlementError};
 ///
 /// Takes `&dyn VaultLookup` (trait from `octo-cap-macaroon`); never
 /// imports the concrete `OctoVaultLookup` adapter (which lives in
-/// `octo-cap-macaroon-vault`). The marketplace caller wires
-/// `OctoVaultLookup::new(substrate)` as the `&dyn VaultLookup` arg.
+/// `octo-cap-macaroon-vault`). A caller would wire
+/// `OctoVaultLookup::new(substrate)` as the `&dyn VaultLookup` arg — but
+/// no such caller exists yet. See the module note above.
 pub fn verify_settlement_chain_match(
     envelope: &SettlementEnvelope,
     vault_lookup: &dyn VaultLookup,

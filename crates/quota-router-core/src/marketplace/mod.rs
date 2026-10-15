@@ -5,12 +5,26 @@
 //! don't want the stoolap dependency.
 //!
 //! Submodules (RFC-0900):
-//! - `orderbook` — price-time priority order book (Gap 5.1).
-//! - `escrow`    — escrow state machine (Gap 5.2).
-//! - `slashing`  — provider slashing model (Gap 5.3).
+//! - `orderbook` — price-time priority order book (Gap 5.1). **Wired.**
+//! - `escrow`    — escrow state machine (Gap 5.2). **Not wired.**
+//! - `slashing`  — provider slashing model (Gap 5.3). **Not wired.**
 //! - `reputation_compat` — async compat adapter over canonical
 //!   `octo_reputation::ReputationStore` (RFC-0968 retirement gate; see
 //!   `Marketplace::record_outcome_async` / `read_reputation_async`).
+//!   **Wired.**
+//!
+//! ## What `Marketplace` actually holds
+//!
+//! `repo`, `axes`, `book`, `reputation`, `reputation_compat` — that is the
+//! whole struct. The marketplace is **discovery + reputation ranking**:
+//! publish an Ask (`put`), find the cheapest (`cheapest`), rank by
+//! latency/reputation (`cheapest_with_ranking`).
+//!
+//! `escrow` and `slashing` are standalone components that no facade method
+//! constructs, drives or settles. There is no transaction, no settlement and
+//! no slashing call site reachable from `Marketplace`. RFC-0900 §Escrow Flow
+//! has no implementation behind this facade. Recorded in mission
+//! `marketplace-escrow-is-not-wired-into-the-marketplace-facade`.
 
 pub mod escrow;
 pub mod orderbook;

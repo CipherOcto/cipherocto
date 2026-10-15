@@ -514,6 +514,95 @@ fn escrow_double_dispute_rejected() {
 }
 
 #[test]
+fn escrow_without_arbitrator_dispute_is_permanently_stuck() {
+    // Pins the fail-closed property documented on `check_caller`.
+    //
+    // `Escrow::new` leaves `arbitrator` empty. `Disputed` is not terminal
+    // (`is_terminal()` is Settled | Slashed), and `resolve_valid` /
+    // `resolve_invalid` are the only transitions out of it. With no stored
+    // arbitrator every resolve call is rejected — so an escrow built this
+    // way, once disputed, has no path forward at all.
+    //
+    // This is intentional (unset arbitrator must never grant dispute-
+    // resolution authority) and it is the correct default. It is pinned
+    // here so the behaviour cannot change silently: `TaskEscrow::new` is
+    // the default constructor and its callers inherit this.
+    //
+    // Mission `marketplace-escrow-is-not-wired-into-the-marketplace-facade`.
+    let mut escrow = Escrow::new([0x77; 32], "buyer", "seller", dqa(500));
+    assert_eq!(escrow.arbitrator, "", "new() leaves arbitrator unset");
+    escrow
+        .lock(&Party::Buyer("buyer".to_string()))
+        .expect("lock");
+    escrow
+        .dispute(&Party::Buyer("buyer".to_string()))
+        .expect("dispute");
+
+    // No caller can resolve — not the buyer, not the seller, and not an
+    // arbitrator claiming any identity at all.
+    for caller in [
+        Party::Buyer("buyer".to_string()),
+        Party::Seller("seller".to_string()),
+        Party::Arbitrator("arb".to_string()),
+    ] {
+        let err = escrow
+            .resolve_valid(&caller)
+            .expect_err("resolve_valid must fail without an arbitrator");
+        assert!(
+            matches!(err, EscrowError::UnauthorizedCaller { .. }),
+            "expected UnauthorizedCaller, got {err:?}"
+        );
+        let err = escrow
+            .resolve_invalid(&caller)
+            .expect_err("resolve_invalid must fail without an arbitrator");
+        assert!(
+            matches!(err, EscrowError::UnauthorizedCaller { .. }),
+            "expected UnauthorizedCaller, got {err:?}"
+        );
+    }
+
+    // And the escrow is stranded: still Disputed, still non-terminal.
+    assert_eq!(escrow.state, EscrowState::Disputed);
+    assert!(
+        !escrow.is_terminal(),
+        "a stuck Disputed escrow must not claim terminality"
+    );
+
+    // Positive control. Without this, the assertions above could pass for
+    // the wrong reason — e.g. if `resolve_*` were broken independently of
+    // the arbitrator. Here the same transitions succeed the moment an
+    // arbitrator is configured, so the failures above are attributable to
+    // the missing arbitrator and nothing else.
+    let mut arbitrated = Escrow::with_arbitrator(
+        [0x78; 32],
+        "buyer",
+        "seller",
+        "arb",
+        dqa(500),
+    );
+    arbitrated
+        .lock(&Party::Buyer("buyer".to_string()))
+        .expect("lock");
+    arbitrated
+        .dispute(&Party::Buyer("buyer".to_string()))
+        .expect("dispute");
+    let settled = arbitrated
+        .resolve_invalid(&Party::Arbitrator("arb".to_string()))
+        .expect("configured arbitrator must be able to resolve");
+    assert_eq!(settled, EscrowState::Settled);
+    assert!(arbitrated.is_terminal());
+
+    // Same escrow, wrong arbitrator identity — still rejected.
+    let err = arbitrated
+        .resolve_valid(&Party::Arbitrator("someone-else".to_string()))
+        .expect_err("wrong arbitrator identity must fail");
+    assert!(
+        matches!(err, EscrowError::UnauthorizedCaller { .. }),
+        "expected UnauthorizedCaller, got {err:?}"
+    );
+}
+
+#[test]
 fn byzantine_provider_offense_count_increments_per_offense() {
     // Byzantine provider submits 99 valid + 1 invalid response.
     // The slashing ledger must register the offense_count = 1

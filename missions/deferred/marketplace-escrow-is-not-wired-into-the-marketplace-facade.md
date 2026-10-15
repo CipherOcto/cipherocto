@@ -1,6 +1,6 @@
 ---
 name: marketplace-escrow-is-not-wired-into-the-marketplace-facade
-description: "The escrow state machine ships inside crates/quota-router-core::marketplace but the Marketplace facade never constructs, locks, settles or disputes one, so the RFC-0900 escrow flow has no implementation behind it. 23 of 24 tests in marketplace_e2e.rs drive Escrow and OrderBook by hand while the header presents them as marketplace end-to-end coverage."
+description: "The escrow and slashing components ship inside crates/quota-router-core::marketplace but the Marketplace facade holds neither — its struct has five fields and none of them is an Escrow or SlashingLedger, so RFC-0900 Gap 5.2 and Gap 5.3 have no implementation behind the facade. 23 of 24 tests in marketplace_e2e.rs drive Escrow and OrderBook by hand while the header presents them as marketplace end-to-end coverage."
 metadata:
   node_type: mission
   type: research
@@ -24,29 +24,50 @@ mission is filed under `missions/deferred/` per BLUEPRINT §Mission Lifecycle
 
 ## Finding
 
-`marketplace::escrow::Escrow` is declared and documented as part of the
-marketplace, but nothing in the marketplace uses it.
+`marketplace::escrow::Escrow` and `marketplace::slashing::SlashingLedger`
+are declared and documented as parts of the marketplace, but nothing in the
+marketplace uses them.
 
-`crates/quota-router-core/src/marketplace/mod.rs` references `Escrow` exactly
-twice:
+The decisive evidence is the struct itself. `Marketplace` holds exactly five
+fields:
 
-| Line | Reference                                               |
-| ---- | ------------------------------------------------------- |
-| 9    | doc comment — `escrow` — escrow state machine (Gap 5.2) |
-| 15   | `pub mod escrow;`                                       |
+| Field               | Component                             | Wired         |
+| ------------------- | ------------------------------------- | ------------- |
+| `repo`              | `Arc<DynAskRepository>`               | yes           |
+| `axes`              | `Vec<PricingAxis>`                    | yes           |
+| `book`              | `Mutex<OrderBook<AskSpec>>`           | yes (Gap 5.1) |
+| `reputation`        | `ProviderReputationRegistry`          | yes (Gap 7)   |
+| `reputation_compat` | `ProviderReputationRegistryCompat<S>` | yes (Gap 7)   |
 
-There is no escrow field, no constructor call, no `lock`/`settle`/`dispute` /
-`resolve_*` call site, and no transition out of the facade. `orderbook.rs`,
-`scoring.rs` and `slashing.rs` contain zero `Escrow` references.
+There is no escrow field, no slashing field, no constructor call, no
+`lock`/`settle`/`dispute`/`resolve_*` call site, and no `slash` call site
+reachable from the facade. `orderbook.rs`, `scoring.rs` and `slashing.rs`
+contain zero `Escrow` references.
 
-The only consumers of the type anywhere in the tree:
+So of the three components RFC-0900 v1.1 records as landed under Gap 5 —
+order book (5.1), escrow (5.2), slashing (5.3) — **only the order book is
+actually wired.** The version-history row lists all three without
+distinguishing module-landed from facade-integrated.
+
+The only consumers of `Escrow` anywhere in the tree:
 
 - inline unit tests in `escrow.rs`
 - `marketplace_e2e.rs`, which constructs it directly in test-local structs
-- `task_market/escrow.rs`, which wraps it as `TaskEscrow` for RFC-0901
+- `task_market/escrow.rs`, which wraps it as `TaskEscrow`
 
 `marketplace/mod.rs` does not reference `task_market`, so that wiring does not
 reach the marketplace either.
+
+### Explicitly NOT a defect: `task_market`
+
+`task_market` (RFC-0901) has only two references outside its own directory —
+the `pub mod task_market;` line in `lib.rs` and `tests/task_market.rs`. No
+production code in any workspace crate consumes it.
+
+That is **expected**: RFC-0901 is **Draft**, not Accepted. A module landing
+ahead of its integration is normal for a draft RFC. It is recorded here only
+so the absence is not later mistaken for an oversight, and it is explicitly
+out of scope for this mission.
 
 ## Consequence for the test suite
 
@@ -83,7 +104,31 @@ close/reopen test's comments previously said "Process A" / "Process B" while
 running in a single process; they now say "Scope", consistent with the
 deferral already recorded by mission `marketplace-subprocess-restart-recovery`.
 
-No production code, no RFC, and no archived record was modified.
+`marketplace/mod.rs` module inventory now marks each submodule **Wired** or
+**Not wired** and states the five fields the facade actually holds, so the
+module list cannot be read as a claim that all three Gap 5 components are
+integrated.
+
+No production logic, no RFC, and no archived record was modified.
+
+## A fail-closed property worth knowing
+
+An `Escrow` built with `Escrow::new` (or `TaskEscrow::new`, which is the
+default constructor) has an **empty arbitrator**. `check_caller` rejects any
+resolve when the stored identity is empty, so both `resolve_valid` and
+`resolve_invalid` return `UnauthorizedCaller` forever.
+
+`Disputed` is not terminal (`is_terminal()` is `Settled | Slashed` only) and
+`resolve_valid` / `resolve_invalid` are the only transitions out of it. There
+is no timeout, expiry or admin recovery.
+
+So an escrow created without an arbitrator, once disputed, is **permanently
+stuck**. This is intentional and documented ("Always fail-closed: unknown /
+unset arbitrators reject all `resolve_*` calls"), and it is the correct
+default — but it means `TaskEscrow::new` callers inherit an unresolvable
+dispute path unless they opt into `with_arbitrator`.
+
+No test pins this. Worth a guard test either way.
 
 ## What the RFC owner needs to decide
 

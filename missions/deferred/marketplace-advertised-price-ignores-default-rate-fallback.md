@@ -167,6 +167,13 @@ The implementation substitutes the registry default for the Ask's own rate
 whenever the Ask's map misses, so `UnknownAxis` now fires only when the
 axis is in **neither** the Ask's rate table **nor** the registry.
 
+Measured directly: an Ask pricing only `input_tokens_per_1k: 90_000`,
+charged for 1000 units of `output_tokens_per_1k` (a standard axis, present
+in the registry, absent from the Ask), returns `Ok(60000)` where the RFC
+requires `UnknownAxis`. The existing `compute_cost_unknown_axis_rejected`
+test misses this because it uses an Ask with an **empty** rate table and
+an id in neither place, pinning only the narrow case.
+
 So the fallback is a conformance deviation, not a deliberate safety net.
 That does not make it obviously wrong — a default is defensible as a
 product decision — but it is a deviation the owner has to make knowingly.

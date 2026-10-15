@@ -94,6 +94,20 @@ The implementation narrows that error condition. `compute_cost` delegates to
 the registry default, so `SettlementError::UnknownAxis` fires only when the
 axis is in **neither** the Ask's rate table **nor** the registry.
 
+Measured directly. An Ask pricing **only** `input_tokens_per_1k: 90_000`,
+charged for 1000 units of `output_tokens_per_1k` — a standard axis, present
+in the registry, simply absent from the Ask:
+
+```text
+registry_axis_absent_from_ask => Ok(60000)
+```
+
+RFC-0959 requires `UnknownAxis` there. The implementation returns `Ok` and
+charges the registry default of 60_000. The existing
+`compute_cost_unknown_axis_rejected` test does not cover this: it uses an
+Ask with an **empty** rate table and an id that is in neither place, so it
+pins the narrow case only.
+
 Two places in RFC-0959 point the same way:
 
 - §Error Handling lists `UnknownAxis` as recoverable, with the remedy

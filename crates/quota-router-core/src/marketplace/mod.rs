@@ -499,9 +499,14 @@ where
         // Snapshot the in-memory book once. The lock is released by
         // the time the loop below awaits `is_excluded_async` /
         // `score` (clippy `await_holding_lock`).
+        //
+        // Expiry is filtered here exactly as in the sync
+        // `cheapest_with_ranking`. Both read the same book; letting them
+        // diverge is how an expired listing came to stay matchable.
+        let now = current_unix();
         let candidates: Vec<orderbook::Order<AskSpec>> = {
             let book = self.book.lock();
-            book.asks_matching(|spec| spec.model == model)
+            book.asks_matching(|spec| spec.model == model && spec.expires_at_unix > now)
                 .into_iter()
                 .cloned()
                 .collect()

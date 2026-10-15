@@ -1162,6 +1162,42 @@ fn cheapest_skips_an_ask_that_expired_after_it_was_indexed() {
     );
 }
 
+#[tokio::test]
+async fn cheapest_async_skips_an_ask_that_expired_after_it_was_indexed() {
+    // The async path reads the same book and once omitted the expiry term
+    // entirely — a third reader, after the sync one and hydration. This
+    // pins the async surface so it cannot drift again.
+    use quota_router_core::marketplace::scoring::LatencyRanking;
+    use quota_router_core::marketplace::Marketplace;
+
+    let m = Marketplace::open_in_memory().expect("open");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let mut live = ask_with_rate(74, 10_000, 0);
+    live.expires_at_unix = now + 3;
+    m.put(&live).expect("put");
+    assert!(
+        m.cheapest_with_ranking_async("openai/gpt-4", LatencyRanking::cheapest())
+            .await
+            .expect("async cheapest")
+            .is_some(),
+        "a live ask must be a candidate on the async path too"
+    );
+
+    std::thread::sleep(std::time::Duration::from_millis(4_000));
+
+    assert!(
+        m.cheapest_with_ranking_async("openai/gpt-4", LatencyRanking::cheapest())
+            .await
+            .expect("async cheapest")
+            .is_none(),
+        "an expired ask must stop being a candidate on the async path"
+    );
+}
+
 #[test]
 fn cheapest_ignores_expired_entries_but_keeps_live_ones() {
     // Expiry must filter per entry, not clear the book.

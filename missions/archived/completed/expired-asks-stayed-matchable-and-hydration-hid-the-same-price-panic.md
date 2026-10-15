@@ -46,9 +46,19 @@ paths. A quota marketplace will route to a provider whose listing has lapsed.
 
 - `AskSpec` gains `expires_at_unix`, populated at both construction sites
   (`put` and hydration).
-- `cheapest_with_ranking` filters `spec.model == model && spec.expires_at_unix > now`.
+- **Every** reader of the book filters
+  `spec.model == model && spec.expires_at_unix > now`.
 
-Both sites, because the two paths were genuinely divergent.
+There are exactly two such readers, and the first pass of this fix caught
+only one. `cheapest_with_ranking_async` — the canonical async surface —
+omitted the term entirely and was found only by re-grepping for book reads
+after the change landed. Both now filter, and a `grep` for `asks_matching`
+shows no unfiltered reader remains in `marketplace/`.
+
+The same one-of-two mistake also produced Defect 2 below. Two separate
+instances of patching a duplicated logic path without enumerating both
+copies is what motivated enumerating readers explicitly rather than
+patching the one a test happened to reach.
 
 ## Defect 2 — the read path still had the price panic
 

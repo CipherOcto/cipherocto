@@ -96,6 +96,48 @@ The three gitignored directories are `docs/reviews/` (409 files),
 `docs/audits/` (197) and `docs/plans/` (105) — 711 in total, matching the count
 recorded above.
 
+## The correct pattern already exists in a sibling script
+
+This was found after the mission was written, and it changes the shape of the
+decision: the alternative is not hypothetical. Another guard in this same
+repository already does it.
+
+How each document guard enumerates its corpus:
+
+| Guard                    | Enumeration        | Machine-independent                              |
+| ------------------------ | ------------------ | ------------------------------------------------ |
+| `lint_section_cites.sh`  | `git ls-files`     | **yes**                                          |
+| `lint-rfc-anchors.py`    | filesystem `rglob` | **no**                                           |
+| `lint-rfc-type-refs.py`  | filesystem `rglob` | yes — reads `rfcs/` only, which is fully tracked |
+| `lint_frontmatter.py`    | filesystem `rglob` | no — reads `docs/` and `missions/` too           |
+| `lint_no_vh_accepted.sh` | `RFC_ROOT` only    | yes                                              |
+
+`lint_section_cites.sh` draws its denominator from the repository rather than
+from the tree it is scanning, and says why in its own comments: a run against a
+fixture corpus otherwise reports `COVERAGE=0%` for content it examined in full,
+which reads as "nothing was examined". It enumerates with `git ls-files` and
+makes every path CWD-relative so the figure and the comparison cannot disagree
+about which tree is meant.
+
+`lint-rfc-anchors.py` walks the filesystem in five places. Its **only** use of
+`git ls-files` is inside the reporting mode added for this investigation — it
+knows the difference and does not apply it to the lint path.
+
+Measured today, running each guard over a tracked-only archive and over the
+full working tree:
+
+| Guard                    | Full tree    | Tracked-only             | Diverges                            |
+| ------------------------ | ------------ | ------------------------ | ----------------------------------- |
+| `lint_section_cites.sh`  | exit 0       | _(needs a git checkout)_ | no — it only ever saw tracked files |
+| `lint_frontmatter.py`    | exit 0       | exit 0                   | no                                  |
+| `lint_no_vh_accepted.sh` | PASS=155     | PASS=155                 | no                                  |
+| `lint-rfc-anchors.py`    | 588 findings | 619 findings             | **yes, 31**                         |
+
+So the anchor linter is the outlier, and the fix has a precedent in the same
+tree. What remains a maintainer decision is not _which pattern_ but whether
+baselining 619 pre-existing dangling anchors in the tracked corpus is
+acceptable — that is a judgement about the RFCs, not about the tooling.
+
 ## Why CI is green right now
 
 The linter is new and unpushed. It does not exist at the tip of `origin/next`,

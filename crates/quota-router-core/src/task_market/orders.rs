@@ -72,7 +72,7 @@ impl TaskSpec {
     }
 }
 
-/// Inference task market — wraps `OrderBook<TaskSpec>` (RFC-0900 §Order Book).
+/// Inference task market — wraps `OrderBook<TaskSpec>` (RFC-0918 §Order Book).
 ///
 /// The book itself is in-memory, so no I/O. `parking_lot::Mutex` keeps
 /// access exclusive across threads; the lock is held only for the

@@ -316,7 +316,7 @@ pub fn register_reason_spec(spec: Arc<dyn SlashReasonSpec>) {
     default_registry().register(spec);
 }
 
-/// Slashing rules (RFC-0900 §Slashing Model defaults).
+/// Slashing rules (RFC-0900 §Slashing Model).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct SlashingRules {
     /// Penalty fraction applied to `stake` on the first offense (0.0-1.0).

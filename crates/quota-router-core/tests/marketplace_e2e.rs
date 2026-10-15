@@ -693,7 +693,7 @@ fn concurrent_settlement_duplicate_rejected() {
     // machine must let exactly one transition Pending->Locked->Settled,
     // and the second settle attempt must fail with
     // `SettleFromInvalid(Settled)`. This is the dedup contract
-    // (RFC-0900 §Settlement).
+    // (RFC-0900 §Settlement Model).
     let mut tx = setup_match(&sample_did(238), &sample_did(145), "openai/gpt-4", 100, 5);
     match_and_populate(&mut tx);
     // First settle succeeds.

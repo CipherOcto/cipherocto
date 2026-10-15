@@ -1,4 +1,4 @@
-//! Order book — price-time priority bid/ask book (RFC-0900 §Order Book).
+//! Order book — price-time priority bid/ask book (RFC-0900, Gap 5.1).
 //!
 //! Generic over `Spec`: the spec is the orderable payload (e.g., an
 //! `AskSpec { ask_id, asker_did, model }` for the quota marketplace,

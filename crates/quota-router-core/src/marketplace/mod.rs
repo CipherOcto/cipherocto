@@ -111,7 +111,7 @@ pub use scoring::{LatencyRanking, ProviderScore};
 ///
 /// `cheapest()` reads through an in-memory `OrderBook<AskSpec>` that is
 /// populated write-through by `put()`. The orderbook uses price-time
-/// priority (RFC-0900 §Order Book) so cheapest lookup is O(log N) and
+/// priority (RFC-0900, Gap 5.1) so cheapest lookup is O(log N) and
 /// avoids the previous linear BTreeMap scan. The `AskRepository` remains
 /// the canonical persistence layer (Gap 7 still queries it via
 /// `list_by_asker`).
@@ -124,7 +124,7 @@ pub use scoring::{LatencyRanking, ProviderScore};
 /// Gap 7 extensions:
 ///
 /// - `reputation` — provider-scoring registry with circuit-breaker
-///   (RFC-0900 §Reputation System). When the registry's
+///   (RFC-0968). When the registry's
 ///   `min_reputation` is positive, providers whose `success_rate` falls
 ///   below the threshold are skipped by `cheapest()`. When
 ///   `min_reputation <= 0.0` (the default), the registry is a passive
@@ -283,7 +283,7 @@ where
     }
 
     // ========================================================================
-    // Gap 7.1 — Reputation registry (RFC-0900 §Reputation System)
+    // Gap 7.1 — Reputation registry (RFC-0968)
     // ========================================================================
 
     /// Set the circuit-breaker threshold (`success_rate` below which a

@@ -6,7 +6,7 @@
 //!   rate + observed latency per asker (provider). The registry gates a
 //!   configurable **circuit-breaker**: when an asker's recorded success
 //!   rate falls below `min_reputation`, the asker is excluded from
-//!   `Marketplace::cheapest()` lookups (RFC-0900 §Reputation System).
+//!   `Marketplace::cheapest()` lookups (RFC-0968).
 //!
 //! - `LatencyRanking` — composite score (weighted blend of normalized
 //!   price + latency). `cheapest()` is the default price-only ranking;

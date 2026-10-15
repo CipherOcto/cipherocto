@@ -111,6 +111,17 @@ pub const fn dqa_int(value: i64) -> Dqa {
 
 /// Free trait helper: arithmetic on `Dqa` returns `Result`; this crate prefers
 /// the `expect` form for known-bounded supply-side calculations.
+///
+/// The bounds are NOT known. `cost_for` multiplies caller-supplied units by
+/// a caller-supplied rate, and `settlement_cost` sums one such product per
+/// consumed axis, so a legitimate set of large rates overflows `i64` and
+/// this aborts the process. Measured: two axes at 9e18 each panic here,
+/// where `compute_cost` on the same `Ask` returns
+/// `SettlementError::Overflow` naming the axis and partial sum.
+///
+/// Every marketplace pricing surface uses `settlement_cost`, which has no
+/// error path. See mission
+/// `settlement-cost-panics-where-compute-cost-errors`.
 #[inline]
 pub fn dqa_add(a: Dqa, b: Dqa) -> Dqa {
     octo_determin::dqa_add(a, b).expect("Dqa addition overflow")
@@ -983,6 +994,15 @@ mod ask_signed_tests {
 pub type AxisConsumption = (AxisId, u64);
 
 /// Compute settlement cost for an `Ask` given per-axis consumption.
+///
+/// # Panics
+///
+/// Aborts if the per-axis costs sum past `i64::MAX`. This function returns
+/// a bare `Dqa`, so a caller cannot handle that case — unlike
+/// [`compute_cost`], which returns `SettlementError::Overflow` naming the
+/// offending axis. Nothing bounds the rates: a listing may carry any
+/// `i64` value, and this is the function every marketplace pricing surface
+/// uses. See mission `settlement-cost-panics-where-compute-cost-errors`.
 #[must_use]
 pub fn settlement_cost(ask: &Ask, consumed: &[AxisConsumption], axes: &[PricingAxis]) -> Dqa {
     let mut total: Dqa = Dqa::new(0, 0).expect("zero");

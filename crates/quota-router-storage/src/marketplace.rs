@@ -5,9 +5,10 @@
 //! `AskId` itself, giving O(log n) tie-break by `ask_id` ASC (lowest ask_id wins).
 //!
 //! Cache invalidation: asks with `expires_at_unix < now` are evicted lazily
-//! (on `select_ask`) and via explicit `prune(now_unix)`. Total active count
-//! is capped at 100K; over-cap inserts trigger FIFO pruning by `published_at_unix`
-//! ASC (oldest published first).
+//! (on `select_ask`) and via explicit `prune_expired(now_unix)`. Total active
+//! count is capped at 100K; an over-cap `insert` prunes by earliest
+//! `expires_at_unix` (the closest available proxy for publication order — see
+//! [`MarketplaceIndex::prune_expired_and_overflow`]).
 //!
 //! Synced from RFC-0862 sync events (this module is the in-memory mirror;
 //! the `asks` table in stoolap is the durable source).
@@ -25,23 +26,55 @@ pub const ACTIVE_ASK_CAP: usize = 100_000;
 /// Backed by `BTreeMap` for deterministic, ordered scans. The key is the
 /// `(namespace, family, version)` triple; the value is a `BTreeSet<AskId>`
 /// which itself orders by `AskId` for tie-break during `select_ask`.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct MarketplaceIndex {
     /// Active asks keyed by model triple.
     by_model: BTreeMap<(String, String, Option<String>), BTreeSet<AskId>>,
     /// Mirror of all active asks for pruning / iteration.
-    /// `published_at_unix` is part of the value so FIFO pruning can sort
-    /// efficiently without a separate `Vec<AskId>`.
+    ///
+    /// The value is a bare `Ask`, which does **not** carry
+    /// `published_at_unix` (that lives on `AskUnsignedPayload`, the pre-mint
+    /// form). Overflow eviction therefore approximates publication order with
+    /// `expires_at_unix`; see [`Self::prune_expired_and_overflow`].
     indexed: BTreeMap<AskId, Ask>,
     /// Total active count (mirror of `indexed.len()`; kept for cheap cap check).
     count: usize,
+    /// Maximum entries before [`Self::insert`] prunes. Always
+    /// [`ACTIVE_ASK_CAP`] outside tests; a private field so the over-cap
+    /// path is reachable from a unit test without a 100K-iteration loop.
+    cap: usize,
+}
+
+impl Default for MarketplaceIndex {
+    /// Delegates to [`Self::new`] so the derived-default `cap == 0` can never
+    /// appear: a zero cap would make `insert` prune on every call and silently
+    /// leave the index empty.
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MarketplaceIndex {
     /// Construct an empty index.
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            by_model: BTreeMap::new(),
+            indexed: BTreeMap::new(),
+            count: 0,
+            cap: ACTIVE_ASK_CAP,
+        }
+    }
+
+    /// Construct an empty index with a lowered capacity.
+    ///
+    /// Test-only: [`ACTIVE_ASK_CAP`] is large enough that reaching it in a
+    /// unit test is impractical, and the over-cap branch of [`Self::insert`]
+    /// is where the pruning policy actually lives.
+    #[cfg(test)]
+    #[must_use]
+    fn with_cap(cap: usize) -> Self {
+        Self { cap, ..Self::new() }
     }
 
     /// Insert an Ask. If `ask_id` already present, replaces the entry.
@@ -57,8 +90,15 @@ impl MarketplaceIndex {
             self.count += 1;
         }
         // Prune if over cap.
-        if self.count > ACTIVE_ASK_CAP {
-            self.prune_expired_and_overflow(u64::MAX);
+        //
+        // The cutoff is `0`, not `u64::MAX`: `prune_expired` removes asks
+        // with `expires_at_unix < now_unix`, so passing `u64::MAX` here
+        // marked **every** ask expired and emptied the whole index on the
+        // over-cap insert. This path is deliberately time-agnostic — `insert`
+        // has no clock argument, and expiry is applied by `select_ask` — so
+        // `0` disables the time filter and leaves only the count cap.
+        if self.count > self.cap {
+            self.prune_expired_and_overflow(0);
         }
         !already_present
     }
@@ -125,10 +165,15 @@ impl MarketplaceIndex {
     /// `AskUnsignedPayload` and the `created_at_unix` DB row), use the earliest
     /// `expires_at_unix` first — TTL is monotonic with publication time within
     /// reasonable operational envelopes (operators mint 30d TTLs).
+    ///
+    /// Callers that mean "enforce the count cap without applying a time
+    /// filter" must pass `0`. Passing `u64::MAX` is the opposite: it matches
+    /// every ask and clears the index.
+    ///
     /// Returns the number of entries removed.
     pub fn prune_expired_and_overflow(&mut self, now_unix: u64) -> usize {
         let mut removed = self.prune_expired(now_unix);
-        while self.count > ACTIVE_ASK_CAP {
+        while self.count > self.cap {
             // Find ask with smallest expires_at_unix.
             let oldest = self
                 .indexed
@@ -165,10 +210,19 @@ impl MarketplaceIndex {
             .collect()
     }
 
-    /// Select the cheapest active Ask matching `(model, jurisdiction, budget_ceiling)`.
+    /// Select the cheapest Ask matching `(model, jurisdiction, budget_ceiling)`.
+    ///
+    /// "Cheapest" is evaluated only against asks that survive the two gates
+    /// this function actually applies: **expiry** (evicted lazily via
+    /// `prune_expired`) and **`budget_ceiling`**. RFC-0959 §Ask state machine
+    /// defines further gates that are **not** applied here — in particular the
+    /// `Published -> Active` `soft_delay` warm-up. That gate cannot be applied
+    /// as things stand: `Ask` does not carry `published_at_unix`, which lives
+    /// on `AskUnsignedPayload`, the pre-mint form this index does not hold.
+    /// The same loss already makes the jurisdiction filter inert (see below).
+    /// See mission `the-ask-lifecycle-state-machine-has-no-representation-in-the-ask-type`.
     ///
     /// Tie-break: lowest `ask_id` wins (deterministic across calls / nodes).
-    /// Evicts expired asks lazily before selection.
     ///
     /// `budget_ceiling` is the maximum cost in `Dqa` the caller is
     /// willing to pay for a synthetic `1k-token` consumption per axis (matches
@@ -549,6 +603,112 @@ mod tests {
         let removed = idx.prune_expired(now);
         assert_eq!(removed, 0);
         assert_eq!(idx.len(), 100);
+    }
+
+    /// Regression: the over-cap insert must evict ONE ask, not all of them.
+    ///
+    /// `insert` has no clock argument, so it passes a sentinel as the expiry
+    /// cutoff. It used to pass `u64::MAX`, which matches every ask in
+    /// `prune_expired` and emptied the entire index on the 100,001st insert
+    /// instead of trimming to the cap. All asks below carry a year-2100 TTL,
+    /// so none is expired by wall-clock standards — the removal can only come
+    /// from the count cap.
+    ///
+    /// This reaches the branch that `prune_cap_evicts_oldest_first` never
+    /// does: 100 inserts against a 100_000 cap never trip it.
+    #[test]
+    fn over_cap_insert_evicts_one_not_everything() {
+        const CAP: usize = 3;
+        // Every TTL is far-future (2100-01-01 and beyond) so nothing is
+        // expired by wall-clock standards: the only thing that can remove an
+        // entry is the count cap. The three base TTLs ascend, which makes
+        // "earliest expiry" a strict ordering rather than a tie — `min_by_key`
+        // would otherwise pick arbitrarily among equals.
+        const FAR: u64 = 4_102_444_800;
+        let mut idx = MarketplaceIndex::with_cap(CAP);
+        let mut base: Vec<AskId> = Vec::new();
+        for i in 0..CAP as u64 {
+            let ask = sample_ask(&format!("did:octo:a{i}"), "openai/gpt-4", 10_000, FAR + i);
+            base.push(ask.id());
+            idx.insert(ask);
+        }
+        assert_eq!(idx.len(), CAP, "index filled to cap, no pruning yet");
+
+        // The 4th insert trips the cap. Its TTL is the latest of all.
+        let overflow = sample_ask("did:octo:overflow", "openai/gpt-4", 10_000, FAR + 99);
+        let overflow_id = overflow.id();
+        assert!(idx.insert(overflow));
+
+        // Trimmed back to the cap, not emptied.
+        assert_eq!(
+            idx.len(),
+            CAP,
+            "over-cap insert must evict exactly one ask, not the whole index"
+        );
+        assert!(
+            idx.get(&overflow_id).is_some(),
+            "the newly inserted ask must survive the prune"
+        );
+        assert!(
+            idx.get(&base[0]).is_none(),
+            "the earliest-expiring ask is the one evicted"
+        );
+        assert!(
+            idx.get(&base[1]).is_some() && idx.get(&base[2]).is_some(),
+            "the two later asks survive"
+        );
+    }
+
+    /// Control for the regression above: `prune_expired_and_overflow` with a
+    /// realistic `now_unix` *should* still drop time-expired asks. Without
+    /// this, the `u64::MAX` bug could be "fixed" by making `insert` always
+    /// pass a real clock — which would silently move expiry into the hot
+    /// insert path — and never be caught.
+    ///
+    /// The cap here is deliberately above the insert count, so `insert` never
+    /// auto-prunes and the explicit call below is the only thing that runs.
+    #[test]
+    fn over_cap_prune_still_honours_a_real_clock() {
+        const CAP: usize = 10;
+        let now: u64 = 1_700_000_000;
+        let mut idx = MarketplaceIndex::with_cap(CAP);
+        let stale = sample_ask("did:octo:stale", "openai/gpt-4", 10_000, now - 1);
+        let live1 = sample_ask("did:octo:live1", "openai/gpt-4", 10_000, now + 10_000);
+        let live2 = sample_ask("did:octo:live2", "openai/gpt-4", 10_000, now + 20_000);
+        let (stale_id, live1_id, live2_id) = (stale.id(), live1.id(), live2.id());
+        idx.insert(stale);
+        idx.insert(live1);
+        idx.insert(live2);
+        assert_eq!(idx.len(), 3, "under cap, nothing auto-pruned");
+
+        let removed = idx.prune_expired_and_overflow(now);
+        assert_eq!(removed, 1, "exactly the expired ask is removed");
+        assert_eq!(idx.len(), 2);
+        assert!(idx.get(&stale_id).is_none());
+        assert!(idx.get(&live1_id).is_some());
+        assert!(idx.get(&live2_id).is_some());
+    }
+
+    #[test]
+    fn default_cap_matches_production_cap() {
+        // `Default` is a public trait impl, so `MarketplaceIndex::default()`
+        // is reachable from outside the crate. It must carry the production
+        // cap, not a derived zero — a zero cap would make `insert` prune on
+        // every call and leave the index permanently empty.
+        let d = MarketplaceIndex::default();
+        assert_eq!(d.cap, ACTIVE_ASK_CAP);
+        assert_eq!(d.cap, MarketplaceIndex::new().cap);
+
+        // Behavioural consequence: a default-built index retains asks well
+        // past what a zero cap would allow.
+        let mut d = MarketplaceIndex::default();
+        d.insert(sample_ask(
+            "did:octo:a",
+            "openai/gpt-4",
+            10_000,
+            4_102_444_800,
+        ));
+        assert_eq!(d.len(), 1, "insert must not prune against a real cap");
     }
 
     #[test]

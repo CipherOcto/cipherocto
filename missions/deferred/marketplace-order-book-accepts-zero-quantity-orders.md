@@ -5,7 +5,7 @@ metadata:
   node_type: mission
   type: research
   created: 2026-10-15T00:00:00.000Z
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0900
 ---
@@ -18,6 +18,10 @@ Deferred — the fix requires changing a public signature
 (`place_ask` / `place_bid` return `OrderId`, not `Result`), and none of the
 candidate behaviours is obviously correct. Evidence gathered and
 reproduced below; nothing actioned.
+
+**v1.1** replaces a reasoned prediction about the `match_top` guard with
+a measured one. The prediction was wrong in kind: the naive guard
+destroys the counterparty's order rather than stalling the book.
 
 ## Finding
 
@@ -93,14 +97,47 @@ behaviours are available once it does, and none is obviously right:
 | ----------------------------- | -------------------------------------------------- | --------------------------------------------------------- |
 | Reject at placement           | `Err(ZeroQuantity)`                                | breaking signature change; caller must handle a new error |
 | Silently skip zero-qty orders | order never rests                                  | fabricates success for a placement that did not happen    |
-| Skip in `match_top`           | zero-qty orders never match but stay in the book   | they occupy the top of the book and block real matches    |
+| Skip in `match_top`           | see below                                          | measured to destroy the counterparty's order              |
 | Consume silently (today)      | phantom `Some(MatchPair { qty: 0 })`, listing lost | the defect                                                |
 
-The third option deserves particular care: because `match_top` reads
-`bids.values().next()` and `asks.values().next()`, a zero-qty order at the
-top of either side would permanently shadow every real order behind it.
-That is strictly worse than today's behaviour, and it is the reason a
-naive "just skip them in match_top" fix should not be taken.
+The third option deserves particular care, and the reason is structural
+rather than a matter of taste. `match_top` performs its removals
+**before** it computes the fill:
+
+```rust
+self.bids.remove(&bid_key);
+self.asks.remove(&ask_key);
+let qty = bid.qty.min(ask.qty);   // <-- guard placed here
+```
+
+and re-inserts residuals **after** it. So a guard written at the natural
+spot sits between the two halves.
+
+### Measured: the naive guard destroys an order
+
+A `if qty == 0 { return None }` mutation placed exactly there:
+
+```text
+MEASURE call1 qty=None ask_owner=None
+MEASURE call2 qty=None ask_owner=None
+MEASURE bid_count=0 ask_count=1
+```
+
+Both orders were removed from the maps before the guard returned, and the
+residual re-insertion below it never ran. The **buyer's resting order is
+gone**, and the real ask is left orphaned. That is silent loss of a live
+order, which is worse than either today's phantom match or a stall.
+
+> **Corrected at v1.1.** v1.0 predicted this option would "occupy the top
+> of the book and block real matches". That prediction was reasoned, not
+> measured, and it was wrong in kind. Applying the mutation showed order
+> destruction, not a stall. The revision is recorded rather than quietly
+> dropped.
+
+So any non-breaking fix has two constraints, not one: the guard must sit
+_before_ the removals, and it must still decide what becomes of the
+zero-qty order. Which is the placement-time rejection again — arriving at
+the same place, for a stronger reason than v1.0 gave.
 
 The correct resolution — reject at placement with a typed error — is the
 only one that both fails closed and leaves no stuck state, which is why
@@ -126,8 +163,8 @@ this is filed rather than patched.
 grep -n -A8 "pub fn place_ask" crates/quota-router-core/src/marketplace/orderbook.rs
 grep -n -A8 "pub fn place_bid" crates/quota-router-core/src/marketplace/orderbook.rs
 
-# the fill that can be zero
-grep -n "bid.qty.min(ask.qty)" crates/quota-router-core/src/marketplace/orderbook.rs
+# the removals precede the fill, which is why a guard there destroys an order
+grep -n -B3 -A3 "bid.qty.min(ask.qty)" crates/quota-router-core/src/marketplace/orderbook.rs
 
 # the facade cannot reach it today: qty is hardcoded
 grep -n "book.place_ask" crates/quota-router-core/src/marketplace/mod.rs

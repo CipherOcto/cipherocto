@@ -1,11 +1,11 @@
 ---
 name: settlement-hash-does-not-bind-the-cost
-description: "Both settlement-hash surfaces in quota-router-storage omit the cost from their preimage. The live one, SettlementEnvelope::compute_settlement_hash, has no signature field either, so the hash is its only integrity mechanism. Measured: inflating cost 1000x while keeping the original settlement_hash passes SettlementEnvelope::verify() and ConsumedReceiptRepository::verify_and_insert. RFC-0959 requires cost in the preimage explicitly as an R3 fix whose stated purpose was that tampering breaks the hash."
+description: "The live settlement-hash surface omits THREE fields from its preimage: cost, asker_did and holder_did. SettlementEnvelope::compute_settlement_hash has no signature field either, so the hash is its only integrity mechanism. Measured on the built binary: rewriting the payee from the legitimate seller to did:octo:attacker leaves settlement_hash byte-identical (8138e9a8...), and the envelope passes settle-replay with verify OK and exit 0 — the hash a third party would check against the seller's signature does not change when the payee does. Swapping the payer is equally invisible. Separately, inflating cost 1000x while keeping the original hash passes verify. RFC-0959 requires cost in the preimage explicitly as an R3 fix whose stated purpose was that tampering breaks the hash. The RFC names Ask forgery (claiming another asker_did) as a consensus attack, so the identity omission is a specified threat, not a hypothetical."
 metadata:
   node_type: mission
   type: research
   created: 2026-10-15T00:00:00.000Z
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0959
     - RFC-0909
@@ -23,6 +23,17 @@ measurement probes were removed and the tree matches its prior state.
 
 This is the highest-severity finding of the marketplace audit, and the
 first one where a **live production path** carries the defect.
+
+## v1.1 — the omission is larger than cost, and worse
+
+The original finding was that `cost` is absent from the live preimage. That
+is correct but incomplete: **`asker_did` and `holder_did` are absent too.**
+They are the payer and the payee, and their omission outranks the cost
+problem — a settlement can be redirected to a different recipient while
+carrying the _original_ hash, which is the value any third party would check.
+
+The rest of this document stands; the finding, measurement and RFC sections
+below are updated to cover the complete unbound set.
 
 ## Finding
 
@@ -44,14 +55,21 @@ model_wire || serde_json::to_vec(axes_consumed) || ask_id || nonce
 || chain_id_opt_prefix || [if Some] chain_id
 ```
 
-`cost` is a field on the struct. It is not in the preimage.
+Three fields on the struct are in that list nowhere: `cost`, `asker_did`,
+`holder_did`.
+
+The first is the amount. The other two are _who is paying and who is being
+paid_ — and a settlement's entire purpose is a transfer between them. Both
+are named in the struct's own field docs ("Asker DID", "Holder DID") as
+carrying identity, and neither participates in the commitment to that
+identity.
 
 And `SettlementEnvelope` has **no signature field at all** — no
 `router_signature`, no signer identity. `verify_and_insert` recomputes the
 hash and compares it to the stored one; that is the entire integrity
 check.
 
-So the amount charged in a verified settlement envelope is not committed
+So neither the amount charged nor the parties to the transfer is committed
 to by anything.
 
 ### Surface A — `ask::compute_settlement_hash(event)` (latent)
@@ -67,6 +85,51 @@ It has no production callers. Where it is used, in
 conformance deviation, not an exploitable hole.
 
 ## Measurement
+
+### The identity omission, end to end on the built binary
+
+Three envelopes differing only in party identity, hashed:
+
+```text
+honest          (holder=legit_seller, asker=legit_buyer) = 8138e9a8d4c36b111ab8023987af3181e67e3e182de2c86e5bbc1293e34528ba
+attacker_holder (holder=attacker,     asker=legit_buyer) = 8138e9a8d4c36b111ab8023987af3181e67e3e182de2c86e5bbc1293e34528ba
+swapped_asker   (holder=legit_seller, asker=attacker)     = 8138e9a8d4c36b111ab8023987af3181e67e3e182de2c86e5bbc1293e34528ba
+
+holder_changed = true
+asker_changed  = true
+```
+
+Byte-identical digests. Neither party is committed to.
+
+The full attack chain, on `quota-router` built from this tree. An envelope
+whose payee was rewritten to `did:octo:attacker`, carrying the honest
+envelope's hash:
+
+```text
+$ quota-router settle --from tampered.json
+settlement_hash = 8138e9a8d4c36b111ab8023987af3181e67e3e182de2c86e5bbc1293e34528ba
+exit=0
+
+$ quota-router settle-replay --from tampered.json
+settlement_hash = 8138e9a8d4c36b111ab8023987af3181e67e3e182de2c86e5bbc1293e34528ba
+verify: OK (hash matches + nonce inserted)
+exit=0
+```
+
+Two things make this worse than a stale-hash problem. `settle`
+**overwrites** `settlement_hash` with a freshly computed value for whatever
+JSON it is handed, so an attacker does not have to preserve anything — the
+tool mints the "valid" hash for the tampered envelope. And the resulting hash
+equals the honest envelope's hash, so the redirected settlement is
+indistinguishable from the genuine one to any third party holding the
+original value.
+
+The default (no `--db-path`) replay store is also empty per invocation, so
+the nonce check contributes nothing here; that is a separate finding
+(`replay-defense-is-a-no-op-in-the-default-cli-configuration`) and is not
+load-bearing for this one — the hash check passes on its own.
+
+### The cost omission
 
 Surface B, on the live verify path:
 
@@ -108,6 +171,19 @@ h.update(&event.cost.0.to_le_bytes());   // R3 fix: cost bound into hash; tamper
 The stated purpose of that R3 fix is exactly the property that Surface B
 lacks: **tampering breaks the hash**. Measured, it does not.
 
+The RFC also names the identity omission as a threat rather than leaving it
+to be discovered. §Security Considerations §Consensus attacks lists:
+
+```text
+**Ask forgery:** attacker publishes Ask claiming someone else's
+`asker_did`. Mitigation: Ed25519 signature + `asker_did` in
+canonical_ser — recipients verify signature before marketplace insert.
+```
+
+The same class of attack applies to the settlement envelope, where the
+mitigation is the hash. `asker_did` and `holder_did` are the two identity
+fields a settlement commits to, and neither is in the preimage.
+
 RFC-0959 Appendix C's fail-closed principle applies to axes; the
 cost-binding requirement is stated twice independently in §Settlement
 hash, which is unusually strong for this document.
@@ -135,28 +211,45 @@ economically.
 
 ## Direction of the failure
 
-Both directions are available, because `axes_consumed` **is** bound while
-`cost` is not:
+For `cost`, both directions are available, because `axes_consumed` **is**
+bound while `cost` is not:
 
 - **Inflate** the cost, keeping `axes_consumed` honest. The recipient
   pays 1000x what the recorded consumption supports.
 - **Deflate** it to zero. The settlement verifies and nothing is charged.
+
+For the identity fields the direction is singular and unconditional: replace
+`holder_did` with any DID and the hash is unchanged. There is no partial
+mitigation and no "only inflation" reading — the payee is simply not part of
+what the hash commits to.
 
 Whether this is exploitable in practice depends on who can write an
 envelope row and whether any party re-derives `cost` from `axes_consumed`
 and the Ask's rates. Nothing in the crate does — the settlement-time path
 recomputes the hash and stops there. The marketplace escrow is unwired
 (separate deferred mission), so the dispute path that would catch an
-inflated amount does not run.
+inflated amount does not run. The same caveat applies to a redirected
+payee: today the settlement is recorded but no tokens move (see
+`the-settlement-path-records-but-never-settles`), so the practical loss is a
+mis-attributed audit record rather than a theft. That is the only thing
+keeping this latent, and it is a property of the _next_ subsystem rather
+than a safeguard in this one.
 
 ## What the RFC owner needs to decide
 
+- Should `asker_did` and `holder_did` be added to the `SettlementEnvelope`
+  preimage? This is the direct question for the identity omission, it is the
+  more urgent of the two, and it is Layer A. Adding them invalidates every
+  stored `settlement_hash` — but so does adding `cost`, and the two should
+  almost certainly land together rather than in sequence.
 - Should `cost` be added to the `SettlementEnvelope` preimage? This is the
   direct question and it is Layer A. Adding it invalidates every stored
   `settlement_hash`.
 - Or should `SettlementEnvelope` stop being an integrity surface at all
   and gain the router signature that `SettlementReceipt` already has? That
-  would make the signature, not the hash, the thing that binds the amount.
+  would make the signature, not the hash, the thing that binds the amount —
+  and would also bind the parties, since `canonical_ser(envelope)` covers
+  them. Given three unbound fields, this is the option worth weighing first.
 - The two surfaces should probably be reconciled. `SettlementEnvelope`'s
   preimage shares neither the domain separator, nor `cap_root_hash`, nor
   `invocation_hash` with RFC-0959 §Settlement hash, yet both are called a
@@ -165,7 +258,7 @@ inflated amount does not run.
   that has produced several other findings in this audit.
 - Should the R3 "cost bound into hash" requirement be restated as an
   acceptance criterion with a concrete expected digest, so a future
-  preimage error can actually fail a test?
+  preimage error can actually fail a test? The same applies to identity.
 
 ## Reproduction
 
@@ -176,6 +269,14 @@ grep -n -A40 'The v2.0 canonical preimage that the single function' \
 
 # Surface B has no signature field
 grep -n -A34 'pub struct SettlementEnvelope' crates/quota-router-storage/src/ask.rs
+
+# the three unbound fields are on the struct and absent from the preimage
+grep -n -A30 'pub fn compute_settlement_hash(&self)' \
+  crates/quota-router-storage/src/ask.rs
+
+# the RFC names Ask forgery as a consensus attack
+grep -n -A2 'Ask forgery' \
+  rfcs/accepted/economics/0959-ask-settlement-chain.md
 
 # the live verification path recomputes only the hash
 grep -n -A10 'pub fn verify_and_insert' \
@@ -205,9 +306,21 @@ grep -n -A12 'fn verify_and_insert_rejects_tampered_envelope' \
 ## Cross-references
 
 - RFC-0959 §Settlement hash — the required preimage, including `cost`
+- RFC-0959 §Security Considerations §Consensus attacks — names "Ask forgery"
+  (claiming another `asker_did`) as a consensus attack, which is the same
+  omission on the Ask side
 - RFC-0959 §Compute cost — the function that produces the unbound value
 - RFC-0900 §Dispute Resolution — the escrow path that would catch an
   inflated amount; unwired today
+- Mission `a-signed-ask-does-not-prove-who-published-it` — the Ask-side
+  identity gap: `verify` does not bind the DID to the key, and the RFC's
+  own pseudocode takes the DID as a verify argument
+- Mission `the-ask-signature-gates-nothing` — why no signature is available
+  to bind these fields on the Ask side either
+- Mission `the-settlement-path-records-but-never-settles` — the only thing
+  keeping a redirected payee latent today
+- Mission `replay-defense-is-a-no-op-in-the-default-cli-configuration` — the
+  nonce half of the same live command; separate defect, not load-bearing here
 - Mission `ask-axis-ids-are-never-validated-against-the-axis-registry` —
   the other RFC-0959 conformance gap in the same file, and the second
   where the code is fail-open where the RFC is fail-closed

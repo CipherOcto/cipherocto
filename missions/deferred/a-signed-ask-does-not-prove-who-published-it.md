@@ -5,7 +5,7 @@ metadata:
   node_type: mission
   type: research
   created: 2026-10-15T00:00:00.000Z
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0959
     - RFC-0009
@@ -24,6 +24,15 @@ are documented on the code they affect.
 
 This is the highest-consequence finding in the marketplace audit that does
 **not** require the unwired facade to be reachable.
+
+## v1.1 — the RFC already specifies the fix
+
+The original finding read the missing binding as an omission. It is not:
+RFC-0959 §Security Considerations §Consensus attacks names "Ask forgery" as a
+consensus attack and specifies the mitigation, and its `verify` pseudocode
+passes `ask.payload.asker_did` as a third argument. The implementation's
+`verify` has no DID parameter at all, so the divergence is structural rather
+than a forgotten check. See §The RFC names this attack below.
 
 ## Finding 1 — the verifier does not bind identity to key
 
@@ -80,6 +89,41 @@ The CLI is honest by construction — `derive_asker_did` computes the DID from
 the same seed it signs with, so `ask_publish` cannot produce a mismatch. The
 defect is entirely in the verifier, and a verifier must not assume its
 producer is the wallet.
+
+### The RFC names this attack, and specifies the mitigation
+
+This is not a defect the RFC overlooked. §Security Considerations §Consensus
+attacks lists it explicitly:
+
+```text
+**Ask forgery:** attacker publishes Ask claiming someone else's
+`asker_did`. Mitigation: Ed25519 signature + `asker_did` in canonical_ser
+— recipients verify signature before marketplace insert.
+```
+
+The two halves of that mitigation need separating, because only one holds:
+
+- `asker_did` in `canonical_ser` — **satisfied.** The DID is covered by the
+  signature, so changing it invalidates the signature for anyone but the
+  legitimate holder.
+- "recipients verify signature before marketplace insert" — **not
+  satisfied.** Nothing verifies (see mission
+  `the-ask-signature-gates-nothing`), and what `verify` _does_ check would
+  not catch the forgery even if it were called.
+
+The same section fixes the expected `verify` signature. RFC-0959's pseudocode
+is:
+
+```rust
+IdentityKey::verify(&ask.signature, &msg, &ask.payload.asker_did)
+```
+
+The DID is the **third argument**. The implementation takes a bare
+`algorithm_id` and `public_key` and no DID at all, so the parameter the RFC
+specifies is absent from the API — which is why the binding could not be
+enforced even by a caller who wanted it. The divergence is structural, not a
+missing check inside a function that has the information and forgot to do
+it.
 
 ## Finding 2 — three incompatible canonical DID encodings
 
@@ -179,6 +223,13 @@ grep -n -A20 'fn sample_payload' crates/quota-router-storage/src/ask.rs
 
 # the wallet's hand-rolled derivation
 grep -n -A6 'fn derive_asker_did' crates/octo-wallet/src/bin/octo-wallet.rs
+
+# the RFC names this exact attack and specifies the mitigation
+grep -n -A2 'Ask forgery' rfcs/accepted/economics/0959-ask-settlement-chain.md
+
+# the RFC's own verify pseudocode takes the DID as a third argument
+grep -n 'IdentityKey::verify(&ask.signature' \
+  rfcs/accepted/economics/0959-ask-settlement-chain.md
 
 # the two forms the codec accepts, and their length rules
 grep -n -A20 'fn legacy_to_wire' crates/octo-ident/src/lib.rs

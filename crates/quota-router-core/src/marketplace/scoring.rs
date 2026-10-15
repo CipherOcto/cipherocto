@@ -283,7 +283,10 @@ pub fn resolve_ranking_latencies(observed: &[Option<u64>]) -> (Vec<u64>, u64, u6
     let Some(worst_observed) = observed.iter().flatten().copied().max() else {
         return (vec![0; observed.len()], 0, 0);
     };
-    let latencies: Vec<u64> = observed.iter().map(|o| o.unwrap_or(worst_observed)).collect();
+    let latencies: Vec<u64> = observed
+        .iter()
+        .map(|o| o.unwrap_or(worst_observed))
+        .collect();
     let min_latency = latencies.iter().copied().min().unwrap_or(0);
     (latencies, min_latency, worst_observed)
 }

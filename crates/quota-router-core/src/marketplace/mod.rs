@@ -623,10 +623,15 @@ where
 
         // Price-only specialization (matches sync path).
         if ranking.latency_weight == 0.0 {
-            return Ok(Some(self.entry_from_order_async(
-                &accepted[0],
-                latencies.get(&accepted[0].spec.asker_did).copied().flatten(),
-            )));
+            return Ok(Some(
+                self.entry_from_order_async(
+                    &accepted[0],
+                    latencies
+                        .get(&accepted[0].spec.asker_did)
+                        .copied()
+                        .flatten(),
+                ),
+            ));
         }
 
         // Latency-aware ranking: identical math to sync path, latencies
@@ -766,8 +771,7 @@ where
                     .map(|s| s.latency_ms)
             })
             .collect();
-        let (latencies, min_lat, max_lat) =
-            scoring::resolve_ranking_latencies(&observed_latencies);
+        let (latencies, min_lat, max_lat) = scoring::resolve_ranking_latencies(&observed_latencies);
 
         let mut best: Option<(f64, &orderbook::Order<AskSpec>)> = None;
         for (order, latency_ms) in candidates.iter().zip(latencies.iter()) {

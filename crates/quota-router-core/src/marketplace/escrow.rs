@@ -36,22 +36,22 @@ pub enum EscrowState {
     /// Funds locked in escrow; settlement in progress.
     Locked,
     /// Funds released to seller.
-///
-/// Reached by **two** distinct paths, and nothing records which:
-/// a clean success via `settle`, and a rejected dispute via
-/// `resolve_invalid`. RFC-0900 models these as separate terminal
-/// outcomes (`COMPLETED` vs `CONFIRMED`/`KEEP`), but the escrow has no
-/// flag, history or timestamp to tell them apart — `EscrowSnapshot`
-/// carries the same fields as `Escrow`.
-///
-/// Measured: `marketplace_e2e::happy_path_bid_matches_ask_escrow_settles`
-/// and `marketplace_e2e::dispute_invalid_confirms_payment` both end here
-/// with the same `amount_micro_octo_w`. The two differ in history, not in
-/// resulting state. See deferred mission
-/// `marketplace-escrow-is-not-wired-into-the-marketplace-facade`.
-///
-/// This doc previously read "Funds released to seller (success path)",
-/// which described only the first path.
+    ///
+    /// Reached by **two** distinct paths, and nothing records which:
+    /// a clean success via `settle`, and a rejected dispute via
+    /// `resolve_invalid`. RFC-0900 models these as separate terminal
+    /// outcomes (`COMPLETED` vs `CONFIRMED`/`KEEP`), but the escrow has no
+    /// flag, history or timestamp to tell them apart — `EscrowSnapshot`
+    /// carries the same fields as `Escrow`.
+    ///
+    /// Measured: `marketplace_e2e::happy_path_bid_matches_ask_escrow_settles`
+    /// and `marketplace_e2e::dispute_invalid_confirms_payment` both end here
+    /// with the same `amount_micro_octo_w`. The two differ in history, not in
+    /// resulting state. See deferred mission
+    /// `marketplace-escrow-is-not-wired-into-the-marketplace-facade`.
+    ///
+    /// This doc previously read "Funds released to seller (success path)",
+    /// which described only the first path.
     Settled,
     /// Buyer raised a dispute (RFC-0900 §Dispute Resolution).
     ///

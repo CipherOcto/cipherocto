@@ -586,13 +586,7 @@ fn escrow_without_arbitrator_dispute_is_permanently_stuck() {
     // the arbitrator. Here the same transitions succeed the moment an
     // arbitrator is configured, so the failures above are attributable to
     // the missing arbitrator and nothing else.
-    let mut arbitrated = Escrow::with_arbitrator(
-        [0x78; 32],
-        "buyer",
-        "seller",
-        "arb",
-        dqa(500),
-    );
+    let mut arbitrated = Escrow::with_arbitrator([0x78; 32], "buyer", "seller", "arb", dqa(500));
     arbitrated
         .lock(&Party::Buyer("buyer".to_string()))
         .expect("lock");
@@ -940,7 +934,11 @@ fn stale_view_after_restart_sees_writes() {
     let winner = m2.cheapest("openai/gpt-4").expect("some");
     assert_eq!(winner.asker_did, sample_did(50));
     let alice_asks = m2.list_by_asker(&sample_did(50)).expect("list_by_asker");
-    assert_eq!(alice_asks.len(), 1, "reopened handle must see the earlier write");
+    assert_eq!(
+        alice_asks.len(),
+        1,
+        "reopened handle must see the earlier write"
+    );
     let bob_asks = m2.list_by_asker(&sample_did(60)).expect("list_by_asker");
     assert_eq!(bob_asks.len(), 1);
     let _ = std::fs::remove_dir_all(&dir);
@@ -1071,8 +1069,7 @@ fn ask_with_rate(seed: u8, rate_value: i64, rate_scale: u8) -> quota_router_stor
             model: ModelRef::from("openai/gpt-4"),
             rates: vec![AxisRate {
                 axis: "input_tokens_per_1k".into(),
-                rate_per_1k: octo_determin::Dqa::new(rate_value, rate_scale)
-                    .expect("non-overflow"),
+                rate_per_1k: octo_determin::Dqa::new(rate_value, rate_scale).expect("non-overflow"),
             }],
         },
         nonce: [0x55; 16],
@@ -1092,7 +1089,8 @@ fn put_rejects_fractional_scale_rate_instead_of_panicking() {
     let m = Marketplace::open_in_memory().expect("open");
 
     // Scale 0 still works — the fix must not reject valid Asks.
-    m.put(&ask_with_rate(1, 10_000, 0)).expect("scale 0 must be accepted");
+    m.put(&ask_with_rate(1, 10_000, 0))
+        .expect("scale 0 must be accepted");
 
     for scale in [5u8, 6, 7, 8] {
         let ask = ask_with_rate(2, 10_000, scale);
@@ -1180,8 +1178,11 @@ fn cheapest_skips_an_ask_that_expired_after_it_was_indexed() {
         "an expired ask must stop being a candidate"
     );
     assert!(
-        m.cheapest_with_ranking("openai/gpt-4", quota_router_core::marketplace::scoring::LatencyRanking::prefer_latency())
-            .is_none(),
+        m.cheapest_with_ranking(
+            "openai/gpt-4",
+            quota_router_core::marketplace::scoring::LatencyRanking::prefer_latency()
+        )
+        .is_none(),
         "the latency-ranked path must honour expiry too"
     );
 }

@@ -556,3 +556,136 @@ async fn set_min_reputation_applies_to_both_read_paths() {
         "async path must exclude the failing provider too"
     );
 }
+
+/// The two write surfaces are **not** mutually dual-writing, so a caller
+/// that picks one gets a half-populated registry on each side.
+///
+/// `record_outcome` writes only `scoring::ProviderReputationRegistry`;
+/// `record_outcome_async` writes only the RFC-0968 compat store. Nothing
+/// fans one out to the other. During the dual-read window a caller must
+/// invoke **both**, and every pre-existing parity fixture here does —
+/// which is exactly why the gap was invisible.
+///
+/// The consequence is not a cosmetic `None`. With the breaker threshold
+/// raised, an async-only failing provider is still returned by the sync
+/// selection path, because the legacy registry holds no record of the
+/// failures and an unknown provider is treated as un-excluded.
+///
+/// Measured (20 async-only records):
+///   - `provider_score` -> `None`; `read_reputation_async` ->
+///     `samples=20, success_rate=0.0`
+///   - breaker on at 0.5, provider failed 20/20:
+///       sync  `cheapest` -> 1_000  (failing provider, breaker INERT)
+///       async `cheapest` -> 90_000 (correctly excluded)
+///
+/// Both assertions below were mutation-verified: making
+/// `record_outcome_async` also write the legacy shadow fails the
+/// `is_none` check, and with that check neutralized fails the breaker
+/// check (`left: 90000, right: 1000`).
+///
+/// This test pins the divergence in its measured direction. It is a
+/// change-detector, not an endorsement: if it fails, the dual-write gap
+/// recorded in the `record_outcome` / `record_outcome_async` doc comments
+/// has been closed and deferred mission
+/// `marketplace-record-outcome-surfaces-require-a-dual-write` should be
+/// closed with corrected numbers.
+#[tokio::test]
+async fn async_only_recording_leaves_the_sync_breaker_inert() {
+    use quota_router_core::marketplace::scoring::LatencyRanking;
+    use quota_router_core::marketplace::Marketplace;
+
+    let m = Marketplace::open_in_memory().expect("open");
+    let controller = blake3_runtime(GOV_PUBKEY);
+    let bad = sample_did(43);
+    let good = sample_did(44);
+
+    m.put(&make_ask(&bad, "openai/gpt-4", 1_000, 1_900_000_000))
+        .expect("put bad");
+    m.put(&make_ask(&good, "openai/gpt-4", 90_000, 1_900_000_000))
+        .expect("put good");
+
+    // 20 failures recorded through the async surface ONLY.
+    for i in 0..20u64 {
+        m.record_outcome_async(&bad, false, 50, controller, 1_700_000_000 + i * 60)
+            .await
+            .expect("async record");
+    }
+
+    // The compat store holds the truth...
+    let compat = m.read_reputation_async(&bad).await.expect("compat read");
+    assert_eq!(compat.samples, 20, "compat saw every record");
+    assert_eq!(compat.success_rate, 0.0, "compat recorded all failures");
+
+    // ...and the legacy shadow holds nothing.
+    assert!(
+        m.provider_score(&bad).is_none(),
+        "legacy shadow is unwritten by the async path"
+    );
+
+    // Raise the breaker. A provider that has failed 20/20 must not be
+    // selectable on a reputation-gated path.
+    m.set_min_reputation(0.5);
+
+    let sync_pick = m.cheapest("openai/gpt-4").expect("some ask");
+    assert_eq!(
+        sync_pick.cost_per_1k, 1_000,
+        "async-only failures leave the sync breaker inert: this is the \
+         measured hazard, and it fails once the dual-write gap is closed"
+    );
+
+    let async_pick = m
+        .cheapest_with_ranking_async("openai/gpt-4", LatencyRanking::cheapest())
+        .await
+        .expect("async cheapest")
+        .expect("some ask");
+    assert_eq!(
+        async_pick.cost_per_1k, 90_000,
+        "the async path, which does hold the record, excludes the failing provider"
+    );
+}
+
+/// Positive control for the test above: the identical fixture recorded
+/// through **both** surfaces must activate the sync breaker.
+///
+/// Without this, `async_only_recording_leaves_the_sync_breaker_inert`
+/// could be satisfied by some other sync-path defect — a threshold that
+/// ignores the registry altogether, or an exclusion rule keyed on the
+/// wrong field — rather than by the dual-write gap. `bad` quotes cheaper
+/// than `good`, so returning 90_000 can only mean `bad` was excluded.
+#[tokio::test]
+async fn dual_write_activates_the_sync_breaker() {
+    use quota_router_core::marketplace::Marketplace;
+
+    let m = Marketplace::open_in_memory().expect("open");
+    let controller = blake3_runtime(GOV_PUBKEY);
+    let bad = sample_did(45);
+    let good = sample_did(46);
+
+    m.put(&make_ask(&bad, "openai/gpt-4", 1_000, 1_900_000_000))
+        .expect("put bad");
+    m.put(&make_ask(&good, "openai/gpt-4", 90_000, 1_900_000_000))
+        .expect("put good");
+
+    // Same fixture as the test above — the only difference is that each
+    // record also goes through the legacy surface.
+    for i in 0..20u64 {
+        m.record_outcome(&bad, false, 50);
+        m.record_outcome_async(&bad, false, 50, controller, 1_700_000_000 + i * 60)
+            .await
+            .expect("async record");
+    }
+
+    assert_eq!(
+        m.provider_score(&bad).map(|s| s.samples),
+        Some(20),
+        "legacy shadow now holds the failures"
+    );
+
+    m.set_min_reputation(0.5);
+
+    let sync_pick = m.cheapest("openai/gpt-4").expect("some ask");
+    assert_eq!(
+        sync_pick.cost_per_1k, 90_000,
+        "with both surfaces written, the sync breaker excludes the failing provider"
+    );
+}

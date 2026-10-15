@@ -351,6 +351,28 @@ where
     /// Typical call sites: the inference task market settlement path
     /// (after a successful or failed prompt completion), and the mesh
     /// `node::scorer` when it observes an HTTP completion.
+    ///
+    /// **Writes the legacy shadow only.** It does not touch the
+    /// RFC-0968 compat store, and nothing fans the two together — a
+    /// caller that invokes *only* [`Self::record_outcome_async`] leaves
+    /// this registry empty for that provider.
+    ///
+    /// The consequence is not a cosmetic `None`. During the dual-read
+    /// window a caller must invoke **both** to keep the surfaces in
+    /// step, because a provider with no entry here is treated as
+    /// un-excluded: the RFC-0900 Gap 7.1 circuit breaker goes inert on
+    /// the sync path. Measured with 20 async-only failures and
+    /// `min_reputation = 0.5`: `provider_score` returns `None`,
+    /// `read_reputation_async` returns `samples=20,
+    /// success_rate=0.0`, and `cheapest` still selects the failing
+    /// provider at 1_000 while `cheapest_with_ranking_async` correctly
+    /// selects the healthy one at 90_000.
+    ///
+    /// Pinned by `async_only_recording_leaves_the_sync_breaker_inert`
+    /// (with `dual_write_activates_the_sync_breaker` as its positive
+    /// control) in `tests/marketplace_reputation_async.rs`, and filed as
+    /// deferred mission
+    /// `marketplace-record-outcome-surfaces-require-a-dual-write`.
     pub fn record_outcome(&self, asker_did: &str, success: bool, latency_ms: u64) {
         self.reputation.record(asker_did, success, latency_ms);
     }
@@ -371,10 +393,21 @@ where
     /// `ReputationError`.
     ///
     /// This is the migration target for callers that move off the
-    /// legacy `record_outcome`. The dual-read parity test
+    /// legacy `record_outcome`. Note that moving a call site here is
+    /// **not** a drop-in substitution during the dual-read window:
+    /// `record_outcome_async` writes the compat store only, so a caller
+    /// that migrates without also keeping its [`Self::record_outcome`]
+    /// calls leaves the legacy shadow empty and the sync circuit breaker
+    /// inert. See the dual-write requirement documented on
+    /// [`Self::record_outcome`].
+    ///
+    /// The dual-read parity test
     /// (`tests/marketplace_reputation_async.rs::dual_read_parity_*`)
     /// verifies that the two paths stay within the retirement-gate
-    /// tolerance over a 24h synthetic fixture.
+    /// tolerance over a 24h synthetic fixture. Every fixture in that
+    /// family writes to **both** surfaces, which is why the missing
+    /// fan-out went unnoticed; the gap is pinned separately by
+    /// `async_only_recording_leaves_the_sync_breaker_inert`.
     /// # Errors
     /// Returns `ReputationError` on store failure or
     /// all-zero `controller_id`.

@@ -36,6 +36,17 @@ while (( IDX < ${#ORIG_ARGS[@]} )); do
       SCAN_TARGETS+=("ARG")
       ((IDX+1 < ${#ORIG_ARGS[@]})) && M_ARGS+=("${ORIG_ARGS[$((IDX+1))]}")
       ;;
+    # Combined short flags. `git commit -am "msg"` means `-a -m msg`, and the
+    # loop above matched none of its patterns, so the message was never added
+    # to SCAN_TARGETS and the wrapper passed it straight through to git. Layer 3
+    # was bypassed by the most ordinary way of using git commit. Of git's own
+    # short options only -m contains the letter m, and the value is still the
+    # next argument. The character class excludes a leading second dash, so
+    # --amend and --message= are not caught here.
+    -[a-zA-Z]*m)
+      SCAN_TARGETS+=("ARG")
+      ((IDX+1 < ${#ORIG_ARGS[@]})) && M_ARGS+=("${ORIG_ARGS[$((IDX+1))]}")
+      ;;
     -m=*|--message=*)
       SCAN_TARGETS+=("ARG")
       M_ARGS+=("${arg#*=}")
@@ -85,7 +96,16 @@ i=0
 for tgt in "${SCAN_TARGETS[@]}"; do
   case "$tgt" in
     ARG)
-      scan_text "argument #${i}" "${M_ARGS[$i]}"
+      # `-m` with no value left SCAN_TARGETS one entry longer than M_ARGS,
+      # and under `set -u` the missing index aborted the wrapper with an
+      # unbound-variable error instead of a message about the flag.
+      msg="${M_ARGS[$i]-}"
+      if [[ -z "$msg" && "${ORIG_ARGS[$i]-}" != "-m" \
+            && "${ORIG_ARGS[$i]-}" != "--message" ]]; then
+        scan_text "argument #${i}" ""
+      else
+        scan_text "argument #${i}" "$msg"
+      fi
       ;;
     FILE:*)
       scan_text "file ${tgt#FILE:}" "$(cat "${tgt#FILE:}")"

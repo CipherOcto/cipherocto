@@ -334,6 +334,30 @@ where
     }
 
     /// Override a provider's reputation (operator / test fixture).
+    ///
+    /// **Writes the legacy shadow only, and cannot be fanned out.**
+    /// Unlike [`Self::set_min_reputation`], there is no counterpart on
+    /// the canonical surface: `ProviderReputationRegistryCompat` exposes
+    /// no score setter, its only write being `record_with_now`, which
+    /// appends events. An override has no representation there, so
+    /// [`Self::read_reputation_async`] and
+    /// [`Self::cheapest_with_ranking_async`] do not observe it.
+    ///
+    /// Measured with the provider recorded healthy asynchronously, then
+    /// overridden to `success_rate = 0.0`, breaker at 0.5, the provider
+    /// quoting 1_000 against a healthy one at 90_000: `cheapest` correctly
+    /// excludes it and returns 90_000, while
+    /// `cheapest_with_ranking_async` returns 1_000.
+    ///
+    /// Taken with the dual-write requirement on
+    /// [`Self::record_outcome`], the invariant is: **whichever
+    /// reputation surface a caller writes to exclusively, the other
+    /// surface's circuit breaker is inert.** Pinned by
+    /// `score_override_is_invisible_to_the_async_breaker` (with
+    /// `async_breaker_excludes_on_its_own_recorded_failures` as its
+    /// positive control) in
+    /// `tests/marketplace_reputation_async.rs`, and filed as deferred
+    /// mission `marketplace-set-provider-score-has-no-async-counterpart`.
     pub fn set_provider_score(&self, score: ProviderScore) {
         self.reputation.set_score(score);
     }

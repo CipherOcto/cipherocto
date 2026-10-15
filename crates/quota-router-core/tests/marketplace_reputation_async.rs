@@ -689,3 +689,125 @@ async fn dual_write_activates_the_sync_breaker() {
         "with both surfaces written, the sync breaker excludes the failing provider"
     );
 }
+
+/// `set_provider_score` is the mirror image of the dual-write gap pinned
+/// by `async_only_recording_leaves_the_sync_breaker_inert`, and unlike it
+/// the gap **cannot** be closed by fanning the write out.
+///
+/// `set_provider_score` writes only the legacy
+/// `scoring::ProviderReputationRegistry`. The async path reads only
+/// `reputation_compat`, and `ProviderReputationRegistryCompat` exposes no
+/// score-override setter at all — its sole write is `record_with_now`,
+/// which appends events. An operator override therefore has no
+/// representation on the canonical surface.
+///
+/// Measured: provider `bad` recorded healthy via the async path, then
+/// overridden to `success_rate = 0.0` via `set_provider_score`, breaker
+/// at 0.5, `bad` quoting 1_000 against `good` at 90_000.
+///
+/// ```text
+/// sync  provider_score = Some(success_rate 0.0, latency 900, samples 10)
+/// async compat        = samples=1, success_rate=1.0, latency 50
+/// SYNC  cheapest      = 90_000   (override honoured, provider excluded)
+/// ASYNC cheapest      = 1_000    (override invisible, provider selected)
+/// ```
+///
+/// Taken together with the async-only case, the invariant is:
+/// **whichever reputation surface a caller writes to exclusively, the
+/// other surface's circuit breaker is inert.**
+#[tokio::test]
+async fn score_override_is_invisible_to_the_async_breaker() {
+    use quota_router_core::marketplace::scoring::{LatencyRanking, ProviderScore};
+    use quota_router_core::marketplace::Marketplace;
+
+    let m = Marketplace::open_in_memory().expect("open");
+    let controller = blake3_runtime(GOV_PUBKEY);
+    let bad = sample_did(51);
+    let good = sample_did(52);
+
+    m.put(&make_ask(&bad, "openai/gpt-4", 1_000, 1_900_000_000))
+        .expect("put bad");
+    m.put(&make_ask(&good, "openai/gpt-4", 90_000, 1_900_000_000))
+        .expect("put good");
+
+    // Healthy on the async surface first, so the only reason to exclude
+    // `bad` afterwards is the override.
+    m.record_outcome_async(&bad, true, 50, controller, 1_700_000_000)
+        .await
+        .expect("async record");
+
+    m.set_min_reputation(0.5);
+    m.set_provider_score(ProviderScore {
+        asker_did: bad.to_owned(),
+        samples: 10,
+        success_rate: 0.0,
+        latency_ms: 900,
+    });
+
+    // The override lands on the legacy surface.
+    assert_eq!(
+        m.provider_score(&bad).map(|s| s.success_rate),
+        Some(0.0),
+        "legacy registry holds the override"
+    );
+    // ...and not on the canonical one.
+    let compat = m.read_reputation_async(&bad).await.expect("compat read");
+    assert_eq!(compat.samples, 1, "compat still holds one healthy record");
+    assert_eq!(compat.success_rate, 1.0, "compat never saw the override");
+
+    let sync_pick = m.cheapest("openai/gpt-4").expect("some ask");
+    assert_eq!(
+        sync_pick.cost_per_1k, 90_000,
+        "sync path honours the override and excludes the provider"
+    );
+
+    let async_pick = m
+        .cheapest_with_ranking_async("openai/gpt-4", LatencyRanking::cheapest())
+        .await
+        .expect("async cheapest")
+        .expect("some ask");
+    assert_eq!(
+        async_pick.cost_per_1k, 1_000,
+        "async path cannot see the override and selects the \
+         reputation-gated provider: this fails once the override reaches \
+         the canonical surface"
+    );
+}
+
+/// Positive control: on the same fixture shape, feeding the async surface
+/// real failure data — rather than an override it cannot express — does
+/// exclude the provider. Without this, the assertion above could be
+/// satisfied by a broken async exclusion gate rather than by the
+/// unpropagated override.
+#[tokio::test]
+async fn async_breaker_excludes_on_its_own_recorded_failures() {
+    use quota_router_core::marketplace::scoring::LatencyRanking;
+    use quota_router_core::marketplace::Marketplace;
+
+    let m = Marketplace::open_in_memory().expect("open");
+    let controller = blake3_runtime(GOV_PUBKEY);
+    let bad = sample_did(53);
+    let good = sample_did(54);
+
+    m.put(&make_ask(&bad, "openai/gpt-4", 1_000, 1_900_000_000))
+        .expect("put bad");
+    m.put(&make_ask(&good, "openai/gpt-4", 90_000, 1_900_000_000))
+        .expect("put good");
+
+    for i in 0..20u64 {
+        m.record_outcome_async(&bad, false, 50, controller, 1_700_000_000 + i * 60)
+            .await
+            .expect("async record");
+    }
+    m.set_min_reputation(0.5);
+
+    let async_pick = m
+        .cheapest_with_ranking_async("openai/gpt-4", LatencyRanking::cheapest())
+        .await
+        .expect("async cheapest")
+        .expect("some ask");
+    assert_eq!(
+        async_pick.cost_per_1k, 90_000,
+        "the async breaker does exclude a provider it has failures for"
+    );
+}

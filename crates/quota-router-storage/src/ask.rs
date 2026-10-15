@@ -1121,6 +1121,20 @@ impl CachePolicy {
 /// records for audit, and verification runs against newly-arrived envelopes
 /// (`ConsumedReceiptRepository::verify_and_insert`), not against rows read back
 /// out of the table.
+///
+/// # The preimage above does not include `cost`
+///
+/// `cost` is a field on this struct and is **not** bound into the hash.
+/// RFC-0959 §Settlement hash requires it, as an R3 fix whose stated purpose
+/// was that tampering with the amount breaks the hash.
+///
+/// This struct also carries no signature field, so this hash is its only
+/// integrity mechanism. Measured: multiplying `cost` by 1000 while keeping
+/// the original `settlement_hash` passes both [`Self::verify`] and
+/// `ConsumedReceiptRepository::verify_and_insert`.
+///
+/// Do not treat a verified envelope as evidence of the amount charged. See
+/// mission `settlement-hash-does-not-bind-the-cost`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettlementEnvelope {
     /// Settlement hash (BLAKE3 32 bytes).
@@ -1384,9 +1398,27 @@ pub struct SettlementReceipt {
 /// `"cipherocto/settlement/v2\n"` and accept a cross-impl hash migration.
 pub const SETTLEMENT_HASH_DOMAIN: &[u8] = b"cipherocto/settlement/v1\n";
 
-/// Compute the RFC-0959 §Algorithms settlement hash.
+/// Compute the RFC-0959 §Settlement hash.
 ///
 /// `settlement_hash = BLAKE3(DOMAIN || cap_root_hash || ask_id || invocation_hash || canonical_ser(axes_consumed))`
+///
+/// # Deviation from RFC-0959
+///
+/// The RFC's preimage has five fields plus the version tag, and the
+/// fifth is `cost` (`event.cost.0.to_le_bytes()`), added as an R3 fix
+/// whose stated purpose was that tampering with the amount breaks the
+/// hash. This function omits it, so two events differing only in `cost`
+/// hash identically.
+///
+/// Not an exploitable hole here: [`verify_settlement_receipt`] also
+/// checks the router Ed25519 signature over the full serialized event,
+/// which does cover `cost`. It is a conformance deviation, and it is why
+/// this function must not be treated as the settlement integrity
+/// boundary on its own.
+///
+/// A second live surface, [`SettlementEnvelope::compute_settlement_hash`],
+/// uses an entirely different preimage, omits `cost` too, and carries no
+/// signature at all. See mission `settlement-hash-does-not-bind-the-cost`.
 ///
 /// `Result` return propagates `serde_json::Error` from `canonical_ser`
 /// (RFC-0959 §Data Structures R1 fix: previously infallible `expect()`).

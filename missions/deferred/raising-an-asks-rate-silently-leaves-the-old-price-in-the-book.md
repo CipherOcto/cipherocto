@@ -5,7 +5,7 @@ metadata:
   node_type: mission
   type: research
   created: 2026-10-15T00:00:00.000Z
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0900
 ---
@@ -50,6 +50,42 @@ There is no escape hatch:
 grep -rE 'pub fn (cancel|remove|delete|supersede|replace|purge)' \
   crates/quota-router-core/src/marketplace/     # no matches
 ```
+
+## The two stores disagree on an identical re-put (added at v1.1)
+
+The measurement above re-prices. An **identical** repeated `put` is a
+distinct and cleaner symptom, because it exposes a divergence between the
+two stores the facade keeps in sync rather than just a stale entry.
+
+`OrderBook` keys on `(price, seq)` with a monotonically incrementing
+`seq`, so a second `place_ask` at the _same_ price still gets a new key.
+`StoolapAskRepository::put` upserts by `ask_id`, which is content-derived
+and therefore identical for an identical Ask.
+
+Measured:
+
+```text
+put Ask twice, byte-identical
+  OrderBook          -> 2 entries, both with the same OrderId
+  list_by_asker      -> 1 row
+```
+
+So `put` is idempotent in the repository and **additive** in the order
+book. The facade's write-through contract holds for the repo and not for
+the book.
+
+Today this is invisible in output rather than absent: both entries carry
+the same `price` and the same `AskSpec.ask_id`, so `cheapest` returns
+either one indistinguishably, and the latency normaliser is unaffected
+because the duplicate shares the candidate's price and latency. It becomes
+a live defect the moment a bid path exists — one listing could then be
+matched twice, and `OrderBook` would credit the seller for two fills
+against a single persisted Ask.
+
+This is the same root cause as the re-pricing case above — the book has no
+remove or replace, and every `place_*` mints a fresh key — but it is worth
+stating separately because it is the only case where the two stores
+provably hold **different** numbers of rows for the same logical listing.
 
 ## Consequences
 

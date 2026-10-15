@@ -1,17 +1,26 @@
 //! Dual-read parity tests for the RFC-0968 retirement gate
 //! (mission `marketplace-facade-reputation-async-migration`).
 //!
-//! Verifies the legacy `record_outcome` / `provider_score` (sync, in
+//! Exercises the legacy `record_outcome` / `provider_score` (sync, in
 //! `scoring::ProviderReputationRegistry`) and the new
 //! `record_outcome_async` / `read_reputation_async` (async, through
-//! `octo_reputation::ReputationStore`) stay within the retirement-gate
-//! tolerance (`0.999` parity over a 24h synthetic fixture).
+//! `octo_reputation::ReputationStore`) surfaces.
 //!
-//! The two paths compute EWMA with slightly different formulas
-//! (legacy uses a single EWMA over `success_rate`; compat maintains
-//! per-signal `score_ewma` via `Dfp`). Parity is therefore measured as
-//! **monotonic agreement** and **bounded divergence** (Δ ≤ 0.10 after
-//! 10 records), not bitwise equality.
+//! The two paths are structurally different, and the difference is large:
+//! legacy maintains a decayed `f64` EWMA over `success_rate`, while compat
+//! exposes a plain success **ratio** (`successes / total`) via its `Dfp`
+//! per-signal `score_ewma`. Measured divergence on identical mixed input is
+//! therefore not a rounding margin — see
+//! `dual_read_mixed_outcome_divergence_within_measured_bound`, which pins the
+//! worst observed case at Δ ≈ 0.357.
+//!
+//! At the extremes (all-success, all-failure) both paths saturate to the same
+//! value by construction, so Δ = 0 identically. Those two fixtures are kept —
+//! saturation agreement is a real property — but they are not evidence of
+//! parity. This header previously claimed a `0.999` parity tolerance and a
+//! `Δ ≤ 0.10` bound that the code never enforced (it asserted `Δ ≤ 0.5`, on
+//! fixtures where Δ is structurally zero). See mission
+//! `dual-read-parity-asserts-a-divergence-bound-it-never-measures`.
 
 use octo_ident::test_helpers::sample_did;
 use quota_router_core::marketplace::Marketplace;
@@ -43,20 +52,21 @@ async fn dual_read_parity_success_path_within_tolerance() {
     // Compat read.
     let compat = m.read_reputation_async(&did).await.expect("compat read");
 
-    // All 10 records succeeded → legacy `success_rate` should be 1.0
-    // (saturated at the top), compat `success_rate` should be ≥ 0.5
-    // (EWMA-warmed after 10 samples). Bounded divergence: Δ ≤ 0.5.
+    // All 10 records succeeded. Both paths saturate at the top: the
+    // legacy EWMA pins to 1.0 and the compat ratio is 10/10 = 1.0.
+    // Saturation agreement is a real property and is asserted exactly —
+    // it is NOT evidence of parity, because the two formulas diverge on
+    // every non-saturated input (see the mixed fixture below).
     let delta = (legacy.success_rate - compat.success_rate).abs();
     assert!(
-        delta <= 0.5,
-        "dual-read success divergence too large: legacy={} compat={} delta={}",
+        delta == 0.0,
+        "saturation agreement broken: legacy={} compat={} delta={}",
         legacy.success_rate,
         compat.success_rate,
         delta
     );
-    // Monotonic agreement: both rate the provider as "good" (positive).
-    assert!(legacy.success_rate > 0.0);
-    assert!(compat.success_rate > 0.0);
+    assert_eq!(legacy.success_rate, 1.0, "legacy saturates at top");
+    assert_eq!(compat.success_rate, 1.0, "compat ratio saturates at top");
 }
 
 #[tokio::test]
@@ -76,21 +86,20 @@ async fn dual_read_parity_failure_path_within_tolerance() {
     let legacy = m.provider_score(&did).expect("legacy score");
     let compat = m.read_reputation_async(&did).await.expect("compat");
 
-    // All 10 failed → legacy `success_rate` 0.0, compat EWMA-warmed
-    // close to 0.0. Bounded divergence: Δ ≤ 0.5.
+    // All 10 failed. Both paths saturate at the bottom: legacy EWMA
+    // pins to 0.0 and the compat ratio is 0/10 = 0.0. Asserted exactly,
+    // for the same reason as the success fixture above — saturation
+    // agreement, not parity.
     let delta = (legacy.success_rate - compat.success_rate).abs();
     assert!(
-        delta <= 0.5,
-        "dual-read failure divergence too large: legacy={} compat={} delta={}",
+        delta == 0.0,
+        "saturation agreement broken: legacy={} compat={} delta={}",
         legacy.success_rate,
         compat.success_rate,
         delta
     );
-    // Monotonic agreement: both rate the provider as "bad" (negative
-    // or low). Legacy uses a single counter that bottoms at 0.0;
-    // compat EWMA bottoms near 0.0 but never below.
-    assert!(legacy.success_rate <= 0.05);
-    assert!(compat.success_rate <= 0.5);
+    assert_eq!(legacy.success_rate, 0.0, "legacy saturates at bottom");
+    assert_eq!(compat.success_rate, 0.0, "compat ratio saturates at bottom");
 }
 
 #[tokio::test]
@@ -134,6 +143,95 @@ async fn all_zero_controller_id_rejected() {
         "expected ControllerIdMissing, got: {err:?}"
     );
     assert_eq!(err.discriminant(), 0x34, "discriminant must be 0x34");
+}
+
+/// The divergence that actually exists.
+///
+/// The two saturation fixtures above pin Δ = 0 because both paths land on the
+/// same endpoint. This drives identical *mixed* records into both paths, where
+/// the legacy decayed EWMA and the compat ratio genuinely separate, and pins
+/// the relationship the production code actually exhibits:
+///
+/// - compat `success_rate` is the plain ratio `successes / total`
+/// - legacy lags it (the EWMA has not converged after 10 samples)
+/// - worst observed gap is Δ ≈ 0.357 at 7/10 successes
+///
+/// Measured table (successes out of 10):
+///   8 → 0.490 / 0.800   Δ 0.310
+///   7 → 0.343 / 0.700   Δ 0.357   <- worst case
+///   5 → 0.168 / 0.500   Δ 0.332
+///   3 → 0.082 / 0.300   Δ 0.218
+///   1 → 0.040 / 0.100   Δ 0.060
+///
+/// `DIVERGENCE_CEILING` sits above the measured worst case with headroom and
+/// well below the old `Δ ≤ 0.5` bound, so drift in either formula trips this
+/// rather than sliding through.
+#[tokio::test]
+async fn dual_read_mixed_outcome_divergence_within_measured_bound() {
+    /// Worst measured Δ is 0.357 (7/10 successes); 0.40 leaves headroom
+    /// without admitting the old 0.5 slack.
+    const DIVERGENCE_CEILING: f64 = 0.40;
+
+    let controller = blake3_runtime(GOV_PUBKEY);
+    let mut worst: f64 = 0.0;
+
+    for successes in [8u8, 7, 5, 3, 1] {
+        let m = Marketplace::open_in_memory().expect("open_in_memory");
+        let did = sample_did(100u8.wrapping_add(successes));
+
+        for i in 0..10u64 {
+            let ok = (i as u8) < successes;
+            m.record_outcome(&did, ok, 100);
+            m.record_outcome_async(&did, ok, 100, controller, 1_700_000_000 + i * 60)
+                .await
+                .expect("async record");
+        }
+
+        let legacy = m.provider_score(&did).expect("legacy score");
+        let compat = m.read_reputation_async(&did).await.expect("compat");
+
+        assert_eq!(legacy.samples, 10, "legacy saw every record");
+        assert_eq!(compat.samples, 10, "compat saw every record");
+
+        // compat exposes the plain success ratio, not an EWMA.
+        let ratio = f64::from(successes) / 10.0;
+        assert!(
+            (compat.success_rate - ratio).abs() < 1e-9,
+            "compat is the success ratio: successes={} expected={} got={}",
+            successes,
+            ratio,
+            compat.success_rate
+        );
+
+        // The legacy EWMA lags the ratio on every non-saturated input.
+        assert!(
+            legacy.success_rate < compat.success_rate,
+            "legacy EWMA should lag compat ratio: successes={} legacy={} compat={}",
+            successes,
+            legacy.success_rate,
+            compat.success_rate
+        );
+
+        let delta = (legacy.success_rate - compat.success_rate).abs();
+        worst = worst.max(delta);
+        assert!(
+            delta <= DIVERGENCE_CEILING,
+            "mixed divergence exceeds ceiling: successes={} legacy={} compat={} delta={} ceiling={}",
+            successes,
+            legacy.success_rate,
+            compat.success_rate,
+            delta,
+            DIVERGENCE_CEILING
+        );
+    }
+
+    // Guards the guard: if the two paths ever converge, this test stops
+    // measuring anything and would pass vacuously.
+    assert!(
+        worst > 0.30,
+        "expected real divergence across the mixed fixtures, saw worst={}",
+        worst
+    );
 }
 
 fn blake3_runtime(pubkey: [u8; 32]) -> [u8; 32] {

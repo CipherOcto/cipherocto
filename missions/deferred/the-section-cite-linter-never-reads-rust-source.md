@@ -5,7 +5,7 @@ metadata:
   node_type: mission
   type: research
   created: 2026-10-15T00:00:00.000Z
-  v: "1.1"
+  v: "1.2"
   depends_on:
     - RFC-0003
 ---
@@ -115,6 +115,53 @@ renamed to an amendment suffix.
 
 Ten hand-verified findings now: eight from the first pass, four from this
 one, overlapping on none.
+
+## RFC numbers claimed by more than one document (added at v1.2)
+
+Enumerating RFCs by the number in each document's own H1 (not the filename)
+shows that several numbers are claimed by two documents with **different
+subjects**. Most apparent collisions are legitimate amendment suffixes —
+`0011-a`…`0011-x`, `0012-v2`/`v3`, `0850p-*`, `0903-B1`/`C1`, `0957-A1`,
+`0967-A1`, `0202-A`/`B` — and are not a problem.
+
+These are not suffixes. Two distinct documents share the number:
+
+| Number   | Documents                                                                   | Subjects                                                       |
+| -------- | --------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| RFC-0009 | `0009-identity-management.md`, `0009-identity-evolution-v12.md`             | Identity Management vs Identity Evolution                      |
+| RFC-0135 | `0135-decimal-dqa-conversion-review.md`, `0135-proof-format-standard.md`    | Decimal↔DQA conversion vs Proof Format Standard                |
+| RFC-0201 | `0201-expression-vm-gas-metering.md`, `0201-binary-blob-type-support.md`    | Expression VM gas metering vs Binary BLOB type                 |
+| RFC-0206 | `0206-octo-storage-split.md`, `0206-v34-value-transfer-canonicalization.md` | octo-storage substrate split vs ValueTransfer canonicalization |
+| RFC-0862 | `0862-writer-election-bootstrap-v130.md`, `0862-stoolap-data-sync.md`       | Writer election/bootstrap vs Stoolap data sync                 |
+
+Two further oddities: `0127-dcs-blob-amendment.md` is titled an amendment
+but carries the bare number 0127 with no suffix, colliding with
+`0127-deterministic-kernel-library.md`; and `0904-real-time-cost-tracking.md`
+exists twice with an identical title, once under `archived/` and once under
+`accepted/`.
+
+Marketplace-relevant consequences, verified in `quota-router-storage/src/ask.rs`:
+
+- `RFC-0009 §Identity Key Format` (3 sites) and `§Node` (3 sites) resolve
+  **only** in `0009-identity-management.md`, so the intent is recoverable —
+  but a reader arriving via the number has a 50% chance of opening the
+  wrong document.
+- `RFC-0009 §DID Resolution` (1 site) appears in
+  `identity-management.md` as body prose, never as a heading. Dangling as a
+  section reference.
+
+An earlier draft of this section claimed a fourth problem — a
+`RFC-0009 §Data Structures` citation. **There is no such citation.** Every
+`§Data Structures` reference in `ask.rs` (14 of them) is to **RFC-0959**.
+The mistake came from reading line 298, which cites both documents at once
+(`RFC-0009 §Node + RFC-0959 §Data Structures`) and attributing the section
+to the first RFC named. Corrected here rather than acted on in code: a
+finding that survives only because nobody re-read the line is exactly the
+kind this mission exists to eliminate.
+
+These four were **not** corrected in code. Fixing them means choosing
+between two documents that both claim RFC-0009, which is an owner
+decision, not a local edit. Recorded rather than guessed.
 
 ## An order-of-magnitude signal — NOT authoritative
 

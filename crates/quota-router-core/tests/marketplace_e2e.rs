@@ -324,12 +324,25 @@ fn best_ask_matching_filters_by_model() {
 // =============================================================================
 
 #[test]
-fn concurrent_ask_insertion_at_same_price_preserves_fifo() {
+fn concurrent_ask_insertion_at_same_price_preserves_all_entries() {
     // Round 1 fix (C1): per-book `next_seq` counter prevents
     // `(price, ts_unix)` collisions when multiple asks land in the same
     // second. This test exercises the fix under thread contention:
     // N threads each insert at the same price simultaneously; the
     // BTreeMap must hold all N entries (no overwrites).
+    //
+    // Despite the previous name this does NOT assert FIFO ordering.
+    // The 32 threads have no externally observable insertion order —
+    // they are spawned together and joined without recording when each
+    // one ran — so there is nothing for a drain order to be compared
+    // against. What it asserts is survival: every concurrent insert is
+    // still matchable afterwards. The book's internal `next_seq`
+    // ordering is what makes such a drain deterministic, and no test
+    // asserts that order: the only tie-break test in the tree,
+    // `quota_router_storage::marketplace::tests::select_ask_deterministic_tie_break_by_ask_id`,
+    // covers `MarketplaceIndex` — a different, unwired type with a
+    // different rule (lowest `ask_id`, not insertion sequence). So
+    // `OrderBook`'s same-price drain order is currently unverified.
     use std::sync::{Arc, Mutex};
     use std::thread;
 
@@ -688,12 +701,23 @@ fn order_side_classification() {
 // names tell the operator exactly which contract broke.
 
 #[test]
-fn concurrent_settlement_duplicate_rejected() {
-    // Two producers race to settle the same escrow. The escrow state
-    // machine must let exactly one transition Pending->Locked->Settled,
-    // and the second settle attempt must fail with
-    // `SettleFromInvalid(Settled)`. This is the dedup contract
-    // (RFC-0900 §Settlement Model).
+fn duplicate_settle_rejected_from_settled_state() {
+    // Sequential duplicate settle, not a concurrency test: `Escrow`
+    // takes `&mut self`, so two producers cannot race inside the state
+    // machine — the caller must serialize access, and serializing here is
+    // what this test does.
+    //
+    // What it proves: once settled, a second `settle` is refused with
+    // `SettleFromInvalid(Settled)` rather than double-paying (RFC-0900
+    // §Settlement Model).
+    //
+    // What it does NOT prove, despite the previous name: that concurrent
+    // settles are safe. Nothing here runs in parallel, and the type
+    // gives no interior mutability for a race to occur through. Whether
+    // the settlement caller serializes is unverified — and the escrow is
+    // not yet wired into the marketplace facade, so there is no caller to
+    // verify. See deferred mission
+    // `marketplace-escrow-is-not-wired-into-the-marketplace-facade`.
     let mut tx = setup_match(&sample_did(238), &sample_did(145), "openai/gpt-4", 100, 5);
     match_and_populate(&mut tx);
     // First settle succeeds.

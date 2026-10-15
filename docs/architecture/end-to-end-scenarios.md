@@ -1015,13 +1015,18 @@ These gaps surfaced while writing this doc. Each should become either a follow-o
 | 13 Dispute         | (covered indirectly by `marketplace-escrow-caller-authorization` lib tests)                                                                            | Appeal flow (no dedicated test yet)                                       |
 | 14 Sybil           | (network-layer tests in `crates/octo-network/tests/porelay_proofs.rs`)                                                                                 | Stake-weighted Sybil resistance at scale (1000+ identities)               |
 
-> **Note on `marketplace_e2e::test_*`:** `marketplace_e2e.rs` exists at
-> `crates/quota-router-core/tests/marketplace_e2e.rs` with 24 e2e tests (all 24 are `#[test]`-marked
-> functions; `order_side_classification` is one of them, not a helper). No non-test helper functions
-> are tagged in the file.
+> **Note on `marketplace_e2e`:** `marketplace_e2e.rs` exists at
+> `crates/quota-router-core/tests/marketplace_e2e.rs` with 34 e2e tests — 33 `#[test]` functions and
+> one `#[tokio::test]` (`cheapest_async_skips_an_ask_that_expired_after_it_was_indexed`).
+> `order_side_classification` is one of them, not a helper. No non-test helper functions are tagged
+> in the file. Test names are not `test_`-prefixed.
 > Mix of strong-scenario + legacy/baseline; the strong-vs-baseline split is not byte-identical to any
 > single AC list.
-> Named examples: `happy_path_bid_matches_ask_escrow_settles`, `dispute_valid_slashes_seller`, `escrow_recovery_from_locked_state_succeeds`, `concurrent_settlement_duplicate_rejected`.
+> Named examples: `happy_path_bid_matches_ask_escrow_settles`, `dispute_valid_slashes_seller`, `escrow_recovery_from_locked_state_succeeds`, `duplicate_settle_rejected_from_settled_state`.
+> Two names previously over-promised and were corrected on 2026-10-15: `concurrent_settlement_duplicate_rejected`
+> ran strictly sequentially (`Escrow` takes `&mut self`, so there is no internal race), and
+> `concurrent_ask_insertion_at_same_price_preserves_fifo` asserted entry survival rather than FIFO order,
+> which unsynchronized threads cannot establish.
 > The coverage map above reflects this.
 
 ## Change log

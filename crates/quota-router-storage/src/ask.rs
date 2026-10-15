@@ -723,6 +723,29 @@ impl AskSigned {
     ///
     /// `asker_public_key` is the 32-byte Ed25519 verifying key derived from the
     /// asker's DID per RFC-0009 §Identity Key Format.
+    ///
+    /// # This does NOT prove who published the Ask
+    ///
+    /// It proves that the holder of `asker_public_key` signed this payload. It
+    /// never checks that `payload.asker_did` belongs to that key, so an Ask
+    /// signed by A while naming B verifies against A's key and is rejected
+    /// against B's. `asker_did` is signed-over but still attacker-chosen data.
+    ///
+    /// Measured: a payload carrying `did_for(bob_seed)` signed with
+    /// `alice_seed` yields `Ok(())` against Alice's key and
+    /// `Err(AskSignatureInvalid)` against Bob's.
+    ///
+    /// This contradicts RFC-0959 §Roles ("`seller_signature ≡ Asker
+    /// signature`"), which asserts exactly the identity binding not enforced
+    /// here. The binding is also not expressible in the argument list, and
+    /// the authoritative DID derivation is specified inconsistently across
+    /// RFC-0009 (multibase-z) and RFC-0968 §6 (base32-`b`), so the fix is an
+    /// RFC-owner decision rather than a local one. See mission
+    /// `a-signed-ask-does-not-prove-who-published-it`.
+    ///
+    /// Callers verifying a received Ask must therefore establish the
+    /// publisher's identity by some means *outside* this function.
+    ///
     /// # Errors
     /// Returns `AskSignedError::AskIdMismatch` if `ask_id != payload.ask_id()`.
     /// Returns `AskSignedError::SignatureLengthInvalid` if signature is not 64 bytes.

@@ -425,6 +425,29 @@ fn ask_publish(
 /// W3C `z<base58btc>` form requires the multibase + multihash codec wrappers
 /// (RFC-0010 `unprefixed-bytes`); the hex form is the dev-friendly fallback
 /// accepted by `quota-router-core::marketplace::reputation_compat::parse_canonical_did`.
+/// Derive the asker DID as `did:octo:b<hex of the raw Ed25519 public key>`.
+///
+/// **This form is rejected by the canonical identity substrate.**
+/// `octo_ident::CanonicalCodec::parse` accepts exactly two encodings — the
+/// canonical `did:octo:z` + 43-44 char base58btc payload (RFC-0009
+/// §Identity Key Format) and the legacy `did:octo:b` + 62-char / 52-char
+/// base32 payload (RFC-0968 §6). The value produced here is 74 characters of
+/// hex and matches neither, even with the legacy-bare flag enabled:
+///
+/// ```text
+/// parse(wallet_did) = Err(InvalidLength(
+///     "did:octo:b legacy form requires 52-char base32 payload"))
+/// ```
+///
+/// Because it starts with the same `did:octo:b` prefix as the valid legacy
+/// form, the diagnostic blames the base32 payload rather than the prefix —
+/// it reads as a malformed legacy DID, not an unsupported one.
+///
+/// Every Ask this CLI publishes therefore carries an `asker_did` that is not a
+/// valid identity in the system, in the field whose own doc cites
+/// RFC-0009 §Identity Key Format. Recorded as deferred mission
+/// `a-signed-ask-does-not-prove-who-published-it`; fixing it means choosing
+/// the authoritative derivation, which RFC-0009 and RFC-0968 disagree on.
 fn derive_asker_did(seed_arr: &[u8; 32]) -> String {
     let id = IdentityKey::from_seed(*seed_arr);
     let pk_bytes = id.public_key_bytes();

@@ -20,6 +20,15 @@
 -- so a double-spend is impossible (atomic per-key guarantee).
 -- Corrected in mission 0862-c10 (S6c Round 3 doc-drift consolidation).
 --
+-- NAME COLLISION: `quota-router-core` `schema.rs` also issues
+-- `CREATE TABLE IF NOT EXISTS spend_ledger`, with a disjoint column set
+-- (event_id / request_id / key_id / cost_amount / ... for RFC-0903 budget
+-- events). Whichever crate initialises first wins; the second fails
+-- loudly rather than silently -- measured both orders. Adopting this
+-- ledger against a DB core already initialised yields
+-- `column 'key_id' not found`, which does not name this conflict.
+-- See mission `two-crates-define-spend-ledger-with-incompatible-schemas`.
+--
 -- Cipherocto-side migration per [[stoolap-general-purpose-db]]:
 -- schema lives in cipherocto crate, NOT in the stoolap fork.
 

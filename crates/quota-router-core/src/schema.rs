@@ -79,6 +79,15 @@ pub fn init_database(db: &octo_storage_core::Database) -> Result<(), KeyError> {
     .map_err(|e| KeyError::Storage(e.to_string()))?;
 
     // Create spend_ledger table for ledger-based budget enforcement (RFC-0903)
+    //
+    // NAME COLLISION: `quota-router-storage` migration v007 also issues
+    // `CREATE TABLE IF NOT EXISTS spend_ledger`, with a disjoint column set
+    // (holder_did / macaroon_id / balance / updated_at_unix_ms) for a
+    // drainable per-macaroon prepaid balance. Whichever runs first wins; the
+    // second fails immediately rather than silently. If this runs second the
+    // operator sees `column 'key_id' not found`, which names a column from a
+    // schema they did not write.
+    // See mission `two-crates-define-spend-ledger-with-incompatible-schemas`.
     // BLOB storage per RFC-0903-B1/C1: event_id (raw SHA256 32B), request_id (raw SHA256 32B),
     // key_id (raw UUID 16B), team_id (raw UUID 16B), pricing_hash (raw SHA256 32B).
     db.execute(

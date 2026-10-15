@@ -158,9 +158,22 @@ impl ConsumedReceiptRepository {
 
     /// Check whether a nonce is already consumed (replay detection).
     ///
-    /// Used by `verify_and_insert` and by the on-demand CLI fast-path.
-    /// # Errors
-    /// Returns `RepoError::Db` on query failure.
+    /// Called by `verify_and_insert`.
+    ///
+    /// # Fail-open on query failure
+    ///
+    /// A database error returns `false` — the same answer as "this nonce
+    /// has not been seen". A query failure is therefore indistinguishable
+    /// from a clean nonce to the caller.
+    ///
+    /// Inside `verify_and_insert` the following `insert` propagates a real
+    /// outage as `Err`, so the practical exposure today is limited. It is
+    /// still the wrong default for a security gate, and it matters for any
+    /// caller that consults this on its own.
+    ///
+    /// The fix is a `Result<bool, RepoError>` return, which is a breaking
+    /// signature change on a `pub` API and therefore deferred. See mission
+    /// `replay-defense-is-a-no-op-in-the-default-cli-configuration`.
     pub fn contains_nonce(&self, nonce: &[u8; 32]) -> bool {
         let rows = self.db.query(
             "SELECT 1 FROM consumed_receipt_index WHERE nonce = ? LIMIT 1",
@@ -173,8 +186,13 @@ impl ConsumedReceiptRepository {
     }
 
     /// Whether a settlement_hash is already in the table (audit / forensic query).
-    /// # Errors
-    /// Returns `RepoError::Db` on query failure.
+    ///
+    /// # Fail-open on query failure
+    ///
+    /// Like [`Self::contains_nonce`], a database error returns `false` —
+    /// indistinguishable from "not present". This is an audit query, so
+    /// the consequence is a forensic query that reports "no such
+    /// settlement" when the database is actually unreadable.
     pub fn contains_settlement_hash(&self, settlement_hash: &[u8; 32]) -> bool {
         let rows = self.db.query(
             "SELECT 1 FROM consumed_receipt_index WHERE settlement_hash = ? LIMIT 1",

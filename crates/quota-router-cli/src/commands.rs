@@ -529,6 +529,32 @@ pub fn settle_from_json(envelope_json: &str) -> Result<String> {
 /// `settle_replay` is the CLI entry point; `settle_replay_repo` is the
 /// testable surface (takes a `ConsumedReceiptRepository` directly); both
 /// delegate to the same `SettlementEnvelope::verify` semantics.
+///
+/// # The default configuration cannot detect a replay
+///
+/// Without `--db-path` this opens a **fresh** in-memory database whose
+/// `consumed_receipt_index` is empty. Every invocation therefore starts
+/// with no history, `contains_nonce` cannot match anything, and the same
+/// envelope is accepted an unlimited number of times.
+///
+/// Measured on the built binary — the same envelope run twice:
+///
+/// ```text
+/// # default
+/// verify: OK (hash matches + nonce inserted)     exit 0
+/// verify: OK (hash matches + nonce inserted)     exit 0   <- replayed
+/// # with --db-path
+/// verify: OK (hash matches + nonce inserted)     exit 0
+/// Error: settle_replay failed: nonce already consumed (replay)
+/// ```
+///
+/// The mechanism is correct; the default selects a store that makes the
+/// check vacuous. The success message does not distinguish the two cases,
+/// so it should not be read as "replay defense passed" unless `--db-path`
+/// was supplied.
+///
+/// Changing the default, or the message, is an owner decision. See mission
+/// `replay-defense-is-a-no-op-in-the-default-cli-configuration`.
 pub fn settle_replay(from: &str, db_path: Option<&str>) -> Result<()> {
     let envelope_json = read_envelope(from)?;
     let repo = match db_path {

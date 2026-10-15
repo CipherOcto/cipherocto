@@ -439,6 +439,27 @@ pub enum SlashError {
         /// The non-zero scale value the caller passed.
         scale: u8,
     },
+
+    /// A write-through to the backing `SlashStore` failed.
+    ///
+    /// Added because the three mutation paths (`register`,
+    /// `withdraw_stake`, `slash`) previously discarded the store's error
+    /// and returned `Ok` regardless. That made `SlashingLedger::open`'s
+    /// documented guarantee — "banned providers must remain banned across
+    /// restarts" — silently untrue: measured with a store that fails every
+    /// write, four provider-error slashes returned `Ok`, the in-memory
+    /// ledger reported the provider banned, and a reload from the same
+    /// store reported it **unknown**.
+    ///
+    /// On this variant the in-memory mutation has been rolled back, so
+    /// the ledger and the store do not diverge: the operation did not
+    /// happen. Callers that need best-effort behaviour must opt into it
+    /// explicitly rather than having it imposed.
+    #[error("slash store write failed: {message}")]
+    Store {
+        /// The underlying store's error message.
+        message: String,
+    },
 }
 
 /// Validate that a caller-supplied `Dqa` is integer-valued (`scale=0`).
@@ -640,9 +661,13 @@ impl SlashingLedger {
     ) -> Result<&ProviderStake, SlashError> {
         require_non_negative_integer(&initial_stake_micro_octo_w, "initial_stake_micro_octo_w")?;
         let provider_id = provider_id.into();
-        let entry = self
-            .stakes
-            .entry(stake_key(&provider_id))
+        let key = stake_key(&provider_id);
+        // Did this call create the entry? If so, a failed write-through
+        // must remove it again so the ledger never claims a stake the
+        // store does not have.
+        let created = !self.stakes.contains_key(&key);
+        self.stakes
+            .entry(key.clone())
             .or_insert_with(|| ProviderStake {
                 chain_id: DEFAULT_CHAIN_ID,
                 provider_id: provider_id.clone(),
@@ -651,22 +676,38 @@ impl SlashingLedger {
                 offense_count: 0,
                 cumulative_loss_pct: 0.0,
             });
-        // Write-through (best-effort: ignore DB errors on the hot path
-        // to avoid panic in `register`; persistent error would surface
-        // via `slash` which already errors).
-        if let Some(store) = &self.store {
-            let row = quota_router_storage::slash_store::SlashLedgerRow {
-                chain_id: DEFAULT_CHAIN_ID,
-                provider_id: provider_id.clone(),
-                stake_micro_octo_w: entry.stake_micro_octo_w,
-                initial_stake_micro_octo_w: entry.initial_stake_micro_octo_w,
-                offense_count: entry.offense_count,
-                cumulative_loss_pct_micro: (entry.cumulative_loss_pct * 1_000_000.0).round() as u64,
-                last_updated_unix: now_unix(),
-            };
-            let _ = store.upsert_stake(&row);
+        // Snapshot for the row, then drop the borrow so the rollback path
+        // can reach `self.stakes` again.
+        let row =
+            self.stakes
+                .get(&key)
+                .map(|e| quota_router_storage::slash_store::SlashLedgerRow {
+                    chain_id: DEFAULT_CHAIN_ID,
+                    provider_id: provider_id.clone(),
+                    stake_micro_octo_w: e.stake_micro_octo_w,
+                    initial_stake_micro_octo_w: e.initial_stake_micro_octo_w,
+                    offense_count: e.offense_count,
+                    cumulative_loss_pct_micro: (e.cumulative_loss_pct * 1_000_000.0).round() as u64,
+                    last_updated_unix: now_unix(),
+                });
+        // Write-through to the backing store. A failure is propagated
+        // and the in-memory entry rolled back: reporting `Ok` for a stake
+        // that was never persisted is what made the cross-restart ban
+        // guarantee unkeepable.
+        if let (Some(store), Some(row)) = (&self.store, row) {
+            if let Err(e) = store.upsert_stake(&row) {
+                if created {
+                    self.stakes.remove(&key);
+                }
+                return Err(SlashError::Store {
+                    message: e.to_string(),
+                });
+            }
         }
-        Ok(entry)
+        Ok(self
+            .stakes
+            .get(&key)
+            .expect("entry present: inserted above, or pre-existing"))
     }
 
     /// Current rules.
@@ -721,6 +762,7 @@ impl SlashingLedger {
             .stakes
             .get_mut(&stake_key(provider_id))
             .expect("stake entry just observed");
+        let previous_stake = entry.stake_micro_octo_w;
         entry.stake_micro_octo_w = entry
             .stake_micro_octo_w
             .subtract(amount)
@@ -736,7 +778,16 @@ impl SlashingLedger {
                 cumulative_loss_pct_micro: (entry.cumulative_loss_pct * 1_000_000.0).round() as u64,
                 last_updated_unix: now_unix(),
             };
-            let _ = store.upsert_stake(&row);
+            if let Err(e) = store.upsert_stake(&row) {
+                // Roll back: the withdrawal did not happen, so the
+                // in-memory balance must not reflect it.
+                if let Some(entry) = self.stakes.get_mut(&stake_key(provider_id)) {
+                    entry.stake_micro_octo_w = previous_stake;
+                }
+                return Err(SlashError::Store {
+                    message: e.to_string(),
+                });
+            }
         }
         Ok(new_stake)
     }
@@ -841,10 +892,18 @@ impl SlashingLedger {
         pct: f64,
         rules: SlashingRules,
     ) -> Result<SlashOutcome, SlashError> {
+        // Snapshot for rollback: if the write-through fails the penalty
+        // must not stand, or the in-memory ledger would claim a slash
+        // the store never recorded.
+        let prior = self
+            .stakes
+            .get(&stake_key(provider_id))
+            .cloned()
+            .ok_or_else(|| SlashError::UnknownProvider(provider_id.to_owned()))?;
         let stake = self
             .stakes
             .get_mut(&stake_key(provider_id))
-            .ok_or_else(|| SlashError::UnknownProvider(provider_id.to_owned()))?;
+            .expect("stake entry just observed");
         if stake.is_banned(&rules) {
             // Encode the percent as integer bits to keep SlashError Eq.
             let bits = (stake.cumulative_loss_pct * 1_000_000.0).round() as u64;
@@ -889,11 +948,19 @@ impl SlashingLedger {
         };
         stake.cumulative_loss_pct += loss_delta;
         let banned = stake.is_banned(&rules);
-        // Write-through to persistent store (if wired). Errors are
-        // swallowed because the in-memory mutation has already taken
-        // effect; a persistent failure here would surface as a
-        // subsequent restart showing stale state, which a follow-on
-        // observability hook can detect via `load_all` divergence.
+        // Write-through to the backing store (if wired).
+        //
+        // This previously discarded the store's error and returned `Ok`
+        // anyway, justified in a comment by "a follow-on observability
+        // hook can detect via `load_all` divergence". No such hook exists
+        // — the phrase appears nowhere else in the crate. The consequence
+        // was that `SlashingLedger::open`'s documented guarantee, "banned
+        // providers must remain banned across restarts", was silently
+        // untrue: a provider banned after four failures reloaded as
+        // unknown, with no error anywhere.
+        //
+        // Now propagated, with the in-memory penalty rolled back so the
+        // ledger and the store cannot disagree.
         if let Some(store) = &self.store {
             let row = quota_router_storage::slash_store::SlashLedgerRow {
                 chain_id: DEFAULT_CHAIN_ID,
@@ -904,7 +971,15 @@ impl SlashingLedger {
                 cumulative_loss_pct_micro: (stake.cumulative_loss_pct * 1_000_000.0).round() as u64,
                 last_updated_unix: now_unix(),
             };
-            let _ = store.upsert_stake(&row);
+            if let Err(e) = store.upsert_stake(&row) {
+                let slot = self.stakes.get_mut(&stake_key(provider_id));
+                if let Some(slot) = slot {
+                    *slot = prior;
+                }
+                return Err(SlashError::Store {
+                    message: e.to_string(),
+                });
+            }
         }
         Ok(SlashOutcome {
             chain_id: stake.chain_id,
@@ -1224,6 +1299,162 @@ mod tests {
         assert!((rules.first_offense_penalty - 0.10).abs() < f64::EPSILON);
         assert!((rules.offense_multiplier - 1.5).abs() < f64::EPSILON);
         assert!((rules.permanent_ban_at - 0.50).abs() < f64::EPSILON);
+    }
+
+    // ========================================================================
+    // Write-failure tests
+    //
+    // `SlashingLedger::open` documents: "Banned providers must remain
+    // banned across restarts". That is only keepable if a failed
+    // write-through is visible. These three mutation paths used to
+    // discard the store's error and return `Ok` regardless, justified in
+    // a comment by "a follow-on observability hook can detect via
+    // `load_all` divergence" — and no such hook exists in the crate.
+    // ========================================================================
+
+    /// Store that loads cleanly but rejects every write: a DB outage.
+    struct FailingStore;
+
+    impl SlashStore for FailingStore {
+        fn load_all(
+            &self,
+        ) -> Result<
+            Vec<quota_router_storage::slash_store::SlashLedgerRow>,
+            quota_router_storage::slash_store::SlashStoreError,
+        > {
+            Ok(Vec::new())
+        }
+        fn upsert_stake(
+            &self,
+            _row: &quota_router_storage::slash_store::SlashLedgerRow,
+        ) -> Result<(), quota_router_storage::slash_store::SlashStoreError> {
+            Err(quota_router_storage::slash_store::SlashStoreError::Db(
+                "simulated outage".to_owned(),
+            ))
+        }
+    }
+
+    /// A healthy in-memory store already holding one provider.
+    fn preloaded_store(
+        provider: &str,
+        stake: i64,
+    ) -> Arc<quota_router_storage::slash_store::StoolapSlashStore> {
+        let store =
+            quota_router_storage::slash_store::StoolapSlashStore::open_in_memory().expect("open");
+        store
+            .upsert_stake(&quota_router_storage::slash_store::SlashLedgerRow {
+                chain_id: DEFAULT_CHAIN_ID,
+                provider_id: provider.to_string(),
+                stake_micro_octo_w: dqa(stake),
+                initial_stake_micro_octo_w: dqa(stake),
+                offense_count: 0,
+                cumulative_loss_pct_micro: 0,
+                last_updated_unix: 1_700_000_000,
+            })
+            .expect("pre-populate");
+        Arc::new(store)
+    }
+
+    /// A ledger hydrated from a healthy store, then pointed at a store
+    /// that fails writes. Isolates the mutation's write-through without
+    /// needing the hydration itself to fail.
+    fn ledger_with_failing_writes(provider: &str, stake: i64) -> SlashingLedger {
+        let mut ledger =
+            SlashingLedger::open(preloaded_store(provider, stake), SlashingRules::default())
+                .expect("open");
+        ledger.store = Some(Arc::new(FailingStore));
+        ledger
+    }
+
+    #[test]
+    fn register_reports_a_failed_write_through() {
+        let mut ledger = SlashingLedger::open(Arc::new(FailingStore), SlashingRules::default())
+            .expect("load_all succeeds");
+        let err = ledger
+            .register("p1", dqa(1_000_000))
+            .expect_err("store rejected the write");
+        assert!(
+            matches!(err, SlashError::Store { .. }),
+            "expected Store, got {err:?}"
+        );
+        // Rollback: the ledger must not claim a stake the store never
+        // persisted, or a later reload would silently disagree with it.
+        assert!(
+            ledger.stake("p1").is_none(),
+            "a failed register must not leave an in-memory entry"
+        );
+    }
+
+    #[test]
+    fn slash_reports_a_failed_write_through_and_rolls_back() {
+        let mut ledger = ledger_with_failing_writes("p1", 1_000_000);
+        let err = ledger
+            .slash("p1", SlashReason::PROVIDER_ERROR, 1.0)
+            .expect_err("store rejected the slash write");
+        assert!(
+            matches!(err, SlashError::Store { .. }),
+            "expected Store, got {err:?}"
+        );
+        let after = ledger.stake("p1").expect("p1 still present");
+        assert_eq!(after.offense_count, 0, "offense count rolled back");
+        assert_eq!(
+            after.stake_micro_octo_w,
+            dqa(1_000_000),
+            "stake rolled back"
+        );
+        assert!(
+            after.cumulative_loss_pct.abs() < f64::EPSILON,
+            "cumulative loss rolled back, got {}",
+            after.cumulative_loss_pct
+        );
+    }
+
+    #[test]
+    fn withdraw_reports_a_failed_write_through_and_rolls_back() {
+        let mut ledger = ledger_with_failing_writes("p1", 1_000_000);
+        let err = ledger
+            .withdraw_stake("p1", dqa(400_000))
+            .expect_err("store rejected the withdraw write");
+        assert!(
+            matches!(err, SlashError::Store { .. }),
+            "expected Store, got {err:?}"
+        );
+        assert_eq!(
+            ledger.stake("p1").expect("p1").stake_micro_octo_w,
+            dqa(1_000_000),
+            "withdrawal rolled back in memory"
+        );
+    }
+
+    /// Positive control: with a healthy store all three operations
+    /// succeed **and persist**, so the tests above fail on the write
+    /// rather than on the operation being impossible.
+    #[test]
+    fn healthy_store_still_accepts_and_persists_all_three_mutations() {
+        let store = open_in_memory_store();
+        let mut ledger = SlashingLedger::open(
+            Arc::clone(&store) as Arc<dyn SlashStore>,
+            SlashingRules::default(),
+        )
+        .expect("open");
+        ledger
+            .register("p1", dqa(1_000_000))
+            .expect("register persists");
+        ledger
+            .slash("p1", SlashReason::PROVIDER_ERROR, 1.0)
+            .expect("slash persists");
+        ledger
+            .withdraw_stake("p1", dqa(100_000))
+            .expect("withdraw persists");
+
+        let reloaded = SlashingLedger::open(store, SlashingRules::default()).expect("reload");
+        let s = reloaded.stake("p1").expect("p1 survived the restart");
+        assert_eq!(s.offense_count, 1, "the slash was persisted");
+        assert!(
+            octo_determin::dqa_cmp(s.stake_micro_octo_w, dqa(1_000_000)) < 0,
+            "slash and withdrawal were both persisted, got {}",
+            s.stake_micro_octo_w
+        );
     }
 
     // ========================================================================
@@ -1598,7 +1829,9 @@ mod stake_registration_bounds {
         // mission `a-zero-stake-provider-can-never-be-banned`.
         let mut l = SlashingLedger::new();
         let zero = Dqa::new(0, 0).expect("non-overflow");
-        let s = l.register("zero", zero).expect("zero stake must be accepted");
+        let s = l
+            .register("zero", zero)
+            .expect("zero stake must be accepted");
         assert_eq!(s.stake_micro_octo_w, zero);
     }
 

@@ -312,8 +312,19 @@ where
     ///
     /// `0.0` (or any negative value) disables the breaker — every
     /// provider remains eligible. Positive values activate the breaker.
+    ///
+    /// Sets **both** the legacy shadow and the RFC-0968 compat registry.
+    /// The two read paths consult different registries — the sync
+    /// `cheapest` reads the legacy one, `cheapest_with_ranking_async`
+    /// reads the compat one — so setting only the legacy shadow left the
+    /// circuit-breaker silently inert on the canonical async surface.
+    /// Measured before the fix, with `set_min_reputation(0.5)` and a
+    /// provider that had failed every record: the sync path correctly
+    /// returned the healthy provider, the async path returned the
+    /// failing one.
     pub fn set_min_reputation(&self, min: f64) {
         self.reputation.set_min_reputation(min);
+        self.reputation_compat.set_min_reputation(min);
     }
 
     /// Current circuit-breaker threshold.

@@ -494,3 +494,65 @@ async fn open_in_memory_with_store_wires_canonical_reputation_store() {
         .expect("legacy score after legacy record");
     assert_eq!(legacy.latency_ms, 75);
 }
+
+/// RFC-0900 Gap 7.1 circuit-breaker must apply on BOTH read paths.
+///
+/// `set_min_reputation` used to write only the legacy shadow while
+/// `cheapest_with_ranking_async` consults the compat registry's own
+/// threshold. The setter appeared to work and read back correctly, but
+/// the breaker was inert on the canonical async surface — a failing
+/// provider was still returned as `cheapest`.
+#[tokio::test]
+async fn set_min_reputation_applies_to_both_read_paths() {
+    use quota_router_core::marketplace::scoring::LatencyRanking;
+    use quota_router_core::marketplace::Marketplace;
+
+    let m = Marketplace::open_in_memory().expect("open");
+    let controller = blake3_runtime(GOV_PUBKEY);
+    let bad = sample_did(41);
+    let good = sample_did(42);
+
+    // `bad` quotes cheaper, so it wins unless the breaker excludes it.
+    m.put(&make_ask(&bad, "openai/gpt-4", 1_000, 1_900_000_000))
+        .unwrap();
+    m.put(&make_ask(&good, "openai/gpt-4", 90_000, 1_900_000_000))
+        .unwrap();
+
+    for i in 0..20u64 {
+        m.record_outcome(&bad, false, 50);
+        m.record_outcome_async(&bad, false, 50, controller, 1_700_000_000 + i * 60)
+            .await
+            .expect("async record");
+    }
+
+    // Breaker off: the cheap failing provider wins on both paths.
+    m.set_min_reputation(0.0);
+    let sync_off = m.cheapest("openai/gpt-4").expect("some");
+    assert_eq!(sync_off.cost_per_1k, 1_000, "breaker off: cheapest wins");
+    let async_off = m
+        .cheapest_with_ranking_async("openai/gpt-4", LatencyRanking::cheapest())
+        .await
+        .expect("async cheapest")
+        .expect("some");
+    assert_eq!(async_off.cost_per_1k, 1_000, "breaker off, async agrees");
+
+    // Breaker on: the failing provider is excluded on BOTH paths.
+    m.set_min_reputation(0.5);
+    assert_eq!(m.min_reputation(), 0.5, "threshold reads back");
+
+    let sync_on = m.cheapest("openai/gpt-4").expect("some");
+    assert_eq!(
+        sync_on.cost_per_1k, 90_000,
+        "sync path must exclude the failing provider"
+    );
+
+    let async_on = m
+        .cheapest_with_ranking_async("openai/gpt-4", LatencyRanking::cheapest())
+        .await
+        .expect("async cheapest")
+        .expect("some");
+    assert_eq!(
+        async_on.cost_per_1k, 90_000,
+        "async path must exclude the failing provider too"
+    );
+}

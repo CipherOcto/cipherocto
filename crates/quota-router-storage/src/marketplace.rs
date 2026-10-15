@@ -146,11 +146,21 @@ impl MarketplaceIndex {
         removed
     }
 
-    /// List all active asks for a given asker DID.
-    pub fn list_by_asker(&self, asker_did: &AskerDid) -> Vec<Ask> {
+    /// List all **non-expired** Asks published by `asker_did`.
+    ///
+    /// `now_unix` is the expiry cutoff, matching the sibling
+    /// `AskRead::list_by_asker` contract and this type's own
+    /// [`Self::select_ask`], which evicts expired asks before selecting.
+    ///
+    /// This previously took no cutoff and returned expired asks, which
+    /// contradicted both its own doc and the storage-level reader of the
+    /// same name. The index retains expired asks until they are pruned
+    /// (on insert-overflow or an explicit [`Self::prune_expired`]), so
+    /// the filter belongs here rather than in `insert`.
+    pub fn list_by_asker(&self, asker_did: &AskerDid, now_unix: u64) -> Vec<Ask> {
         self.indexed
             .values()
-            .filter(|a| &a.asker_did == asker_did)
+            .filter(|a| &a.asker_did == asker_did && a.expires_at_unix > now_unix)
             .cloned()
             .collect()
     }
@@ -582,11 +592,60 @@ mod tests {
             now + 1000,
         ));
         idx.insert(sample_ask("did:octo:b", "openai/gpt-4", 30_000, now + 1000));
-        let alice = idx.list_by_asker(&octo_ident::test_helpers::sample_did(111));
+        let alice = idx.list_by_asker(&octo_ident::test_helpers::sample_did(111), now);
         assert_eq!(alice.len(), 2);
         for a in &alice {
             assert_eq!(a.asker_did, octo_ident::test_helpers::sample_did(111));
         }
+    }
+
+    /// `list_by_asker` is documented as returning **non-expired** asks
+    /// and takes an expiry cutoff to match the storage-level
+    /// `AskRead::list_by_asker`. It previously took no cutoff and
+    /// returned every ask the index retained, expired included.
+    ///
+    /// The pre-existing `list_by_asker_filters` used only live asks, so
+    /// it passed without ever exercising the cutoff.
+    #[test]
+    fn list_by_asker_excludes_expired_asks() {
+        let mut idx = MarketplaceIndex::new();
+        let now = 1_700_000_000u64;
+        let did = octo_ident::test_helpers::sample_did(181);
+        let did_ref = did.parse::<AskerDid>().expect("canonical did");
+
+        idx.insert(sample_ask(&did, "openai/gpt-4", 10_000, now + 1000));
+        idx.insert(sample_ask(&did, "openai/gpt-4", 20_000, now - 1000));
+        idx.insert(sample_ask(&did, "openai/gpt-4", 30_000, now - 9999));
+
+        // The index itself retains all three — expiry is not enforced
+        // on insert, only by explicit pruning or overflow.
+        assert_eq!(idx.len(), 3, "index retains expired asks until pruned");
+
+        let live = idx.list_by_asker(&did_ref, now);
+        assert_eq!(
+            live.len(),
+            1,
+            "only the non-expired ask is returned, not all {} retained",
+            idx.len()
+        );
+        assert_eq!(
+            live[0].expires_at_unix,
+            now + 1000,
+            "the surviving ask is the live one"
+        );
+        assert!(live.iter().all(|a| a.expires_at_unix > now));
+
+        // Positive control: the expired asks are still returned when the
+        // cutoff is before them, so the filter is a real predicate and
+        // not an asker filter that happens to drop everything.
+        let all = idx.list_by_asker(&did_ref, 0);
+        assert_eq!(all.len(), 3, "cutoff of 0 returns every retained ask");
+
+        // And a cutoff past every expiry returns none.
+        assert!(
+            idx.list_by_asker(&did_ref, now + 10_000).is_empty(),
+            "a cutoff past every expiry returns nothing"
+        );
     }
 
     #[test]

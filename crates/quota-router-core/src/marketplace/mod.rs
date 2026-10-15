@@ -379,12 +379,30 @@ where
     /// # Errors
     /// Returns `RepoError` on stoolap failure.
     pub fn put(&self, ask: &Ask) -> Result<(), RepoError> {
-        self.repo.put(ask)?;
-        // Write-through to order book; skip expired.
         let now = current_unix();
-        if ask.expires_at_unix > now {
+        // Price the Ask BEFORE mutating anything. The book stores a `u128`,
+        // so the cost must be a non-negative integer micro-OCTO-W amount.
+        // A fractional-scale or negative rate cannot be represented, and
+        // used to reach an `assert_eq!` (panic) or a silent `as u128`
+        // wrap respectively — after the repo write had already landed.
+        // Validate first so a malformed Ask never half-lands.
+        let priced = if ask.expires_at_unix > now {
             let consumed = build_unit_consumed(ask, &self.axes);
             let cost = settlement_cost(ask, &consumed, &self.axes);
+            if cost.scale != 0 || cost.value < 0 {
+                return Err(RepoError::InvalidSettlementCost {
+                    scale: cost.scale,
+                    value: cost.value,
+                });
+            }
+            Some(cost.value as u128)
+        } else {
+            None
+        };
+
+        self.repo.put(ask)?;
+        // Write-through to order book; skip expired.
+        if let Some(price) = priced {
             let ask_id = compute_ask_id_static(ask);
             let mut book = self.book.lock();
             book.place_ask(
@@ -393,10 +411,7 @@ where
                     asker_did: ask.asker_did.clone(),
                     model: ask.model.to_wire(),
                 },
-                {
-                    assert_eq!(cost.scale, 0, "place_ask: MicroOCTO_W is integer-valued (scale=0); API contract violation");
-                    cost.value as u128
-                },
+                price,
                 1, // qty 1 per Ask; RFC-0900 markets trade 1 prompt per Ask
                 ask.asker_did.clone(),
                 now,

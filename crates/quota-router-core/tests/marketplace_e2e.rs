@@ -1036,3 +1036,94 @@ fn stake_withdrawal_rejects_invalid_inputs() {
         })
     ));
 }
+
+/// Builds an Ask quoting `rate_value` at `rate_scale` on the input axis.
+fn ask_with_rate(seed: u8, rate_value: i64, rate_scale: u8) -> quota_router_storage::ask::Ask {
+    use quota_router_storage::ask::{Ask, AxisRate, ModelRateTable, ModelRef};
+    Ask {
+        asker_did: octo_ident::test_helpers::sample_did(seed),
+        model: ModelRef::from("openai/gpt-4"),
+        rates: ModelRateTable {
+            model: ModelRef::from("openai/gpt-4"),
+            rates: vec![AxisRate {
+                axis: "input_tokens_per_1k".into(),
+                rate_per_1k: octo_determin::Dqa::new(rate_value, rate_scale)
+                    .expect("non-overflow"),
+            }],
+        },
+        nonce: [0x55; 16],
+        expires_at_unix: 1_900_000_000,
+    }
+}
+
+#[test]
+fn put_rejects_fractional_scale_rate_instead_of_panicking() {
+    // Regression: `put()` carried `assert_eq!(cost.scale, 0, ...)`, which
+    // panicked for any rate whose scale is high enough that the settlement
+    // cost is not an integer micro-OCTO-W amount (reachable at scale >= 5).
+    // The panic fired AFTER `repo.put` had already persisted the Ask.
+    use quota_router_core::marketplace::Marketplace;
+    use quota_router_storage::ask_repo::RepoError;
+
+    let m = Marketplace::open_in_memory().expect("open");
+
+    // Scale 0 still works — the fix must not reject valid Asks.
+    m.put(&ask_with_rate(1, 10_000, 0)).expect("scale 0 must be accepted");
+
+    for scale in [5u8, 6, 7, 8] {
+        let ask = ask_with_rate(2, 10_000, scale);
+        let err = m
+            .put(&ask)
+            .expect_err("fractional-scale rate must be rejected, not panic");
+        assert!(
+            matches!(err, RepoError::InvalidSettlementCost { .. }),
+            "expected InvalidSettlementCost at scale {scale}, got {err:?}"
+        );
+    }
+}
+
+#[test]
+fn put_rejects_negative_rate_instead_of_wrapping_to_u128() {
+    // Regression: `cost.value as u128` on a negative cost wraps. Measured
+    // pre-fix, a rate of -5_000 became price 340282366920938463463374607431768206456
+    // (~2^128) and was indexed into the book as a legitimate ask.
+    use quota_router_core::marketplace::Marketplace;
+    use quota_router_storage::ask_repo::RepoError;
+
+    let m = Marketplace::open_in_memory().expect("open");
+    let err = m
+        .put(&ask_with_rate(3, -5_000, 0))
+        .expect_err("negative rate must be rejected");
+    assert!(
+        matches!(err, RepoError::InvalidSettlementCost { .. }),
+        "expected InvalidSettlementCost, got {err:?}"
+    );
+
+    // And nothing was indexed: the book must not hold the wrapped ask.
+    assert!(
+        m.cheapest("openai/gpt-4").is_none(),
+        "a rejected Ask must not appear in the order book"
+    );
+}
+
+#[test]
+fn put_rejects_before_the_repo_write_so_nothing_half_lands() {
+    // The validation must precede `repo.put`, not follow it. Pre-fix the
+    // Ask was persisted and then the process aborted, so a caller that
+    // caught the panic still had a stored Ask behind it.
+    use quota_router_core::marketplace::Marketplace;
+
+    let m = Marketplace::open_in_memory().expect("open");
+    let rejected = ask_with_rate(4, 10_000, 7);
+    let did = rejected.asker_did.clone();
+    assert!(m.put(&rejected).is_err());
+
+    // `list_by_asker` reads through to the repository, so this observes
+    // persistence rather than the in-memory book.
+    let stored = m.list_by_asker(&did).expect("list");
+    assert!(
+        stored.is_empty(),
+        "rejected Ask must not be persisted to the repo, found {} entries",
+        stored.len()
+    );
+}

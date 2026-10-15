@@ -34,6 +34,23 @@ pub enum RepoError {
     Serde(String),
     #[error("migration error: {0}")]
     Migration(#[from] migrations::MigrationError),
+    /// The settlement cost computed for an Ask cannot be represented as an
+    /// order-book price, which is a non-negative integer number of
+    /// micro-OCTO-W.
+    ///
+    /// Two independent ways to reach this, both from a well-typed `Ask`:
+    ///
+    /// - `scale != 0` — the rate carries a fractional scale, so the summed
+    ///   cost is not an integer micro-OCTO-W amount.
+    /// - `value < 0` — the rate is negative, which would silently wrap if
+    ///   cast to the book's `u128` price.
+    ///
+    /// Previously both were unrepresentable at the marketplace write path:
+    /// the non-zero-scale case hit an `assert_eq!` and panicked, and the
+    /// negative case wrapped to ~2^128. See mission
+    /// `marketplace-put-panics-or-wraps-on-unrepresentable-settlement-cost`.
+    #[error("settlement cost not representable as a book price: scale={scale}, value={value} (expected scale=0 and value >= 0)")]
+    InvalidSettlementCost { scale: u8, value: i64 },
 }
 
 /// Persisted row mirror of the `asks` table.

@@ -5,7 +5,7 @@ metadata:
   node_type: mission
   type: research
   created: 2026-10-15T00:00:00.000Z
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0900
     - RFC-0901
@@ -96,6 +96,65 @@ settlement coverage that does not exist.
    `resolve_invalid` (→ `Settled`). A partial refund has no representation
    anywhere in `marketplace/` or `task_market/`.
 
+## Three more gaps against RFC-0900 (added at v1.1)
+
+Mapping the Rust enum onto RFC-0900 §Purchase Lifecycle and §Dispute
+Lifecycle shows three further absences. None is a bug in what the code
+does — each is state or data the RFC specifies and the type has no room
+for.
+
+### 1. There is no investigation state
+
+§Dispute Lifecycle is:
+
+```
+FILED → INVESTIGATING: Evidence collected
+INVESTIGATING → {VALID, INVALID, PARTIAL}
+```
+
+`EscrowState` has no `Investigating`. The Rust states are `Pending`,
+`Locked`, `Settled`, `Disputed`, `Slashed`, and `dispute()` moves straight
+to `Disputed` — which therefore conflates **FILED** with **INVESTIGATING**.
+
+The consequence is that the arbitrator may resolve **immediately** after
+the buyer raises the dispute: `resolve_valid` and `resolve_invalid` both
+require `Disputed`, and nothing gates them behind an evidence-collection
+window. The RFC's mandatory investigation stage does not exist, so the
+"evidence" half of the dispute lifecycle is unmodelled rather than merely
+unimplemented.
+
+### 2. No timestamps anywhere on the escrow
+
+§Observability requires a `timestamp: number` on every `purchase`,
+`listing`, `swap` and `dispute` telemetry event.
+
+`Escrow` carries six fields — `id`, `buyer`, `seller`, `arbitrator`,
+`amount_micro_octo_w`, `state` — and **no time field at all**. There is no
+`locked_at`, no `disputed_at`, no `resolved_at`. A `dispute` event
+therefore cannot be timestamped from the state machine, and the gap
+between filing and resolution is unrecoverable after the fact, which is
+exactly the interval §Dispute Evidence Challenge depends on.
+
+### 3. Disputes are indistinguishable
+
+§Dispute Evidence Challenge classifies disputes by cause and
+verifiability — Timeout, Provider error, Latency high (all **Automatic**)
+versus Garbage response (**Manual**, requires human review).
+
+The escrow has no dispute-reason field and no evidence field. A timeout
+and a garbage-response complaint are the same state transition
+(`Locked → Disputed`) and produce the same record, so the
+automatic-versus-manual split the RFC calls "for MVE" cannot be
+distinguished, and nothing records what the arbitrator actually examined
+before calling `resolve_valid`.
+
+### None of these are pinned by a test
+
+Deliberately. Each is a missing capability, so a test would have to
+assert the absence — enshrining the gap. They are recorded here so the
+wiring work inherits a complete list rather than rediscovering them at
+Phase 2.
+
 ## Actioned in this mission (documentation only)
 
 `marketplace_e2e.rs` headers and comments now state what the file covers and
@@ -177,6 +236,15 @@ must be `scale=0` and non-negative, matching what `Marketplace::put` and
   or is Valid/Invalid sufficient for the first release?
 - Which layer owns settlement: the Rust `Escrow`, an on-chain contract, or
   both?
+- Is the §Dispute Lifecycle investigation stage in scope for the first
+  release, or should the escrow collapse FILED and INVESTIGATING
+  deliberately — in which case the RFC should say so, because today the
+  collapse reads as an omission rather than a decision?
+- Should the escrow carry timestamps (`locked_at`, `disputed_at`,
+  `resolved_at`) so §Observability's required `timestamp` can be emitted?
+- Should a dispute record its cause and evidence class, so the
+  automatic-versus-manual split in §Dispute Evidence Challenge is
+  expressible?
 
 ## Reproduction
 

@@ -50,8 +50,12 @@ pub struct MarketplaceEntry {
     /// `score_ewma` at read time (RFC-0968-A1 §22, amendment 30,
     /// 0968-b Phase C). `None` when the consumer has not asked the
     /// market to populate reputation (legacy listings omit the field).
-    /// `Some(100)` for unknown providers (legacy "unknown = perfect"
-    /// semantics; a non-zero presentation keeps the field populated).
+    /// Measured through `entry_from_order`: `None` for a provider with no
+    /// recorded outcome, `Some(100)` after one success, `Some(50)` after
+    /// one failure. An earlier version of this doc claimed `Some(100)` for
+    /// unknown providers; that is false — the field is `None`, and skipped
+    /// in serialisation. See mission
+    /// `reputation-score-cannot-express-a-provider-worse-than-neutral`.
     /// Mission 0010-b Phase G (S8): wired through `cheapest` /
     /// `list_by_asker` so listing UIs can render the value.
     #[serde(skip_serializing_if = "Option::is_none", default)]

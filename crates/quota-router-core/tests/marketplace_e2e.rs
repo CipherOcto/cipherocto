@@ -1230,3 +1230,81 @@ fn hydration_rejects_an_unrepresentable_stored_price_instead_of_panicking() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn reputation_score_population_matches_the_documented_range() {
+    // Pins what `cheapest` actually emits. The struct doc previously
+    // claimed `Some(100)` for unknown providers; measurement showed `None`.
+    use quota_router_core::marketplace::Marketplace;
+
+    let m = Marketplace::open_in_memory().expect("open");
+    let ask = ask_with_rate(90, 10_000, 0);
+    let did = ask.asker_did.clone();
+    m.put(&ask).expect("put");
+
+    // No recorded outcome: the field is absent, not a default 100.
+    let unknown = m.cheapest("openai/gpt-4").expect("entry");
+    assert_eq!(
+        unknown.reputation_score_0_100, None,
+        "an unobserved provider must not carry a fabricated score"
+    );
+    assert_eq!(unknown.latency_ms, None, "and no latency either");
+
+    // Observed outcomes populate it. A single success seeds the EWMA at
+    // 1.0, which presents as the top of the scale.
+    m.record_outcome(&did, true, 40);
+    let good = m.cheapest("openai/gpt-4").expect("entry");
+    assert_eq!(good.reputation_score_0_100, Some(100));
+
+    // A subsequent failure moves it down, but the decayed EWMA has not
+    // fallen to the floor yet — asserting the direction rather than the
+    // exact value keeps this independent of EWMA_ALPHA.
+    m.record_outcome(&did, false, 40);
+    let degraded = m.cheapest("openai/gpt-4").expect("entry");
+    let after = degraded.reputation_score_0_100.expect("score present");
+    assert!(
+        after < 100,
+        "a recorded failure must lower the score, got {after}"
+    );
+
+    // A provider whose very first outcome is a failure seeds at 0.0 and
+    // presents at the formula's floor of 50.
+    let m2 = Marketplace::open_in_memory().expect("open");
+    let first_failure = ask_with_rate(93, 10_000, 0);
+    let did2 = first_failure.asker_did.clone();
+    m2.put(&first_failure).expect("put");
+    m2.record_outcome(&did2, false, 40);
+    let seeded = m2.cheapest("openai/gpt-4").expect("entry");
+    assert_eq!(seeded.reputation_score_0_100, Some(50));
+}
+
+#[test]
+fn reputation_score_cannot_represent_a_provider_below_neutral() {
+    // The presentation formula is `(clamp(score, -1, 1) + 1) * 50`, which
+    // assumes a *signed* score in [-1, 1]. It is fed the legacy unsigned
+    // `success_rate`, which only ever occupies [0, 1] — so the clamp never
+    // engages and the observable floor is 50, not 0.
+    //
+    // A provider that has failed every single recorded request presents as
+    // 50/100: mid-reputation, not bad. See mission
+    // `reputation-score-cannot-express-a-provider-worse-than-neutral`.
+    use quota_router_core::marketplace::Marketplace;
+
+    let m = Marketplace::open_in_memory().expect("open");
+    let ask = ask_with_rate(92, 10_000, 0);
+    let did = ask.asker_did.clone();
+    m.put(&ask).expect("put");
+
+    // Fail everything, many times, so the EWMA settles toward 0.
+    for _ in 0..200 {
+        m.record_outcome(&did, false, 40);
+    }
+
+    let worst = m.cheapest("openai/gpt-4").expect("entry");
+    let score = worst.reputation_score_0_100.expect("score present");
+    assert!(
+        score >= 50,
+        "the formula floors at 50 because success_rate is unsigned; \
+         observed {score}, which cannot express a failing provider"
+    );
+}

@@ -155,6 +155,36 @@ assert the absence — enshrining the gap. They are recorded here so the
 wiring work inherits a complete list rather than rediscovering them at
 Phase 2.
 
+### 4. Terminal states conflate distinct RFC outcomes
+
+Both terminal states are reachable by two materially different paths, and
+nothing records which happened:
+
+| Rust state | Path A                           | Path B                                           | RFC terminal states                      |
+| ---------- | -------------------------------- | ------------------------------------------------ | ---------------------------------------- |
+| `Settled`  | `settle` — buyer paid, work done | `resolve_invalid` — dispute rejected, buyer pays | `COMPLETED` **and** `CONFIRMED` / `KEEP` |
+| `Slashed`  | —                                | `resolve_valid` — dispute upheld                 | `REFUNDED` **and** `SLASHED`             |
+
+`EscrowSnapshot` adds no discriminator either — it carries the same six
+fields, so a snapshot taken after resolution is indistinguishable from one
+taken after a clean success. There is no flag, no history, no timestamp.
+
+Two consequences worth stating plainly:
+
+- The doc comment on `EscrowState::Settled` reads "Funds released to seller
+  (success path)". That describes only Path A. A rejected dispute lands in
+  the same variant, and the two are indistinguishable afterwards — so an
+  operator reading the enum cannot tell a clean completion from a dispute
+  the buyer lost.
+- `Slashed` names only the slash. On a valid dispute §Escrow Flow step 4
+  says "**Refund to buyer**, slash seller stake" — two effects. The refund
+  half has no representation at all, consistent with the module moving no
+  funds.
+
+The suite already demonstrates Path B: `dispute_invalid_confirms_payment`
+ends in `Settled`, exactly as `happy_path_bid_matches_ask_escrow_settles`
+does. The two tests differ in history, not in the resulting state.
+
 ## Actioned in this mission (documentation only)
 
 `marketplace_e2e.rs` headers and comments now state what the file covers and

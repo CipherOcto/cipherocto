@@ -35,11 +35,37 @@ pub enum EscrowState {
     Pending,
     /// Funds locked in escrow; settlement in progress.
     Locked,
-    /// Funds released to seller (success path).
+    /// Funds released to seller.
+///
+/// Reached by **two** distinct paths, and nothing records which:
+/// a clean success via `settle`, and a rejected dispute via
+/// `resolve_invalid`. RFC-0900 models these as separate terminal
+/// outcomes (`COMPLETED` vs `CONFIRMED`/`KEEP`), but the escrow has no
+/// flag, history or timestamp to tell them apart — `EscrowSnapshot`
+/// carries the same fields as `Escrow`.
+///
+/// Measured: `marketplace_e2e::happy_path_bid_matches_ask_escrow_settles`
+/// and `marketplace_e2e::dispute_invalid_confirms_payment` both end here
+/// with the same `amount_micro_octo_w`. The two differ in history, not in
+/// resulting state. See deferred mission
+/// `marketplace-escrow-is-not-wired-into-the-marketplace-facade`.
+///
+/// This doc previously read "Funds released to seller (success path)",
+/// which described only the first path.
     Settled,
     /// Buyer raised a dispute (RFC-0900 §Dispute Resolution).
+    ///
+    /// Conflates the RFC's `FILED` and `INVESTIGATING`: there is no
+    /// investigation state, so `resolve_valid` / `resolve_invalid` may
+    /// be called immediately after `dispute`, with no evidence-collection
+    /// window.
     Disputed,
-    /// Dispute resolved against seller (slashed).
+    /// Dispute upheld against the seller.
+    ///
+    /// RFC-0900 §Escrow Flow step 4 makes a valid dispute two effects —
+    /// refund the buyer **and** slash the seller's stake. This variant
+    /// names only the slash; the refund has no representation, consistent
+    /// with this module moving no funds.
     Slashed,
 }
 

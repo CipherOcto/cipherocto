@@ -139,6 +139,23 @@ impl<S: ReputationStore> ProviderReputationRegistryCompat<S> {
         Ok(score)
     }
 
+    /// Read only the latency observation, or `None` when the provider has
+    /// no latency aggregate.
+    ///
+    /// [`Self::score`] folds the absent case into `latency_ms: 0`, which
+    /// is indistinguishable from a provider that genuinely measured a
+    /// 0 ms completion — and 0 is the best value the scale admits. Callers
+    /// that rank on latency need the distinction, so it is exposed here.
+    pub async fn observed_latency_ms(&self, did: &str) -> Result<Option<u64>, ReputationError> {
+        match self.read_latency_aggregate(did).await {
+            Ok(agg) => Ok(Some(agg.score_ewma.to_f64().max(0.0) as u64)),
+            // Absence only. Other errors propagate, so a connectivity
+            // fault is never silently reported as "no data".
+            Err(ReputationError::AggregateNotFound { .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Read just the Outcome aggregate, returning the legacy f64 view.
     /// Returns `Ok(empty)` (samples=0, success_rate=1.0) when the
     /// aggregate does not exist — mirrors the legacy "unknown provider

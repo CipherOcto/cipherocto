@@ -542,19 +542,33 @@ where
     /// legacy `ProviderReputationRegistry` shadow.
     ///
     /// Behavioural contract for the gate window: returns the same
-    /// `MarketplaceEntry` ordering as the sync
-    /// `cheapest_with_ranking` when the dual-read parity ≥ 0.999
-    /// holds in prod. On synthetic fixtures the two paths agree by
-    /// construction; on real traffic the gate observation is
-    /// required before the sync path is retired (mission
-    /// `marketplace-retirement-gate-flip` — TBD).
+    /// `MarketplaceEntry` **ordering** as the sync
+    /// `cheapest_with_ranking` for a given candidate set. It does
+    /// **not** return the same scores.
+    ///
+    /// This doc previously claimed the paths agree "when the dual-read
+    /// parity ≥ 0.999 holds in prod" and that they "agree by
+    /// construction on synthetic fixtures". Neither was ever
+    /// established, and both are false. Measured:
+    ///
+    /// - `success_rate`: legacy is a decayed EWMA, compat is a plain
+    ///   ratio, so identical mixed input diverges by up to **0.357**.
+    /// - `latency_ms`: legacy is a decayed EWMA, compat is an
+    ///   `alpha = 1/(n+1)` running mean. Measured deltas on identical
+    ///   input: 75ms x10 → 1 ms; a 0..9 ramp → 4 ms; alternating
+    ///   100/300 → **14 ms**.
+    ///
+    /// Ordering agreement is therefore a property of the fixture, not a
+    /// consequence of the two implementations agreeing. See deferred
+    /// mission `the-reputation-store-implements-a-running-mean-not-the-rfc-ewma`
+    /// and the divergence bound pinned by
+    /// `dual_read_mixed_outcome_divergence_within_measured_bound`.
     ///
     /// Latency observations are read from
-    /// `reputation_compat.score()` which surfaces the canonical
-    /// `ReputationAggregate.score_ewma` (Dfp) into the legacy
-    /// `ProviderScore.latency_ms: u64` shape. The mapping
-    /// `(score_ewma.to_f64() as u64)` matches the legacy shadow for
-    /// non-pathological scores (≥ 0.0).
+    /// `reputation_compat.observed_latency_ms()`, which distinguishes an
+    /// absent observation from a genuine 0 ms measurement. `score()` folds
+    /// absence into `latency_ms: 0` and is not suitable for ranking; see
+    /// `scoring::resolve_ranking_latencies`.
     /// # Errors
     /// Returns `ReputationError` on store failure (caller decides
     /// whether to fall back to the sync shadow — fallback is not
@@ -583,7 +597,7 @@ where
         // Async circuit-breaker exclusion gate.
         let min = self.reputation_compat.min_reputation();
         let mut accepted: Vec<orderbook::Order<AskSpec>> = Vec::with_capacity(candidates.len());
-        let mut latencies: std::collections::HashMap<String, u64> =
+        let mut latencies: std::collections::HashMap<String, Option<u64>> =
             std::collections::HashMap::with_capacity(candidates.len());
         for order in candidates {
             let excluded = if min > 0.0 {
@@ -594,8 +608,11 @@ where
                 false
             };
             if !excluded {
-                let score = self.reputation_compat.score(&order.spec.asker_did).await?;
-                latencies.insert(order.spec.asker_did.clone(), score.latency_ms);
+                let observed = self
+                    .reputation_compat
+                    .observed_latency_ms(&order.spec.asker_did)
+                    .await?;
+                latencies.insert(order.spec.asker_did.clone(), observed);
                 accepted.push(order);
             }
         }
@@ -608,23 +625,21 @@ where
         if ranking.latency_weight == 0.0 {
             return Ok(Some(self.entry_from_order_async(
                 &accepted[0],
-                latencies.get(&accepted[0].spec.asker_did).copied(),
+                latencies.get(&accepted[0].spec.asker_did).copied().flatten(),
             )));
         }
 
-        // Latency-aware ranking: identical math to sync path,
-        // latencies sourced from compat.
+        // Latency-aware ranking: identical math to sync path, latencies
+        // sourced from compat. An absent observation stays `None` until
+        // `resolve_ranking_latencies`, so it is not folded into 0 ms.
         let (min_price, max_price) = accepted.iter().fold((u128::MAX, u128::MIN), |(lo, hi), o| {
             (lo.min(o.price), hi.max(o.price))
         });
-        let lats: Vec<u64> = accepted
+        let observed: Vec<Option<u64>> = accepted
             .iter()
-            .map(|o| latencies.get(&o.spec.asker_did).copied().unwrap_or(0))
+            .map(|o| latencies.get(&o.spec.asker_did).copied().flatten())
             .collect();
-        let (min_lat, max_lat) = lats
-            .iter()
-            .copied()
-            .fold((u64::MAX, u64::MIN), |(lo, hi), l| (lo.min(l), hi.max(l)));
+        let (lats, min_lat, max_lat) = scoring::resolve_ranking_latencies(&observed);
 
         let mut best: Option<(f64, &orderbook::Order<AskSpec>)> = None;
         for (order, latency_ms) in accepted.iter().zip(lats.iter()) {
@@ -649,7 +664,7 @@ where
         let (_, winner) = best.expect("accepted non-empty");
         Ok(Some(self.entry_from_order_async(
             winner,
-            latencies.get(&winner.spec.asker_did).copied(),
+            latencies.get(&winner.spec.asker_did).copied().flatten(),
         )))
     }
 
@@ -743,19 +758,16 @@ where
             .fold((u128::MAX, u128::MIN), |(lo, hi), o| {
                 (lo.min(o.price), hi.max(o.price))
             });
-        let latencies: Vec<u64> = candidates
+        let observed_latencies: Vec<Option<u64>> = candidates
             .iter()
             .map(|o| {
                 self.reputation
                     .score(&o.spec.asker_did)
                     .map(|s| s.latency_ms)
-                    .unwrap_or(0)
             })
             .collect();
-        let (min_lat, max_lat) = latencies
-            .iter()
-            .copied()
-            .fold((u64::MAX, u64::MIN), |(lo, hi), l| (lo.min(l), hi.max(l)));
+        let (latencies, min_lat, max_lat) =
+            scoring::resolve_ranking_latencies(&observed_latencies);
 
         let mut best: Option<(f64, &orderbook::Order<AskSpec>)> = None;
         for (order, latency_ms) in candidates.iter().zip(latencies.iter()) {

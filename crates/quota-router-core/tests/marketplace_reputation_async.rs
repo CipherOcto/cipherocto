@@ -811,3 +811,127 @@ async fn async_breaker_excludes_on_its_own_recorded_failures() {
         "the async breaker does exclude a provider it has failures for"
     );
 }
+
+/// A provider with **no** latency observation must not be ranked as if
+/// it had measured a 0 ms completion.
+///
+/// `0` is the fastest value the scale admits, so resolving absent data to
+/// zero gave an unmeasured provider a perfect latency component and let
+/// it outrank every measured one. Measured before the fix, on both the
+/// sync and async paths: with `unknown` quoting 90_000 and `measured`
+/// quoting 1_000 at a proven 50 ms, `cheapest` returned the measured
+/// provider while `prefer_latency` returned `unknown` on both paths —
+/// a full inversion driven only by `unknown` having no history.
+///
+/// Absent observations now resolve to the worst latency observed among
+/// the candidates, so missing data never wins. Cold-start providers stay
+/// selectable on price, which is the property the midpoint reading would
+/// have given for free and the exclusion reading would not.
+#[tokio::test]
+async fn unmeasured_provider_does_not_rank_as_zero_latency() {
+    use quota_router_core::marketplace::scoring::LatencyRanking;
+    use quota_router_core::marketplace::Marketplace;
+
+    let m = Marketplace::open_in_memory().expect("open");
+    let controller = blake3_runtime(GOV_PUBKEY);
+    let unknown = sample_did(71);
+    let measured = sample_did(72);
+
+    m.put(&make_ask(&unknown, "openai/gpt-4", 90_000, 1_900_000_000))
+        .expect("put unknown");
+    m.put(&make_ask(&measured, "openai/gpt-4", 1_000, 1_900_000_000))
+        .expect("put measured");
+
+    for i in 0..10u64 {
+        m.record_outcome(&measured, true, 50);
+        m.record_outcome_async(&measured, true, 50, controller, 1_700_000_000 + i * 60)
+            .await
+            .expect("async record");
+    }
+
+    assert!(
+        m.provider_score(&unknown).is_none(),
+        "fixture precondition: unknown has no legacy score"
+    );
+    let compat_unknown = m.read_reputation_async(&unknown).await.expect("compat");
+    assert_eq!(
+        compat_unknown.samples, 0,
+        "fixture precondition: unknown has no canonical record"
+    );
+
+    // Price-only ranking is unaffected and picks the cheap provider.
+    assert_eq!(
+        m.cheapest("openai/gpt-4").expect("some").cost_per_1k,
+        1_000,
+        "price-only ranking still prefers the cheaper provider"
+    );
+
+    // Latency-weighted ranking must agree that the proven provider wins,
+    // rather than promoting the one with no history at all.
+    let sync_pick = m
+        .cheapest_with_ranking("openai/gpt-4", LatencyRanking::prefer_latency())
+        .expect("some ask");
+    assert_eq!(
+        sync_pick.cost_per_1k, 1_000,
+        "sync path: an unmeasured provider must not beat a measured one on latency"
+    );
+
+    let async_pick = m
+        .cheapest_with_ranking_async("openai/gpt-4", LatencyRanking::prefer_latency())
+        .await
+        .expect("async cheapest")
+        .expect("some ask");
+    assert_eq!(
+        async_pick.cost_per_1k, 1_000,
+        "async path: same rule, and the two paths must not disagree"
+    );
+}
+
+/// Positive control for the test above: an unmeasured provider that is
+/// *also* the cheapest still wins under `prefer_latency`.
+///
+/// Without this, the fix could be passing simply by refusing to rank any
+/// provider without a latency observation — which would lock every
+/// cold-start provider out of the book. The fail-closed encoding must
+/// keep them selectable; it must only stop absent data from outranking
+/// measured data.
+#[tokio::test]
+async fn unmeasured_provider_still_wins_on_price_when_cheapest() {
+    use quota_router_core::marketplace::scoring::LatencyRanking;
+    use quota_router_core::marketplace::Marketplace;
+
+    let m = Marketplace::open_in_memory().expect("open");
+    let controller = blake3_runtime(GOV_PUBKEY);
+    let cold = sample_did(73);
+    let measured = sample_did(74);
+
+    m.put(&make_ask(&cold, "openai/gpt-4", 1_000, 1_900_000_000))
+        .expect("put cold");
+    m.put(&make_ask(&measured, "openai/gpt-4", 90_000, 1_900_000_000))
+        .expect("put measured");
+
+    for i in 0..10u64 {
+        m.record_outcome(&measured, true, 900);
+        m.record_outcome_async(&measured, true, 900, controller, 1_700_000_000 + i * 60)
+            .await
+            .expect("async record");
+    }
+
+    let sync_pick = m
+        .cheapest_with_ranking("openai/gpt-4", LatencyRanking::prefer_latency())
+        .expect("some ask");
+    assert_eq!(
+        sync_pick.cost_per_1k, 1_000,
+        "an unmeasured provider stays selectable when it wins on price"
+    );
+
+    let async_pick = m
+        .cheapest_with_ranking_async("openai/gpt-4", LatencyRanking::prefer_latency())
+        .await
+        .expect("async cheapest")
+        .expect("some ask");
+    assert_eq!(
+        async_pick.cost_per_1k, 1_000,
+        "async path agrees: cold-start providers are not locked out"
+    );
+}

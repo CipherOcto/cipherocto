@@ -232,6 +232,38 @@ impl LatencyRanking {
     }
 }
 
+/// Resolve per-candidate latency for [`LatencyRanking::composite`],
+/// together with the `(min_latency, max_latency)` normalization bounds.
+///
+/// A provider with **no** latency observation is deliberately *not*
+/// encoded as `0` ms. Zero is the fastest value the scale admits, so
+/// resolving absent data to zero lets an unmeasured provider score a
+/// perfect latency component and outrank every measured one — which in
+///verts the ranking: a provider that costs 90x more and has never been
+///measured once wins, purely because it has no history. Measured before
+///this fix, on both the sync and async paths.
+///
+/// Absent observations resolve to the **worst latency observed** among the
+/// candidates, so missing data never wins and cold-start providers remain
+/// selectable on price. This is the fail-closed choice: it is the only
+/// encoding under which an empty reputation history is not an advantage.
+/// The alternative readings — midpoint, or excluding unmeasured providers
+/// outright — change cold-start behaviour and are recorded as an
+/// RFC-owner question in deferred mission
+/// `marketplace-unknown-latency-is-encoded-as-zero-ms`.
+///
+/// When no candidate has an observation at all, every latency resolves to
+/// `0` with degenerate bounds, and the composite degrades to price-only.
+#[must_use]
+pub fn resolve_ranking_latencies(observed: &[Option<u64>]) -> (Vec<u64>, u64, u64) {
+    let Some(worst_observed) = observed.iter().flatten().copied().max() else {
+        return (vec![0; observed.len()], 0, 0);
+    };
+    let latencies: Vec<u64> = observed.iter().map(|o| o.unwrap_or(worst_observed)).collect();
+    let min_latency = latencies.iter().copied().min().unwrap_or(0);
+    (latencies, min_latency, worst_observed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

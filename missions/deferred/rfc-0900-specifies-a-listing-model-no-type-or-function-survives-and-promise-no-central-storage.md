@@ -1,11 +1,11 @@
 ---
 name: rfc-0900-specifies-a-listing-model-no-type-or-function-survives-and-promise-no-central-storage
-description: "RFC-0900 §Specification defines QuotaListing, QuotaPurchase, QuotaRouter and RouterConfig, plus listQuota, purchaseQuota and routePrompt. None of the three types has an implementation and none of the three functions exists anywhere in the tree. RouterConfig is the dangerous case: a real struct by that name exists, belongs to RFC-0927, and shares not one field with RFC-0900's seven, so a reader who finds it concludes the RFC shipped. Separately §Security & Privacy promises no central storage while §Slash Ledger Substrate in the same document specifies SQL migrations and a Stoolap fork driver, and four crates carry SQL schemas. Credit where due: the prompt-privacy row is an honest, correctly-scoped TRUST ASSUMPTION, and both §References paths exist."
+description: "RFC-0900 §Specification defines QuotaListing, QuotaPurchase, QuotaRouter and RouterConfig, plus listQuota, purchaseQuota and routePrompt. None of the three types has an implementation and none of the three functions exists anywhere in the tree — but v1.1 retracts the reading of that as a defect, because §Version History v1.1 already declared the TypeScript interfaces a wire-shape reference with the Rust impl canonical. What survives is sharper: under the RFC's own precedence rule the one interface with a Rust counterpart is RouterConfig, and that counterpart belongs to RFC-0927 with zero field overlap, so RFC-0900's marketplace routing config has no canonical representation. Separately §Security & Privacy promises no central storage while §Slash Ledger Substrate specifies SQL migrations and a Stoolap fork driver. Credit where due: the prompt-privacy row is an honest, correctly-scoped TRUST ASSUMPTION, and both §References paths exist."
 metadata:
   node_type: mission
   type: research
   created: 2026-10-16T00:00:00.000Z
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0900
 ---
@@ -17,6 +17,54 @@ metadata:
 Deferred. Type and function names, one security-table cell, and two reference
 entries are RFC edits. Nothing was actioned.
 
+## v1.1 — I filed v1.0 without reading §Version History, and it changed the finding
+
+RFC-0900 v1.1 says this, at the end of its version-history row:
+
+> The TypeScript interfaces in this RFC remain a **wire-shape reference**; the
+> **Rust impl is the canonical source for the protocol**.
+
+I swept §Specification, §Security & Privacy, §Related RFCs and §References,
+verified every symbol against the tree, and did not read §Version History. The
+section I was measuring had already been explicitly subordinated by its own
+document, three versions ago.
+
+**That materially weakens v1.0's headline, and it should not stand.** `QuotaListing`,
+`QuotaPurchase`, `QuotaRouter`, `listQuota`, `purchaseQuota` and `routePrompt`
+having no Rust implementation is **declared, not a defect**. The RFC told the
+reader to expect exactly that and named where the truth lives. A finding that
+presents a disclosed, intentional design as an omission is worse than no finding,
+because it spends the reader's attention on a non-issue.
+
+Two things survive, and one of them gets _worse_.
+
+**The `RouterConfig` collision gets worse, not better.** v1.0 called it a name
+collision. But the RFC's own rule is that Rust is canonical — and Rust's
+`RouterConfig` belongs to RFC-0927, whose mission is archived, with zero field
+overlap. So the document that promised "the Rust impl is the canonical source"
+points, for one of its four interfaces, at a type implementing a different RFC's
+extension. Under the RFC's own precedence rule there is **no canonical
+representation of RFC-0900's marketplace routing config at all**. That is a real
+gap, and the disclosure makes it sharper rather than excusing it.
+
+**The design question is real even though the absence is declared.** The
+wire-shape reference describes listings and purchases. The canonical Rust
+implementation is `Ask`-shaped. The RFC designates one as truth and documents the
+other as reference, and the two describe **different protocols** — there is no
+mapping between a `QuotaListing` and an `Ask`, and no statement that one is the
+other. That is the owner decision v1.0 already pointed at, now carrying the added
+weight of the RFC having explicitly made Rust canonical in writing.
+
+**What is retracted.** The "core model does not exist" framing, and any reading of
+the absent functions as unimplemented promises. v1.0's _evidence_ is all still
+true — the symbol counts are unchanged and every reproduction command still
+produces what it claims. What was wrong is the interpretation placed on top of
+it.
+
+The rule this is an instance of, and the one I keep relearning: **read the whole
+document before filing on any part of it.** §Version History was nine lines above
+the section I swept.
+
 ## Finding
 
 RFC-0900 §Specification is the marketplace RFC's normative core, and almost none
@@ -24,7 +72,7 @@ of it exists. What makes it worth filing separately from the recorded RFC-0900
 work is that the _absence_ is not uniform: most of it is honestly absent, and one
 part of it is invisibly absent behind a real type with the same name.
 
-## §Specification: the model does not exist
+## §Specification: the model does not exist — declared, not defective (v1.1)
 
 | Symbol          | Occurrences in `crates/`         |
 | --------------- | -------------------------------- |
@@ -192,6 +240,15 @@ ASSUMPTION - Sellers see prompt content when executing API calls`, followed by
 ## Reproduction
 
 ```bash
+# v1.1 — the disclosure that reclassifies everything below as declared, not
+# defective. It lives in the v1.1 version-history row, dated 2026-07-24.
+grep -o 'The TypeScript interfaces in this RFC remain a wire-shape reference; the Rust impl is the canonical source for the protocol' \
+  rfcs/accepted/economics/0900-ai-quota-marketplace.md
+
+# ...in exactly one accepted RFC, so it is a local decision and not house style
+grep -rln 'canonical source for the protocol' rfcs/accepted/ --include='*.md' | wc -l
+# 1
+
 # CONTROL — Ask exists, so a zero-hit search is distinguishable from a broken one
 grep -rn --include=*.rs 'pub struct Ask\b' crates/ | head -3
 

@@ -591,15 +591,37 @@ pub enum AskError {
 /// AskIds, which matters for rate-table updates where the asker publishes
 /// a new nonce to invalidate prior AskIds).
 ///
-/// `node_type` is the asker's deployment mode (RFC-0009 §Node). It gates
-/// downstream capability-class minting per RFC-0958 §NodeType Gating Matrix
-/// and informs the marketplace index's jurisdiction/routing decisions.
+/// `node_type` is the asker's declared deployment mode. Two corrections to
+/// what this field was previously documented as doing:
+///
+/// - **It does not gate capability minting.** This doc previously said it
+///   "gates downstream capability-class minting per RFC-0958 §NodeType
+///   Gating Matrix". RFC-0009 v1.2 withdrew that: mint authority keys on the
+///   in-boundary inference attestation payload kind, "not on a role name",
+///   and RFC-0959 IA-7 reclassifies `Ask.node_type` as a derived projection
+///   and expressly *not* an authorization input. The capability registry's
+///   Wholesale/ZKBearing check is keyed on a caller-supplied `node_did` in
+///   local state, never sourced from an Ask.
+/// - **It cannot inform index decisions.** This doc previously said it
+///   "informs the marketplace index's jurisdiction/routing decisions". The
+///   index holds `Ask`, which has no `node_type` field and no `jurisdiction`
+///   field; both are dropped at the mint boundary.
+///
+/// RFC-0959 IA-7 also states `node_type` "remains unchanged as persisted
+/// storage layout", but it appears in no migration in the tree and in neither
+/// `Ask` nor `AskRow`. See mission
+/// `rfc-0959-defines-one-ask-and-the-code-has-two-with-different-fields`,
+/// which enumerates the three declared fields lost between this type and
+/// `Ask`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AskUnsignedPayload {
     /// Asker (publisher) DID (RFC-0009 §Identity Key Format).
     pub asker_did: AskerDid,
-    /// NodeType of the asker (RFC-0009 §Node; mirrored locally from
-    /// `octo_wallet::node::NodeType` to avoid the wallet dep).
+    /// NodeType of the asker (mirrored locally from
+    /// `octo_wallet::node::NodeType` to avoid the wallet dep). The RFC-0009
+    /// §Node taxonomy this cited was removed 2026-10-07 and its role
+    /// projection moved to RFC-0871; see the type-level note on this field's
+    /// actual role.
     pub node_type: NodeType,
     /// Model reference — uses `ModelRef` struct form `{namespace, family,
     /// version?}` per RFC-0959 §Data Structures. Stored as the wire string

@@ -116,7 +116,12 @@ fn ask_publish_rejects_oversize_nonce() {
         .success();
 
     // 64 hex chars = 32 bytes (RFC-0959 requires 16 bytes / 32 hex chars).
-    let long_hex = "8c3e6f4b2a1d9e7c5f8b3a6d9c2e5f8b1a4d7c0e3f6b9a2d5c8e1f4b7a0d3c6f"; // 63 chars (odd)
+    // This trailing note previously read "63 chars (odd)", contradicting the
+    // line above it. The literal is 64 chars and decodes cleanly to 32 bytes,
+    // so the test does exercise the oversize path. Odd-length input is a
+    // different case: `hex::decode` rejects it before the length check, with
+    // an `invalid --nonce-hex` error rather than this one.
+    let long_hex = "8c3e6f4b2a1d9e7c5f8b3a6d9c2e5f8b1a4d7c0e3f6b9a2d5c8e1f4b7a0d3c6f";
     octo_wallet()
         .args([
             "ask",

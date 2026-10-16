@@ -3328,8 +3328,10 @@ dependencies = [
 [[package]]
 name = "octo-determin"
 version = "0.1.0"
-source = "git+https://github.com/CipherOcto/cipherocto?branch=next#dfab8f25cdb575b6d81f07a9f81bf12023c60204"
+source = "git+https://github.com/CipherOcto/cipherocto?branch=next#d6c9e2dd1f0eece6ec633157f2422746fd409d6c"
 dependencies = [
+ "blake3",
+ "borsh",
  "hex",
  "num-bigint",
  "num-integer",

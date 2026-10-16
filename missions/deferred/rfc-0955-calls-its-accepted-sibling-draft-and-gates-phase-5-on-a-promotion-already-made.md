@@ -13,6 +13,54 @@ metadata:
 
 # Mission `rfc-0955-calls-its-accepted-sibling-draft-and-gates-phase-5-on-a-promotion-already-made`
 
+## How far this spreads: it does not, and I checked
+
+The obvious next question is whether the version-label-versus-status problem is
+corpus-wide, which would make it a tooling matter rather than a two-document one.
+I measured it, and the answer is **no**.
+
+Of **148** Accepted RFCs detected, exactly **one** has no non-draft version row
+anywhere in its Version History: RFC-0955-R1. Every other Accepted RFC that
+carries a `-draft` label also carries a promotion row that supersedes it. RFC-0955
+itself, which is the other half of this finding, is internally consistent on its
+own labels.
+
+So this is a single-document defect that happens to have a second document
+describing it wrongly. That is worth saying plainly, because the natural reading
+of the finding above — two Accepted RFCs contradicting each other in a corpus of
+148 — sounds much larger than it is.
+
+### A first attempt that produced two false positives
+
+The measurement is only trustworthy because the first version of it was wrong. I
+initially took the **last** row of each Version History table as the newest and
+flagged three documents: RFC-0955-R1 plus RFC-0012-v3 and RFC-0014-v3.
+
+Both of the extra two are correct. Their tables list a `v3.0.0` "Promoted Draft →
+Accepted" row alongside a historical `v3.0.0-draft` row, and because their tables
+run newest-first, the draft row landed last and looked like the newest version.
+Nothing was wrong with either document.
+
+The corrected test asks whether **any** row carries a non-draft label, which does
+not depend on position at all.
+
+### Why a lint here is harder than it looks
+
+The same episode is a caution for whoever writes the check. Version History
+tables in this corpus are **not** ordered consistently:
+
+- RFC-0012-v2 and RFC-0014-v2 run newest-first, opening on `v2.0.0-draft` and
+  closing on `v2.0.0` across 28 rows.
+- RFC-0012-v3 and RFC-0014-v3 carry two rows whose order cannot be settled by
+  inspection — `v3.0.0` and `v3.0.0-draft`, same date, and a draft cannot
+  meaningfully postdate its own promotion.
+
+So "newest row" is not a position any lint can rely on. The check that would
+catch RFC-0955-R1 has to be _absence_-based — does a non-draft row exist at all —
+rather than _position_-based. That is a small design constraint, but it is the
+difference between a check that works on one document and one that produces
+false positives on four.
+
 ## Status
 
 Deferred. A status correction, a version-history label, a duplicated paragraph,
@@ -258,6 +306,41 @@ print("f64 sum != 1.0:", fails, f"({100*fails/total:.1f}%)")
 print("RFC example 30/25/45 exact:", (30/100.0)+(25/100.0)+(45/100.0) == 1.0)
 print("6/57/37 gives:", repr(6/100.0 + 57/100.0 + 37/100.0))
 PY
+
+# How far the version-label problem spreads.
+# CAUTION: do NOT assume the last Version History row is the newest. Tables are
+# ordered inconsistently corpus-wide, and assuming so yields false positives.
+# The robust test is absence-based: does ANY row carry a non-draft label?
+python3 - <<'ENUM'
+import re, pathlib
+
+bad = []
+accepted = 0
+for p in sorted(pathlib.Path('rfcs').rglob('*.md')):
+    lines = p.read_text(encoding='utf-8', errors='replace').splitlines()
+    head = "\n".join(lines[:40])
+    if not (re.search(r'^## Status', head, re.M) and 'Accepted' in head[:2500]):
+        continue
+    accepted += 1
+    rows, in_vh = [], False
+    for ln in lines:
+        if re.match(r'^#+\s*Version History', ln):
+            in_vh = True
+            continue
+        if in_vh and re.match(r'^#+\s', ln):
+            break
+        if in_vh and ln.strip().startswith('|'):
+            rows.append(ln)
+    labels = [r.split('|')[1].strip() for r in rows[2:] if '|' in r]
+    if labels and not any(re.search('draft', x, re.I) is None for x in labels):
+        bad.append(p)
+
+print("Accepted RFCs detected:", accepted)
+print("with no non-draft version row at all:", len(bad))
+for b in bad:
+    print("   ", b)
+ENUM
+# 148 detected, 1 flagged: RFC-0955-R1
 ```
 
 ## Cross-references

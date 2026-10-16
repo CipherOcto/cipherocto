@@ -189,6 +189,24 @@ impl HolderRecord {
     /// `ttl_millis_unix` is the credential's expiry in MILLISECONDS.
     /// R20-N3 fix: `buyer_holder_pub` parameter — `holder_pub` column is
     /// NOT NULL and the BearerCapsule does not carry it; must be plumbed in.
+    ///
+    /// **The capsule's `seller_signature` is not verified, and never has
+    /// been.** This reads `bearer_capsule_hash` into `cap_root_hash` and
+    /// takes `holder_did` and `ask_id` from the caller, so a capsule with a
+    /// forged or absent seller signature produces an identical
+    /// `HolderRecord`.
+    ///
+    /// That is not a hidden gap: [`BearerCapsule`] is an explicitly
+    /// documented structural stub, and mission 0959-a1 owns the real type
+    /// with its X25519 + ChaCha20-Poly1305 + Ed25519 semantics. This note
+    /// exists because the parameter list reads as though authentication
+    /// happened, and a future caller wiring this up could reasonably assume
+    /// it did. Today the constructor has no production caller.
+    ///
+    /// Verified tree-wide: every reference to `seller_signature` is a
+    /// declaration, a `Debug` redaction, a test fixture, or a doc comment.
+    /// See mission `a-signed-ask-does-not-prove-who-published-it` for the
+    /// same signature-verification class on the Ask path.
     pub fn from_bearer(
         bearer: &BearerCapsule,
         buyer_holder_pub: &[u8],

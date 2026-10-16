@@ -81,6 +81,17 @@ uv.lock
 **/target/
 **/Cargo.lock
 
+# ...except the root workspace lockfile, which IS tracked.
+#
+# Without it every CI checkout resolves from scratch, and a fresh resolve can
+# be impossible: `zip` 0.6.x (required by `cairo-vm`, which every version
+# requires non-optionally) has been yanked from crates.io in its entirety, so
+# there is no version left to select. A lockfile already pinning a yanked
+# version keeps building fine -- cargo only refuses to *select* a yanked
+# version, it does not invalidate one that is already locked. Sub-workspace
+# lockfiles stay ignored; only this one is needed.
+!/Cargo.lock
+
 # Telegram MTProto adapter: config files containing bot tokens,
 # api_hash, phone numbers, 2FA passwords, or session auth_keys.
 # Recommended pattern: uncomment to enforce.

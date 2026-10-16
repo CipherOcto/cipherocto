@@ -89,8 +89,15 @@ uv.lock
 # there is no version left to select. A lockfile already pinning a yanked
 # version keeps building fine -- cargo only refuses to *select* a yanked
 # version, it does not invalidate one that is already locked. Sub-workspace
-# lockfiles stay ignored; only this one is needed.
+# lockfiles stay ignored, with two exceptions below.
 !/Cargo.lock
+
+# `crates/quota-router-pyo3` is excluded from the workspace on purpose (its
+# `full` feature pulls pyo3 into feature unification and breaks linking for
+# other members), so it resolves as its own workspace and cannot see the root
+# lockfile. CI builds its wheel with maturin, which resolves it standalone, so
+# without this lockfile that build cannot resolve either.
+!/crates/quota-router-pyo3/Cargo.lock
 
 # Telegram MTProto adapter: config files containing bot tokens,
 # api_hash, phone numbers, 2FA passwords, or session auth_keys.

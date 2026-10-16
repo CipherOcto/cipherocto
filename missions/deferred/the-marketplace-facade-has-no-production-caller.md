@@ -1,16 +1,48 @@
 ---
 name: the-marketplace-facade-has-no-production-caller
-description: "RFC-0900 is Accepted and its v1.1 history records Gaps 5 and 7 as implemented in crates/quota-router-core::marketplace. Nothing in the workspace calls the Marketplace facade outside tests. The live request path selects providers through scorer.rs and ProviderCapacity, never through the marketplace, so the module is fully tested and entirely unreachable."
+description: "RFC-0900 is Accepted and its v1.1 history records Gaps 5 and 7 as implemented in crates/quota-router-core::marketplace. Nothing in the workspace calls the Marketplace facade outside tests. The live request path selects providers through scorer.rs and ProviderCapacity, never through the marketplace, so the module is fully tested and entirely unreachable. v1.1: RFC-0918 adds a second one. task_market is fully built per its own Phase 1 checklist, all five items verified, and also has zero production callers, so RFC-0918 stacks an unreachable market on top of the already-unreachable one."
 metadata:
   node_type: mission
   type: research
   created: 2026-10-15T00:00:00.000Z
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0900
 ---
 
 # Mission `the-marketplace-facade-has-no-production-caller`
+
+## v1.1 — a second unreachable market module, stacked on the first
+
+RFC-0918 §Version History v1.1 records Phase 1 as implemented:
+
+> Phase 1 (Core Market) implemented as `crates/quota-router-core::task_market`
+> (Gap 6). ... Order book reuses `marketplace::orderbook::OrderBook<TaskSpec>`
+> (Gap 5.1). Escrow layer uses `TaskEscrow` wrapping `marketplace::escrow::Escrow`
+> (Gap 5.2). Slashing reuses `marketplace::slashing::SlashingLedger` (Gap 5.3).
+
+I verified all five Phase 1 items independently. Every one is real:
+`task_market::orders::TaskMarket`, `task_market::orders::TaskSpec`,
+`task_market::escrow::TaskEscrow`, `task_market::slashing::TaskMarketSlashing`,
+and `match_top`. The module has its own escrow, slashing and dispute files and a
+substantive test suite.
+
+**And it has zero production callers.** Outside its own directory, the only
+references anywhere in `crates/` are `pub mod task_market;` in `lib.rs` and
+`crates/quota-router-core/tests/task_market.rs`. Nothing in `octo-cli`, nothing
+in any other crate. The control search for `marketplace::` does return real
+production uses, so the absence is real and not a broken search.
+
+This makes the shape worse rather than different. **RFC-0918's task market wraps
+the already-unreachable marketplace in a second unreachable module.** Reaching
+either one is the same amount of work, and both are fully tested. Neither
+compounds into anything a user can exercise.
+
+RFC-0918's §Implementation Phases is also the best-documented phase table in the
+family: five `[x]` items in Phase 1, three unchecked phases, and the checkboxes
+agree exactly with the v1.1 history row. **The documentation here is exemplary** —
+which is what makes the reachability worth stating plainly rather than as a
+defect in the document.
 
 ## Status
 
@@ -109,6 +141,31 @@ grep -rn 'marketplace\|Marketplace' --include=*.rs \
 # what selection actually runs on
 grep -rn 'fn score_provider\|fn filter_capacity' --include=*.rs \
   crates/quota-router-core/src/node/scorer.rs
+
+# --- v1.1: the second unreachable market ---
+
+# RFC-0918 v1.1 claims Phase 1 landed. All five items verify:
+ls crates/quota-router-core/src/task_market/
+grep -rn 'pub struct TaskMarket\b\|pub struct TaskSpec\b' \
+  crates/quota-router-core/src/task_market/orders.rs
+grep -rn 'pub struct TaskEscrow\b' crates/quota-router-core/src/task_market/escrow.rs
+grep -rn 'TaskMarketSlashing' crates/quota-router-core/src/task_market/slashing.rs | head -1
+grep -rn 'fn match_top' crates/quota-router-core/src/task_market/orders.rs
+
+# ...and it has no caller. Only the mod declaration and the test file.
+grep -rn --include=*.rs 'task_market' crates/ \
+  | grep -v 'crates/quota-router-core/src/task_market/'
+grep -rn -E 'task_market|TaskMarket' crates/octo-cli/src/
+# empty
+
+# CONTROL: the same search finds real production uses of `marketplace`,
+# so the zero above is real rather than a broken pattern
+grep -rn --include=*.rs 'marketplace::' crates/ \
+  | grep -v 'crates/quota-router-core/src/marketplace/' | head -2
+
+# and the phase table is honest about what did not ship
+grep -nE '^- \[ \]' rfcs/accepted/economics/0918-inference-task-market.md | wc -l
+# 9 unchecked, matching the "Phases 2-4 remain future work" history row
 ```
 
 ## Cross-references

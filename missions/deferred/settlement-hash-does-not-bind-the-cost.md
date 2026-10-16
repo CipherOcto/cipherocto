@@ -5,7 +5,7 @@ metadata:
   node_type: mission
   type: research
   created: 2026-10-15T00:00:00.000Z
-  v: "1.1"
+  v: "1.2"
   depends_on:
     - RFC-0959
     - RFC-0909
@@ -23,6 +23,30 @@ measurement probes were removed and the tree matches its prior state.
 
 This is the highest-severity finding of the marketplace audit, and the
 first one where a **live production path** carries the defect.
+
+## v1.2 — a surface that binds cost already exists, and is not on the live path
+
+The recommendation below reads "bind `cost` into the settlement hash, and
+this needs an RFC decision". That understates how settled the question is.
+**RFC-0959-v28 specifies a ten-field body hash that binds `cost` — with its
+scale as a separate byte — and it is implemented correctly** in
+`quota-router-sm-engine`, with a domain separator and a green determinism
+test.
+
+It is unreachable from the live path for one reason: `quota-router-cli` does
+not depend on `quota-router-sm-engine`. So the open question is not "what
+should the preimage be" — it is written down and built — but whether the CLI
+should gain that dependency or the body hash should move to a crate both can
+reach.
+
+A fourth construction also exists: a private helper in `anti_fraud` that
+claims in its doc comment to mirror the envelope hash and does not, backing
+an invariance test that therefore cannot fail on a production divergence.
+
+Both surfaces, the dependency evidence, and three of the four constructions
+are worked through in
+`the-settlement-hash-that-binds-cost-is-built-and-not-on-the-live-path`.
+This mission's measurements are unaffected.
 
 ## v1.1 — the omission is larger than cost, and worse
 

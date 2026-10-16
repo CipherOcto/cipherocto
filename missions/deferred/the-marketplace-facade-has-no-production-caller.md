@@ -21,6 +21,18 @@ tested. What follows is a statement about **reachability**, recorded so the
 distinction between "implemented and tested" and "in the request path" is not
 lost.
 
+**Re-verified.** Several later missions in this audit cite this one as the
+standing caveat that makes their findings latent, so the claim was re-checked
+independently rather than carried forward. Two sweeps, both excluding test
+directories and the module's own tree:
+
+```text
+Marketplace::      -> 3 hits, all doc comments in quota-router-storage
+Marketplace (type) -> 3 hits, all comments in octo-reputation
+```
+
+Zero calls. The claim stands.
+
 ## Finding
 
 `Marketplace` and its methods have **no production caller** anywhere in the

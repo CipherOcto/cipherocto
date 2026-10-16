@@ -1,11 +1,11 @@
 ---
 name: replay-defense-is-a-no-op-in-the-default-cli-configuration
-description: "quota-router settle-replay opens a fresh in-memory consumed_receipt_index on every invocation unless --db-path is given, so the same envelope verifies successfully an unlimited number of times in the default configuration while printing verify OK. Measured by running the real binary twice on one envelope file. The mechanism is sound: the second run against a persistent --db-path is correctly rejected as a replay. Separately, contains_nonce and contains_settlement_hash fail open, returning not-present when the query errors."
+description: "quota-router settle-replay opens a fresh in-memory consumed_receipt_index on every invocation unless --db-path is given, so the same envelope verifies successfully an unlimited number of times in the default configuration while printing verify OK. v1.2 withdraws this mission's own claim that the mechanism is sound. It is not: the index is keyed solely on the envelope nonce, and the nonce is an unconstrained field its author supplies, so the same economic event replays indefinitely by varying it. Measured on the built binary with a persistent --db-path, the strongest configuration available: three submissions of an identical event (same ask_id, axes_consumed, cost, timestamp, holder_did) differing only in nonce all returned verify OK with index_len growing 1, 2, 3 and zero rejections. The RFC's design assumes only the router can mint an envelope, since SettlementEnvelope has no signature field that assumption does not hold. Separately, contains_nonce and contains_settlement_hash fail open, returning not-present when the query errors."
 metadata:
   node_type: mission
   type: research
   created: 2026-10-15T00:00:00.000Z
-  v: "1.1"
+  v: "1.2"
   depends_on:
     - RFC-0959
 ---
@@ -19,8 +19,15 @@ breaking signature change. Neither is the auditor's to make. Evidence
 measured against the real binary; the measurement probes were removed and
 the tree matches its prior state.
 
-**v1.1** withdraws a phantom section citation this mission introduced.
-See the note in §Finding.
+**v1.1** withdrew a phantom section citation this mission introduced. See
+the note in §Finding.
+
+**v1.2 withdraws this mission's own claim that "the mechanism is sound".** It
+is not sound against any replay that is not byte-identical, because the only
+thing it indexes is a nonce the envelope's author chooses. The strongest
+available configuration — a persistent `--db-path` — still accepts an
+unbounded number of settlements for one economic event. See
+§Replay defense keys on a field the author controls below.
 
 ## Finding
 
@@ -78,8 +85,66 @@ verify: OK (hash matches + nonce inserted)
 Error: settle_replay failed: nonce already consumed (replay)
 ```
 
-So the replay check itself is correct. What is broken is that the
-default selects a store which makes the check vacuous.
+So against byte-identical resubmission the check is correct, and what is
+broken in the default is that it selects a store which makes even that
+vacuous.
+
+That framing was the limit of the original finding, and v1.2 shows it was
+too generous.
+
+## Replay defense keys on a field the author controls
+
+`ConsumedReceiptIndex` is a `HashMap<[u8; 32], ()>` keyed on the envelope's
+`nonce`. `nonce` is a plain field of `SettlementEnvelope`, supplied by
+whoever authors the envelope, and nothing constrains it. `settle` recomputes
+`settlement_hash` over whatever JSON it is handed, so changing the nonce
+yields a valid hash for an otherwise unchanged envelope.
+
+Measured on the built binary against **one persistent store** — the strongest
+configuration the CLI offers, and the one the v1.0/v1.1 measurements credit
+with working:
+
+```text
+# three envelopes, identical except nonce; each pre-stamped by `settle`
+verify: OK (hash matches + nonce inserted)   nonce=09..09   index_len = 1   exit=0
+verify: OK (hash matches + nonce inserted)   nonce=01..01   index_len = 2   exit=0
+verify: OK (hash matches + nonce inserted)   nonce=02..02   index_len = 3   exit=0
+```
+
+Same `ask_id`, same `axes_consumed`, same `cost`, same `timestamp_unix`, same
+`holder_did` in all three. Three different `settlement_hash` values, because
+the nonce is bound into the hash. Zero rejections. The nonce is not a replay
+_key_; it is a replay _escape hatch_.
+
+RFC-0959 does state the property it wants, in its acceptance criteria: "Same
+`(event_tuple, nonce)` from same router MUST yield distinct `receipt_id`;
+consumed-receipt index rejects duplicates deterministically" (G6). Note what
+that guarantee is about — it is scoped to an _identical_ `(event, nonce)`
+pair. It presupposes that a nonce is minted once per event by the party
+authorising the settlement, and that nobody else can produce an envelope at
+all.
+
+That presupposition fails here, and it fails because of a separate finding:
+**`SettlementEnvelope` has no signature field.** There is no router
+signature on the envelope, so there is no party whose authority constrains
+which nonces can be minted for a given event. Anyone can author an envelope
+for any event and generate as many nonces as they like.
+
+So the three defects compose into one:
+
+1. no signature on the envelope — anyone can author one;
+2. the hash binds the nonce, and `settle` recomputes it — so a fresh nonce
+   is trivially self-certifying;
+3. replay defense keys on that nonce — so a fresh nonce is also a fresh,
+   unchallenged settlement for the same event.
+
+Combined with the payee not being bound into the hash (mission
+`settlement-hash-does-not-bind-the-cost`), each of those settlements can also
+name a different recipient while carrying a hash that matches the original.
+
+This is why "the mechanism is sound" was wrong. The mechanism is sound only
+against an attacker who resubmits bytes verbatim, which is the weakest
+adversary worth defending against.
 
 ## The output says the opposite of the truth
 
@@ -173,6 +238,20 @@ exist — the only caller in the tree is `verify_and_insert`.
 - Should the RFC's replay-defense requirement be restated so that a
   verifier which cannot persist state does not present itself as a
   verifier?
+- **The load-bearing question, now that the nonce is known to be
+  author-controlled:** what makes a nonce unforgeable? As written, nothing.
+  Either the envelope gains a signature so only the settling router can mint
+  one, or the replay key moves off an author-supplied field and onto
+  something derived from the economic event (an RFC-0959 `receipt_id`,
+  which is specified but not implemented on this surface — see
+  `the-settlement-receipt-has-no-receipt-id-and-two-disjoint-stacks-exist`).
+  Persisting the index, which the v1.0 and v1.1 findings are about, does not
+  help by itself: a persistent index of attacker-chosen nonces still accepts
+  every replay.
+- G6 as written is scoped to an identical `(event_tuple, nonce)` pair and so
+  cannot catch this. Should it be restated over the _event_ rather than the
+  pair, or should uniqueness of nonce-per-event become an enforced
+  precondition rather than an assumption?
 
 ## Reproduction
 

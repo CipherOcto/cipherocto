@@ -5,7 +5,7 @@ metadata:
   node_type: mission
   type: research
   created: 2026-10-16T00:00:00.000Z
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0900
     - RFC-0959
@@ -119,6 +119,19 @@ requirement: a list of things that must never be logged. A privacy contract
 with no implementation is not a missing feature so much as an unenforced
 promise, and the `// - Wallet addresses (use hash instead)` line in particular
 asks for a hashing helper that a reader would reasonably expect to find.
+
+## v1.1 — the slash ledger section is sound, but its anchor is unreachable
+
+The section below is the best-specified part of RFC-0900 and it is implemented
+as written. One qualification belongs with that praise: it anchors itself twice
+to **§20.3 Model B**, and RFC-0900 has no numbered sections at all. §20.3 is a
+section of `docs/reviews/`, which `.gitignore` excludes in its entirety and
+which BLUEPRINT mandates be ephemeral and uncommitted. The normative anchor for
+this substrate specification is therefore invisible to any reader who does not
+happen to have that scratchpad on their machine.
+
+Worked through in `rfc-0900-anchors-its-substrate-specification-to-a-gitignored-scratchpad`.
+The implementation findings below stand; the citation does not resolve.
 
 ## The slash ledger substrate, which is sound
 

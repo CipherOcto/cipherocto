@@ -5,7 +5,7 @@ metadata:
   node_type: mission
   type: research
   created: 2026-10-16T00:00:00.000Z
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0960
     - RFC-0967
@@ -36,6 +36,18 @@ file _only_ inside those eleven table cells.
 
 So for a third of the registry, the traceability the section exists to provide
 terminates in a round that was never recorded.
+
+## Wider than this table
+
+The R25 citations are the visible part of a larger gap. RFC-0960's Version
+History states that **R1 through R28** multi-round review closed with R28 a
+clean round, and the implementation mission repeats that figure — but only
+sixteen round sections exist. R17 through R28 are recorded nowhere, so the
+clean-round claim that justified promotion cannot be inspected either.
+
+Worked through in `rfc-0960-closes-its-review-at-r28-and-records-sixteen-rounds`,
+which also covers §Reference Implementation naming a companion crate that does
+not exist. This mission stays scoped to the registry.
 
 ## The eleven
 

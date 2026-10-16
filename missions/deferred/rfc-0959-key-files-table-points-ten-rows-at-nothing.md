@@ -109,6 +109,40 @@ sibling mission that had made the identical error.
 So the doc is half-right, and the wrong half is the one about loading a file
 that does not exist.
 
+## §Implementation Phases repeats the same eleven paths as unchecked boxes
+
+The phase tracker lists the same files as a to-do list, and it is stale in both
+directions at once.
+
+**Phase 1 is substantively closed and recorded as open.** All three unchecked
+boxes are conditions that are now met:
+
+| Phase 1 box                                            | Reality           |
+| ------------------------------------------------------ | ----------------- |
+| Await RFC-0959 acceptance                              | Accepted          |
+| Await RFC-0126, RFC-0853, RFC-0009, RFC-0957 promotion | all four Accepted |
+| RFC-0862 prerequisite satisfied                        | Accepted          |
+
+Phase 2 is headed "mission implementation **gated on Phase 1 closure**". It is
+gated on a gate that is open, while eleven boxes beneath it sit unticked — most
+of them for work that has in fact landed, in `quota-router-storage` rather than
+`octo-core`.
+
+Phase 2 also names eleven specific tests. Seven exist and are green:
+`settlement_hash` replay, `ask_id` determinism, `ConsumedReceiptIndex` replay,
+`compute_cost` overflow guard, cache classification, the `CACHE_KEY_DOMAIN`
+const-assert, and `octow_amount_distinct_newtype` — which covers the amount
+conversion direction that Test vector 4 names but cannot compile, checking
+1 OCTO-W to 1,000,000 micro, the round trip back, and rejection of an unaligned
+value. Two cannot exist as written: the jurisdiction gate is absent and a
+separate mission measures an EU-restricted Ask served to a US caller, and the
+cost-tampering detection test is impossible because the hash is cost-blind. The
+remaining one, `cache_key_hash` determinism, exists as a single relational pair
+rather than the property the RFC asks for.
+
+So the tracker records neither the completed work nor the unmet gates. It is the
+same failure as the table above it, in checkbox form.
+
 ## An absolute path from someone's home directory
 
 One row is an absolute, machine-local path:

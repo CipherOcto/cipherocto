@@ -193,8 +193,12 @@ ls rfcs/accepted/networking/reviews/ 2>/dev/null || echo "target directory absen
   — the RFC-0900 half, in detail; this mission shows it is a corpus pattern and
   not a one-off
 - Mission `the-section-cite-linter-checks-token-shape-and-never-resolution` —
-  the class. A linter that resolved cites would find none of this either, since
-  every instance points at a real file that simply is not in the repository
+  the _hygiene_ linter, which does not resolve. **Correction to an earlier draft
+  of this line:** I wrote that no mechanism could find this. That was wrong.
+  `scripts/lint-rfc-anchors.py` does resolve anchors, is wired into
+  `.github/workflows/lint.yml`, and its `--corpus` mode measures exactly this
+  exposure. See `the-anchor-linter-is-green-locally-and-red-in-a-clean-checkout`
+  (open) for the CI consequence
 - Mission `rfc-0959-v27-checks-its-own-substrate-claims-and-the-other-three-do-not`
   — v27's discipline, and the reason RFC-0959 appears in Grade 1 rather than
   Grade 3

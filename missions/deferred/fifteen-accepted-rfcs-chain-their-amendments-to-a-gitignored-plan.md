@@ -193,8 +193,11 @@ grep -niE 'commit [0-9a-f]{7}|rev ?= ?\"[0-9a-f]{7}|pinned at [0-9a-f]{7}' \
 - Mission `rfc-0900-anchors-its-substrate-specification-to-a-gitignored-scratchpad`
   — RFC-0900's Grade 3 anchor into the same class, on the review tree
 - Mission `the-section-cite-linter-checks-token-shape-and-never-resolution` —
-  still would not catch any of this; every instance names a file that exists on
-  the author's machine
+  the _hygiene_ linter, which validates token shape and does not resolve.
+  **Correction to an earlier draft of this line:** I wrote that there was no
+  mechanism for this. That was wrong. `scripts/lint-rfc-anchors.py` resolves
+  anchors and its `--corpus` mode counts the ones that resolve only in
+  untracked files — 548 named and 556 bare-number, measured
 - Mission `rfc-0959-v27-checks-its-own-substrate-claims-and-the-other-three-do-not`
   — v27 discloses what is unconfirmed, which is the practice whose absence here
   produced Grade C

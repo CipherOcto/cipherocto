@@ -5,7 +5,7 @@ metadata:
   node_type: mission
   type: research
   created: 2026-10-16T00:00:00.000Z
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0959-A1
     - RFC-0862
@@ -51,6 +51,41 @@ So when the linter sees `§Transaction`, it does not know whether the claim was
 `§Transaction` of RFC-0862, of RFC-0959, or of a document that does not exist.
 Resolution is not a rule that was forgotten; it is not expressible in what the
 token contains.
+
+## v1.1 — correction: a resolution linter exists, is CI-wired, and measures this
+
+Everything above is scoped to `scripts/lint_section_cites.sh`, and every
+statement about it holds. But an earlier draft of this mission generalised it
+into "nothing in the toolchain can see this", and **that was wrong.**
+
+`scripts/lint-rfc-anchors.py` exists, resolves section anchors, and is wired
+into `.github/workflows/lint.yml`. Its own comments describe the exact hazard
+this mission was written about:
+
+> A filesystem walk includes gitignored local scratchpads. In this repository
+> that is 711 files under `docs/` contributing roughly 13,460 [headings]
+
+It also has a `--corpus` flag, documented as reporting-only so it cannot turn a
+gate red or green. Run here, it reports:
+
+```text
+resolving ONLY in untracked files, named sections: 548
+resolving ONLY in untracked files, bare numbers : 556
+```
+
+So the mechanism I said did not exist does exist, and someone had already built
+it and written down the problem it causes.
+
+The finding that survives, restated honestly: `lint_section_cites.sh` is a
+**hygiene** linter and cannot resolve, because its token carries no RFC number.
+Resolution is a separate concern with a separate tool that already covers it.
+The two open missions `the-anchor-linter-is-green-locally-and-red-in-a-clean-checkout`
+and `rfcs-cite-sections-of-documents-the-repository-deliberately-does-not-track`
+are the authoritative records for that, and this mission should not be read as
+contradicting them.
+
+I also filed two missions on this class before finding those two. They are
+corrected in place and cross-reference them.
 
 ## All three rules are form checks
 

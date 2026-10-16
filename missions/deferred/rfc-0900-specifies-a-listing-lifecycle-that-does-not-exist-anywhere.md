@@ -1,11 +1,11 @@
 ---
 name: rfc-0900-specifies-a-listing-lifecycle-that-does-not-exist-anywhere
-description: "RFC-0900 section State Machines draws three lifecycle diagrams. The purchase and dispute machines are implemented, with their gaps documented in the escrow enum's own doc comments. The listing lifecycle is not: ListingState appears in no crate, and the marketplace module holds escrow, orderbook, scoring, slashing and reputation compatibility with no listing entity at all. Two further internal contradictions sit in the same document. Section Security lists a stake requirement as a deployed security mechanism while Open Questions still asks what the minimum stake should be, and the code has no stake gate. The purchase diagram specifies a DISPUTED to REFUNDED transition while Open Questions asks how refunds work, and the escrow's Slashed variant carries no refund representation. The Observability section specifies a MarketTelemetry interface enumerating what must never be logged, and no telemetry struct exists in any crate. The slash ledger substrate in the same document is sound and is recorded here as such."
+description: "RFC-0900 section State Machines draws three lifecycle diagrams. The purchase and dispute machines are implemented, with their gaps documented in the escrow enum's own doc comments. The listing lifecycle is not: ListingState appears in no crate, and the marketplace module holds escrow, orderbook, scoring, slashing and reputation compatibility with no listing entity at all. Two further internal contradictions sit in the same document. Section Security lists a stake requirement as a deployed security mechanism while Open Questions still asks what the minimum stake should be, and the code has no stake gate. The purchase diagram specifies a DISPUTED to REFUNDED transition while Open Questions asks how refunds work, and the escrow's Slashed variant carries no refund representation. The Observability section specifies a MarketTelemetry interface enumerating what must never be logged, and no telemetry struct exists in any crate. The slash ledger substrate in the same document is sound at the storage layer and recorded here as such; its in-memory mirror block disagrees with the struct it mirrors on exactly the field the RFC had argued must be integer."
 metadata:
   node_type: mission
   type: research
   created: 2026-10-16T00:00:00.000Z
-  v: "1.1"
+  v: "1.2"
   depends_on:
     - RFC-0900
     - RFC-0959
@@ -120,6 +120,71 @@ with no implementation is not a missing feature so much as an unenforced
 promise, and the `// - Wallet addresses (use hash instead)` line in particular
 asks for a hashing helper that a reader would reasonably expect to find.
 
+## v1.2 — the in-memory mirror is wrong on the field the RFC argued hardest about
+
+v1.1 called this section sound. That verdict holds for the storage layer and
+every migration claim, all of which I re-verified independently. It does not
+hold for the **in-memory mirror**, the code block the RFC presents as the shape
+backing §Slashing Model. That block is wrong twice, and wrong on exactly the
+field the RFC had made an argument about.
+
+The RFC's storage invariant is explicit about why the loss column is an integer:
+
+> **`cumulative_loss_pct_micro` BIGINT** — not amount-bearing; encoded as
+> integer micro-percent (1e6) to keep the column Eq-comparable **without f64
+> round-trip ambiguity**. 500_000 = 50.0000%.
+
+That invariant **holds at the storage layer**. The migration declares
+`cumulative_loss_pct_micro BIGINT NOT NULL`, and the storage row type is
+`cumulative_loss_pct_micro: u64`. The DB comparison the RFC wanted is intact.
+
+The mirror block then specifies the in-memory shape as
+
+```rust
+cumulative_loss_pct_micro: u64,
+last_updated_unix: u64,
+```
+
+and the actual `ProviderStake` in `quota-router-core/src/marketplace/slashing.rs`
+has neither. It has `cumulative_loss_pct: f64`, and no `last_updated_unix` at
+all — six fields where the block specifies seven.
+
+So the f64 the RFC set out to avoid is present, just one layer up from where the
+RFC thought it was excluded. The row is read as
+`cumulative_loss_pct_micro as f64 / 1_000_000.0` and the permanent-ban test is
+`self.cumulative_loss_pct >= rules.permanent_ban_at`, both `f64`.
+
+Whether this is a live defect is a narrower question than it first looks, and
+worth answering exhaustively rather than by inspection. I tested the whole
+representable domain rather than the one boundary the RFC names. Over every
+`cumulative_loss_pct_micro` from 0 to 1,000,000:
+
+- `500_000 / 1e6 == 0.5` **exactly**, as the RFC's stated boundary requires.
+- **Zero** values below the threshold compare `>= 0.5` — no false ban.
+- **Zero** values at or above the threshold fail to compare `>= 0.5` — no missed
+  ban.
+- **Zero** values fail to round-trip through `f64` and back.
+
+So the `f64` is **behaviourally harmless across its entire domain**. The defect is
+narrower than it looks and should be recorded at its actual size: the RFC's
+in-memory block describes a struct that does not exist, and the type no longer
+carries the property that made it Eq-comparable and free of round-trip
+ambiguity. The comparison the f64 was meant to endanger produces correct answers
+for every input it can receive. This is a documentation and typing defect, not a
+correctness defect, and calling it a correctness defect would overstate it.
+
+**What does not change:** v1.1's finding about `chain_id` being a nullable column
+inside a UNIQUE index rather than a PK constraint still stands, and every v015
+step the RFC claims is present in the migration. The slash ledger remains the
+best-specified part of RFC-0900. This is a qualification of one code block, not
+a reversal of the section's verdict.
+
+`SlashingRules` was also re-checked while measuring this: `first_offense_penalty:
+0.10`, `offense_multiplier: 1.5` and `permanent_ban_at: 0.50` are all exactly as
+the RFC specifies. The implementation adds one field the RFC does not mention,
+`miss_rate_tolerance`, defaulted to `0.0`. That is an addition, not a
+contradiction.
+
 ## v1.1 — the slash ledger section is sound, but its anchor is unreachable
 
 The section below is the best-specified part of RFC-0900 and it is implemented
@@ -165,6 +230,11 @@ distinct in a unique index, so two rows with a NULL `chain_id` and the same
 `provider_id` would both be admitted. No code path reaches that — every
 `SlashLedgerRow` binds a `[u8; 32]` — so it is a schema weaker than the stated
 invariant rather than a live defect.
+
+**A second qualification, added in v1.2:** the section's _in-memory mirror_ block
+disagrees with the struct it mirrors on `cumulative_loss_pct_micro` / `f64`, and
+omits `last_updated_unix`. See §v1.2 above. The storage-layer verdict below is
+unaffected.
 
 ## What the owner should do
 
@@ -214,6 +284,43 @@ grep -n 'cross_chain_same_provider_two_distinct_rows' \
 grep -n 'does NOT expose a native Dqa driver' \
   rfcs/accepted/economics/0900-ai-quota-marketplace.md \
   crates/quota-router-storage/migrations/v015__chain_aware_slash_ledger.sql
+
+# v1.2 — storage layer is integer, as the RFC's invariant requires
+grep -n 'cumulative_loss_pct_micro' \
+  crates/quota-router-storage/migrations/v012__create_slash_ledger.sql
+grep -n 'pub cumulative_loss_pct_micro' \
+  crates/quota-router-storage/src/slash_store.rs
+
+# ...and the in-memory struct it mirrors is f64, with one field fewer
+awk '/^pub struct ProviderStake \{/,/^\}/' \
+  crates/quota-router-core/src/marketplace/slashing.rs \
+  | grep -oE '^    pub [a-z_]+' | tr -d ' '
+# 6 fields, cumulative_loss_pct (f64), no last_updated_unix
+
+# the conversion that reintroduces the f64 the RFC excluded
+grep -n 'cumulative_loss_pct_micro as f64' \
+  crates/quota-router-core/src/marketplace/slashing.rs
+grep -n 'self.cumulative_loss_pct >= rules.permanent_ban_at' \
+  crates/quota-router-core/src/marketplace/slashing.rs
+
+# the rule constants are exact as specified
+grep -nE 'first_offense_penalty: 0\.|offense_multiplier: 1\.5|permanent_ban_at: 0\.5' \
+  crates/quota-router-core/src/marketplace/slashing.rs
+
+# ...and the f64 is harmless across its WHOLE domain, not just the boundary.
+# Answer all four: exact boundary, no false ban, no missed ban, no round-trip loss.
+python3 - <<'PY'
+def d(n):
+    return n / 1_000_000.0
+
+print("boundary exact:", d(500000) == 0.5)
+print("false bans below threshold:", sum(1 for n in range(500000) if d(n) >= 0.5))
+print("missed bans at/above threshold:",
+      sum(1 for n in range(500000, 1000001) if not d(n) >= 0.5))
+print("round-trip losses:",
+      sum(1 for n in range(1000001) if round(d(n) * 1_000_000) != n))
+PY
+# expected: True / 0 / 0 / 0
 ```
 
 ## Cross-references

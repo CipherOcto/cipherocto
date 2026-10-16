@@ -1,11 +1,11 @@
 ---
 name: four-of-rfc-0959s-ten-implementation-assumptions-fail
-description: "RFC-0959 states ten Implementation Assumptions, IA-1 to IA-10, six of which name a verification. Four of the six fail. IA-6 fails by measurement, the CLI accepts and signs an Ask whose axis id is INPUT_TOKENS_PER_1K at exit 0, and is_snake_case has zero callers so the TOML half rejects nothing either. IA-10 fails, the named consumed_receipt_rebuild_determinism_test does not exist and the rebuild it covers does not exist. IA-5 fails, the Ask content address is BLAKE3 over serde_json rather than the RFC-0126 canonical_ser the invariant names, although that canonicalizer is implemented in octo-ident and used by other subsystems, so the risk IA-5 describes is live. IA-7 fails on both halves, and the protocol rule its missing RFC-0871 lint is written to forbid, an authorization decision taken from node_type alone, is present in the tree, unit-tested, and has zero production callers, so it is correct-until-wired. IA-9 passes, since declaring CACHE_KEY_DOMAIN as [u8; 32] is exactly the compile-time assertion the assumption asks for. IA-4 is met, but as a sequencing precondition it cannot fail. IA-1 through IA-3 are satisfied because their dependency RFCs are accepted."
+description: "RFC-0959 states ten Implementation Assumptions, IA-1 to IA-10, six of which name a verification. Four of the six fail. IA-6 fails on its CLI half by measurement: the CLI accepts and signs an Ask whose axis id is INPUT_TOKENS_PER_1K at exit 0. Its parser half passes and is covered by green tests, corrects an earlier v1.0 claim in this mission that is_snake_case had no callers and so the parser rejected nothing. IA-10 fails, the named consumed_receipt_rebuild_determinism_test does not exist and the rebuild it covers does not exist. IA-5 fails, the Ask content address is BLAKE3 over serde_json rather than the RFC-0126 canonical_ser the invariant names, although that canonicalizer is implemented in octo-ident and used by other subsystems, so the risk IA-5 describes is live. IA-7 fails on both halves, and the protocol rule its missing RFC-0871 lint is written to forbid, an authorization decision taken from node_type alone, is present in the tree, unit-tested, and has zero production callers, so it is correct-until-wired. IA-9 passes, since declaring CACHE_KEY_DOMAIN as [u8; 32] is exactly the compile-time assertion the assumption asks for. IA-4 is met, but as a sequencing precondition it cannot fail. IA-1 through IA-3 are satisfied because their dependency RFCs are accepted."
 metadata:
   node_type: mission
   type: research
   created: 2026-10-15T00:00:00.000Z
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0959
     - RFC-0126
@@ -41,7 +41,7 @@ one is a sequencing precondition that cannot fail.**
 | IA-3  | RFC-0957 reaches Accepted first                | `CLOSED`                                    | **satisfied**                    |
 | IA-4  | Stoolap fork branch is canonical persistence   | RFC-0862 sync test must pass                | precondition met; **not a test** |
 | IA-5  | canonical_ser version byte is `0x01`           | `canonical_ser_roundtrip_test`              | **fails**                        |
-| IA-6  | axis IDs are snake_case                        | parser rejects; **CLI rejects publish**     | **fails, measured**              |
+| IA-6  | axis IDs are snake_case                        | parser rejects; **CLI rejects publish**     | **parser passes, CLI fails**     |
 | IA-7  | `node_type` is a projection, not authorization | projection round-trip + lint                | **fails, both halves**           |
 | IA-8  | wholesale spread excluded from hash            | `Explicit:`; `node_revenue` table           | **vacuous — table absent**       |
 | IA-9  | keyed-hash keys are exactly 32 bytes           | const-assert                                | **passes**                       |
@@ -70,14 +70,24 @@ The assumption is that PricingAxis IDs are snake_case, with the blast radius
 "Axis-ID casing drift → `UnknownAxis` at compute_cost", and the test is that
 the parser rejects mixed-case IDs **and the CLI rejects publish**.
 
-Neither half holds. The validator exists:
+**The parser half passes. The CLI half fails.** v1.0 of this mission claimed
+both failed; that was wrong and is corrected here.
+
+The validator exists and is wired into the TOML loader:
 
 ```rust
-pub fn is_snake_case(s: &str) -> bool
+for ax in parsed.axes {
+    if !is_snake_case(&ax.id) {
+        return Err(AxisRegistryTomlError::NotSnakeCase(ax.id));
+    }
 ```
 
-and has **zero callers** outside its own module, so the parser rejects
-nothing. And the CLI accepts mixed case:
+with green tests `rejects_mixed_case_axis_id` and
+`rejects_kebab_case_axis_id` covering exactly the two cases the assumption names.
+My error was reading "zero callers outside its own module" as "no callers" —
+the loader that calls it _is_ the parser, and it lives in the same module.
+
+The CLI half fails by measurement:
 
 ```text
 $ octo-wallet ask publish --node-type wholesale --model openai/gpt-4 \
@@ -89,7 +99,10 @@ exit=0
 accepted axis id: INPUT_TOKENS_PER_1K
 ```
 
-The Ask is built, signed and emitted with an all-caps axis id.
+The Ask is built, signed and emitted with an all-caps axis id. The two halves
+disagree, which is the interesting part: **a registry loaded from TOML could
+never contain this id, while an Ask published through the CLI can.** The
+validator and the publisher enforce different rules about the same field.
 
 ### Why the blast radius is worse than stated
 
@@ -242,10 +255,12 @@ statement about where the work stopped.
 
 ## What the RFC owner should do
 
-- **IA-6**: should publish reject non-snake-case axis ids? If yes, wire
-  `is_snake_case` into the CLI and the parser, and decide whether the
-  registry's default-rate fallback should apply to an axis that was declared
-  but misspelled. The silent-settle behaviour is the more urgent half.
+- **IA-6**: should publish reject non-snake-case axis ids? The parser already
+  does, so this is only a CLI-side question — and the sharper version of it is
+  that the two paths enforce different rules about the same field. Separately,
+  decide whether the registry's default-rate fallback should apply to an axis
+  that was declared but misspelled. The silent-settle behaviour is the more
+  urgent half.
 - **IA-6**: if casing drift is meant to be loud, that is a change to the
   unknown-axis policy already recorded in
   `marketplace-advertised-price-ignores-default-rate-fallback`.
@@ -270,8 +285,10 @@ statement about where the work stopped.
 # the assumptions table
 grep -nE '\*\*IA-[0-9]+:\*\*' rfcs/accepted/economics/0959-ask-settlement-chain.md
 
-# IA-6: the validator has no callers, and the CLI accepts mixed case
-grep -rn 'is_snake_case' --include=*.rs crates/ | grep -v axis_registry_toml.rs
+# IA-6: the parser rejects mixed case (green tests), the CLI does not
+grep -n 'is_snake_case(&ax.id)' -B 2 \
+  crates/quota-router-storage/src/axis_registry_toml.rs
+cargo test -p quota-router-storage --lib axis_registry_toml
 ./target/debug/octo-wallet ask publish --node-type wholesale \
   --model openai/gpt-4 --ttl-unix 1900000000 --seed ./seed.bin \
   --axes INPUT_TOKENS_PER_1K:30000 --jurisdiction US \

@@ -5,13 +5,34 @@ metadata:
   node_type: mission
   type: research
   created: 2026-10-15T00:00:00.000Z
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0959
     - RFC-0009
 ---
 
 # Mission `the-ask-lifecycle-state-machine-has-no-representation-in-the-ask-type`
+
+## v1.1 — the parent RFC draws the same lifecycle, and neither record was linked
+
+RFC-0900 §State Machines has its own **Listing Lifecycle** diagram —
+`CREATED → ACTIVE → EXHAUSTED | CANCELLED` — and it has no representation
+either. `ListingState` appears in no crate, and the marketplace module
+holds escrow, orderbook, scoring, slashing and a reputation shim with
+no listing entity at all.
+
+So two accepted RFCs specify a listing lifecycle and neither the `Ask`
+nor a `Listing` type carries one. This mission recorded that from
+RFC-0959's side; `rfc-0900-specifies-a-listing-lifecycle-that-does-not-exist-anywhere`
+recorded it from RFC-0900's. Neither pointed at the other until now.
+
+The RFC-0900 diagram adds one state this mission's eight do not have:
+`EXHAUSTED: All prompts sold`. That is the clearest statement of what is
+missing — an Ask has a TTL and a rate table but no quantity and nothing
+to exhaust — and it is worth reading alongside `Published → Active`,
+because the soft-delay warm-up is unimplementable for the same
+underlying reason: the Ask does not carry the timestamps the transitions
+are written against.
 
 ## Status
 

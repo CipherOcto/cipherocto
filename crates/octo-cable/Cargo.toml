@@ -27,7 +27,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 futures = "0.3"
 
 # Noise NKpsk0_P256_AESGCM_SHA256 primitives.
-p256 = { version = "0.13", features = ["ecdh"] }
+p256 = { version = "0.14", features = ["ecdh"] }
 aes-gcm = "0.10"
 aes = "0.8"
 ctr = "0.9"

@@ -99,6 +99,13 @@ uv.lock
 # without this lockfile that build cannot resolve either.
 !/crates/quota-router-pyo3/Cargo.lock
 
+# `quota-router/` is likewise excluded and resolves standalone, and its test
+# job reaches `cairo-vm` through `quota-router-core -> zk-circuit ->
+# cairo-lang-executable`, which is the dependency that needs the yanked zip
+# release. Verified: without this lockfile its resolve fails with the yank
+# error, with it the resolve succeeds.
+!/quota-router/Cargo.lock
+
 # Telegram MTProto adapter: config files containing bot tokens,
 # api_hash, phone numbers, 2FA passwords, or session auth_keys.
 # Recommended pattern: uncomment to enforce.

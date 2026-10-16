@@ -53,7 +53,7 @@ a failure of it but are violations of the same rule:
 - bare `L<num>`, 130 instances in `.rs` files once all forms are counted,
   or 133 including `Cargo.toml`
 - `path.ext:NNN`, 117 instances in `.rs` files, as in
-  `crates/octo-network/src/dot/binding.rs:648`
+  `crates/octo-network/src/dot/binding.rs:NNN`
 
 ### rfcs/ was never covered at all
 
@@ -116,7 +116,7 @@ Stated plainly so the next person does not inherit it as verified:
   mission's own precedent is that a re-count at mission start is mandatory
   because an earlier draft of it was off by 102. The `path.ext:NNN` counts in
   particular are the least trustworthy, since that form also matches paths into
-  third-party dependencies such as `matrix-sdk-0.18.0/src/room/mod.rs:2958`,
+  third-party dependencies such as `matrix-sdk-0.18.0/src/room/mod.rs:NNN`,
   where the correct remedy may differ from a project file.
 
 ## Acceptance Criteria

@@ -35,8 +35,8 @@ same `Ask` type.
 Every reference to `MarketplaceIndex` outside its own file is the re-export:
 
 ```text
-crates/quota-router-storage/src/lib.rs:11   //! - [`marketplace`] — in-memory `MarketplaceIndex` ...
-crates/quota-router-storage/src/lib.rs:67   pub use marketplace::{MarketplaceIndex, ACTIVE_ASK_CAP};
+crates/quota-router-storage/src/lib.rs  (module doc)    //! - [`marketplace`] — in-memory `MarketplaceIndex` ...
+crates/quota-router-storage/src/lib.rs  (re-export)     pub use marketplace::{MarketplaceIndex, ACTIVE_ASK_CAP};
 ```
 
 Every other reference is inside `marketplace.rs`, and every one of those

@@ -29,7 +29,7 @@ it is the one that removes the safety net for the other three.
 is a reader:
 
 ```text
-commands.rs:633   SettlementEventRepository::open(db_path)   <- settle_list
+quota-router-cli/src/commands.rs   SettlementEventRepository::open(db_path)   <- settle_list
 ```
 
 `SettlementEventRepository::insert` — the only write method — has **no
@@ -81,10 +81,9 @@ that nothing was ever written to it.
 Before this commit:
 
 ```text
-cli.rs:122                  RFC-0959 §Event Sourcing
-commands.rs:630             RFC-0959 §Event Sourcing
-commands.rs:1221            RFC-0959 §Event Sourcing
-settlement_event_repo.rs:1  RFC-0959 §Event Sourcing
+quota-router-cli/src/cli.rs                    RFC-0959 §Event Sourcing
+quota-router-cli/src/commands.rs               RFC-0959 §Event Sourcing  (two sites)
+quota-router-storage/src/settlement_event_repo.rs   RFC-0959 §Event Sourcing
 ```
 
 `grep -rn "Event Sourcing" rfcs/accepted/economics/0959-ask-settlement-chain.md`

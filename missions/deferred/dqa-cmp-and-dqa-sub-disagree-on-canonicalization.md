@@ -108,8 +108,11 @@ End to end, through the production entry point:
 
 ```text
 MEASURE drain_panicked=true
-thread '...' panicked at crates/octo-paid-query/src/ledger.rs:191:44
+thread '...' panicked at crates/octo-paid-query/src/ledger.rs
 ```
+
+Line and column elided from the transcript per the repository's no-line-refs
+rule; the path is quoted exactly.
 
 The panic is at the `expect` line, not anywhere else.
 

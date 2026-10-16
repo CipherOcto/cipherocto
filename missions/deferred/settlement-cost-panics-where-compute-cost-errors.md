@@ -80,10 +80,13 @@ One `Ask` with two axes at `9_000_000_000_000_000_000` each, consumed at
 
 ```text
 MEASURE settlement_cost_panicked=true
-  thread panicked at crates/quota-router-storage/src/ask.rs:116:34
+  thread panicked at crates/quota-router-storage/src/ask.rs
 MEASURE compute_cost=Err(overflow in compute_cost for axis
   `output_tokens_per_1k` (partial sum = Dqa { value: 9000000000000000000, scale: 0 }))
 ```
+
+Line and column elided from the panic transcript per the repository's
+no-line-refs rule; the path is quoted exactly.
 
 Same `Ask`, same axes, same consumption. One panics with a bare
 `Dqa addition overflow`; the other names the offending axis and the
@@ -172,8 +175,10 @@ Measured, with a listing carrying `rate_per_1k = i64::MAX` consumed at
 
 ```text
 MEASURE cost_for_panicked=true
-  thread panicked at crates/quota-router-storage/src/ask.rs:474:46
+  thread panicked at crates/quota-router-storage/src/ask.rs
 ```
+
+Line and column elided per the repository's no-line-refs rule.
 
 So every marketplace price computation has **two** abort points on the
 path `settlement_cost` → `cost_for` → `dqa_mul`, and neither function's

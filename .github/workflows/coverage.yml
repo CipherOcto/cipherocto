@@ -32,6 +32,15 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
 
+    env:
+      # Line tables only (debug=1), not full debuginfo (debug=2).
+      # llvm-cov needs line mappings, not the complete debuginfo
+      # payload, and full debuginfo is the dominant consumer of both
+      # build disk and link-time RAM on a workspace this size. This is
+      # the same reasoning ci.yml already applies for the workspace
+      # build job.
+      CARGO_PROFILE_TEST_DEBUG: 1
+
     steps:
       - uses: actions/checkout@v7
 
@@ -83,14 +92,23 @@ jobs:
           # both). It is run separately below with
           # --no-default-features --features full, which avoids the
           # guard.
-          cargo llvm-cov --all-features --workspace \
+          # Runtime and compile parallelism are capped on purpose.
+          # `-j` bounds how many rustc/link processes are live at once,
+          # and `--test-threads` bounds how many test binaries' threads
+          # run at once. Peak RSS scales with both, and this job was
+          # losing the hosted runner ("the hosted runner lost
+          # communication with the server... starves it for CPU/Memory")
+          # partway through `cargo llvm-cov`. Neither knob changes which
+          # lines are covered; both only change how much is resident at
+          # a time, trading wall-clock for fitting in the runner.
+          cargo llvm-cov --all-features --workspace -j 2 \
             --exclude octo-adapter-telegram \
             --exclude octo-telegram-onboard \
             --exclude octo-telegram-onboard-core \
             --exclude octo-adapter-whatsapp \
             --exclude octo-whatsapp \
             --exclude quota-router-core \
-            --lcov --output-path lcov.info
+            --lcov --output-path lcov.info -- --test-threads 2
 
       - name: Generate coverage for quota-router-core
         run: |
@@ -99,8 +117,8 @@ jobs:
           # `litellm-mode` or `any-llm-mode` as features (it lists the
           # underlying deps directly), so `--features full` alone
           # avoids the compile_error! guard.
-          cargo llvm-cov --no-default-features --features full -p quota-router-core \
-            --lcov --output-path lcov-quota-router-core.info
+          cargo llvm-cov --no-default-features --features full -p quota-router-core -j 2 \
+            --lcov --output-path lcov-quota-router-core.info -- --test-threads 2
 
       - name: Upload to Codecov
         uses: codecov/codecov-action@v7

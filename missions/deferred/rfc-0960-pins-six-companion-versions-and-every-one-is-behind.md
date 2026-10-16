@@ -5,12 +5,40 @@ metadata:
   node_type: mission
   type: research
   created: 2026-10-16T00:00:00.000Z
-  v: "1.0"
+  v: "1.1"
   depends_on:
     - RFC-0960
 ---
 
 # Mission `rfc-0960-pins-six-companion-versions-and-every-one-is-behind`
+
+## v1.1 — M37 is bigger than this mission first measured
+
+This mission called M37 "a corpus-wide status sync" on the evidence of the six
+companions it affects. That characterisation is right but **under-measured**.
+A later corpus sweep found M37 referenced by **23 files**, and it does two
+distinct jobs in disjoint sets:
+
+| Role                                               | Files |
+| -------------------------------------------------- | ----- |
+| Retroactive `## Version History` table addition    | 16    |
+| Status header synced against a Version History row | 7     |
+
+The 7 are the five companions this mission is about (RFC-0961, RFC-0962,
+RFC-0964, RFC-0965, RFC-0967) plus `0862-writer-election-bootstrap-v130` and
+`0008-deterministic-ai-execution-boundary`. **RFC-0960 is in neither set**, which
+confirms this mission's central claim on a wider measurement than the one it was
+filed on.
+
+The larger role — the retroactive Version History additions — is what produced
+the corpus's full VH coverage, and it is a different story with a different
+consequence. It is recorded separately in
+`nine-accepted-rfcs-have-a-version-history-whose-only-row-is-that-the-table-was-added`,
+because nine Accepted RFCs now carry a Version History whose only row is the note
+that the table was added.
+
+Nothing in this mission's finding changes. The six pins are still stale, and
+RFC-0960 is still the document that missed the sync in both roles.
 
 ## Status
 

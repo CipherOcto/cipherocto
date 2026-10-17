@@ -6,7 +6,7 @@
 // handled gracefully by falling back to DB lookup. Budget enforcement
 // happens atomically in record_spend_ledger() at the storage layer.
 
-use crate::keys::{ApiKey, KeyError};
+use crate::keys::{cost_u64_to_i64, ApiKey, KeyError};
 use crate::storage::KeyStorage;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -118,7 +118,7 @@ impl Default for KeyCache {
 ///
 /// Returns `Arc<ApiKey>` to avoid cloning on cache hits.
 pub async fn validate_key_with_cache(
-    db: &stoolap::Database,
+    db: &octo_storage_core::Database,
     cache: &KeyCache,
     key: &str,
 ) -> Result<Arc<ApiKey>, KeyError> {
@@ -134,7 +134,7 @@ pub async fn validate_key_with_cache(
     }
 
     // Cache miss - lookup in DB
-    let key_hash_blob = stoolap::core::Value::blob(key_hash.to_vec());
+    let key_hash_blob = octo_storage_core::stoolap::Value::blob(key_hash.to_vec());
     let mut rows = db
         .query(
             "SELECT * FROM api_keys WHERE key_hash = $1 AND revoked = 0 LIMIT 1",
@@ -171,11 +171,11 @@ pub async fn validate_key_with_cache(
 ///
 /// Note: The authoritative check happens atomically in `record_spend_ledger()`.
 pub fn check_budget_soft_limit(
-    db: &stoolap::Database,
+    db: &octo_storage_core::Database,
     key_id: &str,
     estimated_max_cost: u64,
 ) -> Result<(), KeyError> {
-    let key_id_value: Vec<stoolap::Value> = vec![key_id.into()];
+    let key_id_value: Vec<octo_storage_core::stoolap::Value> = vec![key_id.into()];
 
     // Get key budget
     let mut key_rows = db
@@ -208,7 +208,9 @@ pub fn check_budget_soft_limit(
         .map_err(|e| KeyError::Storage(e.to_string()))?;
 
     // Check if estimated would exceed
-    if current + estimated_max_cost as i64 > key_budget {
+    // Per mission 0862-c7: validate u64→i64 narrowing at boundary.
+    let estimated_max_cost_i64 = cost_u64_to_i64(estimated_max_cost)?;
+    if current + estimated_max_cost_i64 > key_budget {
         return Err(KeyError::BudgetExceeded {
             current: current as u64,
             limit: key_budget as u64,
@@ -224,7 +226,11 @@ pub fn check_budget_soft_limit(
 /// - `auto_rotate = 1` AND `expires_at < now`
 ///
 /// Logs failures but continues processing other keys.
-pub async fn rotation_worker(db: &stoolap::Database, cache: &KeyCache, interval_secs: u64) {
+pub async fn rotation_worker(
+    db: &octo_storage_core::Database,
+    cache: &KeyCache,
+    interval_secs: u64,
+) {
     use crate::keys::generate_key_id;
     use crate::keys::generate_key_string;
 
@@ -241,7 +247,7 @@ pub async fn rotation_worker(db: &stoolap::Database, cache: &KeyCache, interval_
             .unwrap()
             .as_secs() as i64;
 
-        let params: Vec<stoolap::Value> = vec![now.into()];
+        let params: Vec<octo_storage_core::stoolap::Value> = vec![now.into()];
         let rows = match db.query(
             "SELECT * FROM api_keys WHERE auto_rotate = 1 AND expires_at < $1 AND revoked = 0",
             params,
@@ -355,8 +361,8 @@ pub async fn rotation_worker(db: &stoolap::Database, cache: &KeyCache, interval_
 /// - Dual-write: every invalidation event goes to both EventBus and WAL
 /// - Idempotency tracking via event_id deduplication
 pub struct CacheInvalidation {
-    event_bus: stoolap::pubsub::EventBus,
-    wal_pubsub: Option<stoolap::pubsub::WalPubSub>,
+    event_bus: octo_storage_core::stoolap::pubsub::EventBus,
+    wal_pubsub: Option<octo_storage_core::stoolap::pubsub::WalPubSub>,
     cache: KeyCache,
 }
 
@@ -364,7 +370,7 @@ impl CacheInvalidation {
     /// Create a new CacheInvalidation with EventBus only (no WAL).
     pub fn new(cache: KeyCache) -> Self {
         Self {
-            event_bus: stoolap::pubsub::EventBus::new(),
+            event_bus: octo_storage_core::stoolap::pubsub::EventBus::new(),
             wal_pubsub: None,
             cache,
         }
@@ -373,8 +379,8 @@ impl CacheInvalidation {
     /// Create with both EventBus and WalPubSub (dual-write mode).
     pub fn with_wal(cache: KeyCache, wal_path: std::path::PathBuf) -> Self {
         Self {
-            event_bus: stoolap::pubsub::EventBus::new(),
-            wal_pubsub: Some(stoolap::pubsub::WalPubSub::new(wal_path)),
+            event_bus: octo_storage_core::stoolap::pubsub::EventBus::new(),
+            wal_pubsub: Some(octo_storage_core::stoolap::pubsub::WalPubSub::new(wal_path)),
             cache,
         }
     }
@@ -385,13 +391,13 @@ impl CacheInvalidation {
     pub fn invalidate_key(
         &self,
         key_hash: Vec<u8>,
-        reason: stoolap::pubsub::InvalidationReason,
+        reason: octo_storage_core::stoolap::pubsub::InvalidationReason,
         rpm_limit: Option<u32>,
         tpm_limit: Option<u32>,
     ) -> Result<[u8; 32], String> {
         // Placeholder event_id — will be replaced by WAL's computed ID
         let placeholder_id = [0u8; 32];
-        let event = stoolap::pubsub::DatabaseEvent::KeyInvalidated {
+        let event = octo_storage_core::stoolap::pubsub::DatabaseEvent::KeyInvalidated {
             key_hash: key_hash.clone(),
             reason: reason.clone(),
             rpm_limit,
@@ -405,7 +411,7 @@ impl CacheInvalidation {
                 .write(&event)
                 .map_err(|e| format!("WAL write failed: {}", e))?;
             // Re-publish to EventBus with correct event_id
-            let event_with_id = stoolap::pubsub::DatabaseEvent::KeyInvalidated {
+            let event_with_id = octo_storage_core::stoolap::pubsub::DatabaseEvent::KeyInvalidated {
                 key_hash,
                 reason,
                 rpm_limit,
@@ -418,8 +424,8 @@ impl CacheInvalidation {
             id
         } else {
             // No WAL — just EventBus with generated ID
-            let id = stoolap::pubsub::generate_event_id();
-            let event_with_id = stoolap::pubsub::DatabaseEvent::KeyInvalidated {
+            let id = octo_storage_core::stoolap::pubsub::generate_event_id();
+            let event_with_id = octo_storage_core::stoolap::pubsub::DatabaseEvent::KeyInvalidated {
                 key_hash,
                 reason,
                 rpm_limit,
@@ -438,7 +444,7 @@ impl CacheInvalidation {
     /// Start background polling for WAL events.
     /// Returns a JoinHandle for the polling task.
     pub fn start_polling(
-        wal_pubsub: stoolap::pubsub::WalPubSub,
+        wal_pubsub: octo_storage_core::stoolap::pubsub::WalPubSub,
         cache: KeyCache,
         interval_ms: u64,
     ) -> tokio::task::JoinHandle<()> {
@@ -459,7 +465,9 @@ impl CacheInvalidation {
 
                             // Parse and handle event
                             if let Ok(event) =
-                                stoolap::pubsub::wal_pubsub::parse_event(&entry.payload)
+                                octo_storage_core::stoolap::pubsub::wal_pubsub::parse_event(
+                                    &entry.payload,
+                                )
                             {
                                 Self::handle_event(&cache, &event).await;
                                 wal_pubsub.idempotency().mark_seen(entry.event_id);
@@ -476,27 +484,32 @@ impl CacheInvalidation {
     }
 
     /// Handle a single invalidation event by updating the cache.
-    async fn handle_event(cache: &KeyCache, event: &stoolap::pubsub::DatabaseEvent) {
+    async fn handle_event(
+        cache: &KeyCache,
+        event: &octo_storage_core::stoolap::pubsub::DatabaseEvent,
+    ) {
         match event {
-            stoolap::pubsub::DatabaseEvent::KeyInvalidated { key_hash, .. } => {
+            octo_storage_core::stoolap::pubsub::DatabaseEvent::KeyInvalidated {
+                key_hash, ..
+            } => {
                 cache.invalidate(key_hash).await;
                 tracing::debug!("Cache invalidated for key hash {:?}", key_hash);
             }
-            stoolap::pubsub::DatabaseEvent::TableModified { .. }
-            | stoolap::pubsub::DatabaseEvent::SchemaChanged { .. }
-            | stoolap::pubsub::DatabaseEvent::TransactionCommited { .. } => {
+            octo_storage_core::stoolap::pubsub::DatabaseEvent::TableModified { .. }
+            | octo_storage_core::stoolap::pubsub::DatabaseEvent::SchemaChanged { .. }
+            | octo_storage_core::stoolap::pubsub::DatabaseEvent::TransactionCommited { .. } => {
                 // Table/schema events not relevant for key cache
             }
         }
     }
 
     /// Get a reference to the EventBus for subscribing.
-    pub fn event_bus(&self) -> &stoolap::pubsub::EventBus {
+    pub fn event_bus(&self) -> &octo_storage_core::stoolap::pubsub::EventBus {
         &self.event_bus
     }
 
     /// Get a reference to the WalPubSub if configured.
-    pub fn wal_pubsub(&self) -> Option<&stoolap::pubsub::WalPubSub> {
+    pub fn wal_pubsub(&self) -> Option<&octo_storage_core::stoolap::pubsub::WalPubSub> {
         self.wal_pubsub.as_ref()
     }
 
@@ -845,7 +858,7 @@ mod tests {
         let event_id = ci
             .invalidate_key(
                 vec![1, 2, 3],
-                stoolap::pubsub::InvalidationReason::Revoke,
+                octo_storage_core::stoolap::pubsub::InvalidationReason::Revoke,
                 None,
                 None,
             )
@@ -854,7 +867,9 @@ mod tests {
         // Verify EventBus received the event
         let event = rx.recv().unwrap();
         match event {
-            stoolap::pubsub::DatabaseEvent::KeyInvalidated { key_hash, .. } => {
+            octo_storage_core::stoolap::pubsub::DatabaseEvent::KeyInvalidated {
+                key_hash, ..
+            } => {
                 assert_eq!(key_hash, vec![1, 2, 3]);
             }
             _ => panic!("Expected KeyInvalidated event"),
@@ -878,7 +893,7 @@ mod tests {
         let event_id1 = ci
             .invalidate_key(
                 vec![4, 5, 6],
-                stoolap::pubsub::InvalidationReason::Revoke,
+                octo_storage_core::stoolap::pubsub::InvalidationReason::Revoke,
                 None,
                 None,
             )
@@ -887,7 +902,7 @@ mod tests {
         let event_id2 = ci
             .invalidate_key(
                 vec![7, 8, 9],
-                stoolap::pubsub::InvalidationReason::Revoke,
+                octo_storage_core::stoolap::pubsub::InvalidationReason::Revoke,
                 None,
                 None,
             )
@@ -906,7 +921,7 @@ mod tests {
         assert!(entries.len() >= 2);
 
         // Create a new reader simulating cross-process — fresh idempotency tracker
-        let wal_b = stoolap::pubsub::WalPubSub::new(wal_path);
+        let wal_b = octo_storage_core::stoolap::pubsub::WalPubSub::new(wal_path);
         let entries_b = wal_b.read_from_lsn(0).unwrap();
         assert!(entries_b.len() >= 2);
 
@@ -930,21 +945,25 @@ mod tests {
         let ci_a = CacheInvalidation::with_wal(cache_a, wal_path.clone());
         ci_a.invalidate_key(
             vec![7, 8, 9],
-            stoolap::pubsub::InvalidationReason::Revoke,
+            octo_storage_core::stoolap::pubsub::InvalidationReason::Revoke,
             None,
             None,
         )
         .unwrap();
 
         // Process B: reads from same WAL (simulating cross-process)
-        let wal_b = stoolap::pubsub::WalPubSub::new(wal_path);
+        let wal_b = octo_storage_core::stoolap::pubsub::WalPubSub::new(wal_path);
         let entries = wal_b.read_from_lsn(0).unwrap();
         assert!(!entries.is_empty());
 
         // Verify the event content
-        let event = stoolap::pubsub::wal_pubsub::parse_event(&entries[0].payload).unwrap();
+        let event =
+            octo_storage_core::stoolap::pubsub::wal_pubsub::parse_event(&entries[0].payload)
+                .unwrap();
         match event {
-            stoolap::pubsub::DatabaseEvent::KeyInvalidated { key_hash, .. } => {
+            octo_storage_core::stoolap::pubsub::DatabaseEvent::KeyInvalidated {
+                key_hash, ..
+            } => {
                 assert_eq!(key_hash, vec![7, 8, 9]);
             }
             _ => panic!("Expected KeyInvalidated event"),
@@ -1039,7 +1058,7 @@ mod tests {
     async fn test_validate_key_with_cache_miss() {
         use crate::storage::{KeyStorage, StoolapKeyStorage};
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = StoolapKeyStorage::new(db.clone());
 
@@ -1082,7 +1101,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_key_with_cache_hit() {
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
 
         let key_str = crate::keys::generate_key_string();
@@ -1121,7 +1140,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_key_with_cache_miss_not_found() {
-        use stoolap::Database;
+        use octo_storage_core::Database;
 
         let db = Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
@@ -1302,7 +1321,7 @@ mod tests {
 
         ci.invalidate_key(
             vec![10, 20, 30],
-            stoolap::pubsub::InvalidationReason::Revoke,
+            octo_storage_core::stoolap::pubsub::InvalidationReason::Revoke,
             Some(100),
             Some(5000),
         )
@@ -1310,7 +1329,7 @@ mod tests {
 
         let event = rx.recv().unwrap();
         match event {
-            stoolap::pubsub::DatabaseEvent::KeyInvalidated {
+            octo_storage_core::stoolap::pubsub::DatabaseEvent::KeyInvalidated {
                 key_hash,
                 rpm_limit,
                 tpm_limit,
@@ -1365,9 +1384,9 @@ mod tests {
         assert!(cache.get(&key_hash).await.is_some());
 
         // Handle invalidation event
-        let event = stoolap::pubsub::DatabaseEvent::KeyInvalidated {
+        let event = octo_storage_core::stoolap::pubsub::DatabaseEvent::KeyInvalidated {
             key_hash: key_hash.clone(),
-            reason: stoolap::pubsub::InvalidationReason::Revoke,
+            reason: octo_storage_core::stoolap::pubsub::InvalidationReason::Revoke,
             rpm_limit: None,
             tpm_limit: None,
             event_id: [0u8; 32],
@@ -1379,9 +1398,9 @@ mod tests {
     #[tokio::test]
     async fn test_cache_invalidation_handle_event_table_modified() {
         let cache = KeyCache::new();
-        let event = stoolap::pubsub::DatabaseEvent::TableModified {
+        let event = octo_storage_core::stoolap::pubsub::DatabaseEvent::TableModified {
             table_name: "api_keys".to_string(),
-            operation: stoolap::pubsub::OperationType::Insert,
+            operation: octo_storage_core::stoolap::pubsub::OperationType::Insert,
             txn_id: 1,
             event_id: [0u8; 32],
         };
@@ -1393,9 +1412,9 @@ mod tests {
     #[tokio::test]
     async fn test_cache_invalidation_handle_event_schema_changed() {
         let cache = KeyCache::new();
-        let event = stoolap::pubsub::DatabaseEvent::SchemaChanged {
+        let event = octo_storage_core::stoolap::pubsub::DatabaseEvent::SchemaChanged {
             table_name: "api_keys".to_string(),
-            change_type: stoolap::pubsub::SchemaChangeType::CreateTable,
+            change_type: octo_storage_core::stoolap::pubsub::SchemaChangeType::CreateTable,
             event_id: [0u8; 32],
         };
         CacheInvalidation::handle_event(&cache, &event).await;
@@ -1405,7 +1424,7 @@ mod tests {
     #[tokio::test]
     async fn test_cache_invalidation_handle_event_transaction_committed() {
         let cache = KeyCache::new();
-        let event = stoolap::pubsub::DatabaseEvent::TransactionCommited {
+        let event = octo_storage_core::stoolap::pubsub::DatabaseEvent::TransactionCommited {
             txn_id: 42,
             affected_tables: vec!["api_keys".to_string()],
             event_id: [0u8; 32],
@@ -1416,7 +1435,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_budget_soft_limit_key_not_found() {
-        use stoolap::Database;
+        use octo_storage_core::Database;
 
         let db = Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();

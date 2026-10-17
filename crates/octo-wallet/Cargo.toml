@@ -1,0 +1,269 @@
+[package]
+name = "octo-wallet"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "CipherOcto user-facing wallet: identity keys, capability key derivation, encrypted provider-key vault, starkli-compatible keystore"
+
+[[bin]]
+name = "octo-wallet"
+path = "src/bin/octo-wallet.rs"
+
+[lib]
+name = "octo_wallet"
+path = "src/lib.rs"
+
+[dependencies]
+# Canonical filesystem permission primitives (private-from-birth file/dir
+# creation). Lives in its own dependency-free crate so secret-bearing writers
+# OUTSIDE the wallet (WhatsApp session dumps H-6, session export H-7) share
+# one definition instead of copying the rule. `fs_perms` re-exports it.
+cipherocto-fs-perms = { path = "../cipherocto-fs-perms" }
+# Workspace deps — only what's needed for wallet MVP
+serde.workspace = true
+serde_json.workspace = true
+blake3.workspace = true
+sha2.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+directories.workspace = true
+rand.workspace = true
+serde_bytes = "0.11"
+# Mission 0011-c-agent-create-subcommand: deterministic agent_id derivation
+# (UUIDv5) for `register_agent` substrate signature (RFC-0011-c §9.10).
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
+
+# ZK circuit (CASM compile, RFC-0958 Phase B.2; crypto home per [[stoolap-general-purpose-db]])
+# Mission 0957-ext-zk-crate: moved to octo-cap-zk.
+# zk-circuit = { path = "../zk-circuit" }
+
+# ZK canonicalization primitives (canonicalize_axes + ZKP_DOMAIN_PREFIX
+# constants). R3 fix-up 2026-08-05: dropped the orphan `canonical_ser`
+# symbol that was shipped in R2 but had zero non-test callers.
+# Mission 0957-ext-zk-crate: moved to octo-cap-zk.
+# cipherocto-zkp-canonical = { path = "../cipherocto-zkp-canonical" }
+
+# ZK verifier (Gap 3 / RFC-0958 + RFC-0962 §9 batch signature). Used at mint time
+# to construct the canonical `zk_verifier::PublicInputs` the downstream
+# verifier will reconstruct, so the proofer's mock commitment shape
+# matches the verifier's stub_commitment check.
+#
+# **Mission 0958-b Round 1 review fix (2026-08-05, F-1):** the
+# `allow-stub-verifier` feature is no longer enabled on the production
+# dependency edge. Production `cargo build` of `octo-wallet` now
+# activates the FFI fail-closed branch (`stub_commitment` returns
+# `Err(ProverError::StubVerifierDisabled)` when `libstwo_sys.so` is
+# absent). The feature is re-activated for the test suite below via a
+# `dev-dependencies` re-export so `cargo test --features
+# allow-stub-verifier` (or any `cargo test` that pulls the test-only
+# feature) still has the BLAKE3 stub path available for the structural
+# smoke tests + crypto-bypass detection in
+# `tests/zk_vectors.rs::stub_proof_*`.
+# Mission 0957-ext-zk-crate: production dep moved to octo-cap-zk;
+# dev-dep kept (test suite still exercises stub_commitment).
+zk-verifier = { path = "../zk-verifier" }
+
+# Storage types (Ask + AskRepository + SettlementEnvelope) for the
+# `octo-wallet ask publish/list/show/revoke` CLI subcommand set
+# (mission 0959-a §CLI surface).
+quota-router-storage = { path = "../quota-router-storage" }
+
+
+# S4 codemod (RFC-0105 DFP): CLI bin constructs `AxisRate { rate_per_1k: Dqa }`
+# from a parsed u128 CLI arg. Git dep matches workspace version (avoids
+# serde-traits-from-different-serde-crate errors when mixing with the
+# git-pulled octo-determin from transitive workspace deps).
+octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
+
+# Identity crypto (RFC-0009 §Identity Key Format)
+ed25519-dalek = { version = "2.2", features = ["serde", "zeroize"] }
+# Mission 0970-a1: X25519 ECDH + ChaCha20-Poly1305 encryption for
+# `InnerRequest::ciphertext` (replaces BLAKE3 hash placeholder from 0970-a).
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+hkdf = "0.12"
+getrandom = "0.2"
+hex = "0.4"
+base64 = "0.22"
+
+# Capability token (RFC-0957 §3)
+borsh = { version = "1", optional = true }
+# Mission 0957-a R6 fix: the optional `borsh` dep above was unused — the
+# wire format actually uses serde_json (canonical JSON), per the new
+# `wire::json_canon` module + naming alignment. Borsh may be re-enabled
+# in a future RFC if a tighter canonicalization is adopted; until then
+# the dep is removed to avoid carrying an unused surface.
+
+# ZK circuit substrate (mission 0957-ext-zk-crate).
+#
+# REMOVED from `[dependencies]` by RFC-0973 §Phase 5. `octo-cap-zk` is a
+# Layer-E strategy crate and the wallet is Layer B, so a dependency between
+# them inverts the layer model (RFC-0973 Lifecycle Requirement 8). Strategy
+# crates are reached through registration from a host, never by a core crate
+# naming one. The lint in `.github/linters/no-core-strategy-dep.sh` is what
+# keeps it removed.
+#
+# The ZK mint API is not gone, it is no longer *re-exported*. It lives in
+# `octo-cap-zk` and is imported from there directly, which is the import path
+# the extension crate exists to own (RFC-0965 §Per-Extension Crate Layout).
+# A `[dev-dependencies]` edge remains below: the wallet's own ZK tests exercise
+# the extension crate's API, and the lint scans `[dependencies]` only.
+
+# Federation delta wire format (RFC-0957-A1 §F1) — uses JSON (already in
+# workspace deps). Bounded via length-prefixed encoding (see federation.rs).
+
+# Typed Constraint substrate (RFC-0964) for Caveat::Factory pre_conditions
+
+# Policy Object Graph (RFC-0967) — subgraph check at redemption (Gap 1)
+octo-policy = { path = "../octo-policy" }
+
+# Vault encryption (RFC-0009 §Vault + RFC-0102 §Key Storage post-amendment)
+argon2 = "0.5"
+aes-gcm = "0.10"
+# chacha20poly1305 reserved for Starkli keystore import (diverges from RFC-0102 §Key Storage; see mission §Starkli Keystore Divergence)
+chacha20poly1305 = "0.10"
+
+# Memory hygiene (RFC-0009 §Security Considerations: zeroize all secret-bearing types on drop)
+zeroize = { version = "1", features = ["zeroize_derive"] }
+
+# CLI (mission acceptance: octo-wallet subcommands)
+clap = { version = "4.5", features = ["derive"] }
+rpassword = "7"
+
+# Mission 0958-b S2 (2026-08-05): bench reads `zk_vendor::vendor_state()`
+# to dispatch the AC-12 proof-size gate on whether the real-zk STWO FFI
+# is loaded.
+# Mission 0958-c AC-3 (2026-08-05): also a runtime dep — the wallet-side
+# `ProofBundle.witness_format` field uses
+# `zk_vendor::prover_input::WitnessFormat` so the enum is shared across
+# proofer + verifier + wallet.
+# Mission 0957-ext-zk-crate: moved to octo-cap-zk.
+# zk-vendor = { path = "../zk-vendor" }
+
+# Mission 0959-c3: production `TransportDeliveryCatalog` wires
+# `CapabilityCatalog::gossip_to_buyer` to the canonical RFC-0862
+# gossip substrate (`octo_transport::NodeTransport::broadcast`).
+# Phase 2c-1 (mission 0957-ext-macaroon): the struct lives in
+# `octo-cap-macaroon-transport` (Layer 4 ↔ Layer D glue crate).
+# The test harness still imports `octo_transport::NodeTransport`
+# directly to build an in-process capturing sender.
+octo-transport = { path = "../../octo-transport" }
+
+# Mission 0959-c3: production wiring tests use tokio runtime to drive
+# `octo_transport::NodeTransport::broadcast` (an async fn). Pulled
+# in as a runtime dep because `gossip_envelope_to_buyer_async` in
+# `gossip.rs` uses `tokio::time::sleep`.
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+
+# `async_trait` allows `CapabilityGossip::gossip_to_buyer` (an `async fn`
+# in a trait) to be invoked through `&dyn CapabilityGossip` — required
+# because Rust's native `async fn` in trait is not yet dyn-compatible.
+# Mission 0959-c3. Runtime dep (not dev-dep) because the trait lives
+# in library code (`crates/octo-wallet/src/capability/macaroon.rs`).
+async-trait = "0.1"
+
+# Mission 0010-d: AudienceId::from_str calls `CanonicalCodec::parse` to
+# validate canonical DID shape at the wallet boundary (RFC-0010 F4).
+octo-ident = { path = "../octo-ident" }
+
+# Mission 0009-c: the Ed25519 `SignatureAlgorithm` implementation, so
+# `IdentityKey::verify` dispatches through `AlgorithmRegistry` instead of
+# constructing a `VerifyingKey` itself (RFC-0009 AC#11). Layer E per-algorithm
+# extension depending on Layer B — the arrow never points back, which is why
+# `octo-ident` itself has no ed25519-dalek dependency.
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
+
+# Mission 0957-ext-macaroon: Layer 4 extension crate owning the macaroon
+# cryptographic foundation (HMAC-BLAKE3 + macaroon_id derivation). Layer 4
+# registers CapabilitySpec impls per RFC-0965; the Macaroon struct + Caveat
+# types remain in octo-wallet for now (Phase 2 follow-on migration).
+octo-cap-macaroon = { path = "../octo-cap-macaroon" }
+# Audit substrate (RFC-0012 §Module Layout). Layer B facade re-exports
+# canonical AuditEvent + AuditEventKind + AppendOnlyAuditSink + verify_chain
+# per mission 0012-audit-wallet-migration.
+octo-audit = { path = "../octo-audit" }
+
+[features]
+# RFC-0015-a §6.4 paired-acceptance bridge: when this wallet feature
+# is on, `octo-audit`'s `octo-audit-internal` feature also turns on
+# (Cargo pass-through syntax), which transitively enables the
+# `octo-audit-core` substrate's `AgentTransition` variant. Used by
+# `transition_agent` (the agent write-path substrate) to emit
+# canonical audit events on `Registered → Running` and
+# `Running → Terminated` transitions.
+#
+# Phase 2 unblock: when the feature is OFF (default), `transition_agent`
+# fails closed with `WalletError::AuditUnavailable` — no audit event
+# is emitted, no sink registration is attempted. This preserves the
+# RFC-0015-a §6.1 rollback contract even in feature-off builds.
+octo-audit-internal = ["octo-audit/octo-audit-internal"]
+
+[dev-dependencies]
+# Mission 0206-003 v3.0: the StoolapHolderRegistry impl lives in
+# octo-ident-storage, and octo-wallet's test fixtures import it directly from
+# that declarer crate (Layer C adapter).
+#
+# Dev-only, which is what its own comment here always claimed: the crate's
+# non-test source never references `octo_ident_storage`, only `capability/
+# verify.rs`'s `#[cfg(test)] mod` and five integration tests do. As a regular
+# dependency it made the crate import storage-bearing code it does not use, and
+# RFC-0871 §G9 says a wallet's storage dependency count is zero.
+octo-ident-storage = { path = "../octo-ident-storage" }
+# The second real algorithm (mission 0009-d). Dev-only: this crate must not
+# depend on it at runtime, and the test exists precisely to show a lifecycle
+# proof signed under one algorithm does not verify under the other.
+octo-algo-stark-schnorr = { path = "../octo-algo-stark-schnorr" }
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
+# Mission 0957-a AC #10 (R6 fix): property test for 10K random monotonic
+# caveat sequences.
+proptest = "1"
+# Mission 0957 Phase 2c-1: production `TransportDeliveryCatalog` lives
+# in this glue crate; the integration test imports it directly.
+octo-cap-macaroon-transport = { path = "../octo-cap-macaroon-transport" }
+# RFC-0973 TV16 determinism fixture: a second implementation of the
+# `root_secret_knowledge` relation, so a verdict difference cannot be blamed on
+# the relation. Dev-only and Layer-E-to-Layer-B-by-test, which is the one
+# direction mission 0973-v36-d's lint must permit — the production library edge
+# is what it forbids, and this is not one.
+octo-cap-zk = { path = "../octo-cap-zk" }
+# Mission 0957-ext-zk-crate: ZK substrate moved to octo-cap-zk but tests
+# still reach into `zk_circuit` + `zk_vendor` + `zk_verifier` directly
+# for `verify_mock_batch_proof` + `vendor_state()` + stub_commitment
+# shape checks. Re-added as dev-deps for test-only access.
+zk-circuit = { path = "../zk-circuit" }
+zk-vendor = { path = "../zk-vendor" }
+
+# **Mission 0958-b Round 1 review fix (2026-08-05, F-1):** re-export
+# `zk-verifier` with `allow-stub-verifier` enabled here so the
+# integration tests (`tests/zk_vectors.rs`,
+# `tests/capability_zk_acceptance.rs`, `tests/wire_v2_roundtrip.rs`)
+# can still call `stub_commitment` / `stub_proof` under their `#[test]`
+# bodies. Cargo's feature unification scopes dev-dependency features
+# to `cargo test` invocations only — `cargo build` of the wallet
+# library (and any downstream consumer that doesn't itself enable the
+# feature) gets the FFI fail-closed branch. This restores the
+# security rationale for S3 (`StubVerifierDisabled` returns Err on
+# production builds) without breaking the test suite.
+zk-verifier = { path = "../zk-verifier", features = ["allow-stub-verifier"] }
+
+# Gap 3 / Task 3.4: eleven_step_zk.rs uses `verify_batch_capability_zk` +
+# `CapabilityVerifier` from quota-router-core. Dev-dep only — production
+# wallet code does not depend on quota-router-core (one-way dependency).
+quota-router-core = { path = "../quota-router-core" }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+# Mission acceptance: clippy -D warnings clean across workspace
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

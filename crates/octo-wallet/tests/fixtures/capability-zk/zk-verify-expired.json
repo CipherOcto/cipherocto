@@ -1,0 +1,10 @@
+{
+  "vector_id": "zk-verify-expired",
+  "rfc": "RFC-0958 §Test Vectors TV7 + v1.1 R1 H8",
+  "description": "Clock skew exceeded (>300s) → ClockSkewExceeded at verify time",
+  "node_type": "self-host",
+  "expected_error_variant": "ClockSkewExceeded",
+  "skew_secs": 301,
+  "max_skew_secs": 300,
+  "notes": "Defense against malicious prover setting arbitrary wall-clock; verifies |issued - local| <= MAX_SKEW_SECS."
+}

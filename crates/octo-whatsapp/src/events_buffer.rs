@@ -247,12 +247,7 @@ mod tests {
     fn list_since_id_survives_eviction() {
         let b = EventsBuffer::new(3);
         for i in 0..5 {
-            b.push(InboundEvent::Unknown {
-                raw: format!("m{i}"),
-                ts_unix_ms: i,
-                ts_mono_ns: 0,
-                untrusted: false,
-            });
+            b.push(InboundEvent::synthetic_unknown("test", format!("m{i}")));
         }
         // After 5 pushes, buffer holds ids 3, 4, 5 (raw: "m2", "m3", "m4").
         // since_id = 1 → should return all 3 (3, 4, 5).
@@ -270,17 +265,12 @@ mod tests {
     fn list_recent_returns_last_n() {
         let b = EventsBuffer::new(100);
         for i in 0..10 {
-            b.push(InboundEvent::Unknown {
-                raw: format!("m{i}"),
-                ts_unix_ms: i,
-                ts_mono_ns: 0,
-                untrusted: false,
-            });
+            b.push(InboundEvent::synthetic_unknown("test", format!("m{i}")));
         }
         let last3 = b.list_recent(3);
         assert_eq!(last3.len(), 3);
-        if let InboundEvent::Unknown { raw, .. } = &last3[0] {
-            assert_eq!(raw, "m7");
+        if let InboundEvent::Unknown { wacore_event, .. } = &last3[0] {
+            assert_eq!(wacore_event, &serde_json::Value::String("m7".to_string()));
         } else {
             panic!("expected Unknown");
         }
@@ -297,12 +287,7 @@ mod tests {
     fn list_with_limit() {
         let b = EventsBuffer::new(100);
         for i in 0..20 {
-            b.push(InboundEvent::Unknown {
-                raw: format!("m{i}"),
-                ts_unix_ms: i,
-                ts_mono_ns: 0,
-                untrusted: false,
-            });
+            b.push(InboundEvent::synthetic_unknown("test", format!("m{i}")));
         }
         let v = b.list(None, 5);
         assert_eq!(v.len(), 5);

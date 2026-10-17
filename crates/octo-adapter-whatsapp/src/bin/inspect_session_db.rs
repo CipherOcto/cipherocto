@@ -7,7 +7,7 @@ fn main() {
     });
 
     let dsn = format!("file://{path}");
-    let db = stoolap::Database::open(&dsn).unwrap_or_else(|e| {
+    let db = octo_storage_core::Database::open(&dsn).unwrap_or_else(|e| {
         eprintln!("Failed to open {path}: {e}");
         std::process::exit(1);
     });

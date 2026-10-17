@@ -123,7 +123,7 @@ async fn cleanup_message(client: &Arc<RealTelegramMtprotoClient>, chat_id: i64, 
 }
 
 // =============================================================================
-// §1  Config & Session
+// §1  Config && Session
 // =============================================================================
 
 #[tokio::test]
@@ -164,7 +164,7 @@ async fn lt03_session_file_exists() {
 }
 
 // =============================================================================
-// §2  Connection & Identity
+// §2  Connection && Identity
 // =============================================================================
 
 #[tokio::test]
@@ -697,7 +697,7 @@ async fn lt26_admin_capabilities_report() {
 }
 
 // =============================================================================
-// §11  Lifecycle & Error Paths
+// §11  Lifecycle && Error Paths
 // =============================================================================
 
 /// Shutdown completes without error.

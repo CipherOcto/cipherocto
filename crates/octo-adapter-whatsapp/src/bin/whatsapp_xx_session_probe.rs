@@ -322,11 +322,11 @@ async fn run() -> Result<()> {
                 println!(
                     "verdict         : MATCHES CHROME FRAME[1] SHAPE (server accepted opener)"
                 );
-            } else if reply.len() >= 4 && &chrome_prefix[..4] == b"\x00\x01\x5b\x1a" {
+            } else if reply.len() >= 4 && &&chrome_prefix[..4] == b"\x00\x01\x5b\x1a" {
                 println!(
                     "verdict         : PARTIAL MATCH (first 4B match Chrome's frame[1] prefix)"
                 );
-            } else if reply.len() >= 2 && &chrome_prefix[..2] == b"\x57\x41" {
+            } else if reply.len() >= 2 && &&chrome_prefix[..2] == b"\x57\x41" {
                 println!(
                     "verdict         : WA BINARY ENVELOPE (server replies with its own WA frame)"
                 );

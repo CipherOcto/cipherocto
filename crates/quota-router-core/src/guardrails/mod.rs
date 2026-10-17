@@ -4,6 +4,16 @@
 //! on LLM requests and responses. Enables enterprise deployments to enforce
 //! content policies, detect sensitive data, and prevent misuse.
 
+// Clippy `[disallowed-methods]` allowlist: Content moderation (RFC-0946)
+// calls out to third-party moderation APIs (operator-configured URL +
+// API key). These are NOT LLM model providers — the cipherocto
+// capability strip happens at the upstream egress boundary (egress.rs),
+// and the moderation call carries only the moderated content bytes (not
+// capability tokens).
+#![allow(clippy::disallowed_methods)]
+
+pub mod adapter;
+pub mod engine;
 pub mod registry;
 
 use serde::{Deserialize, Serialize};
@@ -483,10 +493,19 @@ impl ContentModeration {
         };
 
         for attempt in 0..=self.retries {
+            // CipherOcto provider-boundary invariant (RFC-0957 §Adversary A5):
+            // every outbound `Authorization: Bearer …` MUST go through
+            // `egress::key_swap::attach_bearer` so the cipherocto-internal
+            // prefix denylist fires at construction time. Operator-supplied
+            // `self.api_key` from YAML config is treated as provider-shaped
+            // by default; if a future caller wires a CipherOcto-internal
+            // key through `ContentModeration::new`, this guard rejects it.
+            let bearer = crate::egress::key_swap::attach_bearer(&self.api_key)
+                .expect("provider-boundary key-swap: ContentModeration::api_key MUST be provider-shaped; if this fires, the operator-config source path leaked a CipherOcto key (sk-virtual-/sk-cipherocto-/sk-cto-/CipherOcto-)");
             let result = self
                 .client
                 .post(&self.api_url)
-                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Authorization", bearer)
                 .header("Content-Type", "application/json")
                 .timeout(std::time::Duration::from_millis(self.timeout_ms))
                 .json(&request)

@@ -111,7 +111,7 @@ async fn main() {
         match raw_rx.recv().await {
             Ok(desc) => {
                 event_count += 1;
-                println!("[EVENT #{event_count}] {desc}");
+                println!("[EVENT #{event_count}] {:?}", desc);
             }
             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                 println!("[LAGGED] missed {n} events");

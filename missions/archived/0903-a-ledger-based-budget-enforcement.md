@@ -5,6 +5,7 @@
 **Implemented** — Option A with atomic transactions and FOR UPDATE locking
 
 Core ledger enforcement is complete:
+
 - `TokenSource` enum, `SpendEvent` struct, `compute_event_id()` ✅
 - `spend_ledger` table and indexes in `schema.rs` ✅
 - `record_spend_ledger()` and `record_spend_ledger_with_team()` on `KeyStorage` trait ✅
@@ -13,6 +14,7 @@ Core ledger enforcement is complete:
 - All 61 tests pass, 0 ignored (BYTEA blob fully integrated) ✅
 
 **Remaining (testing only, not blocking 0903-b):**
+
 - Determinism tests for `compute_event_id()`
 - Integration test for concurrent `FOR UPDATE`
 
@@ -27,6 +29,7 @@ Replace the deprecated `key_spend` counter table with the `spend_ledger` archite
 ## Motivation
 
 Current implementation uses `key_spend` counter table which is **deprecated** per RFC-0903 v22+. The ledger-based approach provides:
+
 - Single source of truth for economic state
 - Deterministic replay (SUM from ledger = authoritative balance)
 - Prevention of double-spend via `FOR UPDATE` row locking
@@ -253,13 +256,13 @@ No other dependencies — foundational for RFC-0903 compliance
 
 ## Key Files to Modify
 
-| File | Change |
-|------|--------|
-| `crates/quota-router-core/src/schema.rs` | Add `spend_ledger` table, `key_spend` can remain for migration or be dropped |
-| `crates/quota-router-core/src/keys/models.rs` | Add `TokenSource` enum, `SpendEvent` struct |
-| `crates/quota-router-core/src/storage.rs` | Implement ledger-based `record_spend()`, `record_spend_with_team()` |
-| `crates/quota-router-core/src/keys/mod.rs` | Add `compute_event_id()` |
-| `crates/quota-router-core/src/errors.rs` | Add `TeamBudgetExceeded` variant if not present |
+| File                                          | Change                                                                       |
+| --------------------------------------------- | ---------------------------------------------------------------------------- |
+| `crates/quota-router-core/src/schema.rs`      | Add `spend_ledger` table, `key_spend` can remain for migration or be dropped |
+| `crates/quota-router-core/src/keys/models.rs` | Add `TokenSource` enum, `SpendEvent` struct                                  |
+| `crates/quota-router-core/src/storage.rs`     | Implement ledger-based `record_spend()`, `record_spend_with_team()`          |
+| `crates/quota-router-core/src/keys/mod.rs`    | Add `compute_event_id()`                                                     |
+| `crates/quota-router-core/src/errors.rs`      | Add `TeamBudgetExceeded` variant if not present                              |
 
 ## Complexity
 
@@ -268,33 +271,38 @@ Medium — database schema migration + atomic transaction implementation
 ## Notes
 
 ### ON CONFLICT Syntax — CRITICAL FINDING
+
 Stoolap uses **MySQL-style `ON DUPLICATE KEY UPDATE`**, NOT PostgreSQL's `ON CONFLICT ... DO NOTHING`. The idempotent INSERT must be implemented as:
+
 1. Plain `INSERT INTO spend_ledger ... VALUES (...)`
 2. Catch `stoap::Error::UniqueConstraint` error and ignore it (idempotent repeat)
 
 The `ON CONFLICT` syntax shown in acceptance criteria code samples is aspirational/portable SQL; actual implementation must use the catch-based approach above.
 
 ### CHECK Constraint Enforcement
-CHECK constraints ARE fully enforced during INSERT/UPDATE in stoolap (dml.rs:641,980,1060). The IN expression with string literals parses and compiles correctly. **Fixed:** Prior stoolap silently skipped validation on parse failure; now returns `Error::Parse` so invalid CHECK expressions fail loudly rather than allowing bad data through. Application-level TokenSource validation remains recommended as defense-in-depth, but is no longer the only line of defense.
+
+CHECK constraints ARE fully enforced during INSERT/UPDATE in stoolap (dml.rs). The IN expression with string literals parses and compiles correctly. **Fixed:** Prior stoolap silently skipped validation on parse failure; now returns `Error::Parse` so invalid CHECK expressions fail loudly rather than allowing bad data through. Application-level TokenSource validation remains recommended as defense-in-depth, but is no longer the only line of defense.
 
 ### pricing_hash Type
+
 `pricing_hash` is `[u8; 32]` in code and `BLOB` in schema. Stoolap's `ToParam` for `&[u8]` should handle this via the existing `impl ToParam for &[u8]` which calls `Value::blob(self.to_vec())`.
 
 ## Reference
 
-- RFC-0903 §Ledger-Based Architecture (lines 1722-2037)
-- RFC-0903 §Atomic Budget Accounting (lines 447-497)
-- RFC-0903 §Ledger-Based Spend Recording (lines 1224-1334)
-- RFC-0903 §Canonical Token Accounting (lines 1336-1472)
-- RFC-0903 §Deterministic Replay Procedure (lines 1658-1670)
-- RFC-0903 §Lock Ordering Invariant (lines 1700-1711)
+- RFC-0903 §Ledger-Based Architecture
+- RFC-0903 §Atomic Budget Accounting
+- RFC-0903 §Ledger-Based Spend Recording
+- RFC-0903 §Canonical Token Accounting
+- RFC-0903 §Deterministic Replay Procedure
+- RFC-0903 §Lock Ordering Invariant
 - **RFC-0912 (Accepted):** FOR UPDATE row locking — stoolap missions 0912-a/b/c completed, `SELECT ... FOR UPDATE` syntax available
 - **Stoolap Blob:** Already implemented — `DataType::Blob`, `Value::Blob`, `FromValue for Vec<u8>`, `ToParam for Vec<u8>`, `parse_data_type("BYTEA(32)")` all functional
 
 ## Future Work
 
 **Note on Decimal Types:** RFC-0903 was written before RFC-0202 (BIGINT/DECIMAL) and RFC-0202-B (DQA) existed. It uses integer cost units (e.g., nanodollars) to avoid floating-point determinism issues. A future revision (per RFC-0909 Deterministic Quota Accounting) could explore using DFP or DQA for `cost_amount` to represent real pricing like `$0.0016` directly. This would require:
+
 - Canonical unit definition (e.g., store prices in smallest unit)
 - Avoid division by pre-computing cost tables
 - Commit unit interpretation via `pricing_hash`
-This is NOT part of 0903-a scope — flagged for RFC-0909 consideration.
+  This is NOT part of 0903-a scope — flagged for RFC-0909 consideration.

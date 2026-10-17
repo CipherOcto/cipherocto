@@ -272,7 +272,7 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
         &self,
         domain: &BroadcastDomainId,
         envelope_obj: &DeterministicEnvelope,
-        // RFC-0850 v1.3.0: payload is now part of the trait signature.
+        // RFC-0850: payload is now part of the trait signature.
         // Telegram adapter forwards the envelope via sendMessage/sendDocument
         // and does not separately serialise the payload bytes onto the wire;
         // payload handling is tracked as a follow-up.
@@ -465,15 +465,16 @@ impl<C: TelegramClient + Send + Sync> PlatformAdapter for TelegramAdapter<C> {
         // Without this check, any chat participant can forge envelopes
         // (R6 WIRE-C1, R7 CRYPTO-C1).
         if let Some(pk) = &self.verifying_key {
-            env.verify(pk).map_err(|e| {
-                // CRYPTO-H3: collapse all verify errors to a single ApiError(401)
-                // to avoid timing oracles on error messages.
-                tracing::debug!(error = %e, "canonicalize: signature verification failed");
-                PlatformAdapterError::ApiError {
-                    code: 401,
-                    message: "signature verification failed".into(),
-                }
-            })?;
+            env.verify(&octo_algo_ed25519::ed25519_algorithm_id(), pk)
+                .map_err(|e| {
+                    // CRYPTO-H3: collapse all verify errors to a single ApiError(401)
+                    // to avoid timing oracles on error messages.
+                    tracing::debug!(error = %e, "canonicalize: signature verification failed");
+                    PlatformAdapterError::ApiError {
+                        code: 401,
+                        message: "signature verification failed".into(),
+                    }
+                })?;
         }
         Ok(env)
     }

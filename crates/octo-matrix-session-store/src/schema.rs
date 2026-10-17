@@ -44,7 +44,7 @@ use crate::store::{stoolap_err, SessionStoreError};
 ///   `set_latest_session`. Drives stable multi-account ordering.
 /// - `display_name` / `avatar_url` — UI hints cached from the
 ///   homeserver; not authoritative.
-pub fn init_schema(db: &stoolap::Database) -> Result<(), SessionStoreError> {
+pub fn init_schema(db: &octo_storage_core::Database) -> Result<(), SessionStoreError> {
     db.execute(
         "CREATE TABLE IF NOT EXISTS sessions (
             user_id TEXT NOT NULL,

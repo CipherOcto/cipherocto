@@ -1245,7 +1245,7 @@ pub fn decimal_build_merkle_tree(hashes: &[[u8; 32]]) -> [u8; 32] {
     level[0]
 }
 
-/// Reference Merkle root from RFC-0111 v1.20
+/// Reference Merkle root from RFC-0111
 pub const DECIMAL_REFERENCE_MERKLE_ROOT: &str =
     "496bc8038e3fd38462f4308bf03088b3f872d000256a45ddb53d4932efff0c1c";
 
@@ -2055,7 +2055,7 @@ mod decimal_tests {
 
     #[test]
     fn test_all_57_entries() {
-        // RFC-0111 v1.20 specifies 57 entries (entry 25 is high-scale SQRT)
+        // RFC-0111 specifies 57 entries (entry 25 is high-scale SQRT)
         let entries = decimal_all_probe_entries();
         assert_eq!(entries.len(), 57, "RFC-0111 v1.20 specifies 57 entries");
     }

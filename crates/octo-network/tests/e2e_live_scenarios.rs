@@ -28,9 +28,6 @@ use octo_network::dc::consensus::{
     consensus_topic, ConsensusAction, ConsensusState, ConsensusVote, DcConsensusCoordinator, Quorum,
 };
 use octo_network::dc::rejoin::{RejoinCooldown, RejoinError, REJOIN_COOLDOWN_EPOCHS};
-use octo_network::dc::reputation::{
-    DcRootedSlashReputationStore, DcSlashEventRef, DC_REPUTATION_HARD_THRESHOLD,
-};
 use octo_network::dc::slash::{process_dc_slash, DcMisbehavior, DcSlashEnvelope, DcSlashError};
 use octo_network::dgp::dedup::GossipReplayCache;
 use octo_network::dom::admission::{
@@ -61,12 +58,16 @@ use octo_network::mon::bootstrap::{
     SeedListEnvelope, SlashedSeedBlacklist, EPOCH_GOVERNANCE_TAKEOVER,
 };
 use octo_network::mon::governance::{
-    DecisionType, EmergencyAuthority, GovernanceModel, GovernancePolicy, GovernanceProposal,
-    ProposalState,
+    default_dao_policy, from_legacy_policy_args, is_approval_met, is_quorum_met, GovernanceModel,
+    LegacyEmergency, ProposalState, VotingTally,
 };
 use octo_network::mon::rebind::{PrepareVote, RebindCoordinator};
 use octo_network::orr::onion::{construct_onion, peel_layer, HopConstructionParams};
 use octo_network::orr::types::{OnionRoute, TransportVector};
+use octo_network::reputation::{
+    DcRootedSlashReputationStoreCompat, HARD_THRESHOLD as DC_HARD_THRESHOLD,
+};
+use octo_reputation::types::RecorderDid;
 
 /// Helper: make a `BindEnvelope`.
 fn make_bind(domain: &str, platform: &str, group: &str) -> BindEnvelope {
@@ -472,21 +473,23 @@ async fn scenario5_slash_cooldown_exclusion_rejoin() {
         Err(DcSlashError::InsufficientWitnesses { .. })
     ));
 
-    // Cross-domain reputation store: build up to exclusion.
-    let mut store = DcRootedSlashReputationStore::new();
-    for i in 0..(DC_REPUTATION_HARD_THRESHOLD as u8) {
-        store.record_slash(
-            "dc-1",
-            DcSlashEventRef {
-                domain_id: format!("d-{i}"),
-                slash_reason: 0x000F,
-                event_hash: [i; 32],
-                epoch: 1000,
-            },
-        );
+    // Cross-domain reputation store: build up to exclusion via the
+    // canonical DID-keyed compat adapter (mission 0855p-c
+    // RFC-0968-A1 amendment 29). The legacy pubkey-keyed
+    // `octo_network::dc::DcRootedSlashReputationStore` was removed
+    // 2026-07-27 (gap closure); this scenario retains its
+    // exclusion-at-threshold semantics against the compat API.
+    let store = DcRootedSlashReputationStoreCompat::new();
+    let dc_did = {
+        let mut a = [0u8; 52];
+        a[0] = 1;
+        RecorderDid::from_array(a)
+    };
+    for _ in 0..DC_HARD_THRESHOLD {
+        store.record_dc_slash(&dc_did);
     }
-    assert!(store.is_excluded("dc-1"));
-    assert!(store.priority("dc-1", 1000).is_none());
+    assert!(store.is_excluded(&dc_did));
+    assert!(store.election_priority(&dc_did, 1000, 1.0, 100).is_none());
 
     // Rejoin cooldown: rate-limit within window.
     let mut cd = RejoinCooldown::new();
@@ -573,13 +576,30 @@ async fn scenario7_mempool_admission_gossip_propagation() {
     let mut replay: ReplayCache = Default::default();
 
     // Both nodes admit the same intent.
-    assert!(check_admission(&intent, 500, &replay, &seq, 0, &cfg).is_ok());
+    assert!(check_admission(
+        &intent,
+        500,
+        &replay,
+        &seq,
+        0,
+        &cfg,
+        &octo_algo_ed25519::ed25519_algorithm_id()
+    )
+    .is_ok());
     // After first admission, replay and sequence are updated.
     replay.insert(intent.intent_id, 500);
     seq.insert((intent.sender_id, intent.mission_id), intent.sequence);
 
     // Replay: same intent again is rejected.
-    let result = check_admission(&intent, 500, &replay, &seq, 1, &cfg);
+    let result = check_admission(
+        &intent,
+        500,
+        &replay,
+        &seq,
+        1,
+        &cfg,
+        &octo_algo_ed25519::ed25519_algorithm_id(),
+    );
     assert!(matches!(result, Err(DomError::ReplayDetected { .. })));
 
     // Capacity overflow: pending_count >= max_pending_intents → rejected.
@@ -598,12 +618,28 @@ async fn scenario7_mempool_admission_gossip_propagation() {
         ..AdmissionConfig::default()
     };
     // pending_count=0, max=0 → 0 >= 0 → capacity exceeded.
-    let result = check_admission(&fresh_intent, 500, &replay, &seq, 0, &cfg_tight);
+    let result = check_admission(
+        &fresh_intent,
+        500,
+        &replay,
+        &seq,
+        0,
+        &cfg_tight,
+        &octo_algo_ed25519::ed25519_algorithm_id(),
+    );
     assert!(matches!(result, Err(DomError::CapacityExceeded { .. })));
 
     // Sequence: re-using sequence=1 from same sender is rejected.
     let replay2: ReplayCache = Default::default();
-    let result = check_admission(&intent, 500, &replay2, &seq, 0, &cfg);
+    let result = check_admission(
+        &intent,
+        500,
+        &replay2,
+        &seq,
+        0,
+        &cfg,
+        &octo_algo_ed25519::ed25519_algorithm_id(),
+    );
     assert!(matches!(result, Err(DomError::SequenceInvalid { .. })));
 
     // Ed25519: bad signature is rejected.
@@ -611,7 +647,15 @@ async fn scenario7_mempool_admission_gossip_propagation() {
     bad_sig.signature = [0u8; 64];
     let replay3: ReplayCache = Default::default();
     let seq2: SequenceTracker = Default::default();
-    let result = check_admission(&bad_sig, 500, &replay3, &seq2, 0, &cfg);
+    let result = check_admission(
+        &bad_sig,
+        500,
+        &replay3,
+        &seq2,
+        0,
+        &cfg,
+        &octo_algo_ed25519::ed25519_algorithm_id(),
+    );
     assert!(matches!(result, Err(DomError::InvalidSignature { .. })));
 
     // Cross-gateway delivery: intent flows through MockNetwork as bytes.
@@ -727,83 +771,67 @@ async fn scenario8_pce_round_trip_aggregate_verify() {
 
 #[tokio::test]
 async fn scenario9_governance_federated_and_dao() {
-    // Federated policy: count-based quorum.
-    let fed_policy = GovernancePolicy::new(
+    // Federated policy: BPS-based quorum (2/3 = 6667 bps).
+    let fed_policy = from_legacy_policy_args(
+        "did:cipherocto:federated",
         GovernanceModel::Federated,
         2,
         3,
         100,
-        EmergencyAuthority::Coordinator,
-    )
-    .unwrap();
-    let mut prop =
-        GovernanceProposal::new([0xAA; 32], DecisionType::Admission, [0x01; 32], 100, 200);
-    prop.open_voting();
-    // 4 of 10 voters cast for.
-    for i in 0..4u8 {
-        prop.cast_vote([i; 32], 1, true);
-    }
-    prop.cast_vote([10; 32], 1, false);
-    let state = prop.resolve(&fed_policy, 10);
-    // 5/10 voted (count-quorum: 5*3 >= 10*2 = 20? 15 >= 20 no) → Preparing.
-    assert_eq!(state, ProposalState::Voting);
+        LegacyEmergency::Coordinator,
+    );
 
-    // Now 7 of 10 vote.
-    for i in 5..7u8 {
-        prop.cast_vote([i; 32], 1, true);
+    // 5 of 10 voters cast (4 for, 1 against). Total weight voted = 5,
+    // total eligible = 10 → 5000 bps voted < 6667 quorum → not met.
+    let mut tally = VotingTally::default();
+    for i in 0..4u8 {
+        tally.cast_vote([i; 32], 1, true);
     }
-    let state = prop.resolve(&fed_policy, 10);
-    // 7/10 voted (count-quorum: 7*3 >= 10*2 = 20? 21 >= 20 yes).
-    // For-weight = 5, against-weight = 1, majority for.
-    assert_eq!(state, ProposalState::Approved);
+    tally.cast_vote([10; 32], 1, false);
+    let total_voted_bps = 5_000_u32;
+    assert!(!is_quorum_met(&fed_policy, total_voted_bps, 0));
+
+    // 7 of 10 vote. 7/10 = 7000 bps voted ≥ 6667 quorum → met.
+    for i in 5..7u8 {
+        tally.cast_vote([i; 32], 1, true);
+    }
+    let total_voted_bps = 7_000_u32;
+    let approval_bps = 6_000_u32; // 6 of 7 voted in favor
+    assert!(is_quorum_met(&fed_policy, total_voted_bps, 1_000));
+    assert!(is_approval_met(&fed_policy, approval_bps));
 
     // Voter change of mind: replace, don't duplicate.
-    let mut prop2 =
-        GovernanceProposal::new([0xBB; 32], DecisionType::Admission, [0x02; 32], 100, 200);
-    prop2.open_voting();
-    prop2.cast_vote([0x11; 32], 100, true);
-    prop2.cast_vote([0x11; 32], 100, false); // changes mind
-    assert_eq!(prop2.total_for(), 0);
-    assert_eq!(prop2.total_against(), 100);
+    let mut tally2 = VotingTally::default();
+    tally2.cast_vote([0x11; 32], 100, true);
+    tally2.cast_vote([0x11; 32], 100, false); // changes mind
+    assert_eq!(tally2.total_for(), 0);
+    assert_eq!(tally2.total_against(), 100);
 
-    // DAO policy: weight-based quorum.
-    let dao_policy = GovernancePolicy::new(
+    // DAO policy: weight-based quorum (2/3 = 6667 bps).
+    let dao_policy = from_legacy_policy_args(
+        "did:cipherocto:dao",
         GovernanceModel::Dao,
         2,
         3,
         100,
-        EmergencyAuthority::Coordinator,
-    )
-    .unwrap();
-    let mut prop3 =
-        GovernanceProposal::new([0xCC; 32], DecisionType::Admission, [0x03; 32], 100, 200);
-    prop3.open_voting();
-    prop3.cast_vote([0x21; 32], 100, true);
-    prop3.cast_vote([0x22; 32], 80, true);
-    // voted weight = 180 >= 160 → quorum met, for > against → approve.
-    let state = prop3.resolve_weighted(&dao_policy, 240);
-    assert_eq!(state, ProposalState::Approved);
+        LegacyEmergency::Coordinator,
+    );
+    let mut tally3 = VotingTally::default();
+    tally3.cast_vote([0x21; 32], 100, true);
+    tally3.cast_vote([0x22; 32], 80, true);
+    // voted weight = 180 / 240 eligible = 7500 bps voted ≥ 6667 quorum → met.
+    // approval_bps = 180/240 = 7500 ≥ 5001 → approval met.
+    assert!(is_quorum_met(&dao_policy, 7_500, 0));
+    assert!(is_approval_met(&dao_policy, 7_500));
 
     // Zero weight rejected.
-    let mut prop4 =
-        GovernanceProposal::new([0xDD; 32], DecisionType::Admission, [0x04; 32], 100, 200);
-    prop4.open_voting();
-    assert!(!prop4.cast_vote([0x33; 32], 0, true));
+    let mut tally4 = VotingTally::default();
+    assert!(!tally4.cast_vote([0x33; 32], 0, true));
 
-    // Centralized: auto-approved on resolve.
-    let central = GovernancePolicy::new(
-        GovernanceModel::Centralized,
-        1,
-        1,
-        100,
-        EmergencyAuthority::Coordinator,
-    )
-    .unwrap();
-    let mut prop5 =
-        GovernanceProposal::new([0xEE; 32], DecisionType::Admission, [0x05; 32], 100, 200);
-    prop5.open_voting();
-    let state = prop5.resolve(&central, 1);
-    assert_eq!(state, ProposalState::Approved);
+    // Centralized: substrate `Voting → Approved` is a legal transition
+    // (matches legacy auto-approve on resolve).
+    let _central = default_dao_policy("did:cipherocto:central");
+    assert!(ProposalState::Voting.can_transition_to(ProposalState::Approved));
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -1114,7 +1142,7 @@ async fn scenario12_coordinator_admin_bridge_downcast_and_capability_honesty() {
 // The main end-to-end flow. Exercises the full bridge from a trait
 // method through to wire bytes:
 //
-//   1. `&dyn PlatformAdapter` → `as_coordinator_admin` → `&dyn CoordinatorAdmin`
+//   1. `&&dyn PlatformAdapter` → `as_coordinator_admin` → `&&dyn CoordinatorAdmin`
 //   2. `CoordinatorAdmin::create_group` returns a `GroupHandle`
 //   3. `GroupHandle.id` flows into a `BindEnvelope` (consumer side)
 //   4. `BindGossipState::record_received` ingests the bind

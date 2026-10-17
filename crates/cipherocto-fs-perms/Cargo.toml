@@ -1,0 +1,16 @@
+[package]
+name = "cipherocto-fs-perms"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "CipherOcto filesystem permission primitives: private-from-birth file and directory creation. Promoted from `octo-wallet::fs_perms` (2026-10-05) so that secret-bearing writers outside the wallet — the WhatsApp session-export path and the CDP session-dump path — stop carrying private copies of the same rule."
+
+[lib]
+name = "cipherocto_fs_perms"
+path = "src/lib.rs"
+
+[dependencies]
+
+[dev-dependencies]
+tempfile = "3"

@@ -263,7 +263,7 @@ pub struct SpendEvent {
 ///    (e.g., `WHERE key_id IN (SELECT key_id FROM api_keys WHERE team_id = $tenant_id)`).
 ///    A filtered view over a unified ledger is sufficient **only if** the filter is
 ///    applied consistently to every call that builds or verifies a Merkle proof.
-/// 
+///
 /// This RFC's primary stated integration targets ("verifiable billing," "decentralized compute
 /// markets," "cryptographic settlement") are inherently multi-tenant — multiple independent
 /// parties who cannot be assumed to be non-adversarial. In these contexts, a malicious client
@@ -500,7 +500,9 @@ Budget exceeded - double-spend occurred!
 For deterministic accounting across multiple routers:
 
 ```
+
 Router → Primary DB (strong consistency) → Usage Event Recorded
+
 ```
 
 ## Lock Ordering Invariant
@@ -510,9 +512,11 @@ Router → Primary DB (strong consistency) → Usage Event Recorded
 ALL transactions that lock both `teams` and `api_keys` rows MUST acquire the team lock BEFORE the key lock to prevent deadlocks:
 
 ```
+
 1. SELECT ... FROM teams WHERE ... FOR UPDATE
 2. SELECT ... FROM api_keys WHERE ... FOR UPDATE
-```
+
+````
 
 This order must be followed consistently across ALL code paths that lock both rows. Any code that violates this order risks deadlock under concurrent load.
 
@@ -565,7 +569,7 @@ pub fn validate_request_id(request_id: &str) -> Result<(), KeyError> {
     }
     Ok(())
 }
-```
+````
 
 The database enforces:
 
@@ -694,9 +698,11 @@ Verification nodes can reconstruct:
 For budget state computation and ledger reconciliation, budget state computation MUST follow this procedure:
 
 ```
+
 1. Load all spend_ledger for a key_id
 2. Compute current_spend = SUM(events.cost_amount)
 3. Verify against ledger-derived balance (not stored counter)
+
 ```
 
 **Note:** No ORDER BY is needed for SUM — aggregation is order-independent. The `ORDER BY created_at ASC, event_id ASC` in historical versions was for deterministic replay ordering (ensuring events were processed in insertion order when reconstructing state). It is not needed for aggregate computation.
@@ -710,6 +716,7 @@ For budget state computation and ledger reconciliation, budget state computation
 The following invariants MUST hold at all times:
 
 ```
+
 1. spend_ledger are the authoritative economic record
 2. current_spend = SUM(spend_ledger.cost_amount)
 3. true_cost - N ≤ current_spend ≤ budget_limit
@@ -729,6 +736,7 @@ The following invariants MUST hold at all times:
 4. For the same `(key_id, request_id)` pair, `UNIQUE` constraint ensures exactly one INSERT succeeds — duplicate requests are deduplicated at the schema level. Double-charging via different `request_id` values for the same logical event is the caller's responsibility to prevent (see §Known Limitations).
 5. pricing_hash ensures deterministic cost calculation
 6. token_source MUST be identical across routers for a given request_id
+
 ```
 
 **On cost_amount in event_id:** `event_id` is computed from `pricing_hash` + token counts, but NOT from `cost_amount`. This is a deliberate design choice: if cost_amount were included in event_id, a retry that computes a different cost_amount (due to rounding, timing, or pricing table update) would produce a different event_id and NOT be deduplicated by `UNIQUE(key_id, request_id)`. The current design prioritizes idempotency (retries with the same request_id are deduplicated regardless of cost) over cost-bug detection. A pricing table bug would cause the same incorrect cost to be recorded on every retry, rather than being detected as a divergence.
@@ -736,12 +744,14 @@ The following invariants MUST hold at all times:
 ### Rate Limiting Determinism
 
 ```
+
 Rate limiting decisions MUST NOT influence spend recording.
 
 If a provider request executed → spend MUST be recorded.
 Even if rate limiter would have denied the request locally.
 Rate limiting uses non-deterministic clocks (Instant) and is separate from accounting.
-```
+
+````
 
 ## Deterministic Pricing Tables
 
@@ -912,33 +922,42 @@ This causes **deterministic accounting failure** where the same request produces
 
 **Canonical token source rule:**
 
-```
+````
+
 Priority 1: Provider-reported tokens (from response.usage)
 Priority 2: Canonical tokenizer (pinned implementation per RFC-0910)
 Priority 3: REJECT - cannot account without verifiable source
+
 ```
 
 **CONSISTENCY GOAL (Best-Effort):**
 
 ```
+
 For a given request_id, routers SHOULD use the same token_source.
 
 This property is not guaranteed under all conditions due to:
+
 - Provider response variability (usage metadata present vs. missing)
 - Partial failures (timeout, retry, incomplete response)
 - Independent router execution (no coordination between router instances)
 
 The system tolerates divergence via storage-layer idempotency, not output equivalence.
+
 ```
 
 ```
+
 Local tokenizer estimation MUST NOT be used for accounting.
+
 ```
 
 **Pricing hash determinism:**
 
 ```
+
 pricing_hash = SHA256(DCS Entry 16 binary encoding of pricing table)
+
 ```
 
 > RFC-0126 §JSON Allowed Contexts forbids JSON for Merkle tree leaves. Since `pricing_hash` feeds
@@ -949,11 +968,13 @@ This ensures pricing determinism is defined. RFC-0910 will provide immutable pri
 **CONSISTENCY GOAL:**
 
 ```
+
 For a given request_id, routers SHOULD use the SAME token_source.
 token_source MUST be included in event_id hash.
 
 This is a consistency goal, not a hard invariant. Divergence is possible
 and is resolved by the storage layer as described below.
+
 ```
 
 **Token Source Divergence Handling:**
@@ -970,8 +991,10 @@ The actual retry double-charge scenario: if a client retries with a *different* 
 The genuine application-bug limitation: if `record_spend()` produces two rows for the same logical event (different `request_id` BLOBs, same economic content, same tokens) due to an internal bug, `build_merkle_tree` will double-count the cost without error. There is no schema-level enforcement against this class of bug. Preventing it requires correct implementation of `record_spend` — specifically, that callers of `record_spend` are responsible for providing the same `request_id` for the same logical event.
 
 ```
+
 For a given request_id, only ONE usage event may exist.
 This is enforced by UNIQUE(key_id, request_id) constraint.
+
 ```
 
 ### Definition: Deterministic Accounting (RFC-0909 Scope)
@@ -979,11 +1002,14 @@ This is enforced by UNIQUE(key_id, request_id) constraint.
 **Determinism in this RFC means:**
 
 ```
+
 Given:
+
 - identical inputs (key_id, request_id, provider, model, tokens, pricing_hash, token_source)
 - processed by the SAME router instance
 
 The system produces identical outputs (event_id, ledger state).
+
 ```
 
 This definition explicitly **excludes**:
@@ -998,19 +1024,24 @@ Cross-router consistency is achieved via **idempotent deduplication** (UNIQUE co
 Deployments requiring cross-router deterministic token counts MAY enable **Strict Mode**:
 
 ```
+
 When Strict Mode is enabled:
+
 - token_source MUST be CanonicalTokenizer
 - ProviderUsage MUST be ignored for cost computation
 - All routers compute tokens using the same canonical tokenizer
 
 This guarantees:
+
 - Cross-router deterministic token counts
 - Replay equivalence across all router instances
 
 Trade-off:
+
 - Computed tokens may diverge from provider billing
 - Provider-reported tokens are stored in provider_usage_json for audit only
-```
+
+````
 
 Strict Mode is a **per-deployment configuration choice**. The RFC does not mandate it; it is provided as an optional path for deployments requiring stricter determinism guarantees.
 ## Provider Usage Reconciliation
@@ -1061,7 +1092,7 @@ pub async fn process_response(
         true => (TokenSource::ProviderUsage, None),
         false => {
             let version = get_canonical_tokenizer(model);
-            let id = tokenizer_version_to_id(version); // BLAKE3 truncated to 16 bytes (see line 352)
+            let id = tokenizer_version_to_id(version); // BLAKE3 truncated to 16 bytes (see)
             (TokenSource::CanonicalTokenizer, Some(id))
         },
     };
@@ -1118,7 +1149,7 @@ pub async fn process_response(
 
     Ok(())
 }
-```
+````
 
 > **RFC-0910 Concern:** The `get_canonical_tokenizer()` function and tokenizer version
 > management are part of RFC-0910 (Pricing Table Registry), not RFC-0909.
@@ -1264,8 +1295,10 @@ This enables:
 If accounting fails after request execution:
 
 ```
+
 request result must not be returned
-```
+
+````
 
 Accounting must be treated as part of the **transaction boundary**.
 
@@ -1310,7 +1343,7 @@ pub async fn process_request_with_accounting(
     // Return response only after successful accounting
     Ok(response)
 }
-```
+````
 
 ## Constraints
 
@@ -1342,7 +1375,7 @@ If two routers process the same `(key_id, request_id)` simultaneously with diffe
 
 ### BLAKE3 truncation for tokenizer_id
 
-`tokenizer_version_to_id` truncates BLAKE3 to 16 bytes (line 352). Collision probability becomes non-negligible after ~2^32 versions — acceptable for tokenizer versioning but documented for completeness.
+`tokenizer_version_to_id` truncates BLAKE3 to 16 bytes. Collision probability becomes non-negligible after ~2^32 versions — acceptable for tokenizer versioning but documented for completeness.
 
 **Note on NTP constraint:** See `## Constraints § Multi-Node Clock Synchronization`. The NTP clock synchronization requirement is fully documented there and is not repeated here.
 
@@ -1480,16 +1513,16 @@ RFC-0909 adopts RFC-0903's `spend_ledger` schema as the canonical ledger. Both R
 
 RFC-0903-B1 (an amendment to RFC-0903 Final) makes the following changes to the `spend_ledger` schema:
 
-| Field | RFC-0903 Final | RFC-0903-B1 | Reason |
-|-------|---------------|-------------|--------|
-| `event_id` | `TEXT` (hex, 64 chars) | `BLOB(32)` (raw SHA256) | 50% storage reduction; RFC-0201 |
-| `request_id` | `TEXT` (variable) | `BLOB(32)` (raw SHA256 bytes) | Consistent 32-byte storage; RFC-0201 |
-| `key_id` | `TEXT` (UUID hex, 36 chars) | `BLOB(16)` (raw UUID bytes) | 56% storage reduction; RFC-0903-B1 |
-| `idx_spend_ledger_key_time` | *(none)* | *(unchanged)* | Pre-existing legacy index (not used in deterministic replay path) |
-| `idx_spend_ledger_key_created` | *(none)* | Added | Efficient `ORDER BY created_at` queries |
-| `idx_spend_ledger_event_id` | *(none)* | Added | Equality lookup on event_id |
-| `idx_spend_ledger_pricing_hash` | *(none)* | Added | Pricing verification queries |
-| `created_at` | `INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))` | *(unchanged)* | No DEFAULT added per RFC-0903-B1; app provides value at insert |
+| Field                           | RFC-0903 Final                                     | RFC-0903-B1                   | Reason                                                            |
+| ------------------------------- | -------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------- |
+| `event_id`                      | `TEXT` (hex, 64 chars)                             | `BLOB(32)` (raw SHA256)       | 50% storage reduction; RFC-0201                                   |
+| `request_id`                    | `TEXT` (variable)                                  | `BLOB(32)` (raw SHA256 bytes) | Consistent 32-byte storage; RFC-0201                              |
+| `key_id`                        | `TEXT` (UUID hex, 36 chars)                        | `BLOB(16)` (raw UUID bytes)   | 56% storage reduction; RFC-0903-B1                                |
+| `idx_spend_ledger_key_time`     | _(none)_                                           | _(unchanged)_                 | Pre-existing legacy index (not used in deterministic replay path) |
+| `idx_spend_ledger_key_created`  | _(none)_                                           | Added                         | Efficient `ORDER BY created_at` queries                           |
+| `idx_spend_ledger_event_id`     | _(none)_                                           | Added                         | Equality lookup on event_id                                       |
+| `idx_spend_ledger_pricing_hash` | _(none)_                                           | Added                         | Pricing verification queries                                      |
+| `created_at`                    | `INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))` | _(unchanged)_                 | No DEFAULT added per RFC-0903-B1; app provides value at insert    |
 
 > **Note:** `event_id` is stored as raw binary (32 bytes) per RFC-0201, not hex-encoded text. For display/debugging, convert using `hex::encode(event_id)`. The `compute_event_id()` function continues to return `String` (hex) for API compatibility; storage uses binary. API key material (key_hash) is already stored as `BLOB(32)` per RFC-0903 Final.
 
@@ -1499,13 +1532,13 @@ RFC-0903-C1 extends RFC-0903-B1 to amend `api_keys` and `teams` tables, fixing t
 
 RFC-0903-C1 changes:
 
-| Field | RFC-0903 Final | RFC-0903-C1 | Reason |
-|-------|---------------|-------------|--------|
-| `teams.team_id` | `TEXT` (UUID hex, 36 chars) | `BLOB(16)` (raw UUID bytes) | 56% storage reduction; consistent FK |
-| `api_keys.key_id` | `TEXT` (UUID hex, 36 chars) | `BLOB(16)` (raw UUID bytes) | 56% storage reduction; consistent FK |
-| `api_keys.team_id` | `TEXT` (UUID nullable) | `BLOB(16)` (raw UUID bytes) | 56% storage reduction; consistent FK |
-| `idx_teams_team_id` | *(on TEXT)* | *(on BLOB(16))* | Updated index |
-| `idx_api_keys_team_id` | *(on TEXT)* | *(on BLOB(16))* | Updated index |
+| Field                  | RFC-0903 Final              | RFC-0903-C1                 | Reason                               |
+| ---------------------- | --------------------------- | --------------------------- | ------------------------------------ |
+| `teams.team_id`        | `TEXT` (UUID hex, 36 chars) | `BLOB(16)` (raw UUID bytes) | 56% storage reduction; consistent FK |
+| `api_keys.key_id`      | `TEXT` (UUID hex, 36 chars) | `BLOB(16)` (raw UUID bytes) | 56% storage reduction; consistent FK |
+| `api_keys.team_id`     | `TEXT` (UUID nullable)      | `BLOB(16)` (raw UUID bytes) | 56% storage reduction; consistent FK |
+| `idx_teams_team_id`    | _(on TEXT)_                 | _(on BLOB(16))_             | Updated index                        |
+| `idx_api_keys_team_id` | _(on TEXT)_                 | _(on BLOB(16))_             | Updated index                        |
 
 After RFC-0903-C1, all UUID primary keys and their foreign keys are `BLOB(16)`, and all FK relationships are type-consistent.
 
@@ -1537,14 +1570,15 @@ This RFC can be approved when:
 
 The following test vectors verify that `compute_event_id()` produces identical output across all router implementations. Failure to match these vectors indicates a UUID format, byte ordering, or encoding bug.
 
-| # | request_id | key_id (UUID) | provider | model | input_tokens | output_tokens | pricing_hash (hex) | token_source | expected event_id (hex) |
-|---|------------|---------------|----------|-------|-------------|---------------|--------------------|--------------|------------------------|
-| TV1 | `"req-001"` | `"550e8400-e29b-41d4-a716-446655440000"` | `"openai"` | `"gpt-4"` | `100` | `50` | `"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"` | ProviderUsage | `8d22792346a0417bb928da0c16f2af5330640678f365d16bc392d400c2aa4ab2` |
-| TV2 | `"req-002"` | `"550e8400-e29b-41d4-a716-446655440000"` | `"openai"` | `"gpt-4"` | `100` | `50` | `"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"` | CanonicalTokenizer | `0f26450e1734034b9bc6f999b61586c671dd8249002524dd740a94c51ded3f36` |
-| TV3 | `"req-001"` | `"660e8400-e29b-41d4-a716-446655440001"` | `"openai"` | `"gpt-4"` | `100` | `50` | `"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"` | ProviderUsage | `a3e31fbaa4b3bf6fe9d5c1eeb59055cfe4a3389358fc0e38c8820e2c2e6912ed` |
-| TV4 | `"req-001"` | `"550e8400-e29b-41d4-a716-446655440000"` | `"openai"` | `"gpt-4"` | `100` | `50` | `"8b48fe37e84565f99285690a835a881fe2d580ec63775aa5f9465ba38a5a2f60"` | ProviderUsage | `06a6eb1c68f8a75287d0ac45b1ede9f00cd770f106c505685c299cf3b593726c` |
+| #   | request_id  | key_id (UUID)                            | provider   | model     | input_tokens | output_tokens | pricing_hash (hex)                                                   | token_source       | expected event_id (hex)                                            |
+| --- | ----------- | ---------------------------------------- | ---------- | --------- | ------------ | ------------- | -------------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------ |
+| TV1 | `"req-001"` | `"550e8400-e29b-41d4-a716-446655440000"` | `"openai"` | `"gpt-4"` | `100`        | `50`          | `"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"` | ProviderUsage      | `8d22792346a0417bb928da0c16f2af5330640678f365d16bc392d400c2aa4ab2` |
+| TV2 | `"req-002"` | `"550e8400-e29b-41d4-a716-446655440000"` | `"openai"` | `"gpt-4"` | `100`        | `50`          | `"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"` | CanonicalTokenizer | `0f26450e1734034b9bc6f999b61586c671dd8249002524dd740a94c51ded3f36` |
+| TV3 | `"req-001"` | `"660e8400-e29b-41d4-a716-446655440001"` | `"openai"` | `"gpt-4"` | `100`        | `50`          | `"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"` | ProviderUsage      | `a3e31fbaa4b3bf6fe9d5c1eeb59055cfe4a3389358fc0e38c8820e2c2e6912ed` |
+| TV4 | `"req-001"` | `"550e8400-e29b-41d4-a716-446655440000"` | `"openai"` | `"gpt-4"` | `100`        | `50`          | `"8b48fe37e84565f99285690a835a881fe2d580ec63775aa5f9465ba38a5a2f60"` | ProviderUsage      | `06a6eb1c68f8a75287d0ac45b1ede9f00cd770f106c505685c299cf3b593726c` |
 
 **Test vector computation notes:**
+
 - `key_id.to_string()` uses RFC 4122 hyphenated lowercase format (`"550e8400-e29b-41d4-a716-446655440000"`, 36 chars with hyphens)
 - `pricing_hash` is 32 raw bytes encoded as 64 hex chars — decoded to raw bytes before hashing
 - `token_source.to_hash_str()` returns `"provider"` for ProviderUsage, `"tokenizer"` for CanonicalTokenizer
@@ -1556,13 +1590,13 @@ The following test vectors verify that `compute_event_id()` produces identical o
 
 The L1-L5 framework provides a **recommended** test methodology for validating deterministic execution. These invariants are not mandatory for compliance but provide a systematic verification approach:
 
-| Level | Scope | Invariants |
-|-------|-------|------------|
-| **L1** | Encoding & Canonicalization | Identical byte sequences across architectures; length-prefixed or unambiguous field encoding; no TEXT in consensus path; endianness consistent; UUID round-trip exact |
-| **L2** | Functional Determinism | `tokenize()` is pure; `pricing()` is immutable per version; `cost = f(tokens, pricing)` is exact integer math; `event_id = SHA256(canonical_bytes)` recomputes to identical value; no external inputs (time, randomness) in consensus path |
-| **L3** | Cross-Node Consistency | N nodes processing same `CanonicalRequest` → identical `SpendEvent`; different routing decisions produce identical `SpendEvent`; ledger ordering depends only on `event_id` and `created_at`; serialization round-trip is bit-exact |
-| **L4** | Replay & Auditability | Ledger alone is sufficient to recompute all fields; rebuild produces identical Merkle root; all events verify via recompute; no hidden dependencies (tokenizer/pricing frozen per epoch) |
-| **L5** | Adversarial Robustness | Structural encoding prevents collision; provider output does not affect consensus fields; duplicate events detectable; overflow boundaries are deterministic (TRAP or exact) |
+| Level  | Scope                       | Invariants                                                                                                                                                                                                                                 |
+| ------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **L1** | Encoding & Canonicalization | Identical byte sequences across architectures; length-prefixed or unambiguous field encoding; no TEXT in consensus path; endianness consistent; UUID round-trip exact                                                                      |
+| **L2** | Functional Determinism      | `tokenize()` is pure; `pricing()` is immutable per version; `cost = f(tokens, pricing)` is exact integer math; `event_id = SHA256(canonical_bytes)` recomputes to identical value; no external inputs (time, randomness) in consensus path |
+| **L3** | Cross-Node Consistency      | N nodes processing same `CanonicalRequest` → identical `SpendEvent`; different routing decisions produce identical `SpendEvent`; ledger ordering depends only on `event_id` and `created_at`; serialization round-trip is bit-exact        |
+| **L4** | Replay & Auditability       | Ledger alone is sufficient to recompute all fields; rebuild produces identical Merkle root; all events verify via recompute; no hidden dependencies (tokenizer/pricing frozen per epoch)                                                   |
+| **L5** | Adversarial Robustness      | Structural encoding prevents collision; provider output does not affect consensus fields; duplicate events detectable; overflow boundaries are deterministic (TRAP or exact)                                                               |
 
 **Note:** The current design (v1.x) allows `ProviderUsage` as a token source (with `CanonicalTokenizer` as fallback). This means L2's "tokenize() is pure" applies only to the `CanonicalTokenizer` path. The `ProviderUsage` path intentionally uses provider-reported tokens for ledger-USD alignment. L3's "different routing decisions produce identical SpendEvent" assumes identical `token_source` — if one router uses `ProviderUsage` and another uses `CanonicalTokenizer` for the same request, they produce different `event_id` values, but `UNIQUE(key_id, request_id)` prevents duplicate INSERTs.
 
@@ -1633,6 +1667,7 @@ The `&'static str` return type eliminates heap allocation on every call.
 ### Event ID Hashing (Optimization)
 
 `compute_event_id` uses a stack-allocated `Sha256` hasher. This is already near-optimal:
+
 - `Sha256` hasher is stack-allocated; `key_id.to_string()` makes one `String` heap allocation per call (unavoidable given the hyphenated UUID format the hash commits to)
 - `Sha256::new()` is a `const fn` on most digest crates
 - Each input component is a single `update()` call
@@ -1646,16 +1681,19 @@ The current implementation uses `u64` micro-units for all cost calculations. The
 **Why DQA fits quota accounting (RFC-0105):**
 
 DQA represents numbers as `i64 + explicit_scale` (0–18 decimal places), purpose-built for financial/pricing work. Current micro-unit accounting uses an implicit scale=6 convention:
+
 ```
 $0.03/1K tokens → 30_000 micro-units (scale=6 assumed)
 ```
 
 DQA makes the scale explicit in the type system:
+
 ```
 $0.03/1K tokens → DQA(30_000, scale=6)
 ```
 
 **Benefits when RFC-0903 adopts DQA for cost_amount:**
+
 - Scale is enforced by the type — no implicit convention errors
 - DQA_ADD/MUL/DIV are 10-40x faster than DFP for bounded-range arithmetic (RFC-0105 benchmark)
 - Scale tracking prevents mixed-scale arithmetic errors across providers
@@ -1667,65 +1705,65 @@ $0.03/1K tokens → DQA(30_000, scale=6)
 
 ## Changelog
 
-| Version | Date       | Changes |
-| ------- | ---------- | ------- |
-| v69     | 2026-04-25 | Round 38: fix spec/inconsistency (reviewer R9) — reclassify token_source MUST as CONSISTENCY GOAL (SHOULD); add Token Source Divergence Handling section (first-writer-wins via UNIQUE constraint); add Definition of Deterministic (RFC-0909 Scope); add Strict Mode option for cross-router deterministic deployments; update Known Limitation to make race-dependent outcome explicit; update Status header v68→v69 |
-| v68     | 2026-04-25 | Round 37: fix reviewer timestamp comment (clarify gateway-generated, not provider-generated); add L1-L5 verification methodology as recommended testing approach; update Status header v67→v68 |
-| v67     | 2026-04-24 | Round 36: fix HIGH-3 (add normalization requirement to compute_event_id doc comment and DDL comment for provider/model TEXT fields); fix HIGH-4 (add RFC 4122 byte order preservation note to uuid_to_blob_16/blob_16_to_uuid); update Status header v66→v67 |
-| v66     | 2026-04-24 | Round 35 fixes: fix XC-1 (remove InternalPricingTable.compute_pricing_hash — RFC-0909 no longer defines pricing_hash; caller must obtain via RFC-0910 PricingRegistry::get(...).compute_pricing_hash()); fix XC-2 (update process_response pricing_hash comment: PRICING_TABLE.get(model).compute_pricing_hash() was invalid call, PricingModel has no such method — now documents correct call path); update Status header v65→v66 |
-| v65     | 2026-04-24 | Round 29: fix R2-03 (High) — make compute_cost fallible (checked_mul on both multiplications, Result<u64, CostError> return type); update process_response pseudocode to handle error; update Status header v64→v65 |
-| v64     | 2026-04-24 | Round 28: remove duplicate get_canonical_tokenizer function block — RFC-0910 is authoritative single source of truth; add normative reference to RFC-0910's implementation; update Status header v63→v64 |
-| v63     | 2026-04-21 | Fix RFC126-C1: replace canon-json pseudocode with DCS Entry 16 binary encoding — RFC-0126 §JSON Allowed Contexts explicitly forbids JSON for Merkle tree leaves; pricing_hash uses DCS Part 3 binary (BTreeMap as u32_be(count)||sorted entries, each field u32_be(field_id)||binary value); update pricing_hash = SHA256(DCS) note accordingly; update Status header v62→v63 |
-| v62     | 2026-04-20 | Round 59 fixes: fix N-H3 (compute_pricing_hash: replace stale serde_json pseudocode with canon-json usage example — canon-json is RFC 8785-compliant, cross-tested against olpc-cjson; BTreeMap provides key ordering, canon-json guarantees field ordering and number formatting; production code MUST use canon-json) |
-| v61     | 2026-04-20 | Round 57 fixes: fix C5 (add event_id uniqueness enforcement note to DDL comment — application-layer enforcement required per RFC-0903-B1); fix N-H1 (clarify BLOB conversion happens at record_spend storage boundary, not in process_response); fix C2 (update RFC-0903 Final reference from v29 to v30 — RFC-0903 amended to change SpendEvent.team_id from Option<String> to Option<Uuid>, aligning with RFC-0909's Option<uuid::Uuid>); update RFC-0903-C1 reference to v4 (rotated_from/rotation_grace_until columns restored) |
-| v60     | 2026-04-20 | Round 56 fixes: fix N-M4 (remove unverified VARBINARY claim from DDL comment — storage representation is implementation-defined, not normative per RFC-0201); fix N-H2 (rename PricingTable → InternalPricingTable to avoid naming collision with RFC-0910's canonical PricingTable struct) |
-| v58     | 2026-04-20 | Break circular version pin between RFC-0909 and RFC-0910 — RFC-0910 version removed from Status header and Related RFCs footer; RFC-0910 referenced only in Optional Dependencies without version pin |
-| v56     | 2026-04-19 | Round 53 fixes: fix 914-L1 (Status header + Optional Dependencies: RFC-0910 version updated from v4 to v6 to match current RFC-0910 version; Related RFCs footer updated) |
-| v57     | 2026-04-20 | Round 55 fixes: fix 909-L1 (Status header + Optional Dependencies + Related RFCs footer: RFC-0910 version updated from v6 to v7 to match current RFC-0910 version) |
-| v55     | 2026-04-19 | Round 51 fixes: fix 909-H1 (Optional Dependencies: RFC-0910 version updated from v3 to v4 to match current RFC-0910 version) |
-| v54     | 2026-04-19 | Round 50 fixes: fix 909-H1 (Optional Dependencies: RFC-0910 version updated from v2 to v3 to match current RFC-0910 version) |
-| v53     | 2026-04-19 | Round 49 fixes: fix 909-C1 (get_canonical_tokenizer: 'g' and 'c' arms now return "tiktoken-cl100k_base-v1.2.3" to match RFC-0910 Tokenizer Assignment Table; 'o' arm added note about coarse prefix-match limitation); fix 909-M3 (Approval Criteria: "two compliant mitigation paths specified" → "two deployer-side mitigation options identified" — clarifies RFC identifies options but does not specify implementation); add 909-L2 (Numeric Tower/DQA integration added to Approval Criteria as tracked future enhancement) |
-| v52     | 2026-04-19 | Round 44 fixes: fix C1 (RFC-0910 version updated from Draft v1 to Draft v2 in Dependencies) |
-| v51     | 2026-04-19 | Round 43 fixes: fix 909-C2 (remove stale "defined at line 1469" comment from process_response); RFC-0910 v2 cross-reference updates (910-C1: RFC-0909-B1→RFC-0903-B1 in tokenizers schema; 910-C2: SpendReceipt.token_source→TokenSource; 910-C3: request_id encoding clarification; 910-C4: o200k_base version aligned (unversioned); 910-C5: RFC-0909 v49→v50; 910-C6: RFC-0903 refs include B1/C1 amendments; 910-C7: tokenizer_assignments "(future extension)" removed) |
-| v50     | 2026-04-19 | Round 42 fixes: fix C1 (RFC-0910 Pricing Table Registry moved to Draft v1, resolving get_canonical_tokenizer MUST requirement); fix C2 (RFC-0126 version-pinned to Accepted v2.5.1 in Dependencies); fix C3 (RFC-0126 and RFC-0201 version-pinned in Status header) |
-| v49     | 2026-04-19 | Round 41 fixes: fix H1 (stale replay_events_for_proof reference → build_merkle_tree at line 618); fix L1 (compute_cost doc comment header added); fix L2 (NTP constraint removed from Known Limitations — cross-referenced to §Constraints) |
-| v48     | 2026-04-19 | Comprehensive review fixes: fix C1 (Dependencies RFC-0903-B1 v19→v22); fix H1 (process_response uses tokenizer_version_to_id, not untruncated blake3::hash); fix H2 (Known Limitations section added: upstream cost loss, app bug double-charge, NTP sync, token_source divergence, BLAKE3 truncation); fix M1 (NTP sync now in Approval Criteria); fix M2 (get_canonical_tokenizer call site notes "defined at line 1469"); fix M3 (pricing_hash derivation path documented in comment); fix M4 (test vector computation clarification); fix M5 (Approval Criteria: caller, not build_merkle_tree, does tenant filtering) |
-| v47     | 2026-04-18 | Round 35 post-review: fix R36M1 (lower bound cross-reference added to §Quota Consistency Model — now in blockquote, not code block); fix R36M2 (multi-tenant MUST added to Approval Criteria); fix R36L1 (changelog labeled "self-review" to distinguish internal passes from adversarial review rounds) |
-| v46     | 2026-04-18 | Round 35 fixes applied: fix R35C1 (v45 row added; footer v45→v46); fix R35M1 (tokenizer_id_to_version doc: "When fully implemented" + "Current stub" note); fix R35M2 (separate storage defined: build_merkle_tree requires tenant-filtered events); fix R35L2 (changelog space removed) |
-| v45     | 2026-04-18 | Round 35: fix R34H1 (tokenizer_id_to_version pseudocode removed); fix R34M1 ("not client-controlled" → "specified by the client in the API request"); fix R34M2 (either/or multi-tenant MUST framing added); fix R34M3 (stoolap full SHA1 in normative text, not short hash in changelog); fix R34L1 (inaccurate optional() comment removed) |
-| v44     | 2026-04-18 | Round 33: fix R32H1 (security note moved into compute_event_id doc comment, before fn signature); fix R32H2 (security note rewritten to accurately describe multi-tenant threat model); fix R32M3 (tokenizer_id_to_version pseudocode updated to show Result<Option<String>, &'static str>); fix R32M4 (detached /// note removed); fix R32M1 (RFC-0914 v8 changelog entry for v6 now complete); fix R32L1 (RFC-0914 Approval Criteria pinned to RFC-0903-B1 v22) |
-| v43     | 2026-04-18 | Round 32: fix R31H1 (KeyError::Storage removed from Error Handling doc); fix R31H2 (add compute_event_id security note documenting no-delimiter construction); fix R31M1 (replay_events_for_proof removal converted to > blockquote); fix R31L2 (§Audit Proof Generation "(Future)" designation clarified); fix R31M3 (RFC-0914 v7 version-pin B1 to v22); update request_id round-trip note to clarify stored data cannot re-derive event_id without original gateway text |
-| v42     | 2026-04-18 | Round 31: fix R30C1 (TV4 corrected — pricing_hash=SHA256("pricing-table-v2")=8b48fe37, event_id=06a6eb1c); fix R30C2 (KeyError::Unimplemented → &'static str return type); fix R30C3 (§Event Ordering rewritten to resolve contradiction with §Budget Computation Procedure); fix R30H2 (intro "deterministic replay" → "budget state computation"); fix R30H3 (remove replay_events_for_proof pending spec debt); fix R30M3 (Invariant #4 corrected to reflect UNIQUE scope); update provider_usage_json comment to note "format is provider-dependent" (R30M2) |
-| v41     | 2026-04-17 | Round 30: correct R29H2 — stoolap fully enforces UNIQUE on BLOB columns; only INTEGER PRIMARY KEY is restricted; RFC-0903-B1 ref updated to v22; also update RFC-0903-B1 ref in known limitation text |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v69     | 2026-04-25 | Round 38: fix spec/inconsistency (reviewer R9) — reclassify token_source MUST as CONSISTENCY GOAL (SHOULD); add Token Source Divergence Handling section (first-writer-wins via UNIQUE constraint); add Definition of Deterministic (RFC-0909 Scope); add Strict Mode option for cross-router deterministic deployments; update Known Limitation to make race-dependent outcome explicit; update Status header v68→v69                                                                                                                                                                                                                                |
+| v68     | 2026-04-25 | Round 37: fix reviewer timestamp comment (clarify gateway-generated, not provider-generated); add L1-L5 verification methodology as recommended testing approach; update Status header v67→v68                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| v67     | 2026-04-24 | Round 36: fix HIGH-3 (add normalization requirement to compute_event_id doc comment and DDL comment for provider/model TEXT fields); fix HIGH-4 (add RFC 4122 byte order preservation note to uuid_to_blob_16/blob_16_to_uuid); update Status header v66→v67                                                                                                                                                                                                                                                                                                                                                                                          |
+| v66     | 2026-04-24 | Round 35 fixes: fix XC-1 (remove InternalPricingTable.compute_pricing_hash — RFC-0909 no longer defines pricing_hash; caller must obtain via RFC-0910 PricingRegistry::get(...).compute_pricing_hash()); fix XC-2 (update process_response pricing_hash comment: PRICING_TABLE.get(model).compute_pricing_hash() was invalid call, PricingModel has no such method — now documents correct call path); update Status header v65→v66                                                                                                                                                                                                                   |
+| v65     | 2026-04-24 | Round 29: fix R2-03 (High) — make compute_cost fallible (checked_mul on both multiplications, Result<u64, CostError> return type); update process_response pseudocode to handle error; update Status header v64→v65                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| v64     | 2026-04-24 | Round 28: remove duplicate get_canonical_tokenizer function block — RFC-0910 is authoritative single source of truth; add normative reference to RFC-0910's implementation; update Status header v63→v64                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| v63     | 2026-04-21 | Fix RFC126-C1: replace canon-json pseudocode with DCS Entry 16 binary encoding — RFC-0126 §JSON Allowed Contexts explicitly forbids JSON for Merkle tree leaves; pricing_hash uses DCS Part 3 binary (BTreeMap as u32_be(count)                                                                                                                                                                                                                                                                                                                                                                                                                       |     | sorted entries, each field u32_be(field_id) |     | binary value); update pricing_hash = SHA256(DCS) note accordingly; update Status header v62→v63 |
+| v62     | 2026-04-20 | Round 59 fixes: fix N-H3 (compute_pricing_hash: replace stale serde_json pseudocode with canon-json usage example — canon-json is RFC 8785-compliant, cross-tested against olpc-cjson; BTreeMap provides key ordering, canon-json guarantees field ordering and number formatting; production code MUST use canon-json)                                                                                                                                                                                                                                                                                                                               |
+| v61     | 2026-04-20 | Round 57 fixes: fix C5 (add event_id uniqueness enforcement note to DDL comment — application-layer enforcement required per RFC-0903-B1); fix N-H1 (clarify BLOB conversion happens at record_spend storage boundary, not in process_response); fix C2 (update RFC-0903 Final reference from v29 to v30 — RFC-0903 amended to change SpendEvent.team_id from Option<String> to Option<Uuid>, aligning with RFC-0909's Option<uuid::Uuid>); update RFC-0903-C1 reference to v4 (rotated_from/rotation_grace_until columns restored)                                                                                                                   |
+| v60     | 2026-04-20 | Round 56 fixes: fix N-M4 (remove unverified VARBINARY claim from DDL comment — storage representation is implementation-defined, not normative per RFC-0201); fix N-H2 (rename PricingTable → InternalPricingTable to avoid naming collision with RFC-0910's canonical PricingTable struct)                                                                                                                                                                                                                                                                                                                                                           |
+| v58     | 2026-04-20 | Break circular version pin between RFC-0909 and RFC-0910 — RFC-0910 version removed from Status header and Related RFCs footer; RFC-0910 referenced only in Optional Dependencies without version pin                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| v56     | 2026-04-19 | Round 53 fixes: fix 914-L1 (Status header + Optional Dependencies: RFC-0910 version updated from v4 to v6 to match current RFC-0910 version; Related RFCs footer updated)                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| v57     | 2026-04-20 | Round 55 fixes: fix 909-L1 (Status header + Optional Dependencies + Related RFCs footer: RFC-0910 version updated from v6 to v7 to match current RFC-0910 version)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| v55     | 2026-04-19 | Round 51 fixes: fix 909-H1 (Optional Dependencies: RFC-0910 version updated from v3 to v4 to match current RFC-0910 version)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| v54     | 2026-04-19 | Round 50 fixes: fix 909-H1 (Optional Dependencies: RFC-0910 version updated from v2 to v3 to match current RFC-0910 version)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| v53     | 2026-04-19 | Round 49 fixes: fix 909-C1 (get_canonical_tokenizer: 'g' and 'c' arms now return "tiktoken-cl100k_base-v1.2.3" to match RFC-0910 Tokenizer Assignment Table; 'o' arm added note about coarse prefix-match limitation); fix 909-M3 (Approval Criteria: "two compliant mitigation paths specified" → "two deployer-side mitigation options identified" — clarifies RFC identifies options but does not specify implementation); add 909-L2 (Numeric Tower/DQA integration added to Approval Criteria as tracked future enhancement)                                                                                                                     |
+| v52     | 2026-04-19 | Round 44 fixes: fix C1 (RFC-0910 version updated from Draft v1 to Draft v2 in Dependencies)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| v51     | 2026-04-19 | Round 43 fixes: fix 909-C2 (remove stale "defined" comment from process_response); RFC-0910 v2 cross-reference updates (910-C1: RFC-0909-B1→RFC-0903-B1 in tokenizers schema; 910-C2: SpendReceipt.token_source→TokenSource; 910-C3: request_id encoding clarification; 910-C4: o200k_base version aligned (unversioned); 910-C5: RFC-0909 v49→v50; 910-C6: RFC-0903 refs include B1/C1 amendments; 910-C7: tokenizer_assignments "(future extension)" removed)                                                                                                                                                                                       |
+| v50     | 2026-04-19 | Round 42 fixes: fix C1 (RFC-0910 Pricing Table Registry moved to Draft v1, resolving get_canonical_tokenizer MUST requirement); fix C2 (RFC-0126 version-pinned to Accepted v2.5.1 in Dependencies); fix C3 (RFC-0126 and RFC-0201 version-pinned in Status header)                                                                                                                                                                                                                                                                                                                                                                                   |
+| v49     | 2026-04-19 | Round 41 fixes: fix H1 (stale replay_events_for_proof reference → build_merkle_tree); fix L1 (compute_cost doc comment header added); fix L2 (NTP constraint removed from Known Limitations — cross-referenced to §Constraints)                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| v48     | 2026-04-19 | Comprehensive review fixes: fix C1 (Dependencies RFC-0903-B1 v19→v22); fix H1 (process_response uses tokenizer_version_to_id, not untruncated blake3::hash); fix H2 (Known Limitations section added: upstream cost loss, app bug double-charge, NTP sync, token_source divergence, BLAKE3 truncation); fix M1 (NTP sync now in Approval Criteria); fix M2 (get_canonical_tokenizer call site notes "defined"); fix M3 (pricing_hash derivation path documented in comment); fix M4 (test vector computation clarification); fix M5 (Approval Criteria: caller, not build_merkle_tree, does tenant filtering)                                         |
+| v47     | 2026-04-18 | Round 35 post-review: fix R36M1 (lower bound cross-reference added to §Quota Consistency Model — now in blockquote, not code block); fix R36M2 (multi-tenant MUST added to Approval Criteria); fix R36L1 (changelog labeled "self-review" to distinguish internal passes from adversarial review rounds)                                                                                                                                                                                                                                                                                                                                              |
+| v46     | 2026-04-18 | Round 35 fixes applied: fix R35C1 (v45 row added; footer v45→v46); fix R35M1 (tokenizer_id_to_version doc: "When fully implemented" + "Current stub" note); fix R35M2 (separate storage defined: build_merkle_tree requires tenant-filtered events); fix R35L2 (changelog space removed)                                                                                                                                                                                                                                                                                                                                                              |
+| v45     | 2026-04-18 | Round 35: fix R34H1 (tokenizer_id_to_version pseudocode removed); fix R34M1 ("not client-controlled" → "specified by the client in the API request"); fix R34M2 (either/or multi-tenant MUST framing added); fix R34M3 (stoolap full SHA1 in normative text, not short hash in changelog); fix R34L1 (inaccurate optional() comment removed)                                                                                                                                                                                                                                                                                                          |
+| v44     | 2026-04-18 | Round 33: fix R32H1 (security note moved into compute_event_id doc comment, before fn signature); fix R32H2 (security note rewritten to accurately describe multi-tenant threat model); fix R32M3 (tokenizer_id_to_version pseudocode updated to show Result<Option<String>, &'static str>); fix R32M4 (detached /// note removed); fix R32M1 (RFC-0914 v8 changelog entry for v6 now complete); fix R32L1 (RFC-0914 Approval Criteria pinned to RFC-0903-B1 v22)                                                                                                                                                                                     |
+| v43     | 2026-04-18 | Round 32: fix R31H1 (KeyError::Storage removed from Error Handling doc); fix R31H2 (add compute_event_id security note documenting no-delimiter construction); fix R31M1 (replay_events_for_proof removal converted to > blockquote); fix R31L2 (§Audit Proof Generation "(Future)" designation clarified); fix R31M3 (RFC-0914 v7 version-pin B1 to v22); update request_id round-trip note to clarify stored data cannot re-derive event_id without original gateway text                                                                                                                                                                           |
+| v42     | 2026-04-18 | Round 31: fix R30C1 (TV4 corrected — pricing_hash=SHA256("pricing-table-v2")=8b48fe37, event_id=06a6eb1c); fix R30C2 (KeyError::Unimplemented → &'static str return type); fix R30C3 (§Event Ordering rewritten to resolve contradiction with §Budget Computation Procedure); fix R30H2 (intro "deterministic replay" → "budget state computation"); fix R30H3 (remove replay_events_for_proof pending spec debt); fix R30M3 (Invariant #4 corrected to reflect UNIQUE scope); update provider_usage_json comment to note "format is provider-dependent" (R30M2)                                                                                      |
+| v41     | 2026-04-17 | Round 30: correct R29H2 — stoolap fully enforces UNIQUE on BLOB columns; only INTEGER PRIMARY KEY is restricted; RFC-0903-B1 ref updated to v22; also update RFC-0903-B1 ref in known limitation text                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | v40     | 2026-04-17 | Round 29 fixes: fix R29C1 (footer v38→v39); fix R29C2 (tokenizer_id_to_version signature → Result<Option<String>, KeyError>); fix R29H2 (known limitation updated to explicitly acknowledge stoolap UNIQUE/BLOB enforcement gap); fix R29H3 (replay_events_for_proof renamed as pending future API); fix R29M1 (correct retry behavior no longer called a limitation); fix R29M3 (ORDER BY note removed false 'cursor-based pagination' justification); fix R29M4 (Merkle root reproducibility from BLOB storage documented); add BLAKE3 test vector to Approval Criteria (R29H4); add TV4 pricing_hash origin (R29H1); update RFC-0903-B1 ref to v20 |
-| v39     | 2026-04-17 | Round 28 fixes: replace malformed test vectors (52-char pricing_hash → correct 64-char hex); fix H4 known limitation (UNIQUE constraint prevents described double-insertion); update RFC-0903-B1 ref to v19; fix RL1 changelog error (BLAKE3 truncation code already in v18); update RFC-0914 ref to v5 |
-| v38     | 2026-04-17 | Round 27 fixes: rename §Deterministic Replay Procedure to §Budget Computation Procedure (clarifies scope, not Merkle path); replace tokenizer_id_to_version None-return with unreachable!() (silent wrong answer worse than panic); fix Invariant #3 truncation bound (<2 micro-units per event, not <1); fix request_id description (remove stale "16-256 bytes"); add BLAKE3 test vector for tokenizer_version_to_id; add missing ignore tags to ensure_tokenizer pseudocode; add NL1 clarification (replay_events_for_proof not input to build_merkle_tree); update RFC-0903-B1 ref to v19 |
-| v37     | 2026-04-16 | Round 26 fixes: fix BLAKE3 truncation code (Hasher::new+finalize, Hash→[u8;32]→slice); fix tokenizer_id_to_version stub (remove unimplemented!, add DB lookup pseudocode); add computed test vectors for TV1/TV2/TV3 (mechanically verifiable); align footer version to v36; update RFC-0903-B1 reference to v18; clarify two ordering paths (canonical external vs internal DB); add cost_amount tradeoff note; add token_source divergence known limitation; strengthen serde_json warning; raise MAX_REQUEST_ID_LEN to 1024 |
-| v36     | 2026-04-15 | Round 25 fixes (continued): update Invariant #3 to note truncation (true_cost - N ≤ current_spend); add upstream cost loss documentation in Failure Handling; designate in-memory event_id-only ordering as canonical Merkle root for external verification; add NTP clock sync constraint for multi-node deployments |
-| v35     | 2026-04-15 | Round 25 fixes: mandate UUID format (RFC 4122 hyphenated lowercase) in compute_event_id; change "should" to "MUST" for canonical JSON in compute_pricing_hash; document ordering difference between replay_events (event_id only) and DB replay (created_at+event_id); explain execute-first pattern in process_request_with_accounting; fix tokenizer_id_to_version to unimplemented!(); add round-trip type semantics note to request_id; add cross-router test vectors; note 'g' prefix collision for gemini and unknown family limitations |
-| v34     | 2026-04-15 | Round 23 fixes: align RFC-0903-B1 version to v15 and RFC-0903-C1 to v1 throughout (was referencing wrong C1 version); update Approval Criteria to reflect RFC-0903-C1 team_id BLOB(16); add RFC-0903-B1/B1/C1 version references to Dependencies |
-| v33     | 2026-04-15 | Round 22 fixes: normalize tokenizer_version to tokenizer_id FK (BLOB(16) via BLAKE3); add tokenizers table to RFC-0903-B1 schema; update SpendEvent to use Option<[u8;16]> tokenizer_id; update RFC-0903-B1 v15 cross-refs |
-| v28     | 2026-04-15 | Round 17 fixes: fix get_canonical_tokenizer(model)? compile error (remove ?, add .to_string()); fix pricing_hash schema comment (unchanged from RFC-0903 Final, not changed by RFC-0903-B1); add saturating_add rationale to replay_events; add DB-based router BLOB→hex Merkle note; add RFC-0903-B1 cross-refs for encode_request_id; add pseudocode caveat to process_request_with_accounting; align with RFC-0903-B1 v12 |
-| v27     | 2026-04-15 | Round 16 fixes: add replay_events_for_proof() for Merkle proof path, fix stale "(BYTEA storage)" header comment, add cross-RFC get_canonical_tokenizer determinism warning, align with RFC-0903-B1 v11 |
-| v26     | 2026-04-15 | Round 15 fixes: remove non-substantive file-existence approval criterion, align with RFC-0903-B1 v10 |
-| v25     | 2026-04-15 | Round 14 fixes: update request_id entry in RFC-0903-B1 table to note SHA256 encoding, align with RFC-0903-B1 v9 |
-| v24     | 2026-04-15 | Round 13 fixes: fix Merkle tree to build navigable structure (children now populated), mark idx_spend_ledger_key_time as pre-existing legacy index, add RFC-0201 to Related RFCs footer, align with RFC-0903-B1 v8 |
-| v23     | 2026-04-15 | Round 12 fixes: fix Merkle tree panic on empty events (returns Option), add event_id vs request_id duality section, align with RFC-0903-B1 v7 |
-| v22     | 2026-04-15 | Round 11 fixes: fix stale TEXT→BLOB comment in compute_event_id, fix hex_to_blob_32/blob_32_to_hex comments (only for event_id, not request_id) |
-| v21     | 2026-04-15 | Round 10 fixes: fix created_at comment (no DEFAULT added), clarify event_id vs request_id encoding distinction, update event_id example comment |
-| v20     | 2026-04-15 | Round 9 fixes: fix request_id comment (hex→raw is wrong; gateway raw text + SHA256), fix approval criteria (BLOB not BYTEA), fix schema comment consistency (dashes + phrasing) |
-| v19     | 2026-04-14 | Round 8 fixes: fix created_at DEFAULT UNIXEPOCH() claim, fix compute_event_id TEXT storage comment, fix Merkle tree BLOB vs TEXT comment, fix pricing_hash BLOB→BYTEA(32), fix event_id BLOB vs TEXT comment, fix created_at ordering (struct lacks created_at), add validate_request_id call in process_response, fix step numbering |
-| v18     | 2026-04-14 | Round 7 fixes: add hex_to_blob/blob_32_to_hex/uuid_to_blob_16/blob_16_to_uuid helpers, fix event_id comment (BLOB not TEXT), add storage encoding comment to SpendEvent, fix stale key_id TEXT note, add request_id encoding rules to RFC-0903-B1, remove stale created_at DEFAULT entry, remove stale PRIMARY KEY comment, fix get_canonical_tokenizer (add RFC-0910 disclaimer) |
-| v17     | 2026-04-14 | Round 6 fixes: fix process_response return type to match record_spend (returns Ok(())), add RFC-0903-B1 amendment section, update schema to BYTEA storage (event_id BLOB(32), request_id BLOB(32), key_id BLOB(16)), mark RFC-0903-B1 ext indexes, add compute_cost truncation note, fix o1/o3 tokenizer (o200k_base), update Merkle tree for BLOB storage, add RFC-0903-B1 approval criteria |
-| v16     | 2026-04-14 | Add Numeric Tower (DQA) integration note for future cost_amount enhancement; note key_id TEXT storage per RFC-0903 |
-| v15     | 2026-04-14 | Round 5 fixes: replace record_spend_ledger prose refs with record_spend/record_spend_with_team, add ASC to §Ledger-Based replay SQL, add CANONICAL_TOKENIZER_VERSION const, fix Merkle tree odd-leaf comment, add request_id length bound, RFC-8785 crate reference |
-| v14     | 2026-04-14 | Round 4 fixes: rename calculate_cost→compute_cost, clarify process_response as pseudocode calling record_spend, fix lock ordering scope, fix replay_events comment, add model lookup O(1) optimization, update Implementation Notes |
-| v13     | 2026-04-14 | Round 3 fixes: use KeyError, call record_spend_ledger, fix Error types, add PricingTable caching note, add key_created index, fix TEXT comment, fix Merkle tree comment, clarify TokenSource methods |
-| v12     | 2026-04-14 | Round 2 adversarial review fixes: fix event ordering conflicts, remove invalid CHECK constraint, fix schema PRIMARY KEY for stoolap compatibility, fix ON CONFLICT to MySQL-style idempotency, add created_at to INSERT, fix four-backtick code fences |
-| v11     | 2026-04-14 | Adversarial review fixes: remove duplicate token_source_lookup module, fix event ordering (created_at, event_id), pricing_hash→[u8;32], add FOR UPDATE locks, add token_source CHECK constraint, fix pricing_hash BLOB not TEXT, canonical JSON note, mark process_response as impl detail, fix replay_events |
-| v10     | 2026-04-14 | Full alignment with RFC-0903 Final v29: event_id→String, request_id→String, timestamp ordering, TokenSource lookup tables, lock ordering, BTreeMap pricing |
-| v9      | 2026-03-27 | Adopt RFC-0903 `spend_ledger` schema; remove parallel `usage_ledger` table; rename columns |
-| v1      | 2026-03-25 | Initial draft |
+| v39     | 2026-04-17 | Round 28 fixes: replace malformed test vectors (52-char pricing_hash → correct 64-char hex); fix H4 known limitation (UNIQUE constraint prevents described double-insertion); update RFC-0903-B1 ref to v19; fix RL1 changelog error (BLAKE3 truncation code already in v18); update RFC-0914 ref to v5                                                                                                                                                                                                                                                                                                                                               |
+| v38     | 2026-04-17 | Round 27 fixes: rename §Deterministic Replay Procedure to §Budget Computation Procedure (clarifies scope, not Merkle path); replace tokenizer_id_to_version None-return with unreachable!() (silent wrong answer worse than panic); fix Invariant #3 truncation bound (<2 micro-units per event, not <1); fix request_id description (remove stale "16-256 bytes"); add BLAKE3 test vector for tokenizer_version_to_id; add missing ignore tags to ensure_tokenizer pseudocode; add NL1 clarification (replay_events_for_proof not input to build_merkle_tree); update RFC-0903-B1 ref to v19                                                         |
+| v37     | 2026-04-16 | Round 26 fixes: fix BLAKE3 truncation code (Hasher::new+finalize, Hash→[u8;32]→slice); fix tokenizer_id_to_version stub (remove unimplemented!, add DB lookup pseudocode); add computed test vectors for TV1/TV2/TV3 (mechanically verifiable); align footer version to v36; update RFC-0903-B1 reference to v18; clarify two ordering paths (canonical external vs internal DB); add cost_amount tradeoff note; add token_source divergence known limitation; strengthen serde_json warning; raise MAX_REQUEST_ID_LEN to 1024                                                                                                                        |
+| v36     | 2026-04-15 | Round 25 fixes (continued): update Invariant #3 to note truncation (true_cost - N ≤ current_spend); add upstream cost loss documentation in Failure Handling; designate in-memory event_id-only ordering as canonical Merkle root for external verification; add NTP clock sync constraint for multi-node deployments                                                                                                                                                                                                                                                                                                                                 |
+| v35     | 2026-04-15 | Round 25 fixes: mandate UUID format (RFC 4122 hyphenated lowercase) in compute_event_id; change "should" to "MUST" for canonical JSON in compute_pricing_hash; document ordering difference between replay_events (event_id only) and DB replay (created_at+event_id); explain execute-first pattern in process_request_with_accounting; fix tokenizer_id_to_version to unimplemented!(); add round-trip type semantics note to request_id; add cross-router test vectors; note 'g' prefix collision for gemini and unknown family limitations                                                                                                        |
+| v34     | 2026-04-15 | Round 23 fixes: align RFC-0903-B1 version to v15 and RFC-0903-C1 to v1 throughout (was referencing wrong C1 version); update Approval Criteria to reflect RFC-0903-C1 team_id BLOB(16); add RFC-0903-B1/B1/C1 version references to Dependencies                                                                                                                                                                                                                                                                                                                                                                                                      |
+| v33     | 2026-04-15 | Round 22 fixes: normalize tokenizer_version to tokenizer_id FK (BLOB(16) via BLAKE3); add tokenizers table to RFC-0903-B1 schema; update SpendEvent to use Option<[u8;16]> tokenizer_id; update RFC-0903-B1 v15 cross-refs                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| v28     | 2026-04-15 | Round 17 fixes: fix get_canonical_tokenizer(model)? compile error (remove ?, add .to_string()); fix pricing_hash schema comment (unchanged from RFC-0903 Final, not changed by RFC-0903-B1); add saturating_add rationale to replay_events; add DB-based router BLOB→hex Merkle note; add RFC-0903-B1 cross-refs for encode_request_id; add pseudocode caveat to process_request_with_accounting; align with RFC-0903-B1 v12                                                                                                                                                                                                                          |
+| v27     | 2026-04-15 | Round 16 fixes: add replay_events_for_proof() for Merkle proof path, fix stale "(BYTEA storage)" header comment, add cross-RFC get_canonical_tokenizer determinism warning, align with RFC-0903-B1 v11                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| v26     | 2026-04-15 | Round 15 fixes: remove non-substantive file-existence approval criterion, align with RFC-0903-B1 v10                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| v25     | 2026-04-15 | Round 14 fixes: update request_id entry in RFC-0903-B1 table to note SHA256 encoding, align with RFC-0903-B1 v9                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| v24     | 2026-04-15 | Round 13 fixes: fix Merkle tree to build navigable structure (children now populated), mark idx_spend_ledger_key_time as pre-existing legacy index, add RFC-0201 to Related RFCs footer, align with RFC-0903-B1 v8                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| v23     | 2026-04-15 | Round 12 fixes: fix Merkle tree panic on empty events (returns Option), add event_id vs request_id duality section, align with RFC-0903-B1 v7                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| v22     | 2026-04-15 | Round 11 fixes: fix stale TEXT→BLOB comment in compute_event_id, fix hex_to_blob_32/blob_32_to_hex comments (only for event_id, not request_id)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| v21     | 2026-04-15 | Round 10 fixes: fix created_at comment (no DEFAULT added), clarify event_id vs request_id encoding distinction, update event_id example comment                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| v20     | 2026-04-15 | Round 9 fixes: fix request_id comment (hex→raw is wrong; gateway raw text + SHA256), fix approval criteria (BLOB not BYTEA), fix schema comment consistency (dashes + phrasing)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| v19     | 2026-04-14 | Round 8 fixes: fix created_at DEFAULT UNIXEPOCH() claim, fix compute_event_id TEXT storage comment, fix Merkle tree BLOB vs TEXT comment, fix pricing_hash BLOB→BYTEA(32), fix event_id BLOB vs TEXT comment, fix created_at ordering (struct lacks created_at), add validate_request_id call in process_response, fix step numbering                                                                                                                                                                                                                                                                                                                 |
+| v18     | 2026-04-14 | Round 7 fixes: add hex_to_blob/blob_32_to_hex/uuid_to_blob_16/blob_16_to_uuid helpers, fix event_id comment (BLOB not TEXT), add storage encoding comment to SpendEvent, fix stale key_id TEXT note, add request_id encoding rules to RFC-0903-B1, remove stale created_at DEFAULT entry, remove stale PRIMARY KEY comment, fix get_canonical_tokenizer (add RFC-0910 disclaimer)                                                                                                                                                                                                                                                                     |
+| v17     | 2026-04-14 | Round 6 fixes: fix process_response return type to match record_spend (returns Ok(())), add RFC-0903-B1 amendment section, update schema to BYTEA storage (event_id BLOB(32), request_id BLOB(32), key_id BLOB(16)), mark RFC-0903-B1 ext indexes, add compute_cost truncation note, fix o1/o3 tokenizer (o200k_base), update Merkle tree for BLOB storage, add RFC-0903-B1 approval criteria                                                                                                                                                                                                                                                         |
+| v16     | 2026-04-14 | Add Numeric Tower (DQA) integration note for future cost_amount enhancement; note key_id TEXT storage per RFC-0903                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| v15     | 2026-04-14 | Round 5 fixes: replace record_spend_ledger prose refs with record_spend/record_spend_with_team, add ASC to §Ledger-Based replay SQL, add CANONICAL_TOKENIZER_VERSION const, fix Merkle tree odd-leaf comment, add request_id length bound, RFC-8785 crate reference                                                                                                                                                                                                                                                                                                                                                                                   |
+| v14     | 2026-04-14 | Round 4 fixes: rename calculate_cost→compute_cost, clarify process_response as pseudocode calling record_spend, fix lock ordering scope, fix replay_events comment, add model lookup O(1) optimization, update Implementation Notes                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| v13     | 2026-04-14 | Round 3 fixes: use KeyError, call record_spend_ledger, fix Error types, add PricingTable caching note, add key_created index, fix TEXT comment, fix Merkle tree comment, clarify TokenSource methods                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| v12     | 2026-04-14 | Round 2 adversarial review fixes: fix event ordering conflicts, remove invalid CHECK constraint, fix schema PRIMARY KEY for stoolap compatibility, fix ON CONFLICT to MySQL-style idempotency, add created_at to INSERT, fix four-backtick code fences                                                                                                                                                                                                                                                                                                                                                                                                |
+| v11     | 2026-04-14 | Adversarial review fixes: remove duplicate token_source_lookup module, fix event ordering (created_at, event_id), pricing_hash→[u8;32], add FOR UPDATE locks, add token_source CHECK constraint, fix pricing_hash BLOB not TEXT, canonical JSON note, mark process_response as impl detail, fix replay_events                                                                                                                                                                                                                                                                                                                                         |
+| v10     | 2026-04-14 | Full alignment with RFC-0903 Final v29: event_id→String, request_id→String, timestamp ordering, TokenSource lookup tables, lock ordering, BTreeMap pricing                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| v9      | 2026-03-27 | Adopt RFC-0903 `spend_ledger` schema; remove parallel `usage_ledger` table; rename columns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| v1      | 2026-03-25 | Initial draft                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 ---
 

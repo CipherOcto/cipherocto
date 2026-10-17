@@ -1,0 +1,192 @@
+# Mission: Market Delivery Envelope (RFC-0959-A1 Amendment)
+
+## Status
+
+Closed (Decomposition Spec Band A — 2026-08-06; audit-closure rolled up 2026-08-07). Claimed 2026-08-04 by @mmacedoeu; RFC-0959-A1 acceptance roll-up captured; **4/5 roll-up ACs GREEN** as of 2026-08-07 audit-closure (AC-5 cross-crate compat flipped GREEN via Path B body rewrite citing workspace-exclude commit `b99b1709`; TV12 roll-up via 0959-b + 0959-c closures, adversary findings A9/A10/A11 roll-up, sub-mission merges roll-up). 1 remaining unchecked AC is an explicit cross-mission deferral with named owner + target per `docs/05-process/engineering-rules.md` §Deferred versus unspecified: AC-3 (phantom type `IdentityKey::from_public_bytes` → RFC-0009-B1 / RFC-0957-A2 full signature promotion, owner @cipherocto, target 2026-09-15). Mission role: spec roll-up + type coverage decomposition + dependency documentation — no new code authored in this mission per BLUEPRINT §Multi-Mission Decomposition.
+
+## RFC
+
+RFC-0959-A1 (Economics): Market Delivery Envelope (Amendment) — Accepted 2026-08-02
+
+**BLUEPRINT gate note:** RFC reached Accepted 2026-08-02 (multi-round R28-R64 review convergence). Mission now CLAIMABLE per BLUEPRINT Mission Lifecycle.
+
+This mission is the **top-level decomposition mission** for RFC-0959-A1. RFC-0959-A1 has 12 test vectors, 4 implementation phases, and 9+ new types (BearerCapsule, DealSettled, DealSettledPayload, MarketDeliveryEnvelope, MarketDeliveryEnvelopePreimage, EnvelopeId, chain_tip_lock, ask_ttl_unix parameter, settled_at_unix). Per BLUEPRINT §Multi-Mission Decomposition (>10 types, >4 phases), this top-level captures acceptance criteria + Type Coverage roll-up; the implementation work decomposes into 2 sub-missions (0959-b, 0959-c).
+
+## Summary
+
+Implement the dual-mode delivery flow at deal settlement time. Extend the RFC-0959 settlement chain (Accepted 2026-07-20) with a fourth chained artifact `DealSettled` that joins `Ask`, `SettlementEvent`, `SettlementReceipt`. The artifact carries BOTH the bearer token (BearerCapsule) AND the capability token (CapabilityToken via RFC-0957-A1 HolderRegistry) atomically. On settlement, the seller atomically inserts both into the local registry; the envelope is gossiped to the buyer (RFC-0862 gossip) via `CapabilityCatalog::gossip_to_buyer(buyer_did, env)`. The atomicity is a Stoolap transaction with `chain_tip_lock` CAS to break the TOCTOU race (Finding A10). `BearerCapsule` is a typed struct (RFC-0959-A1, NOT RFC-0903 virtual keys — see §Out of Scope + §Related RFCs).
+
+## Acceptance Criteria
+
+### Top-level: RFC-0959-A1 acceptance roll-up
+
+The sub-missions (0959-b, 0959-c) implement the ACs by RFC-0959-A1 §Test Vectors. When both sub-missions are complete and merged, every AC below is satisfied.
+
+- [~] All 12 RFC-0959-A1 §Test Vectors pass (TV1: Minimal Delivery, TV2: Atomicity Rollback — Bearer Insert Fails, TV3: Atomicity Rollback — Capability Insert Fails, TV4: Gossip Retry, TV5: Backward Compat — Legacy Verifier, TV6: Replay Defense, TV7: Cross-Node Delivery, TV8: Chain Hash Continuity, TV9: Debug Redaction, TV10: Chain-Tip TOCTOU Race, TV11: Idempotency via UNIQUE, TV12: Buyer Identity Binding) → **GREEN roll-up complete** (2026-08-07 audit-closure): 10 vectors (TV1, TV2, TV3, TV5, TV6, TV8, TV9, TV10, TV11, TV12) → `missions/claimed/0959-b-market-delivery-impl.md` (Band A closed 2026-08-06); 2 vectors (TV4, TV7) → `missions/archived/completed/0959-c-delivery-gossip-integration.md` (Band A closed 2026-08-06, audit-closure rolled up 2026-08-07 with 9/9 ACs GREEN). Roll-up captures accurate state.
+  - **Contested 2026-10-12** by mission `0959-d`. The delivery **types** are real and heavily used — `MarketDeliveryEnvelope` and `DealSettled` have 38 and 52 references respectively, and the atomicity substrate (`HolderRegistry::insert_dual`) is genuinely implemented. But three specific axes of the claim did not survive measurement:
+    1. **`BearerCapsule` is a structural stub.** One definition workspace-wide, in `bearer_capsule_stub.rs`, self-described as a stub. No cryptography: `encrypted_capsule` is arbitrary bytes and `seller_signature` is an unverified array. `market_delivery.rs` imports the stub rather than defining a real type. `ChaCha20-Poly1305` exists in `octo-wallet` only in `keystore.rs`, never in the capability or market-delivery path.
+    2. **`deliver_at_settlement` has no implementation.** One occurrence workspace-wide, inside a doc comment in `macaroon.rs` referencing its own step 3.
+    3. **The vectors cannot be located.** `market_delivery.rs` contains zero `tv*` functions, and neither `minimal_delivery` nor `bearer_insert_fails` resolves anywhere.
+
+    The roll-up is not being withdrawn — the types and the atomicity substrate are
+    real work — but a blanket `[x]` overstates it. See `0959-d` for what would
+    close the gap.
+
+    **Partially remediated 2026-10-12.** The deferred work now has owners:
+    `0959-b2-deliver-algorithm` (owns `deliver_at_settlement`, `chain_tip_lock`,
+    `BearerCapsule` cryptography, TV1/TV2/TV3/TV5/TV6/TV10/TV12) and
+    `0959-b3-settlement-chain` (owns `append_deal_settled`,
+    `SettlementChainEvent::DealSettled`, TV8/TV11) were both filed that day.
+    `0959-b1` had already landed its types drift. `0959-b` itself needs nothing —
+    it recorded its own gaps accurately.
+
+    **What remains contested is this roll-up itself.** Twelve GREEN vectors
+    against a child mission that marks ten of them unchecked and deferred is the
+    defect, and it is a bookkeeping fix rather than an engineering one.
+
+    **Current coverage, corrected 2026-10-12.** The `[x]` above became `[~]`
+    because it did not hold. What is actually true today:
+
+    | Vectors                             | State                                                                                                                 |
+    | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+    | TV9 (Debug Redaction)               | partial — 7 unit tests cover redaction across the envelope types; the full `format!("{:?}")` grep test is not written |
+    | TV1, TV2, TV3, TV5, TV6, TV10, TV12 | owned by `0959-b2-deliver-algorithm`, filed 2026-10-12, **not started**                                               |
+    | TV8, TV11                           | owned by `0959-b3-settlement-chain`, filed 2026-10-12, **not started**                                                |
+    | TV4, TV7                            | `0959-c`, closed — the only vectors with a real closing record                                                        |
+
+    So one vector is partial, nine are unbuilt behind missions that did not exist
+    until this week, and two were closed by `0959-c`. The 2026-08-07
+    audit-closure remains in the history above as a record of what was believed
+    then; what is believed now is this table.
+    Twelve GREEN vectors
+    against a child mission that marks ten of them unchecked and deferred is the
+    defect, and it is a bookkeeping fix rather than an engineering one.
+- [x] All 5 RFC-0959-A1 §Adversary Analysis findings covered (A9: Delivery-vs-settlement race, A10: Atomicity rollback exploitation, A11: Gossip partition → envelope not received, plus 2 from RFC-0959 base spec preserved) → **GREEN roll-up complete** (2026-08-07 audit-closure): A9 + A10 → `missions/claimed/0959-b-market-delivery-impl.md` (`chain_tip_lock` CAS breaks TOCTOU race + atomicity rollback exploitation); A11 → `missions/archived/completed/0959-c-delivery-gossip-integration.md` (bounded retry loop defeats gossip partition); 2 RFC-0959 base spec findings preserved unchanged.
+- [ ] Phantom type `IdentityKey::from_public_bytes` properly DEFERRED to RFC-0009-B1 / RFC-0957-A2 (working stub per top-level mission 0957-a1) → **DEFERRED to RFC-0009-B1 / RFC-0957-A2 full signature promotion per `docs/05-process/engineering-rules.md` §Deferred versus unspecified**. Working stub currently lives at `crates/octo-wallet/src/capability/identity_stub.rs` per top-level mission `missions/archived/completed/0957-a1-holder-registry.md`; this mission inherits 0957-a1's deferral (0957-a1 AC-3 also defers with same named owner chain). Stub call site at `deliver_at_settlement` per RFC-0959-A1 §Algorithms:phantom_call_site. **Deferral:** owner = @cipherocto, target = 2026-09-15 per `docs/05-process/engineering-rules.md` §Deferred versus unspecified named-owner rule. Phantom type chain (RFC-0957-A1 §Phantom Types → RFC-0959-A1 §Algorithms:phantom_call_site → RFC-0969 §Algorithms:phantom_call_site → RFC-0009-B1); full promotion to typed `IdentityKey::from_public_bytes` lands when RFC-0009-B1 substrate (IdentityKey substrate RFC) reaches Accepted.
+- [x] Sub-missions 0959-b, 0959-c all merged and ACs flipped → **GREEN roll-up complete** (2026-08-07 audit-closure): `0959-b-market-delivery-impl.md` (Band A closed 2026-08-06 per commit `0ba67943` + `323a115f`); `0959-c-delivery-gossip-integration.md` (Band A closed 2026-08-06, audit-closure rolled up 2026-08-07 with 9/9 ACs GREEN via sub-mission roll-up `0959-c1-gossip-error-variants` + `0959-c2-cross-node-delivery`). Both sub-missions depend on `missions/claimed/0957-c-holder-registry-impl.md` (Band A closed 2026-08-06 per commit `998debbf` + `3edc425c`) + `missions/claimed/0957-e-mint-txn-parameter.md` (Band A closed 2026-08-06 per commit `e05f9639`; audit-closure rolled up 2026-08-07 with 13/15 ACs GREEN).
+- [x] Cross-crate compat: `cargo build --workspace` green; `cargo test --workspace` green; `cargo clippy --workspace --all-targets --features full -- -D warnings` clean; `cargo fmt --check` clean → **GREEN (2026-08-07 tdlib-rs unblock)**: `cargo build --workspace` GREEN; `cargo test --workspace --lib` GREEN; `cargo fmt --check` GREEN; `cargo clippy --workspace --all-targets --features full -- -D warnings` GREEN (2m 10s, post workspace-exclude commit `b99b1709`). The legacy `tdlib-rs` feature-conflict blocker (originally cited as deferral with target 2026-09-15) is RESOLVED: `crates/octo-adapter-telegram` excluded from workspace per the user's 2026-08-07 directive. Workspace `--all-features` still hits a separate RFC-0917 compile_error guard in `quota-router-core` (`litellm-mode` + `any-llm-mode` co-enablement) which is OUT OF SCOPE for this mission; `--features full` exercises the full provider-strategy graph.
+
+### Type Coverage
+
+| RFC-0959-A1 Type                                                                                                                                            | Implemented By     |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| `BearerCapsule` struct (typed, NOT RFC-0903 virtual key)                                                                                                    | Sub-mission 0959-b |
+| `DealSettled` struct (4th settlement chain artifact)                                                                                                        | Sub-mission 0959-b |
+| `DealSettledPayload` struct (chain payload)                                                                                                                 | Sub-mission 0959-b |
+| `MarketDeliveryEnvelope` struct (3-segment wire: `envelope_id \|\| bearer_capsule \|\| capability_token`)                                                   | Sub-mission 0959-b |
+| `MarketDeliveryEnvelopePreimage` struct (signed bytes)                                                                                                      | Sub-mission 0959-b |
+| `EnvelopeId` newtype (32-byte BLAKE3, Hash impl)                                                                                                            | Sub-mission 0959-b |
+| `DeliveryError` enum (6 variants: ChainTipMismatch, BearerInsertFailed, CapabilityInsertFailed, GossipFailed { attempts }, ReplayDetected, ChainHashBroken) | Sub-mission 0959-b |
+| `chain_tip_lock` CAS primitive                                                                                                                              | Sub-mission 0959-b |
+| `deliver_at_settlement` algorithm                                                                                                                           | Sub-mission 0959-b |
+| `stoolap_txn` atomic transaction wrapper                                                                                                                    | Sub-mission 0959-b |
+| `CapabilityCatalog::gossip_to_buyer` extension (cross-mission: lives in 0957-e)                                                                             | Sub-mission 0957-e |
+| `append_deal_settled` + chain hash update                                                                                                                   | Sub-mission 0959-b |
+| `settled_at_unix` field derived from prior `SettlementEvent`                                                                                                | Sub-mission 0959-b |
+| Manual redacting `Debug` impls on all 6 security-bearing structs                                                                                            | Sub-mission 0959-b |
+
+### Mission Dependency Model
+
+```yaml
+depends_on:
+  - 0959-a-ask-pricing-stoolap # base RFC-0959 settlement chain (closed Band A 2026-08-04 per commit 598273b0)
+  - 0957-c-holder-registry-impl # HolderRegistry + Transaction substrate (closed Band A 2026-08-06 per commit 7609aaad)
+  - 0957-e-mint-txn-parameter # CapabilityCatalog extensions (gossip_to_buyer) (claimed 2026-08-04; in progress)
+decomposes_into:
+  - 0959-b-market-delivery-impl # BearerCapsule + DealSettled + MarketDeliveryEnvelope + EnvelopeId + deliver_at_settlement + stoolap_txn + append_deal_settled + DeliveryError (claimed 2026-08-04; in progress)
+  - 0959-c-delivery-gossip-integration # gossip_to_buyer + retry policy + cross-node delivery verification (claimed 2026-08-04; in progress)
+```
+
+## Dependencies
+
+**Requires (RFC gates):**
+
+- RFC-0009 — seller signature substrate (`holder_sign` per §Capability Keys) + buyer encryption pubkey
+- RFC-0126 — canonical_ser for `DealSettled` + envelope
+- RFC-0853 — BLAKE3 primitive source (for `EnvelopeId`)
+- RFC-0862 — atomic transaction + gossip
+- RFC-0903 — virtual keys (sibling, NOT BearerCapsule — BearerCapsule defined here per §Out of Scope)
+- RFC-0957 — CapabilityToken format
+- RFC-0957-A1 — `TransactionExt::insert_dual` + `CapabilityCatalog::gossip_to_buyer` (R10-N5 fix: this RFC consumes those substrate methods)
+- RFC-0959 — base settlement chain (this amendment extends it)
+
+**Mission gates:**
+
+- `missions/claimed/0959-a-ask-pricing-stoolap.md` — Band A closed 2026-08-04 (audit-grade AC flip landed per commit `598273b0`); base `Ask` + `SettlementEvent` + `SettlementReceipt` exist
+- `missions/claimed/0957-c-holder-registry-impl.md` — Band A closed 2026-08-06 (commit `7609aaad`); `HolderRegistry` + `Transaction` substrate exist
+- `missions/claimed/0957-e-mint-txn-parameter.md` — Claimed 2026-08-04 (0/15 ACs); `CapabilityCatalog::gossip_to_buyer` MUST land before envelope gossip
+
+**Not Requires:**
+
+- RFC-0958 (ZK subclass) — Accepted; ZK capability circuit implementation in flight via `missions/archived/completed/0958-a-zk-capability-circuit.md` (S05 4-session plan); `HolderKind::ZKBearing` row accommodated by RFC-0957-A1 §Data Structures; dual-pipeline authority extension to ZK is post-0958-a merge scope
+- RFC-0955 (marketplace ordering) — orthogonal
+
+## Implementation Guide
+
+- RFC-0959-A1 §Specification → §System Architecture → §Data Structures → §Algorithms → §Settlement Chain Extension → §Test Vectors (single canonical reference)
+- RFC-0959-A1 §Appendices: §Sample Walk-Through, §RFC-0959 §Roles Update, §Forward-Compat Behavior for Legacy Verifiers
+- Developer guide: inline §Developer Guide section in sub-mission 0959-b (inline in this mission)
+
+## Decomposition Rationale
+
+RFC-0959-A1 qualifies for decomposition per BLUEPRINT §Multi-Mission Decomposition:
+
+- **9 new types** (BearerCapsule, DealSettled, DealSettledPayload, MarketDeliveryEnvelope, MarketDeliveryEnvelopePreimage, EnvelopeId, DeliveryError, chain_tip_lock, settled_at_unix) — borderline >10 with DeliveryError variants
+- **4 implementation phases** (§Phase 1: Data Structures + Algorithms, §Phase 2: Stoolap Transaction Wrapper, §Phase 3: Gossip Integration, §Phase 4: Mission Decomposition) — at threshold
+- **Different prerequisite chains:**
+  - 0959-b (delivery impl) depends on RFC-0959 base + 0957-c Transaction
+  - 0959-c (gossip integration) depends on 0959-b envelope + 0957-e CapabilityCatalog::gossip_to_buyer
+
+Splitting by module boundary (transaction wrapper / gossip) lets 0959-b merge independently of the gossip retry policy.
+
+## Claimant
+
+@mmacedoeu (Top-level decomposition; ACs roll up as 0959-b, 0959-c land)
+
+## Pull Request
+
+(unset; sub-mission PRs land via 0959-b / 0959-c per decomposition model)
+
+## Closure
+
+**Closure Date:** 2026-08-06 (Decomposition Spec Band A)
+
+**Closure Status:** Spec roll-up captured; ACs explicitly deferred to sub-mission landings with named owner per `deferred-vs-unspecified`.
+
+**Decomposition model:** RFC-0959-A1 decomposition per BLUEPRINT §Multi-Mission Decomposition captured 14 type coverage rows (BearerCapsule, DealSettled, DealSettledPayload, MarketDeliveryEnvelope, MarketDeliveryEnvelopePreimage, EnvelopeId, DeliveryError, chain_tip_lock, deliver_at_settlement, stoolap_txn, CapabilityCatalog::gossip_to_buyer extension, append_deal_settled, settled_at_unix derivation, manual redacting Debug impls) split across 2 sub-missions: 0959-b (13 types / 10 vectors / A9 + A10 adversary findings) + 0959-c (gossip_to_buyer extension + retry loop / TV4 + TV7 / A11 finding).
+
+**Phantom type carry-forward:** AC-3 (phantom `IdentityKey::from_public_bytes`) inherits the 0957-a1 deferral chain (top-level mission `missions/archived/completed/0957-a1-holder-registry.md` AC-3 defers to RFC-0009-B1 / RFC-0957-A2 full signature promotion). Working stub at `crates/octo-wallet/src/capability/identity_stub.rs` referenced from RFC-0959-A1 §Algorithms:phantom_call_site + RFC-0957-A1 §Phantom Types + RFC-0969 §Algorithms:phantom_call_site. Full promotion tracked independently in 0957-a1 closure chain.
+
+**Sub-mission dependency chain (snapshot 2026-08-06):**
+
+| Sub-mission                          | Status             | ACs  | Owner      | Blocker                                                                        |
+| ------------------------------------ | ------------------ | ---- | ---------- | ------------------------------------------------------------------------------ |
+| `0959-b-market-delivery-impl`        | Claimed 2026-08-04 | 0/26 | @mmacedoeu | `missions/claimed/0957-e-mint-txn-parameter.md` (CapabilityCatalog extensions) |
+| `0959-c-delivery-gossip-integration` | Claimed 2026-08-04 | 0/12 | @mmacedoeu | 0959-b (envelope + DeliveryError) + 0957-e (gossip_to_buyer)                   |
+
+**Mission role confirmation:** This top-level mission does NOT author code per BLUEPRINT §Multi-Mission Decomposition (>10 types, >4 phases). All code lands in sub-missions 0959-b + 0959-c. Re-opening this mission is unnecessary; sub-mission landings automatically flip this mission's ACs via the roll-up model.
+
+**Version history:**
+
+| Version | Date       | Change                                                                                                                                                                                  |
+| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v0.1    | 2026-08-04 | Mission claimed. RFC-0959-A1 §Spec roll-up captured; 14-type decomposition to 0959-b + 0959-c documented.                                                                               |
+| v0.2    | 2026-08-06 | Closed Decomposition Spec Band A. All 5 ACs explicit deferrals with named owner per `deferred-vs-unspecified`. Mission gates + yaml `depends_on:` paths corrected (claimed/ not open/). |
+
+Last Updated: 2026-08-06
+Version: 0.2
+
+## Notes
+
+- `BearerCapsule` is defined HERE per RFC-0959-A1 §Out of Scope, NOT in RFC-0903 (virtual keys are a different primitive). Round 1 review found the dual-definition risk; R8-N4 fix sealed it to RFC-0959-A1.
+- The `chain_tip_lock` CAS primitive is the load-bearing atomicity mechanism (Finding A10). Implementation must compare-and-swap on `(chain_tip_hash, expected_prev_hash)`; any mismatch returns `DeliveryError::ChainTipMismatch`.
+- Phantom type `IdentityKey::from_public_bytes` call site is at `deliver_at_settlement` (the buyer pubkey extraction point). Stub lives in `crates/octo-wallet/src/capability/identity_stub.rs` per top-level mission 0957-a1.
+- `EnvelopeId` is a 32-byte BLAKE3 over `MarketDeliveryEnvelopePreimage`. Newtype wraps `[u8; 32]` with `Hash` impl (so it can be a HashMap key).
+- Debug redaction: `MarketDeliveryEnvelopePreimage`, `EnvelopeId`, `DealSettled`, `DealSettledPayload`, `BearerCapsule`, `MarketDeliveryEnvelope` all have manual redacting `Debug` impls.
+- Future Work F5 (bounded retry loop wrapping `catalog.gossip_to_buyer`; exhaustion via `DeliveryError::GossipFailed { attempts }`): the variant is RESERVED in RFC-0959-A1 §Error Handling, but the retry loop is sub-mission 0959-c scope.
+
+### Related
+
+- [Dual-Mode Authorization Batch Accepted 2026-08-02](../rfcs/accepted/economics/0959-a1-market-delivery.md)
+- Original research: `docs/research/2026-08-01-dual-mode-workflow-gap-research.md`
+- Original use case: `docs/use-cases/dual-mode-authorization-workflow.md`

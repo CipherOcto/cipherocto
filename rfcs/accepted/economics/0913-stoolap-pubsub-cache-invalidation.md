@@ -4,7 +4,7 @@
 
 Accepted (v3) - WAL-only with dual-write
 
-## Changelog
+## Version History
 
 - **v3** (2026-03-14): WAL-only architecture with dual-write (broadcast + WAL). 50ms polling interval. Explicit WAL events with event_id for idempotency.
 - **v2** (2026-03-14): Added optional `rpm_limit`/`tpm_limit` fields to `KeyInvalidated` event; clarified WAL polling assumptions for multi-process deployments

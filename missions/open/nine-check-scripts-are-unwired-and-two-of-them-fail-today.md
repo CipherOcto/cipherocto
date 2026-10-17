@@ -1,0 +1,215 @@
+---
+name: nine-check-scripts-are-unwired-and-two-of-them-fail-today
+description: "Nine check and lint scripts exist in scripts/. Two are wired into CI. The remaining seven are unwired. lint_status_vh_sync.sh and lint_plan_yaml_vh_sync.sh fail today, lint_plan_yaml_vh_sync.sh lints a hardcoded path outside the repository so it cannot run anywhere else, and the remaining findings are dominated by files that legitimately have no Status version or no Version History rows. A gate that is unwired and red is worse than no gate, because red teaches people to ignore it."
+metadata:
+  node_type: mission
+  type: implementation
+  created: 2026-10-12T00:00:00.000Z
+  v: "1.0"
+  depends_on:
+    - RFC-0001
+---
+
+# Mission `nine-check-scripts-are-unwired-and-two-of-them-fail-today`
+
+## Status
+
+Open. One defect fixed (see below). Nothing wired, nothing deleted, nothing in
+`.github/` changed — wiring is owner policy.
+
+## The census
+
+Eleven scripts in `scripts/` are checks or linters. Two are referenced by a
+workflow.
+
+| Script                      | In CI | Exit today | Notes                                            |
+| --------------------------- | ----- | ---------- | ------------------------------------------------ |
+| `lint-rfc-anchors.py`       | yes   | 0          | 588-entry baseline                               |
+| `lint-rfc-type-refs.py`     | yes   | 0          | 652-entry baseline                               |
+| `lint_no_vh_accepted.sh`    | no    | 0          | was exit 1 with 51 findings                      |
+| `lint_status_vh_sync.sh`    | no    | 1          | 9 findings                                       |
+| `lint_plan_yaml_vh_sync.sh` | no    | 1          | lints a path outside the repository; 6 findings  |
+| `lint_section_cites.sh`     | no    | 0          | was exit 1 with 58 false positives               |
+| `validate_cites.sh`         | no    | 1          | 1300 INVALID / 339 PHANTOM / 1028 STALE          |
+| `verify_canonical_blobs.py` | no    | 0          | RFC-mandated, independently verified by mutation |
+| `mutation-verify-guards.sh` | no    | 0          | 5 guards, 10 cases, 26 s, 1.0 GB peak            |
+
+## Two rows above said "not re-run" for a blocker that was not there
+
+`mutation-verify-guards.sh` and the rebuild tier of `mutate-zk-guards.py` were
+both recorded as unaffordable, on the reasoning that they recompile and the disk
+sat at 100 percent with 3.6 GB free. Neither had been run to find that out.
+
+Both were run:
+
+| Script                         | Result                                          | Cost                | Disk      |
+| ------------------------------ | ----------------------------------------------- | ------------------- | --------- |
+| `mutation-verify-guards.sh`    | 10 of 10 passed, 5 guards red and restored      | 26 s, 1.0 GB peak   | unchanged |
+| `mutate-zk-guards.py` (all 73) | 73 red, 0 vacuous, 0 bad-mutation, 0 bad-anchor | 175 s, 1.79 GB peak | unchanged |
+
+The reason the cost is so low is that both drive a _targeted_ `cargo test` for
+one package, and this repository already holds 294 GB of compiled dependencies
+in `target/`. An incremental build against that needs no meaningful new space.
+The 35 mutation entries nobody had run were verified red in under three minutes.
+
+This is the same shape as the rest of this mission set: a cost estimated rather
+than measured is a claim about a condition nobody examined. Two rows of this
+table asserted a blocker, and it was in the table long enough to be quoted from
+elsewhere — the sibling mission repeated it. Both rows are now measurements.
+
+## One of these was locale-dependent, and the class is bounded
+
+`projection_inflation_metric.sh` computed its rates with an awk printf, which
+honours the locale's decimal separator. Under a comma-decimal locale the rates
+came out as `100,0` rather than `100.0`, feeding them back as a string, and the
+comparison silently became lexicographic. The guard reported a perfect
+realization rate as FAIL, in a message that said the same value was below the
+threshold three lines after printing it.
+
+The other guards were checked for the same dependence rather than assumed clear,
+because `[0-9]` ranges in a regular expression are collation-dependent in a
+UTF-8 locale and several of these programs lean on them. Run under `C`,
+`pt_BR.UTF-8` and `de_DE.UTF-8`, the section-cite linter, the accepted-history
+guard and the Status/VH guard all report identical counts. The Python linters do
+not consult the locale for these patterns at all.
+
+So the class is one script wide, and it was found by running the two checks
+nobody had run rather than by auditing for it.
+
+Two scripts in this census had never been executed at all before this pass:
+the token-list test suite, which is 56 pass and 0 fail, and the projection
+metric, which is the one that was broken. Neither was reachable from the exits
+recorded here, because one takes arguments and the other is a fixture runner.
+
+## Re-measured Every exit code above was run, not carried forward from the
+
+original census. Four rows had moved:
+
+| Row                      | Then           | Now                  |
+| ------------------------ | -------------- | -------------------- |
+| `lint_no_vh_accepted.sh` | 1, 51 findings | 0                    |
+| `lint_section_cites.sh`  | 1, 58 findings | 0                    |
+| `lint_status_vh_sync.sh` | 1, 1 finding   | 1, 9 findings        |
+| `validate_cites.sh`      | 1, 1323        | 1, 1300 / 339 / 1028 |
+
+Both baselines shrank as debt was retired, not as suppression was added: the
+anchors baseline is 588 and the type-reference baseline is 652, and each guard
+now states how much of its current findings the baseline covers.
+
+This entry's own title says "two of them fail today". Three do. The census was
+accurate when written and the guards changed underneath it, which is the
+ordinary way a hand-kept table goes stale — and this repository has already
+had a run of those. Nothing here is now maintained by hand: the mutation
+harness derives its own coverage from its own table, and the two figures most
+likely to move again are the ones a reader can re-run.
+
+Two scripts named in this census turned out not to be gates and are excluded:
+`cross_rfc_propagate.sh` is a maintenance automation tool that emits a diff for
+human review ("Manual review required: YES"), and
+`test-dangerous-tokens.sh` is a test fixture runner. Neither is a check that
+claims to police the tree.
+
+One measurement note, recorded because it nearly produced a wrong table:
+`mutation-verify-guards.sh --help` used to report `passed=0 skipped=10`, because
+the script treated any argument as a name filter and `--help` matched nothing.
+With no argument it passed 10/10. A script that treats its own help flag as a
+filter silently measures nothing, which is worth knowing before wiring it
+anywhere.
+
+**Since fixed.** `--help` prints usage and lists every guard, and a filter that
+matches no guard exits 1 instead of reporting a successful empty run. Recorded
+in mission
+`four-linters-report-clean-while-their-counters-describe-a-different-population`.
+The 10/10 figure in the table above is unchanged and re-verified after that
+fix.
+
+## Fixed here: the status linter compared against the oldest row
+
+`lint_status_vh_sync.sh` extracted the "latest" Version History version with an
+awk that printed the first matching versioned row and exited:
+
+```bash
+awk '/^## (Version History|Changelog)$/{found=1; next} found && /^\| [0-9]+(\.[0-9]+)+ \|/ {print; exit}'
+```
+
+A Version History table is append-ordered oldest-first, so the first row is the
+**oldest** entry. Every RFC whose table held more than one row was compared
+against its initial version and reported out of sync.
+
+9 findings, 8 of them this bug on files that are correctly in sync. Example:
+`rfcs/draft/networking/0859-proof-carrying-envelopes.md` declares
+`version: 1.1.0` in frontmatter, its VH table starts at `1.0.0`, and its newest
+row is `1.1.0`. The linter reported `Status=v1.1.0, VH latest=v1.0.0`.
+
+Fixed by collecting every versioned row and taking `sort -V | tail -1`. Version
+sorting is required rather than lexicographic: `1.10.0` must beat `1.9.0`.
+
+After the fix the tree reports **1** finding, down from 9.
+
+Verified by mutation in both directions:
+
+- reverting to the first-row form returns the count to **11**, higher than the
+  original 9, because removing `sort -V` also misorders versions
+- injecting genuine drift (VH row `1.3.0` against Status `v1.1.0`) is still
+  detected, and still classified in the correct direction as
+  `OUT_OF_SYNC_STATUS_OLDER`
+
+The ninth original finding is real and untouched: `0110-deterministic-bigint.md`
+declares `**Version:** 2.14.0` against a VH row of `2.14`. Same version,
+different precision.
+
+## The plan linter cannot run anywhere but this machine
+
+`lint_plan_yaml_vh_sync.sh` defaults to an absolute path outside the repository:
+
+```bash
+PLAN_ROOT="${PLAN_ROOT:-/home/mmacedoeu/.claude/plans}"
+```
+
+It reports 6 failures, all of which are agent session plan files. None of them
+are in this repository; the repo has no `plans/` directory and the two tracked
+`plans/` paths are elsewhere.
+
+A gate whose target is a developer's home directory is not a gate on the
+project. It is a personal scratchpad check wearing a linter's clothes. It is
+also the only linter that hardcodes a path in this way, though
+`lib-octo-wa.sh` and several `persist-*.sh` scripts hardcode
+`/home/mmacedoeu/...` binary paths, which is a separate portability concern for
+scripts that are not checks.
+
+## The bulk findings are probably not defects
+
+`lint_status_vh_sync.sh` still reports, after the fix:
+
+| Class                      | Count | Reading                                           |
+| -------------------------- | ----- | ------------------------------------------------- |
+| `NO_STATUS_VERSION`        | 210   | files whose `## Status` header carries no version |
+| `NO_VH`                    | 135   | files with no Version History section at all      |
+| `OUT_OF_SYNC_STATUS_NEWER` | 1     | the genuine format mismatch above                 |
+| `IN_SYNC`                  | 15    |                                                   |
+
+345 findings against 247 files, from a linter that is not wired and whose
+severity model treats a missing optional section as a failure. An archived RFC
+with no `## Status` version is not drift. These counts are recorded as
+observations, **not** as a work queue — resolving them means deciding what the
+linter should require of an archived document, which is an owner decision.
+
+## Acceptance criteria
+
+- [ ] A decision is recorded for each unwired check: wire it, or record why it
+      is satisfied without running in CI.
+- [ ] `lint_plan_yaml_vh_sync.sh` either targets something inside the repository
+      or is marked as a local-only tool. A hardcoded home path in a script that
+      presents itself as a project guard is a defect either way.
+- [ ] `NO_STATUS_VERSION` / `NO_VH` are classified as required or exempt
+      before the status linter is considered for wiring. A gate that reports 345
+      findings on a clean tree cannot be adopted as-is.
+- [ ] Anything adopted reports zero on the tree at the moment of adoption.
+
+## Notes
+
+The census was run excluding `.claude/worktrees/` copies, which otherwise
+inflate reference counts by 3 to 4x and make dead scripts look wired. Seven
+scripts have zero references anywhere in the tree; this mission covers the six
+that are checks or linters, and the seventh
+(`compute_decimal_config_hash.py`) is not a check.

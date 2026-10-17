@@ -38,11 +38,11 @@ Add RFC-specified division test vectors and "Brutal Edge Case" test vectors to t
 
 All RFC-0105 §7 test vectors were already present in the codebase (added in commit `3f08e57`):
 
-- `test_div_rfc_vectors` (lines 761-775) - RFC division tests
-- `test_div_additional_vectors` (lines 778-809) - Additional division tests
-- `test_div_brutal_edge_cases` (lines 812-824) - i64::MIN/-1 overflow, etc.
-- `test_chain_operations` (lines 869-911) - Chain operations at different scales
-- `test_overflow_vectors` (lines 827-839) - Overflow tests
+- `test_div_rfc_vectors` - RFC division tests
+- `test_div_additional_vectors` - Additional division tests
+- `test_div_brutal_edge_cases` - i64::MIN/-1 overflow, etc.
+- `test_chain_operations` - Chain operations at different scales
+- `test_overflow_vectors` - Overflow tests
 
 All 26 DQA tests pass with `cargo test --release`.
 

@@ -24,7 +24,7 @@ Implement `handle_request_anyllm()` in proxy.rs to provide full HTTP proxy funct
 
 ## Motivation
 
-The current `handle_request_anyllm()` at proxy.rs:855-869 is a stub that returns HTTP 400 "any-llm-mode proxy not yet implemented". Anyone building with `--features any-llm-mode` gets a completely broken HTTP proxy. This blocks any-llm users from using quota-router as a gateway.
+The current `handle_request_anyllm()` at proxy.rs is a stub that returns HTTP 400 "any-llm-mode proxy not yet implemented". Anyone building with `--features any-llm-mode` gets a completely broken HTTP proxy. This blocks any-llm users from using quota-router as a gateway.
 
 ## Specification
 
@@ -95,35 +95,37 @@ The response MUST be OpenAI-compatible JSON:
 
 ```json
 {
-    "id": "chatcmpl-xxx",
-    "object": "chat.completion",
-    "created": 1234567890,
-    "model": "gpt-4o",
-    "choices": [{
-        "index": 0,
-        "message": {
-            "role": "assistant",
-            "content": "Hello!"
-        },
-        "finish_reason": "stop"
-    }],
-    "usage": {
-        "prompt_tokens": 10,
-        "completion_tokens": 5,
-        "total_tokens": 15
+  "id": "chatcmpl-xxx",
+  "object": "chat.completion",
+  "created": 1234567890,
+  "model": "gpt-4o",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Hello!"
+      },
+      "finish_reason": "stop"
     }
+  ],
+  "usage": {
+    "prompt_tokens": 10,
+    "completion_tokens": 5,
+    "total_tokens": 15
+  }
 }
 ```
 
 ### Error Handling
 
-| py_bridge Error | HTTP Status | Response |
-|-----------------|-------------|----------|
-| AuthError | 401 | `{"error": "authentication_error"}` |
-| RateLimit | 429 | `{"error": "rate_limit_error"}` |
-| InvalidRequest | 400 | `{"error": "invalid_request_error"}` |
-| ProviderError | 502 | `{"error": "provider_error"}` |
-| Timeout | 504 | `{"error": "gateway_timeout"}` |
+| py_bridge Error | HTTP Status | Response                             |
+| --------------- | ----------- | ------------------------------------ |
+| AuthError       | 401         | `{"error": "authentication_error"}`  |
+| RateLimit       | 429         | `{"error": "rate_limit_error"}`      |
+| InvalidRequest  | 400         | `{"error": "invalid_request_error"}` |
+| ProviderError   | 502         | `{"error": "provider_error"}`        |
+| Timeout         | 504         | `{"error": "gateway_timeout"}`       |
 
 ### Fallback Chain
 
@@ -162,11 +164,11 @@ if let Some(ref executor) = fallback {
 
 ## Key Files
 
-| File | Change |
-|------|--------|
-| `crates/quota-router-core/src/proxy.rs` | Implement handle_request_anyllm() |
+| File                                                | Change                                      |
+| --------------------------------------------------- | ------------------------------------------- |
+| `crates/quota-router-core/src/proxy.rs`             | Implement handle_request_anyllm()           |
 | `crates/quota-router-core/src/py_bridge/factory.rs` | Add completion() and streaming_completion() |
-| `crates/quota-router-core/src/py_bridge/mod.rs` | Update PyBridgeProvider trait |
+| `crates/quota-router-core/src/py_bridge/mod.rs`     | Update PyBridgeProvider trait               |
 
 ## Risks
 
@@ -176,6 +178,6 @@ if let Some(ref executor) = fallback {
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 0.1.0 | 2026-05-16 | Initial draft |
+| Version | Date       | Changes       |
+| ------- | ---------- | ------------- |
+| 0.1.0   | 2026-05-16 | Initial draft |

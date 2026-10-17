@@ -70,11 +70,7 @@ impl GatewayIdentity {
 
     /// Derive gateway_id deterministically.
     /// gateway_id = BLAKE3-256(public_key || network_id || creation_epoch)
-    pub fn derive_gateway_id(
-        public_key: &[u8; 32],
-        network_id: u32,
-        creation_epoch: u64,
-    ) -> [u8; 32] {
+    pub fn derive_gateway_id(public_key: &[u8], network_id: u32, creation_epoch: u64) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
         hasher.update(public_key);
         hasher.update(&network_id.to_be_bytes());

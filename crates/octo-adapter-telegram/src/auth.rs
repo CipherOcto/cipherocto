@@ -93,7 +93,7 @@ pub type AuthResult<T> = std::result::Result<T, AuthError>;
 ///
 /// `AuthStateKey` is the testable surface (no TDLib type to construct), and
 /// `decide_key` maps a key to an `AuthAction`. The receive loop uses
-/// `decide(&AuthorizationState)` (the TDLib-aware wrapper) at runtime.
+/// `decide(&&AuthorizationState)` (the TDLib-aware wrapper) at runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthStateKey {
     WaitTdlibParameters,
@@ -183,7 +183,7 @@ impl UserAuth {
     /// take. This is the pure decision function — it does no I/O and does not
     /// touch TDLib — so it can be unit-tested without a real client.
     ///
-    /// The receive loop uses this through `decide(&AuthorizationState)` (the
+    /// The receive loop uses this through `decide(&&AuthorizationState)` (the
     /// feature-gated TDLib wrapper) at runtime.
     pub fn decide_key(&self, key: AuthStateKey) -> AuthAction {
         match key {

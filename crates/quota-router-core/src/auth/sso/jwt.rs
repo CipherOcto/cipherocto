@@ -3,6 +3,12 @@
 //! JWT validation with JWKS caching, clock skew tolerance, and audience/issuer validation.
 //! Implements cryptographic signature verification using JWKS keys.
 
+// Clippy `[disallowed-methods]` allowlist: JWT JWKS fetches are operator
+// IdP calls (RFC-0949), NOT LLM model providers. The fetcher only
+// retrieves public keys for signature verification — no Authorization
+// header carrying cipherocto material.
+#![allow(clippy::disallowed_methods)]
+
 use super::{JwtAlgorithm, JwtValidationConfig, SsoError, TokenClaims};
 use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};

@@ -1,0 +1,41 @@
+[package]
+name = "octo-cap-macaroon-vault"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Vault glue crate: `OctoVaultLookup` for `octo-cap-macaroon`. Wires `VaultLookup::lookup_vault` to the canonical RFC-0960 substrate `vaults_vault_id_idx` UNIQUE INDEX lookup. Keeps `octo-cap-macaroon` free of the Layer B vault substrate dep."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# `VaultLookup` trait + `VaultRowSnapshot` (RFC-0957 verify-time bump
+# per review §20.6.1). This glue crate implements the trait using the
+# octo-vault substrate's typed `VaultSubstrate` handle — `octo-cap-macaroon`
+# stays free of any vault-substrate dep (Layer B extension).
+octo-cap-macaroon = { path = "../octo-cap-macaroon" }
+# Layer B substrate `VaultSubstrate` handle (`vaults_vault_id_idx` UNIQUE
+# INDEX lookup primitive). Only this crate (not `octo-cap-macaroon`)
+# depends on it. `VaultSubstrate` wraps `Arc<stoolap::Database>` so the
+# glue crate does NOT need a direct stoolap dep — see
+# `feedback_stoolap_persistence` + plan §B.2.
+octo-vault = { path = "../octo-vault" }
+
+[dev-dependencies]
+# Test-only: `open_in_memory` substrate handle + pre-running the
+# `octo_vault::apply` migration runner so the `vaults` table +
+# `vaults_vault_id_idx` exist before the unit tests insert rows.
+# Dev-only — keeps the production dep tree minimal (Layer A substrate
+# stays an internal test utility).
+octo-storage-core = { path = "../octo-storage-core" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+# Pedantic doc-comment style nits — original octo-cap-macaroon source
+# was hand-written, not pedantic-style-compliant. Mirrors
+# octo-cap-macaroon-transport's lint profile.
+empty_line_after_doc_comments = "allow"
+doc_lazy_continuation = "allow"

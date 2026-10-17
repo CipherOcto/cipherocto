@@ -1,6 +1,6 @@
 //! Deterministic Matrix (DMAT) Implementation
 //!
-//! This module implements RFC-0113 v1.21: Deterministic Matrices (DMAT)
+//! This module implements RFC-0113: Deterministic Matrices (DMAT)
 //!
 //! ## Trait Architecture
 //!

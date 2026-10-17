@@ -144,10 +144,10 @@ The trace proves regulatory compliance.
 
 ## Related RFCs
 
-- [RFC-0412 (Agents): Verifiable Reasoning Traces](../rfcs/0412-verifiable-reasoning-traces.md)
-- [RFC-0410 (Agents): Verifiable Agent Memory](../rfcs/0410-verifiable-agent-memory.md)
-- [RFC-0411 (Economics): Knowledge Market](../rfcs/0411-knowledge-market-verifiable-data-assets.md)
-- [RFC-0116 (Numeric/Math): Unified Deterministic Execution Model](../rfcs/0116-unified-deterministic-execution-model.md)
-- [RFC-0413 (Agents): State Virtualization for Massive Agent Scaling](../rfcs/0413-state-virtualization-massive-scaling.md)
-- [RFC-0414 (Agents): Autonomous Agent Organizations](../rfcs/0414-autonomous-agent-organizations.md)
-- [RFC-0415 (Agents): Alignment & Control Mechanisms](../rfcs/0415-alignment-control-mechanisms.md)
+- RFC-0412
+- RFC-0410
+- RFC-0411
+- RFC-0116
+- RFC-0413
+- RFC-0414
+- RFC-0415

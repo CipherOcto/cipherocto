@@ -165,8 +165,13 @@ struct PeerState {
     /// Liveness tracking: consecutive missed pongs
     #[allow(dead_code)] // Tracked for future liveness-based eviction.
     missed_pongs: u32,
-    /// Last successful pong nonce
-    #[allow(dead_code)] // Tracked for future nonce-replay defense.
+    /// Last successful pong nonce.
+    ///
+    /// Inbound PING replay defense does NOT live here — it is per-connection
+    /// state in the accept loop, which is where a PONG is actually emitted.
+    /// This field tracks the *outbound* direction for future liveness-based
+    /// eviction, and is still unread.
+    #[allow(dead_code)] // Read when liveness-based eviction lands (CD-6 D3).
     last_pong_nonce: u64,
     /// GDP registration (if peer is registered)
     registration: Option<PeerRegistration>,
@@ -193,7 +198,11 @@ pub struct QuicAdapter {
     /// GDP discovery state for peer management
     discovery: RwLock<DiscoveryState>,
     /// Replay cache for 0-RTT envelope deduplication (RFC-0853 §7)
-    replay_cache: Mutex<ReplayCache>,
+    ///
+    /// Shared as an `Arc` so the spawned accept loop can consult it: the loop
+    /// outlives `start_server`'s borrow of `self`, and the replay check has to
+    /// happen on the receive path or it is not a check at all.
+    replay_cache: Arc<Mutex<ReplayCache>>,
     /// QUIC endpoint (set when server starts)
     endpoint: Mutex<Option<quinn::Endpoint>>,
     /// TLS certificate (DER bytes, set when server starts)
@@ -213,7 +222,7 @@ impl QuicAdapter {
             self_id: Mutex::new(None),
             ping_counter: std::sync::atomic::AtomicU64::new(0),
             discovery: RwLock::new(discovery),
-            replay_cache: Mutex::new(replay_cache),
+            replay_cache: Arc::new(Mutex::new(replay_cache)),
             endpoint: Mutex::new(None),
             cert_der: Mutex::new(None),
         }
@@ -242,6 +251,13 @@ impl QuicAdapter {
     }
 
     /// Decode a frame header. Returns (frame_type, payload_len) or error.
+    ///
+    /// The declared `payload_len` is bounded here, at the decode boundary, so
+    /// that no caller can be tricked into allocating from an attacker-controlled
+    /// length. A 6-byte header declaring `frame_len = 0xFFFFFFFF` yields
+    /// `payload_len = 0xFFFFFFFD`; without this check the accept loop's
+    /// `vec![0u8; plen]` attempts a ~4 GB allocation per stream (RFC-0850 §8.7.3
+    /// frame limits; cap per `max_payload_bytes`).
     pub fn decode_frame_header(header: &[u8; 6]) -> Result<(u16, u32), String> {
         let frame_len = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
         if frame_len < 2 {
@@ -249,6 +265,12 @@ impl QuicAdapter {
         }
         let frame_type = u16::from_be_bytes([header[4], header[5]]);
         let payload_len = frame_len - 2;
+        if payload_len as usize > Self::max_payload_bytes() {
+            return Err(format!(
+                "payload too large: {payload_len} > {}",
+                Self::max_payload_bytes()
+            ));
+        }
         Ok((frame_type, payload_len))
     }
 
@@ -304,8 +326,12 @@ impl QuicAdapter {
             .parse()
             .map_err(|e| quic_err(format!("Invalid listen addr: {e}")))?;
 
-        let (endpoint, cert) = Self::make_server_endpoint(listen_addr)
-            .map_err(|e| quic_err(format!("Server endpoint: {e}")))?;
+        let (endpoint, cert) = Self::make_server_endpoint(
+            listen_addr,
+            self.config.tls_cert_path.as_deref(),
+            self.config.tls_key_path.as_deref(),
+        )
+        .map_err(|e| quic_err(format!("Server endpoint: {e}")))?;
 
         // Store cert and endpoint
         *self.cert_der.lock().await = Some(cert);
@@ -314,6 +340,7 @@ impl QuicAdapter {
         // Spawn accept loop
         let inbound_tx = self.inbound_tx.clone();
         let ep = endpoint.clone();
+        let replay_cache = Arc::clone(&self.replay_cache);
         *self.endpoint.lock().await = Some(endpoint);
 
         tokio::spawn(async move {
@@ -322,7 +349,12 @@ impl QuicAdapter {
                 match ep.accept().await {
                     Some(connecting) => {
                         let tx = inbound_tx.clone();
+                        let rc = Arc::clone(&replay_cache);
                         tokio::spawn(async move {
+                            // L-10: highest PING nonce reflected so far on this
+                            // connection. Per-connection, so one noisy peer
+                            // cannot advance another's window.
+                            let mut last_ping_nonce: Option<u64> = None;
                             match connecting.await {
                                 Ok(conn) => {
                                     tracing::info!(
@@ -352,6 +384,67 @@ impl QuicAdapter {
                                                                     .await
                                                                     .is_ok()
                                                                 {
+                                                                    // Replay check on
+                                                                    // the receive path
+                                                                    // (RFC-0853 §7).
+                                                                    // This used to be
+                                                                    // defined and never
+                                                                    // called, so a
+                                                                    // captured frame
+                                                                    // replayed freely.
+                                                                    let dedup_key =
+                                                                        match DeterministicEnvelope::from_wire_bytes(
+                                                                            &payload,
+                                                                        ) {
+                                                                            Ok(env) => env.envelope_id,
+                                                                            // Not a full
+                                                                            // envelope (e.g. a
+                                                                            // FRAGMENT frame):
+                                                                            // fall back to the
+                                                                            // payload hash, which
+                                                                            // is still a stable
+                                                                            // replay key.
+                                                                            Err(_) => {
+                                                        *blake3::hash(&payload)
+                                                            .as_bytes()
+                                                    }
+                                                                        };
+                                                                    // The epoch is local
+                                                                    // wall-clock, NOT the
+                                                                    // envelope's
+                                                                    // `logical_timestamp`:
+                                                                    // the cache purges by
+                                                                    // epoch, so a
+                                                                    // backdated timestamp
+                                                                    // from an attacker
+                                                                    // would flush the
+                                                                    // seen-set and unlock
+                                                                    // every earlier replay.
+                                                                    let now_unix =
+                                                                        std::time::SystemTime::now(
+                                                                        )
+                                                                        .duration_since(
+                                                                            std::time::UNIX_EPOCH,
+                                                                        )
+                                                                        .map(|d| d.as_secs())
+                                                                        .unwrap_or(0);
+                                                                    let is_replay = {
+                                                                        let mut cache =
+                                                                            rc.lock().await;
+                                                                        cache
+                                                                            .check_and_insert(
+                                                                                dedup_key, now_unix,
+                                                                            )
+                                                                            .is_err()
+                                                                    };
+                                                                    if is_replay {
+                                                                        tracing::debug!(
+                                                                            "dropping replayed \
+                                                                             quic frame: {}",
+                                                                            blake3::hash(&payload)
+                                                                        );
+                                                                        continue;
+                                                                    }
                                                                     let raw = RawPlatformMessage {
                                                                         platform_id: format!(
                                                                             "quic:{}",
@@ -378,14 +471,44 @@ impl QuicAdapter {
                                                                     .await
                                                                     .is_ok()
                                                                 {
-                                                                    let pong =
-                                                                        QuicAdapter::encode_pong(
-                                                                            u64::from_be_bytes(
-                                                                                nonce_bytes,
-                                                                            ),
+                                                                    let nonce = u64::from_be_bytes(
+                                                                        nonce_bytes,
+                                                                    );
+                                                                    // L-10: the PONG used to
+                                                                    // echo whatever nonce
+                                                                    // arrived, with no
+                                                                    // memory of what was
+                                                                    // already
+                                                                    // reflected — so a
+                                                                    // captured ping could
+                                                                    // be replayed for
+                                                                    // unbounded liveness
+                                                                    // responses. A
+                                                                    // ping nonce is
+                                                                    // monotonically
+                                                                    // increasing per
+                                                                    // sender, so a
+                                                                    // duplicate or
+                                                                    // regressed one is
+                                                                    // a replay.
+                                                                    if last_ping_nonce.is_some_and(
+                                                                        |last| nonce <= last,
+                                                                    ) {
+                                                                        tracing::debug!(
+                                                                            nonce,
+                                                                            "dropping replayed                                                                              quic ping"
                                                                         );
-                                                                    let _ =
-                                                                        send.write_all(&pong).await;
+                                                                    } else {
+                                                                        last_ping_nonce =
+                                                                            Some(nonce);
+                                                                        let pong =
+                                                                            QuicAdapter::encode_pong(
+                                                                                nonce,
+                                                                            );
+                                                                        let _ = send
+                                                                            .write_all(&pong)
+                                                                            .await;
+                                                                    }
                                                                 }
                                                             }
                                                         }
@@ -426,24 +549,81 @@ impl QuicAdapter {
         Ok(())
     }
 
+    /// Build the server endpoint from `config`.
+    ///
+    /// TLS material resolution (audit H-8):
+    ///
+    /// - **Both** `tls_cert_path` and `tls_key_path` supplied ⇒ load them.
+    ///   The operator's certificate is actually used.
+    /// - **Neither** supplied ⇒ mint an ephemeral self-signed certificate and
+    ///   log a warning that the endpoint has no stable server identity.
+    /// - **Exactly one** supplied ⇒ error. Half a TLS configuration is a
+    ///   misconfiguration, and silently ignoring either half is precisely the
+    ///   defect this function used to have.
+    ///
+    /// Previously all three cases took the self-signed path, so an operator who
+    /// supplied a real CA-signed certificate got an ephemeral one instead with
+    /// no warning — and `auth_mode` was never consulted at all.
     fn make_server_endpoint(
         addr: SocketAddr,
+        cert_path: Option<&str>,
+        key_path: Option<&str>,
     ) -> Result<(quinn::Endpoint, Vec<u8>), Box<dyn std::error::Error>> {
-        // Generate a self-signed certificate for development
-        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
-        let cert_der = rustls::pki_types::CertificateDer::from(cert.cert);
-        let key_der = rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+        let (cert_der, key_der) = match (cert_path, key_path) {
+            (Some(cert_path), Some(key_path)) => {
+                let cert_pem = std::fs::read(cert_path)
+                    .map_err(|e| format!("read tls_cert_path {cert_path}: {e}"))?;
+                let key_pem = std::fs::read(key_path)
+                    .map_err(|e| format!("read tls_key_path {key_path}: {e}"))?;
 
-        let mut server_config = quinn::ServerConfig::with_single_cert(
-            vec![cert_der.clone()],
-            rustls::pki_types::PrivatePkcs8KeyDer::from(key_der.secret_pkcs8_der().to_vec()).into(),
-        )?;
+                let cert_chain = parse_pem_certs(&cert_pem)
+                    .map_err(|e| format!("parse tls_cert_path {cert_path}: {e}"))?;
+                if cert_chain.is_empty() {
+                    return Err(format!(
+                        "tls_cert_path {cert_path} contained no CERTIFICATE block"
+                    )
+                    .into());
+                }
+                let key = parse_pem_key(&key_pem)
+                    .map_err(|e| format!("parse tls_key_path {key_path}: {e}"))?;
+                (cert_chain, key)
+            }
+            (None, None) => {
+                // No operator TLS material. Ephemeral and unusable for anything
+                // but local development — say so loudly rather than silently.
+                tracing::warn!(
+                    "QUIC server starting with an EPHEMERAL SELF-SIGNED certificate: \
+                     clients cannot pin a stable identity and this must not be used \
+                     outside local development. Set tls_cert_path + tls_key_path."
+                );
+                let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
+                let cert_der = rustls::pki_types::CertificateDer::from(cert.cert);
+                let key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(
+                    rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()),
+                );
+                (vec![cert_der], key_der)
+            }
+            (Some(_), None) => {
+                return Err("tls_cert_path is set but tls_key_path is not: refusing to \
+                            start with a self-signed certificate that silently ignores \
+                            the operator's configured certificate"
+                    .into())
+            }
+            (None, Some(_)) => {
+                return Err("tls_key_path is set but tls_cert_path is not: refusing to \
+                            start with a self-signed certificate that silently ignores \
+                            the operator's configured key"
+                    .into())
+            }
+        };
+
+        let mut server_config = quinn::ServerConfig::with_single_cert(cert_der.clone(), key_der)?;
 
         let transport = quinn::TransportConfig::default();
         server_config.transport_config(Arc::new(transport));
 
         let endpoint = quinn::Endpoint::server(server_config, addr)?;
-        Ok((endpoint, cert_der.to_vec()))
+        Ok((endpoint, cert_der[0].to_vec()))
     }
 
     // ── GDP Integration (RFC-0850 §8.7.5, RFC-0851) ──
@@ -614,6 +794,32 @@ impl QuicAdapter {
     }
 }
 
+/// Parse a PEM chain into DER certificates, preserving order.
+fn parse_pem_certs(
+    pem: &[u8],
+) -> Result<Vec<rustls::pki_types::CertificateDer<'static>>, std::io::Error> {
+    let mut reader = std::io::BufReader::new(pem);
+    rustls_pemfile::certs(&mut reader)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+}
+
+/// Parse a PEM private key (PKCS#8 / PKCS#1 / SEC1).
+///
+/// `with_single_cert` accepts any of the three encodings, so operators are not
+/// forced to reissue a certificate merely to match this crate's format.
+fn parse_pem_key(pem: &[u8]) -> Result<rustls::pki_types::PrivateKeyDer<'static>, std::io::Error> {
+    let mut reader = std::io::BufReader::new(pem);
+    rustls_pemfile::private_key(&mut reader)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "no PRIVATE KEY block found",
+            )
+        })
+}
+
 fn quic_err(msg: impl Into<String>) -> PlatformAdapterError {
     PlatformAdapterError::Unreachable {
         platform: "quic".into(),
@@ -695,6 +901,13 @@ impl PlatformAdapter for QuicAdapter {
 
         // QUIC carries raw wire bytes — try direct deserialization first
         if let Ok(env) = DeterministicEnvelope::from_wire_bytes(&raw.payload) {
+            // Ed25519 named explicitly so this reads as an assumption rather than an
+            // accident. CD-6's peer registry binds the key AND names the algorithm
+            // it speaks, so this constant goes away when that registry lands.
+            // M-15: see the note on the fallback path below — parsing alone
+            // accepts a structurally valid frame with a forged signature.
+            env.verify(&octo_algo_ed25519::ed25519_algorithm_id(), &env.source_peer)
+                .map_err(|e| quic_err(format!("envelope verify failed: {e}")))?;
             return Ok(env);
         }
 
@@ -707,12 +920,25 @@ impl PlatformAdapter for QuicAdapter {
             }
         })?;
 
-        DeterministicEnvelope::from_wire_bytes(&wire_bytes).map_err(|e| {
+        let envelope = DeterministicEnvelope::from_wire_bytes(&wire_bytes).map_err(|e| {
             PlatformAdapterError::ApiError {
                 code: 400,
                 message: format!("canonicalize failed: {e}"),
             }
-        })
+        })?;
+        // M-15: parsing is not verification. `from_wire_bytes` accepts a
+        // structurally valid frame whose `envelope_id` does not match its
+        // contents and whose signature is garbage. The key is the envelope's
+        // own `source_peer`, so this proves integrity and internal consistency,
+        // NOT that the claimed peer is who it claims to be — binding the key to
+        // a known peer, and names its algorithm, is the registry work in CD-6.
+        envelope
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &envelope.source_peer,
+            )
+            .map_err(|e| quic_err(format!("envelope verify failed: {e}")))?;
+        Ok(envelope)
     }
 
     fn capabilities(&self) -> CapabilityReport {
@@ -791,6 +1017,38 @@ mod tests {
         // frame_len = 1 (less than 2, impossible)
         let header = [0, 0, 0, 1, 0, 1];
         assert!(QuicAdapter::decode_frame_header(&header).is_err());
+    }
+
+    #[test]
+    fn test_decode_frame_header_rejects_oversized_payload() {
+        // Regression (H-9): an attacker-controlled frame_len must not survive
+        // decode as a ~4 GB allocation request. frame_len = 0xFFFFFFFF is the
+        // worst case; anything above the 1 MB cap must be rejected here.
+        let header = [0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x01];
+        let err = QuicAdapter::decode_frame_header(&header).unwrap_err();
+        assert!(
+            err.contains("payload too large"),
+            "expected a size rejection, got: {err}"
+        );
+
+        // Header layout is [u32 frame_len][u16 frame_type] — 6 bytes, so a bare
+        // u32::to_be_bytes is not a header.
+        let header_of = |frame_len: u32| {
+            let mut h = [0u8; 6];
+            h[..4].copy_from_slice(&frame_len.to_be_bytes());
+            h[4..].copy_from_slice(&FRAME_TYPE_ENVELOPE.to_be_bytes());
+            h
+        };
+
+        // One byte over the cap is still rejected — the boundary is the cap,
+        // not some rounder number. frame_len = payload + 2, so payload = cap+1.
+        let one_over = (QuicAdapter::max_payload_bytes() + 1) as u32;
+        assert!(QuicAdapter::decode_frame_header(&header_of(one_over + 2)).is_err());
+
+        // Exactly at the cap is accepted.
+        let at_cap = QuicAdapter::max_payload_bytes() as u32;
+        let (_, plen) = QuicAdapter::decode_frame_header(&header_of(at_cap + 2)).unwrap();
+        assert_eq!(plen as usize, QuicAdapter::max_payload_bytes());
     }
 
     #[test]
@@ -1135,6 +1393,103 @@ mod tests {
         assert_eq!(
             state.last_remote_addr,
             Some("10.0.0.3:47401".parse().unwrap())
+        );
+    }
+
+    // ---- H-8: operator TLS material must actually be used ----
+
+    /// Write a self-signed cert + key to a temp dir as PEM and return the paths.
+    fn operator_cert_fixture(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("quic-h8-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let cert = rcgen::generate_simple_self_signed(vec!["operator.example".into()])
+            .expect("rcgen cert");
+        let cert_path = dir.join("cert.pem");
+        let key_path = dir.join("key.pem");
+        std::fs::write(&cert_path, cert.cert.pem()).expect("write cert");
+        std::fs::write(&key_path, cert.key_pair.serialize_pem()).expect("write key");
+        (cert_path, key_path)
+    }
+
+    /// The regression this pins: the configured certificate must be the one
+    /// served. Before the fix, `make_server_endpoint` ignored both paths and
+    /// minted its own, so a round-tripped DER would never match the operator's
+    /// file.
+    #[tokio::test]
+    async fn configured_certificate_is_actually_served() {
+        let (cert_path, key_path) = operator_cert_fixture("served");
+        let addr: SocketAddr = "127.0.0.1:0".parse().expect("addr");
+
+        let (_endpoint, served) = QuicAdapter::make_server_endpoint(
+            addr,
+            Some(cert_path.to_str().expect("utf8")),
+            Some(key_path.to_str().expect("utf8")),
+        )
+        .expect("endpoint with operator material");
+        assert!(
+            !served.is_empty(),
+            "served leaf certificate must be non-empty DER"
+        );
+
+        // Independently re-read the operator's file and compare, so the
+        // assertion does not just echo what the function returned.
+        let on_disk = parse_pem_certs(&std::fs::read(&cert_path).expect("read"))
+            .expect("parse operator cert");
+        assert_eq!(
+            served,
+            on_disk[0].to_vec(),
+            "the DER served must be the operator's certificate, not a generated one"
+        );
+    }
+
+    #[test]
+    fn cert_without_key_is_rejected() {
+        let (cert_path, _) = operator_cert_fixture("half-cert");
+        let addr: SocketAddr = "127.0.0.1:0".parse().expect("addr");
+        let err =
+            QuicAdapter::make_server_endpoint(addr, Some(cert_path.to_str().expect("utf8")), None)
+                .expect_err("half a TLS configuration must not silently fall back");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("tls_key_path") && msg.contains("refusing"),
+            "error must name the missing key and the refusal, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn key_without_cert_is_rejected() {
+        let (_, key_path) = operator_cert_fixture("half-key");
+        let addr: SocketAddr = "127.0.0.1:0".parse().expect("addr");
+        let err =
+            QuicAdapter::make_server_endpoint(addr, None, Some(key_path.to_str().expect("utf8")))
+                .expect_err("half a TLS configuration must not silently fall back");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("tls_cert_path") && msg.contains("refusing"),
+            "error must name the missing cert and the refusal, got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_material_falls_back_to_self_signed() {
+        let addr: SocketAddr = "127.0.0.1:0".parse().expect("addr");
+        let (_endpoint, served) =
+            QuicAdapter::make_server_endpoint(addr, None, None).expect("dev fallback still works");
+        assert!(!served.is_empty(), "self-signed fallback must serve a cert");
+    }
+
+    #[test]
+    fn unreadable_certificate_path_is_an_error_not_a_silent_fallback() {
+        let addr: SocketAddr = "127.0.0.1:0".parse().expect("addr");
+        let err = QuicAdapter::make_server_endpoint(
+            addr,
+            Some("/nonexistent/quic/cert.pem"),
+            Some("/nonexistent/quic/key.pem"),
+        )
+        .expect_err("a missing cert file must not fall back to self-signed");
+        assert!(
+            err.to_string().contains("tls_cert_path"),
+            "error must identify the unreadable path, got: {err}"
         );
     }
 }

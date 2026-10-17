@@ -19,7 +19,15 @@ async fn envelope_send_native_rejects_dot_prefixed_input() {
         socket_dir: tmp.path().to_path_buf(),
         media_buffer: MediaBufferConfig::default(),
         events: EventsConfig::default(),
-        security: SecurityConfig::default(),
+        // Explicit opt-out: `bearer_required` now defaults to true, so a test
+        // that needs to reach the handler must disable it deliberately rather
+        // than inheriting an insecure default. Matches the idiom already used
+        // by `it_daemon_chain.rs`.
+        security: SecurityConfig {
+            bearer_required: false,
+            hermetic_bypass: true,
+            ..SecurityConfig::default()
+        },
         observability: Default::default(),
         rules: RulesConfig::default(),
         ..Default::default()
@@ -75,7 +83,7 @@ async fn envelope_send_native_rejects_dot_prefixed_input() {
     assert_eq!(resp["error"]["code"], -32602, "full response: {resp}");
     let msg = resp["error"]["message"].as_str().unwrap();
     assert!(
-        msg.contains("raw wire bytes") && msg.contains("DOT/"),
+        msg.contains("raw wire bytes") & msg.contains("DOT/"),
         "expected guidance message, got: {msg}"
     );
     assert_eq!(

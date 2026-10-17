@@ -1,6 +1,6 @@
 //! L5: TcpAdapter payload wire-format regression tests
 //!
-//! Verifies TcpAdapter honours RFC-0850 v1.3.0's `send_message(domain, envelope, payload)`
+//! Verifies TcpAdapter honours RFC-0850's `send_message(domain, envelope, payload)`
 //! signature: the wire frame includes the payload bytes alongside the envelope.
 //!
 //! Plan reference: `docs/plans/2026-06-28-payload-transport-regression-tests.md` (L5)
@@ -48,6 +48,19 @@ async fn capture_wire_bytes(
 ///
 /// Wire format (RFC-0850 §8.8, Raw mode, single-frame):
 ///   `[4-byte total_len][envelope wire bytes][payload bytes]`
+/// A genuinely signed envelope. See the note at the call site.
+fn signed_test_envelope() -> DeterministicEnvelope {
+    use ed25519_dalek::Signer as _;
+    let sk = ed25519_dalek::SigningKey::from_bytes(&[3u8; 32]);
+    let mut env = DeterministicEnvelope {
+        source_peer: sk.verifying_key().to_bytes(),
+        ..Default::default()
+    };
+    env.envelope_id = env.derive_envelope_id();
+    env.signature = sk.sign(&env.to_signing_bytes()).to_bytes();
+    env
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn tcp_adapter_sends_payload_over_wire() {
     // 1. Bind a raw listener
@@ -164,7 +177,10 @@ async fn tcp_adapter_receives_payload_from_wire() {
     sender.connect(recv_addr).await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let envelope = DeterministicEnvelope::default();
+    // M-15: the receiver's canonicalize verifies the envelope, so an unsigned
+    // `default()` fixture is correctly rejected before it reaches the handler.
+    // This test exercises the wire path, so it sends a real signature.
+    let envelope = signed_test_envelope();
     let payload: &[u8] = b"inbound L5 payload bytes";
     let domain = BroadcastDomainId::new(PlatformType::Tcp, "recv.example");
 

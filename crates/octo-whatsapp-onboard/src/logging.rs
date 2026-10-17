@@ -160,7 +160,7 @@ impl<'a> Visit for FieldCollector<'a> {
     fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
         use std::fmt::Write as _;
         // R3-H1: same special-case for the `message` field
-        // (record_str is called for &str values, which `tracing`
+        // (record_str is called for &&str values, which `tracing`
         // uses for plain string fields).
         if field.name() == "message" {
             let _ = write!(self.buf, " {:?}", value);
@@ -297,7 +297,7 @@ mod tests {
         // R4-M1 regression check: the message should NOT be
         // surrounded by Debug's `\"...\"` quotes. The standard
         // tracing-subscriber Format uses format_args! for messages
-        // (no Debug wrapping). For `&str` fields, the rendered
+        // (no Debug wrapping). For `&&str` fields, the rendered
         // body is the unwrapped string. If a future maintainer
         // uses `{:?}` for the message, the body would be
         // `"resolved bot identity: +1 555 123 4567"` (with

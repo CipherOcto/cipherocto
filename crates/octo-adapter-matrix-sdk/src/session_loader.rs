@@ -136,7 +136,7 @@ impl std::fmt::Debug for LoadedSession {
 ///
 /// R1-M23: this is `async` (was sync). The caller MUST be running
 /// inside a tokio runtime. `MatrixAdapter::new` builds a runtime
-/// and uses `runtime.block_on(load(&config))` to drive the loader
+/// and uses `runtime.block_on(load(&&config))` to drive the loader
 /// — this eliminates the prior per-call `current_thread` runtime
 /// build that the loader used to do internally.
 ///
@@ -213,7 +213,7 @@ fn load_from_file(config: &MatrixConfig) -> Result<LoadedSession, LoadError> {
 
 // R1-M23: removed `futures_block_on` helper — the loader is now
 // `async` and uses the caller's runtime. The `MatrixAdapter::new`
-// path drives the loader via `runtime.block_on(load(&config))`.
+// path drives the loader via `runtime.block_on(load(&&config))`.
 
 #[cfg(test)]
 mod tests {

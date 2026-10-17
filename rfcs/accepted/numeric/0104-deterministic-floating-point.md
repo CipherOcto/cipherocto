@@ -973,16 +973,16 @@ DFP software arithmetic is significantly slower than native integer operations. 
 
 DFP defines total ordering for sorting and comparison operations:
 
-| Order | Class     | Sign | Mantissa   | Exponent   |
+| Order | Class | Sign | Mantissa | Exponent |
 | ----- | --------- | ---- | ---------- | ---------- | ------ |
-| 1     | -Infinity | 1    | -          | -          |
-| 2     | Zero      | 1    | -          | -          | (-0.0) |
-| 3     | Normal    | 1    | descending | descending |
-| ...   | ...       | ...  | ...        | ...        |
-| N-2   | Normal    | 0    | ascending  | ascending  |
-| N-1   | Zero      | 0    | -          | -          | (+0.0) |
-| N     | +Infinity | 0    | -          | -          |
-| N+1   | NaN       | -    | -          | -          |
+| 1 | -Infinity | 1 | - | - |
+| 2 | Zero | 1 | - | - | (-0.0) |
+| 3 | Normal | 1 | descending | descending |
+| ... | ... | ... | ... | ... |
+| N-2 | Normal | 0 | ascending | ascending |
+| N-1 | Zero | 0 | - | - | (+0.0) |
+| N | +Infinity | 0 | - | - |
+| N+1 | NaN | - | - | - |
 
 **Total ordering:** `-Infinity < -0.0 < negative values < +0.0 < positive values < +Infinity < NaN`
 
@@ -1251,11 +1251,13 @@ exponent: i32
 
 **Hazard:** Little vs big endian can misinterpret serialized values.
 
-**Mitigation:** Use fixed byte order (little-endian) in serialization:
+**Mitigation:** Use fixed byte order (big-endian) in serialization, consistent with the canonical layout at §5.1 (lines 198-200) and the `to_bytes()` / `from_bytes()` implementation in `crates/determin/src/lib.rs`:
 
 ```
 struct { int128 mantissa, int32 exponent }
 ```
+
+(See Version History v1.1 — this line was corrected from "little-endian" to "big-endian" on 2026-07-25 to align with the canonical implementation and §5.1 layout.)
 
 ##### 7. Non-Deterministic Math Libraries
 
@@ -1770,7 +1772,7 @@ None. DFP is a new type that does not modify existing FLOAT/DOUBLE behavior.
 ## Related RFCs
 
 - RFC-0103 (Numeric/Math): Unified Vector-SQL Storage Engine
-- RFC-0100 (Economics): AI Quota Marketplace
+- RFC-0900 (Economics): AI Quota Marketplace
 - RFC-0102 (Numeric/Math): Wallet Cryptography
 
 ## Related Use Cases
@@ -1833,17 +1835,18 @@ The original RFC specified type-specific DFP opcodes (`OP_DFP_ADD/SUB/MUL/DIV`).
 ### A2. Cross-Type Numeric Comparison (Resolves: S7, F1)
 
 **Previous behavior:** Cross-type comparison (DFP vs Integer/Float) used `as_float64().unwrap()`, which:
+
 1. Panicked for Extension types (server crash)
 2. Lost DFP's 113-bit precision via lossy f64 conversion
 
 **New behavior:** Cross-type comparison uses **type promotion** instead of lossy conversion:
 
-| Left Type | Right Type | Comparison Strategy |
-|-----------|------------|---------------------|
-| DFP | Integer | Promote Integer → DFP, compare in DFP space |
-| DFP | Float | Promote Float → DFP, compare in DFP space |
-| DFP | DFP | Same-type `compare_dfp()` |
-| DFP | Quant | `Error::IncomparableTypes` (explicit CAST required) |
+| Left Type | Right Type | Comparison Strategy                                 |
+| --------- | ---------- | --------------------------------------------------- |
+| DFP       | Integer    | Promote Integer → DFP, compare in DFP space         |
+| DFP       | Float      | Promote Float → DFP, compare in DFP space           |
+| DFP       | DFP        | Same-type `compare_dfp()`                           |
+| DFP       | Quant      | `Error::IncomparableTypes` (explicit CAST required) |
 
 **Implementation:** `as_float64()` still supports DFP for backward compatibility but the `compare()` method uses dedicated promotion paths that avoid precision loss.
 
@@ -1879,6 +1882,7 @@ Op::Sqrt => {
 ### A5. Single Casting Truth (Resolves: F3)
 
 Three code paths previously implemented independent type coercion:
+
 1. `Value::cast_to_type(&self, target)` — borrowing
 2. `Value::into_coerce_to_type(self, target)` — consuming
 3. `CastExpr::perform_cast(&self, value)` — storage expression
@@ -1893,27 +1897,36 @@ Deferred to a separate RFC-0110. The VM's `deterministic` flag and `arithmetic_o
 
 DFP integration MUST include:
 
-| Category | Tests Required | Coverage |
-|----------|---------------|----------|
-| Value API | Round-trip, Display, as_string, as_float64, coercion | Per type conversion |
-| VM Arithmetic | add/sub/mul/div/mod/neg/abs/cmp | Per opcode × per type |
-| Cross-type comparison | DFP vs Int, DFP vs Float | Per combination |
-| SQL round-trip | CREATE → INSERT → SELECT → WHERE → UPDATE → DELETE | End-to-end |
-| Persistence | Serialization → deserialization fidelity | Per wire format |
+| Category              | Tests Required                                       | Coverage              |
+| --------------------- | ---------------------------------------------------- | --------------------- |
+| Value API             | Round-trip, Display, as_string, as_float64, coercion | Per type conversion   |
+| VM Arithmetic         | add/sub/mul/div/mod/neg/abs/cmp                      | Per opcode × per type |
+| Cross-type comparison | DFP vs Int, DFP vs Float                             | Per combination       |
+| SQL round-trip        | CREATE → INSERT → SELECT → WHERE → UPDATE → DELETE   | End-to-end            |
+| Persistence           | Serialization → deserialization fidelity             | Per wire format       |
 
 ---
 
-**Version:** 1.17
+**Version:** 1.18
 **Submission Date:** 2025-03-06
-**Last Updated:** 2026-03-08
-**Changes:** v1.16 final fixes (10/10):
+**Last Updated:** 2026-07-25
+**Changes:** v1.18 endianness fix (RFC-0968 §3 peer-flagged):
 
+- §6.Endianness now reads "big-endian" (was incorrectly "little-endian"). Aligned with §5.1 layout and `crates/determin/src/lib.rs` `to_bytes()` / `from_bytes()` implementation. Mantissa (16 bytes), exponent (4 bytes), class_sign (4 bytes) all big-endian.
+
+- v1.17 prep:
 - R1: Add Infinity unreachable note to ADD, MUL, DIV, SQRT
 - R2: Fix SQRT negative odd exponent - use >> 1 (floor), (exp & 1) != 0 (parity)
-- v1.15: MOD-1, MOD-2, MOD-3 and L1-L5 fixes
-- v1.14: SQRT 226-bit scaling, subnormal algorithm, signed-zero rules
+- v1.16: MOD-1, MOD-2, MOD-3 and L1-L5 fixes
+- v1.15: SQRT 226-bit scaling, subnormal algorithm, signed-zero rules
 - M2: Remove sqrt probe entry (was incorrect), now covered by algorithm fix
 - M3: Replace dfp_soft with dfp_spec_version for replay pinning
 - M4: Fix DFP_MAX_MANTISSA comment - correct formula to (2^113-1) × 2^1023
 - M5: Add INT → DFP promotion rules with rationale
 - v1.13: SQRT algorithm, verification probe structure, round_to_113 zero guard
+
+## Version History
+
+| Version | Date       | Change                                                                                 |
+| ------- | ---------- | -------------------------------------------------------------------------------------- |
+| 1.0     | 2026-08-22 | Retroactive VH table addition (per long-horizon plan v1.3 Phase 1 + Option C per M37). |

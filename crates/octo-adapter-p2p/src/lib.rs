@@ -295,6 +295,15 @@ impl PlatformAdapter for NativeP2PAdapter {
         // Native P2P carries raw wire bytes — no encoding layer.
         // Try direct deserialization first (binary path from gossipsub).
         if let Ok(env) = DeterministicEnvelope::from_wire_bytes(&raw.payload) {
+            // M-15: see the note on the fallback path below — parsing alone
+            // accepts a structurally valid frame with a forged signature.
+            // The envelope's own claimed peer. There is no registry here
+            // to say which algorithm that key speaks — see the M-15
+            // note below. Ed25519 is named explicitly so the call site
+            // reads as an assumption rather than an accident; binding a
+            // real per-peer algorithm is CD-6's work.
+            env.verify(&octo_algo_ed25519::ed25519_algorithm_id(), &env.source_peer)
+                .map_err(|e| transport_err(format!("envelope verify failed: {e}")))?;
             return Ok(env);
         }
 
@@ -306,12 +315,25 @@ impl PlatformAdapter for NativeP2PAdapter {
                 message: format!("canonicalize failed: {e}"),
             })?;
 
-        DeterministicEnvelope::from_wire_bytes(&wire_bytes).map_err(|e| {
+        let envelope = DeterministicEnvelope::from_wire_bytes(&wire_bytes).map_err(|e| {
             PlatformAdapterError::ApiError {
                 code: 400,
                 message: format!("canonicalize failed: {e}"),
             }
-        })
+        })?;
+        // M-15: parsing is not verification. `from_wire_bytes` accepts a
+        // structurally valid frame whose `envelope_id` does not match its
+        // contents and whose signature is garbage. The key is the envelope's
+        // own `source_peer`, so this proves integrity and internal consistency,
+        // NOT that the claimed peer is who it claims to be — binding the key to
+        // a known peer, and names its algorithm, is the registry work in CD-6.
+        envelope
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &envelope.source_peer,
+            )
+            .map_err(|e| transport_err(format!("envelope verify failed: {e}")))?;
+        Ok(envelope)
     }
 
     fn capabilities(&self) -> CapabilityReport {

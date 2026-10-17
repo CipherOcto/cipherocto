@@ -8,6 +8,7 @@
 //! ```json
 //! {
 //!   "send_url": "https://partner.example.com/dot/incoming",
+//!   "listen_addr": "127.0.0.1",
 //!   "listen_port": 8443,
 //!   "listen_path": "/dot/v1/envelope",
 //!   "send_method": "POST",
@@ -15,6 +16,21 @@
 //!   "hmac_secret": "shared-secret-for-signature-verification"
 //! }
 //! ```
+//!
+//! ## Inbound listener is fail-closed
+//!
+//! Starting the inbound listener requires `hmac_secret`. Without it every
+//! inbound envelope would be unauthenticated, so the adapter refuses to start
+//! rather than serving an open injection endpoint. The listener also binds
+//! loopback by default; set `listen_addr` to a routable address to opt out of
+//! that explicitly.
+
+// Clippy `[disallowed-methods]` allowlist: this is a messaging-platform
+// adapter (NOT an LLM model provider). The cipherocto capability
+// token boundary lives at `quota-router-core/src/egress/`; this
+// adapter talks to its own platform API using platform-issued
+// credentials.
+#![allow(clippy::disallowed_methods)]
 
 use async_trait::async_trait;
 use axum::{extract::State, http::StatusCode, routing::post, Router};
@@ -43,6 +59,14 @@ pub struct WebhookConfig {
     /// Port to listen on for incoming webhooks.
     #[serde(default = "default_listen_port")]
     pub listen_port: u16,
+    /// Address to bind the incoming listener to.
+    ///
+    /// Defaults to loopback. The previous behaviour — binding `[0, 0, 0, 0]`
+    /// with no way to configure it — turned the default deployment into a
+    /// network-reachable endpoint on every interface. Binding a public address
+    /// is now an explicit choice.
+    #[serde(default = "default_listen_addr")]
+    pub listen_addr: String,
     /// URL path to listen on.
     #[serde(default = "default_listen_path")]
     pub listen_path: String,
@@ -57,6 +81,10 @@ fn default_send_method() -> String {
 }
 fn default_listen_port() -> u16 {
     8443
+}
+fn default_listen_addr() -> String {
+    // Loopback by default; a routable address must be opted into explicitly.
+    "127.0.0.1".into()
 }
 fn default_listen_path() -> String {
     "/dot/v1/envelope".into()
@@ -106,19 +134,42 @@ impl WebhookAdapter {
             return Ok(());
         }
 
+        // Fail closed: no HMAC secret means every inbound envelope is
+        // unauthenticated, so there is no safe way to run the listener. The
+        // server also starts lazily (on the first `receive_messages`), which
+        // made "no secret configured" the path of least resistance — the serde
+        // default is `None` and nothing refused to start.
+        let Some(hmac_secret) = self.config.hmac_secret.as_deref() else {
+            return Err(transport_err(
+                "refusing to start the webhook listener without `hmac_secret`: \
+                 every inbound envelope would be unauthenticated. Set hmac_secret \
+                 (or use a transport that terminates auth upstream).",
+            ));
+        };
+        if hmac_secret.is_empty() {
+            return Err(transport_err(
+                "refusing to start the webhook listener with an empty `hmac_secret`",
+            ));
+        }
+
         let listen_port = self.config.listen_port;
         let listen_path = self.config.listen_path.clone();
 
         let state = Arc::new(WebhookState {
             tx: self.tx.clone(),
-            hmac_secret: self.config.hmac_secret.clone(),
+            hmac_secret: Some(hmac_secret.to_string()),
         });
 
         let app = Router::new()
             .route(&listen_path, post(webhook_handler))
             .with_state(state);
 
-        let addr = std::net::SocketAddr::from(([0, 0, 0, 0], listen_port));
+        let ip: std::net::IpAddr = self
+            .config
+            .listen_addr
+            .parse()
+            .map_err(|e| transport_err(format!("invalid listen_addr: {e}")))?;
+        let addr = std::net::SocketAddr::from((ip, listen_port));
         tokio::spawn(async move {
             if let Ok(listener) = tokio::net::TcpListener::bind(addr).await {
                 let _ = axum::serve(listener, app).await;
@@ -319,12 +370,25 @@ impl PlatformAdapter for WebhookAdapter {
         if raw.payload.is_empty() {
             return Err(transport_err("Empty payload"));
         }
-        DeterministicEnvelope::from_wire_bytes(&raw.payload).map_err(|e| {
+        let envelope = DeterministicEnvelope::from_wire_bytes(&raw.payload).map_err(|e| {
             PlatformAdapterError::ApiError {
                 code: 400,
                 message: format!("canonicalize failed: {e}"),
             }
-        })
+        })?;
+        // M-15: parsing is not verification. `from_wire_bytes` accepts a
+        // structurally valid frame whose `envelope_id` does not match its
+        // contents and whose signature is garbage. The key is the envelope's
+        // own `source_peer`, so this proves integrity and internal consistency,
+        // NOT that the claimed peer is who it claims to be — binding the key to
+        // a known peer, and names its algorithm, is the registry work in CD-6.
+        envelope
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &envelope.source_peer,
+            )
+            .map_err(|e| transport_err(format!("envelope verify failed: {e}")))?;
+        Ok(envelope)
     }
 
     fn capabilities(&self) -> CapabilityReport {
@@ -497,6 +561,7 @@ mod tests {
             send_url: None,
             send_method: "POST".into(),
             listen_port: 8443,
+            listen_addr: default_listen_addr(),
             listen_path: "/dot/v1/envelope".into(),
             auth_header: None,
             hmac_secret: None,
@@ -513,11 +578,82 @@ mod tests {
             send_url: None,
             send_method: "POST".into(),
             listen_port: 8443,
+            listen_addr: default_listen_addr(),
             listen_path: "/dot/v1/envelope".into(),
             auth_header: None,
             hmac_secret: None,
         });
         let d = a.domain_id("https://example.com");
         assert_eq!(d.platform_type, PlatformType::Webhook as u16);
+    }
+
+    // ── H-11: unauthenticated listener on all interfaces by default ──
+
+    #[tokio::test]
+    async fn test_listener_refuses_to_start_without_hmac_secret() {
+        // The serde default for `hmac_secret` is `None`, and the server starts
+        // lazily — so "no secret" was the path of least resistance and produced
+        // a network-reachable, unauthenticated injection endpoint.
+        for secret in [None, Some(String::new())] {
+            let a = WebhookAdapter::new(WebhookConfig {
+                send_url: None,
+                send_method: "POST".into(),
+                listen_port: 0,
+                listen_addr: default_listen_addr(),
+                listen_path: "/dot/v1/envelope".into(),
+                auth_header: None,
+                hmac_secret: secret,
+            });
+            let err = a.ensure_server_started().await.unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("hmac_secret"),
+                "expected a fail-closed refusal naming hmac_secret, got: {msg}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_listener_starts_with_hmac_secret() {
+        let a = WebhookAdapter::new(WebhookConfig {
+            send_url: None,
+            send_method: "POST".into(),
+            // Port 0 = ephemeral; the point is that the gate opens, not which
+            // port it lands on.
+            listen_port: 0,
+            listen_addr: default_listen_addr(),
+            listen_path: "/dot/v1/envelope".into(),
+            auth_header: None,
+            hmac_secret: Some("shared-secret".into()),
+        });
+        a.ensure_server_started().await.unwrap();
+        // Idempotent.
+        a.ensure_server_started().await.unwrap();
+    }
+
+    #[test]
+    fn test_default_listen_addr_is_loopback() {
+        // Regression: the bind used to be a hardcoded [0, 0, 0, 0].
+        let a = WebhookAdapter::from_config_bytes(b"{}").unwrap();
+        assert_eq!(a.config.listen_addr, "127.0.0.1");
+        assert!(
+            a.config
+                .listen_addr
+                .parse::<std::net::IpAddr>()
+                .unwrap()
+                .is_loopback(),
+            "default bind must be loopback, not a wildcard address"
+        );
+    }
+
+    #[test]
+    fn test_listen_addr_is_configurable_for_explicit_opt_in() {
+        let json = serde_json::json!({
+            "listen_addr": "0.0.0.0",
+            "hmac_secret": "s"
+        });
+        let a = WebhookAdapter::from_config_bytes(serde_json::to_vec(&json).unwrap().as_slice())
+            .unwrap();
+        assert_eq!(a.config.listen_addr, "0.0.0.0");
     }
 }

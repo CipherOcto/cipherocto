@@ -1134,7 +1134,7 @@ mod tests {
             .unwrap();
         // Wait for debounce to fire (no manual flush).
         let ok = wait_until(
-            || p.storage_path().exists() && p.snapshot().contains_key("r1"),
+            || p.storage_path().exists() & p.snapshot().contains_key("r1"),
             std::time::Duration::from_secs(2),
         );
         let resolved = ok.await;

@@ -1,0 +1,480 @@
+# 0105-v35-asset-registry-nonce-registry-substrate — RFC-0105 v3.5 canonical Layer B substrate
+
+**Status:** Open
+**Substrate:** RFC-0105 v3.5 §3.1 + §3.4 + §3.5 + §3.6 + §3.11 + §3.12 (canonical Layer B additive surface for all consumer RFCs)
+**Parent:** RFC-0105 v3.5 §3 + RFC-0965 v2.1 §2.1 + RFC-0960 v3.6 §2.1 + RFC-0959 v2.8 §2.1 (canonical homes cited)
+**Depends on:** RFC-0105 v3.5; RFC-0862 §Substrate types for Dqa wire form
+
+## Scope
+
+Land the **canonical Layer B additive substrate** that RFC-0105 v3.5 §3.x
+allocates as the single-source-of-truth for asset registry, bridge identity
+registry, nonce registry, typed newtypes, cryptographic primitives, and the
+sovereign-nonce namespace helper. Every consumer RFC (RFC-0965 v2.1,
+RFC-0960 v3.6, RFC-0959 v2.8, RFC-0960 v3.7) imports from these anchors;
+none re-declares the types locally (RFC-0105 v3.5 §3.8 single-source-of-truth
+rule at §3.8 + §3.12).
+
+### Mission D sub-steps
+
+1. **`AssetMetadata` struct + `AssetKind` enum + `MAX_SCALE` const** —
+   `crates/octo-vault/src/asset_registry.rs` (NEW). Per RFC-0105 v3.5 §3.1
+   `MAX_SCALE: u8 = 18` is **re-exported** here (canonical home
+   per §3.1; substrate DFA value lives at `determin/src/dqa.rs` —
+   this const is the asset-side mirror, NOT a re-binding of DFA
+   MAX_SCALE). `AssetKind` has 4 variants:
+   `SovereignRoleToken` / `PrivateCorporateAsset` / `BridgedExternalAsset`
+   / `WrappedCrossChainAsset`.
+   `AssetMetadata` fields + `namespace_tag()` impl per §3.1
+   (canonical derivation input for `AssetId::derive`). `kind_tag()` impl
+   per §3.1 (discriminant byte 0x01..0x04 for body_hash commitment).
+
+2. **`AssetRegistry` trait + `AssetError` enum** — same file.
+   Per §3.1. 4 methods (`metadata` / `register` / `revoke` /
+   `rotate_governance`). `AssetError` has **13 variants** per
+   RFC-0105 v3.5 §3.1: `Unknown` / `ScaleOutOfRange` /
+   `ScaleImmutable { existing, proposed }` / `DerivationMismatch` /
+   `KindNamespaceMismatch` / `GovernanceMissing` /
+   `GovernanceSignatureInvalid` / `SovereignRoleToken` /
+   `AlreadyRevoked` / `NotRevoked` / `BoundedCacheMiss` /
+   `BridgeUnknown { bridge_id }` / `CuratorNotInBridgeSet { bridge_id,
+claimed_pubkey }`. **Annotated `#[non_exhaustive]`** at the enum
+   level (Layer B additive; downstream consumers MUST handle the
+   wildcard arm).
+
+3. **`register()` scale-immutability + bridge-forgery triple check** —
+   same file. Per §3.2. REJECTS re-registration with different
+   `wire_scale`. REJECTS sovereign role token runtime registration.
+   REJECTS missing `governance_pubkey` on non-sovereign assets. Validates
+   `AssetId::derive(metadata.namespace_tag()) == asset_id`. Cross-checks
+   namespace-prefix / kind. For BRIDGED/WRAPPED kinds: parses bridge_id
+   from namespace_tag prefix, resolves via `BridgeIdentityRegistry`,
+   verifies curator set contains `metadata.governance_pubkey` (3 checks
+   close bridge-forgery vector per §3.2).
+
+4. **Revocation + governance rotation** — same file. Per §3.3.
+   `revoke()` flips `tombstone = true` (historical events still resolve,
+   NEW events REJECT). `rotate_governance()` requires OLD governance
+   pubkey co-signature (prevents unilateral takeover; bumps `version`,
+   stores `prev_commitment`).
+
+5. **Chain-of-trust commitment** — same file. Per §3.4. Length-
+   prefixed BLAKE3-256 commitment over `wire_scale || display_decimals ||
+len-prefixed(denomination) || len-prefixed(symbol) || kind_tag ||
+governance_pubkey || chain_id || len-prefixed(asset_name) ||
+(version - 1)`. Version-bump semantics: any of the listed fields
+   changing MUST bump `version` and produce new `prev_commitment`.
+
+6. **`CachedAssetRegistry` + bounded LRU + registry-snapshot epoch** —
+   same file or NEW `crates/octo-vault/src/cached_asset_registry.rs`.
+   Per §3.5. `LruCache<AssetId, (AssetMetadata, u64)>`. TTL =
+   `current_snapshot_epoch() - snapshot_epoch < ttl_epochs`. `Err(
+AssetError::BoundedCacheMiss)` on cache miss (Round 1 DoS mitigation;
+   variant is REACHABLE in v3.5-r3).
+
+7. **`BridgeIdentityRegistry` trait + `BridgeIdentity` struct +
+   `BridgeError` enum + `BridgeCuratorSlashingCondition` enum** —
+   `crates/octo-vault/src/bridge_identity_registry.rs` (NEW). Per §3.6
+   Per §3.6. `BridgeIdentity` fields per §3.6. `BridgeError` has 8
+   variants covering bridge lookup miss, quorum attestation
+   failure, external-chain mismatch, revocation state, curator-set check,
+   missing governance co-signature, retroactive compromised-key flag, and
+   co-signature audit attribution. `register()` performs 4-step
+   verification: BLS pubkey canonicalization (sign-bit → 0x80,
+   idempotent), distinct-pubkey check (rejects duplicates),
+   pairwise signature verification, aggregate pairing check.
+   First-time `register()` of NEW `bridge_id` REQUIRES Layer A root-key
+   co-signature; subsequent `rotate_curators()` does NOT.
+   `slash()` redistributes `slashing_stake` 50/30/20 (burn/curators/reporter
+   per §3.6). `BridgeCuratorSlashingCondition` has 3 variants
+   (`FalseAttestation` / `DoubleSign` / `KeyCompromise`).
+
+8. **`BridgeChainNamespace` enum** — `crates/octo-vault/src/bridge_chain_namespace.rs`
+   (NEW). Per §2.4. 5 variants:
+   `Mainnet` / `Testnet` / `Devnet` / `Sidechain` / `Other`. NO parallel
+   abstraction with existing `pub enum ChainNamespace { Rfc, User }` at
+   `crates/octo-policy/src/policy_kinds.rs` (`docs/architecture/design-principles.md` §No parallel abstractions
+   principle per RFC-0105 v3.5 §2.4).
+
+9. **`NonceRegistry` trait + `NonceError` enum** — `crates/octo-vault/src/nonce_registry.rs`
+   (NEW). Per §3.11. **3 methods + 1 enum discriminator**:
+
+   > **R7 CRITICAL NOTE (Mission D substrate-fidelity drift):** the
+   > `event_kind` discriminator parameter + `unobserve` method +
+   > `NonceError::NotObserved` variant + `observe_readonly` return-type
+   > change (`bool` → `Result`) are PROPOSED RFC-0105 v3.5-r8 AMENDMENT
+   > to §3.11 — they are NOT in the canonical RFC substrate (last
+   > touched v3.5-r4 per VH; v3.5-r7 was VH-trim/DRY only),
+   > Mission D substrate implementation MUST NOT land before
+   > the v3.5-r8 §3.11 amendment is Accepted. If the amendment is
+   > rejected or deferred, Mission D MUST back out these additions
+   > and conform to the canonical 2-arg `observe(pk, nonce) → Result`
+   >
+   > - `observe_readonly(pk, nonce) → bool` form. The proposal is
+   >   documented here in advance of amendment landing so consumer
+   >   missions (E, F, G) can be designed against the proposed surface.
+
+   ```rust
+   #[repr(u8)]   // MANDATORY (R7 CRITICAL #1): explicit discriminants
+                 // prevent mid-list insertion from shifting existing
+                 // LRU bucket tags. 0 + 128+ reserved for forward compat.
+   #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+   pub enum NonceEventKind {
+       Burn        = 1,  // RFC-0960 v3.6 BurnEventRef
+       Settlement  = 2,  // RFC-0959 v2.8 SettlementEvent
+       Payment     = 3,  // RFC-0965 v2.1 PaymentCaveat
+       // Reserved: 0 (nil), 4-127 (future additive), 128-255 (vendor extension)
+   }
+
+   pub trait NonceRegistry: Send + Sync {
+       fn observe(
+           &mut self,
+           event_kind: NonceEventKind,
+           pk: &[u8; 32],
+           nonce: &[u8; 32],
+       ) -> Result<(), NonceError>;
+
+       fn observe_readonly(
+           &self,
+           event_kind: NonceEventKind,
+           pk: &[u8; 32],
+           nonce: &[u8; 32],
+       ) -> Result<(), NonceError>;
+
+       fn unobserve(
+           &mut self,
+           event_kind: NonceEventKind,
+           pk: &[u8; 32],
+           nonce: &[u8; 32],
+       ) -> Result<(), NonceError>;
+   }
+   ```
+
+   `event_kind` discriminator (NEW v3.5-r8 PROPOSAL — pending
+   amendment acceptance per the blockquote above) namespaces the
+   observe key per event type: Burn / Settlement / Payment each use
+   distinct `event_kind` prefix in the LRU bucket hash, preventing
+   cross-event nonce collision when the same `pk + nonce` pair
+   would otherwise race across event types (BurnEventRef vs
+   SettlementEvent on the same sovereign asset). The `#[repr(u8)]`
+   - explicit discriminants (Burn=1, Settlement=2, Payment=3)
+     guarantee that future additive variants cannot shift existing
+     tags — reserved 0 (nil) + 128-255 (vendor extension) bounds
+     the discriminant space. This is the substrate precondition
+     Mission F step 7 + Mission G validate() (h) require for
+     cross-event isolation.
+
+   `unobserve` (NEW v3.5-r8 PROPOSAL per the blockquote at §9) is the
+   atomicity rollback primitive Mission F consume() requires for
+   audit_sink.write-failure-after-observe recovery. Without
+   `unobserve`, a sink-failure would permanently burn the nonce
+   bucket (R2 carry atomicity gap).
+
+   `NonceError` has **4 variants**: `AlreadyObserved { event_kind,
+pk, nonce }` (R7 #9 LOW: `prior_height` removed from public
+   variant — internal log only, info-disclosure mitigation) /
+   `NotObserved { event_kind, pk, nonce }` (NEW v3.5-r8 PROPOSAL —
+   returned by `unobserve` when target was never observed or
+   already rolled back) / `PersistenceFailure`
+   (NEW in v3.5-r5 for WAL failure surfacing) /
+   `WalRecovering` (NEW in v3.5-r6 for outage recovery).
+
+10. **`StoolapNonceRegistry` impl (WALPrimary)** — same file. Per §3.11
+    Persists via cipherocto-fork stoolap with WAL-primary write
+    semantics. `crates/octo-vault/src/nonce_registry.rs` header comment
+    MUST declare `WALPrimary` and reference `crates/stoolap/src/persistence/wal.rs`.
+    Bounded LRU per `governance_pubkey` with capacity `~10^6 entries per
+pubkey`. TTL tied to asset revocation grace period.
+
+    **v3.5-r8 PROPOSAL impl additions (gated on RFC §3.11 amendment
+    acceptance per the blockquote at §9):**
+    - `observe(event_kind, pk, nonce)` — hashes `(event_kind, pk)` to
+      derive the LRU bucket key (prefix with `b"octo:nonce:v1:" || event_kind_tag_u8`
+      before blake3; `event_kind_tag_u8` is the `#[repr(u8)]`
+      discriminant byte per R7 #1 CRITICAL — pins bucket tag
+      across additive variant insertions); writes `(event_kind, pk,
+nonce) → observed_at_height` to WAL
+    - `observe_readonly(event_kind, pk, nonce)` — same hash but read-only
+      (no WAL write; for `validate()` path per RFC-0959 v2.8 §2.2
+      - RFC-0965 v2.1 §2.3 patterns)
+    - `unobserve(event_kind, pk, nonce)` — removes from LRU + writes
+      `unobserved_at_height` to WAL; returns `Err(NotObserved)` if target
+      was never observed or already rolled back. Failure during
+      unobserve (WAL outage) bubbles up to caller — Mission F
+      consume() maps to `BurnEventError::AuditSinkFailed { sink_error:
+AuditError::UnobserveFailed(e) }` per R6 finding.
+
+11. **`InMemoryNonceRegistry` impl (test-only)** — same file. Per §3.11
+    Gated by `#[cfg(test)]`. Production binaries MUST NOT link.
+    Persists zero observations across process restart — this is the
+    documented restart-window replay vector (acceptance-promotion
+    checklist item).
+
+    **v3.5-r8 PROPOSAL impl additions (gated on RFC §3.11 amendment
+    acceptance per the blockquote at §9):** `observe` / `observe_readonly`
+    / `unobserve` all delegate to in-memory `HashMap<(NonceEventKind,
+[u8;32], [u8;32]), ObservationRecord>`. Test-only — production
+    binaries MUST NOT link.
+
+12. **`newtypes` module** — `crates/octo-vault/src/newtypes.rs` (NEW).
+    Per RFC-0965 v2.1 §0 + RFC-0960 v3.6 §2.1 + RFC-0959 v2.8 §2.1.
+    3 types:
+
+    ```rust
+    pub struct Nonce(pub [u8; 32]);
+    pub struct Epoch(pub u64);
+    pub struct GovernanceSignature {  // RFC-0105 v3.5 §3.6
+        pub root_key_fingerprint: [u8; 32],
+        pub epoch: u64,
+        pub sig: [u8; 64],
+    }
+    ```
+
+13. **`verify_governance_signature` + `blake3_hash`** — amend
+    `crates/octo-cap-macaroon/src/lib.rs` (canonical home per RFC-0105
+    v3.5 §3.12; no separate `crypto_primitives.rs` file).
+    Per RFC-0105 v3.5 §3.12. Canonical home is
+    **octo-cap-macaroon** (Layer B identity-substrate host) which
+    hosts the Layer A crypto-primitive functions
+    `verify_governance_signature` + `blake3_hash`; `octo_vault`
+    re-exports for consumer convenience per §3.12.
+    `blake3_hash(data: &[u8]) -> [u8; 32]` uses
+    `blake3::hash(data).into()` — NOT `blake3::hash(data).as_bytes()` at
+    call sites. Single-source-of-truth rule per §3.12 — consumers
+    MUST NOT re-declare. Layer classification: octo-cap-macaroon crate
+    = Layer B (identity-substrate host per per-type semver table); the
+    functions `verify_governance_signature` + `blake3_hash` themselves
+    = Layer A (RFC-0105 v3.5 §3.12).
+
+    **Semver impact:** `verify_governance_signature` + `blake3_hash` are
+    **Layer A crypto primitives** hosted in `octo-cap-macaroon` (Layer B
+    identity substrate) per per-type table above. Per CLAUDE.md layer
+    table: Layer A = "RFC-frozen, semver-major only (years-stable)".
+    Function-level changes = semver-MAJOR; host crate
+    `octo-cap-macaroon` itself stays Layer B-additive.
+    Alternative: place `verify_governance_signature` + `blake3_hash` at a
+    NEW Layer A crate (e.g., `octo-canonical-primitives`) to isolate blast
+    radius (Stable Abstractions Principle per `docs/architecture/design-principles.md`).
+
+14. **`sovereign_nonce_namespace` helper** — `crates/octo-vault/src/bridge_chain_namespace.rs`
+    OR NEW `crates/octo-vault/src/sovereign_nonce.rs`. Per RFC-0965 v2.1
+    §2.4. Domain-separated hash:
+    `blake3_hash(b"octo:sovereign-nonce-ns:v1" || asset_id.0) -> [u8; 32]`.
+    Domain string `"octo:sovereign-nonce-ns:v1"` MUST be globally unique
+    across all substrate uses of blake3.
+
+15. **Sovereign role token hardcoding at startup** — `crates/octo-vault/src/sovereign_role_tokens.rs`
+    (NEW). Per §3.7 + §2.1 (sovereign namespace table). The
+    table of OCTO-A/B/D/M/N/O/S/H/W is loaded at process init from §2.1.
+    `AssetRegistry::register()` REJECTS `kind == SovereignRoleToken` via
+    `AssetError::SovereignRoleToken`. version = 1, no `prev_commitment`,
+    no `governance_pubkey` for these entries.
+
+### Cargo deps (add to `crates/octo-vault/Cargo.toml`)
+
+- `blake3 = "<version>"` (BLAKE3-256 hash function for namespace_tag +
+  blake3_hash + sovereign_nonce_namespace; §3.1 + §3.4 + §3.11)
+- `lru = { version = "0.12", features = ["std"] }` (bounded LRU per
+  §3.5)
+- `borsh = { version = "<version>", features = ["derive"] }` (wire form
+  per §3.9)
+- `serde = { version = "<version>", features = ["derive"] }`
+- `thiserror = "<version>"` (error enum derives for AssetError, BridgeError,
+  NonceError, BridgeChainNamespace)
+- `bls12_381 = "<version>"` (BLS12-381 aggregated signatures for
+  bridge quorum verifier per §3.6; verify exact
+  substrate-fork version pin at landing per
+  `feedback_stoolap_persistence`)
+
+### Cargo deps (add to `crates/octo-cap-macaroon/Cargo.toml`)
+
+- `blake3 = "<version>"` (canonical home for `blake3_hash` per §3.12)
+- `ed25519-dalek = { version = "<version>", features = ["serde"] }`
+  (governance signature scheme per §3.12)
+
+## Acceptance Criteria
+
+This mission is verified by the §Test Vectors list below. Each vector is a
+named, independently runnable check, so a vector passing is the acceptance
+condition met. Do not add a separate checkbox list here: it would duplicate
+the vectors and let the two drift apart.
+
+## Test Vectors
+
+Per RFC-0105 v3.5 §3.1+§3.4+§3.5+§3.6+§3.11+§3.12 spec blocks. Selectors:
+
+- TV-AS1: `AssetMetadata::namespace_tag()` for `SovereignRoleToken`
+  symbol=`"OCTO-W"` returns `b"cipherocto/asset/v1/OCTO-W"` verbatim
+- TV-AS2: `kind_tag()` returns 0x01 for sovereign, 0x02 for private,
+  0x03 for bridged, 0x04 for wrapped
+- TV-AS3: `register()` with `wire_scale = 19` returns
+  `AssetError::ScaleOutOfRange { scale: 19 }` (defense-in-depth; MAX_SCALE = 18)
+- TV-AS4: `register()` re-registration with different `wire_scale`
+  returns `AssetError::ScaleImmutable { existing, proposed }`
+- TV-AS5: `register()` with `AssetId::derive(metadata.namespace_tag()) != asset_id`
+  returns `AssetError::DerivationMismatch`
+- TV-AS6: `register()` for BRIDGED kind with `bridge_id` not in
+  `BridgeIdentityRegistry` returns `AssetError::BridgeUnknown { bridge_id }`
+- TV-AS7: `register()` for BRIDGED kind with `governance_pubkey` not in
+  bridge's curator set returns
+  `AssetError::CuratorNotInBridgeSet { bridge_id, claimed_pubkey }`
+- TV-AS8: `register()` for sovereign role token returns
+  `AssetError::SovereignRoleToken`
+- TV-AS9: chain-of-trust commitment length-prefix encoding — two distinct
+  metadata tuples produce different commitments (no concat-ambiguity
+  collision)
+- TV-AS10: `CachedAssetRegistry::metadata()` cache miss returns
+  `AssetError::BoundedCacheMiss` (variant REACHABLE per v3.5-r3)
+- TV-AS11: `CachedAssetRegistry` TTL expiry triggers live-registry lookup
+  - cache repopulation
+- TV-BR1: `BridgeIdentityRegistry::register()` with duplicate BLS pubkeys
+  returns `BridgeError::QuorumAttestationInvalid` (distinct-pubkey check
+  per §3.6)
+- TV-BR2: `BridgeIdentityRegistry::register()` with non-canonical BLS
+  pubkey (sign bit set) returns `BridgeError::QuorumAttestationInvalid`
+  (canonicalization step per §3.6)
+- TV-BR3: First-time `register()` of NEW bridge without Layer A root-key
+  co-signature returns `BridgeError::GovernanceAttestationMissing`
+- TV-BR4: `rotate_curators()` succeeds WITHOUT co-signature (only
+  curator-quorum threshold required for rotation)
+- TV-BR5: `BridgeIdentity` registered at `registering_epoch = 100` whose
+  root key rotated at `epoch = 150` resolves `Ok(bridge_identity)` +
+  `retroactive_review(bridge_id, suspected_epoch: 100)` flags
+  `BridgeError::RegisteredUnderCompromisedKey`
+- TV-NR1: `NonceRegistry::observe(NonceEventKind::Burn, pk, nonce)` first
+  call returns `Ok(())`
+- TV-NR2: `NonceRegistry::observe(NonceEventKind::Burn, pk, nonce)` second
+  call with same (event_kind, pk, nonce) returns `Err(NonceError::AlreadyObserved)`
+- TV-NR3: `observe_readonly(NonceEventKind::Burn, pk, nonce)` does NOT
+  mutate the registry (verified by subsequent `observe` succeeding)
+- TV-NR4: WAL failure during `observe` returns `NonceError::PersistenceFailure`
+  (canonical StoolapNonceRegistry impl per §3.11)
+- TV-NR7: `unobserve(NonceEventKind::Burn, pk, nonce)` after successful
+  `observe` returns `Ok(())` + re-observe of same triple succeeds
+  (rollback-verified; Mission F consume() atomicity substrate)
+- TV-NR8: `unobserve(NonceEventKind::Burn, pk, nonce)` without prior
+  `observe` returns `Err(NonceError::NotObserved)` — substrate guard
+  against double-rollback
+- TV-NR9: WAL failure during `unobserve` returns `NonceError::PersistenceFailure`
+  (canonical StoolapNonceRegistry impl; Mission F maps to
+  `BurnEventError::AuditSinkFailed { sink_error: AuditError::UnobserveFailed(inner) }`
+  with structured log + alert)
+- TV-NR5: Sovereign-asset namespace fallback —
+  `sovereign_nonce_namespace(asset_id)` returns `blake3_hash(b"octo:sovereign-nonce-ns:v1" || asset_id.0)`,
+  distinct from any ed25519 pubkey derivation
+- TV-NR6: `InMemoryNonceRegistry` is `#[cfg(test)]`-gated — production
+  builds MUST NOT link (verified via `cargo build --release` symbol scan)
+- TV-CP1: `verify_governance_signature(sig, msg, pk)` returns `true` for
+  valid ed25519 signature; `false` for malformed sig or wrong pubkey
+- TV-CP2: `blake3_hash(data)` returns canonical 32-byte form
+  (NOT `blake3::hash(data).as_bytes()`)
+
+## Layer direction (per `docs/architecture/design-principles.md`)
+
+- `octo-vault` (Layer B) — `asset_registry` + `bridge_identity_registry` +
+  `nonce_registry` + `bridge_chain_namespace` + `newtypes` + sovereign
+  role tokens = **all Layer B additive, semver-minor**
+- `octo-cap-macaroon` (Layer B identity substrate HOST) hosts Layer A
+  crypto primitives (`verify_governance_signature` + `blake3_hash`).
+  The per-type table above classifies the FUNCTIONS as Layer A
+  (MAJOR); the host crate itself is Layer B-additive (consumers MUST
+  import via `octo_cap_macaroon::{verify_governance_signature,
+blake3_hash}` OR via `octo_vault` re-export per §3.12)
+- BLS12-381 quorum verifier is substrate-mandated across all nodes
+  (split-chain equivalence per §3.6)
+- No cross-layer inversion
+
+## Validation
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --features full -- -D warnings
+cargo test --workspace --lib
+cargo test --workspace  # StoolapNonceRegistry WAL tests; bridge quorum tests
+cargo test -p octo-vault --lib nonce_registry  # InMemoryNonceRegistry (test-only)
+```
+
+**Cargo dep audit:** verify `bls12_381` is sourced from a pinned substrate
+version per `feedback_stoolap_persistence` (CipherOcto fork pin). If
+non-substrate: BLOCK landing, surface to user per `docs/05-process/engineering-rules.md` §Git workflow.
+
+## Backward compat
+
+- All new types are additive (no existing crate modification)
+- `AssetId(pub [u8; 32])` UNCHANGED per §3.8
+- `VaultId(pub [u8; 32])` UNCHANGED
+- `Dqa` UNCHANGED
+- `MAX_SCALE: u8 = 18` re-export at `octo_vault::asset_registry::MAX_SCALE`
+  is a NEW re-export; the DFA substrate const at `determin/src/dqa.rs`
+  is the source — Mission D adds a `pub use` to surface it for §3.1 spec
+  compliance, NOT a parallel declaration
+- `InMemoryNonceRegistry` is `#[cfg(test)]`-only — production builds
+  MUST NOT link (acceptance-promotion checklist item per §3.11)
+
+## Cross-references
+
+- RFC-0105 v3.5 §2.1 — sovereign namespace table (canonical hardcoded entries)
+- RFC-0105 v3.5 §2.4 — BridgeChainNamespace definition
+- RFC-0105 v3.5 §3.1 — AssetRegistry trait + AssetMetadata + AssetKind + AssetError + MAX_SCALE
+- RFC-0105 v3.5 §3.2 — scale-immutability + bridge-forgery triple check
+- RFC-0105 v3.5 §3.3 — revocation + governance rotation
+- RFC-0105 v3.5 §3.4 — chain-of-trust commitment (length-prefix BLAKE3)
+- RFC-0105 v3.5 §3.5 — CachedAssetRegistry + LRU + TTL
+- RFC-0105 v3.5 §3.6 — BridgeIdentityRegistry + BLS12-381 quorum + co-signature
+- RFC-0105 v3.5 §3.6.1 — bridge slashing governance (50/30/20 redistribution)
+- RFC-0105 v3.5 §3.6.2 — Layer A root-key governance (rotation ceremony)
+- RFC-0105 v3.5 §3.7 — population semantics (sovereign hardcoded at startup)
+- RFC-0105 v3.5 §3.8 — single-source-of-truth rule (consumers MUST import)
+- RFC-0105 v3.5 §3.9 — wire form (borsh 100+ bytes)
+- RFC-0105 v3.5 §3.11 — NonceRegistry + StoolapNonceRegistry + WALPrimary
+- RFC-0105 v3.5 §3.12 — Cryptographic Primitives canonical home
+- RFC-0105 v3.5 §3.13 — tri-invariant declaration
+- RFC-0862 §Substrate types — DqaEncoding wire form (16-byte BE)
+- RFC-0965 v2.1 §2.1 — PaymentCaveat asset_id + newtypes imports
+- RFC-0965 v2.1 §2.3 — verify() scale-binding + NonceRegistry key
+- RFC-0965 v2.1 §2.4 — NonceRegistry key + legacy-form rejection
+- RFC-0960 v3.6 §2.1 — BurnEventRef imports from Mission D substrate
+- RFC-0959 v2.8 §2.1 — SettlementEvent imports from Mission D substrate
+- RFC-0960 v3.7 — VaultBalanceProjection consumes AssetRegistry + newtypes
+- `docs/architecture/design-principles.md` — Layer B additive-only rule
+- `feedback_stoolap_persistence` — CipherOcto fork pin
+- Mission A (`0960-v37-a-vault-balance-projection-substrate.md`) — depends on Mission D for AssetRegistry/MAX_SCALE/newtypes imports
+- Mission B (`0960-v37-b-event-log-producer-wiring.md`) — depends on Mission D for producer boundary types
+- Mission E (`0965-v21-payment-caveat-asset-binding-substrate.md`) — depends on Mission D
+- Mission F (`0960-v36-burn-event-dqa-migration-substrate.md`) — depends on Mission D
+- Mission G (`0959-v28-settlement-cost-dqa-migration-substrate.md`) — depends on Mission D
+
+## Per-type semver classification
+
+| Type / Module                                               | Layer | Semver impact                     | Anchor                                                                      |
+| ----------------------------------------------------------- | ----- | --------------------------------- | --------------------------------------------------------------------------- |
+| `AssetMetadata` / `AssetKind` / `MAX_SCALE`                 | B     | minor                             | §3.1                                                                        |
+| `AssetRegistry` / `AssetError`                              | B     | minor                             | §3.1                                                                        |
+| `CachedAssetRegistry`                                       | B     | minor                             | §3.5                                                                        |
+| `BridgeIdentityRegistry` / `BridgeIdentity` / `BridgeError` | B     | minor                             | §3.6                                                                        |
+| `BridgeCuratorSlashingCondition` enum                       | B     | minor                             | §3.6.1                                                                      |
+| `BridgeChainNamespace` enum                                 | B     | minor                             | §2.4 (closed enum; 5 variants bounded by RFC)                               |
+| `NonceRegistry` / `NonceError`                              | B     | minor                             | §3.11                                                                       |
+| `StoolapNonceRegistry` impl                                 | B     | minor                             | §3.11                                                                       |
+| `InMemoryNonceRegistry` impl                                | B     | minor (`#[cfg(test)]`)            | §3.11                                                                       |
+| `GovernanceSignature` newtype                               | B     | minor                             | §3.6                                                                        |
+| `Nonce` / `Epoch` newtypes                                  | B     | minor                             | §3.11 (NonceRegistry substrate GREENFIELD anchor)                           |
+| `verify_governance_signature` + `blake3_hash`               | **A** | **MAJOR**                         | §3.12 (octo-cap-macaroon host)                                              |
+| `sovereign_nonce_namespace` helper                          | B     | minor                             | RFC-0965 v2.1 §2.4                                                          |
+| Sovereign role token table (9 entries)                      | **A** | **MAJOR** (table expansion gated) | §2.1 (sovereign namespace, hardcoded entries) + §3.7 (population reference) |
+
+## Ship milestone (RFC-0105 v3.5 §3.11)
+
+`StoolapNonceRegistry` MUST land before v0 promotion to Accepted.
+Until landing, v0 drafts UNSAFE for production deployment — operators
+MUST attest (per RFC-0105 v3.5 §3.11 acceptance-promotion checklist)
+that the restart-window replay vector is acceptable. Acceptance-promotion
+checklist item.
+
+## Claimant
+
+@mmacedoeu (claimed 2026-08-26 after R10 DRY closure; v3.5-r8 PROPOSAL blockquote gates substrate implementation on RFC §3.11 amendment acceptance; NonceEventKind #[repr(u8)] pinned)
+
+## Pull Request
+
+#

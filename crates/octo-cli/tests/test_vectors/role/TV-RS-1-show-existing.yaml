@@ -1,0 +1,10 @@
+# TV-RS-1 — RFC-0011-d §11 Test Vectors.
+vector: TV-RS-1
+description: octo role show builder returns full record
+schema_version: octo.role.test.v1
+invocation:
+  args: [role, show, builder]
+expect:
+  exit_code: 0
+  stdout_contains_all: [builder, OCTO-A]
+  stdout_field_path: role_id=builder

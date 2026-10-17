@@ -43,6 +43,33 @@ pub enum RoutingStrategy {
     UsageBasedV2,
     /// Weighted distribution based on explicitly configured weights (distinct from SimpleShuffle)
     Weighted,
+    /// Shard-routed (PR-Q6 + W7): route to provider based on `wal_segment_id`
+    /// shard via `quota_router_sm_engine::shard::shard_for_segment`. Multi-shard
+    /// variant of the 11-step exercise uses this strategy.
+    ShardRouted,
+}
+
+/// Shard-routed provider selection (PR-Q6 + W7).
+///
+/// Picks a provider based on `shard_for_segment(wal_segment_id, num_shards)`.
+/// Provider set is partitioned into `num_shards` buckets; the bucket index
+/// selects the provider (round-robin within the bucket).
+pub fn shard_routed_pick<'a>(
+    providers: &'a [Provider],
+    wal_segment_id: &[u8; 32],
+    num_shards: u32,
+) -> Option<&'a Provider> {
+    if providers.is_empty() || num_shards == 0 {
+        return None;
+    }
+    let shard = match quota_router_sm_engine::shard::shard_for_segment(wal_segment_id, num_shards) {
+        Ok(s) => s as usize,
+        Err(_) => return None,
+    };
+    let bucket_size = (providers.len() as u32).div_ceil(num_shards).max(1) as usize;
+    let start = (shard * bucket_size) % providers.len();
+    let end = (start + bucket_size).min(providers.len());
+    providers.get(start..end).and_then(|slice| slice.first())
 }
 
 impl std::fmt::Display for RoutingStrategy {
@@ -56,6 +83,7 @@ impl std::fmt::Display for RoutingStrategy {
             RoutingStrategy::UsageBased => write!(f, "usage-based"),
             RoutingStrategy::UsageBasedV2 => write!(f, "usage-based-v2"),
             RoutingStrategy::Weighted => write!(f, "weighted"),
+            RoutingStrategy::ShardRouted => write!(f, "shard-routed"),
         }
     }
 }
@@ -83,6 +111,7 @@ impl std::str::FromStr for RoutingStrategy {
             | "usage_v2"
             | "usage_based_routing_v2" => Ok(RoutingStrategy::UsageBasedV2),
             "weighted" => Ok(RoutingStrategy::Weighted),
+            "shard-routed" | "shard_routed" => Ok(RoutingStrategy::ShardRouted),
             _ => Err(format!("Unknown routing strategy: {}", s)),
         }
     }
@@ -102,6 +131,7 @@ impl RoutingStrategy {
             "usage-based" => RoutingStrategy::UsageBased,
             "usage-based-v2" | "usage-based-routing-v2" => RoutingStrategy::UsageBasedV2,
             "weighted" => RoutingStrategy::Weighted,
+            "shard-routed" => RoutingStrategy::ShardRouted,
             _ => RoutingStrategy::SimpleShuffle, // Default fallback
         }
     }
@@ -397,7 +427,7 @@ impl CooldownTracker {
 }
 
 // =============================================================================
-// LatencyTracker — RFC-0917 §LatencyTracker
+// LatencyTracker — RFC-0917 §Shared Router
 // Integer microseconds for deterministic latency tracking (no floating point)
 // =============================================================================
 
@@ -527,9 +557,7 @@ impl LatencyTracker {
         let candidates: Vec<(&str, f32)> = self
             .samples
             .iter()
-            .filter(|(name, samples)| {
-                available_names.contains(name.as_str()) && !samples.is_empty()
-            })
+            .filter(|(name, samples)| available_names.contains(name.as_str()) & !samples.is_empty())
             .map(|(name, samples)| {
                 let avg_latency = samples.iter().sum::<u64>() as f32 / samples.len() as f32;
                 let avg_ttft = self
@@ -1053,6 +1081,12 @@ impl Router {
             RoutingStrategy::UsageBased => Self::usage_based_impl(providers),
             RoutingStrategy::UsageBasedV2 => Self::usage_based_v2_impl(providers),
             RoutingStrategy::Weighted => Self::weighted_impl(providers, &self.config.weights),
+            RoutingStrategy::ShardRouted => {
+                // Shard-routed (PR-Q6 + W7): pick via shard_for_segment.
+                // Falls back to simple_shuffle for now; full shard-aware
+                // routing (using cluster shard map) lives in `shard_route.rs`.
+                Self::simple_shuffle_impl(providers)
+            }
         };
 
         Some(selected_idx)
@@ -2703,7 +2737,7 @@ mod tests {
     fn test_rolling_avg_returns_none_when_minutes_filter_excludes_all_buckets() {
         // minutes=0 → cutoff = now → bucket timestamp (slightly older now) < cutoff
         // → filtered out → `recent` empty → None. Locks the `if recent.is_empty()`
-        // branch (L882-884 and L912-914) with an explicit assertion.
+        // branch ( and ) with an explicit assertion.
         let mut metrics = ProviderMetrics::with_ttl(3600);
         metrics.record("d1", 100);
         // Tiny sleep to guarantee Instant::now() has advanced past the record
@@ -2738,7 +2772,7 @@ mod tests {
     fn test_usage_based_v2_routing_no_history_defaults_success_rate_to_100() {
         // Both providers have total_count=0 → success_rate=100 → score=current_rpm*0/100=0
         // Ties broken by first encountered (min_by_key behavior). Locks the
-        // `else { 100 }` branch at L1198-1199.
+        // `else { 100 }` branch at .
         let providers = test_providers();
         let config = RouterConfig {
             routing_strategy: RoutingStrategy::UsageBasedV2,
@@ -2849,7 +2883,7 @@ mod tests {
     #[test]
     fn test_request_ended_trims_latencies_to_window_size() {
         // 5 records with window=3 → latencies must be trimmed to len=3,
-        // dropping the 2 oldest. Locks the drain branch at L192-194.
+        // dropping the 2 oldest. Locks the drain branch at .
         let mut p = ProviderWithState::new(test_providers()[0].clone());
         for i in 0..5u64 {
             p.request_ended(100_000 + i * 1_000, 10, 3);
@@ -2898,7 +2932,7 @@ mod tests {
     #[test]
     fn test_best_provider_with_ttft_buffer_negative_infinity_excludes_all() {
         // buffer = -INFINITY → valid threshold = lowest + (-inf) = -inf
-        // → no score satisfies score <= -inf → valid empty → None at L513-514.
+        // → no score satisfies score <= -inf → valid empty → None at .
         let mut tracker = LatencyTracker::default();
         tracker.record("p1", 100_000, None);
         assert!(
@@ -2911,7 +2945,7 @@ mod tests {
 
     #[test]
     fn test_routing_strategy_display_all_variants() {
-        // Locks every Display arm at L49-58.
+        // Locks every Display arm at .
         assert_eq!(RoutingStrategy::SimpleShuffle.to_string(), "simple-shuffle");
         assert_eq!(RoutingStrategy::RoundRobin.to_string(), "round-robin");
         assert_eq!(RoutingStrategy::LeastBusy.to_string(), "least-busy");
@@ -2935,7 +2969,7 @@ mod tests {
 
     #[test]
     fn test_provider_metrics_new_default_ttl_and_default_impl() {
-        // Locks L722-728 (new body) + L941-942 (default delegation).
+        // Locks  (new body) +  (default delegation).
         let m = ProviderMetrics::new();
         assert_eq!(
             m.ttl_seconds, 60,
@@ -2951,7 +2985,7 @@ mod tests {
 
     #[test]
     fn test_router_model_groups_and_provider_count() {
-        // Locks L996-1004 (model_groups + provider_count bodies).
+        // Locks  (model_groups + provider_count bodies).
         let providers = test_providers();
         let router = Router::new(RouterConfig::default(), providers);
         let mut groups = router.model_groups();

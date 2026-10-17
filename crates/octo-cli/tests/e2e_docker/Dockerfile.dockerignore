@@ -1,0 +1,77 @@
+# Build context exclusions for the Layer 4 node image.
+#
+# BuildKit reads this file when the Dockerfile is not at the context root:
+# it looks for `<dockerfile>.dockerignore` next to the Dockerfile. The
+# context itself is the repository root, so without this the transfer
+# carries a 5.5 GB virtualenv, a 1.6 GB git object store, and several
+# agent-tooling caches — none of which a Rust build can use.
+#
+# The important consequence is not the size. It is that the Dockerfile
+# can do a single `COPY . .` instead of enumerating every crate cargo
+# has to resolve. Path dependencies, `[patch.crates-io]` overrides, and
+# root-level leaf crates all escape `crates/`, and each one that gets
+# forgotten fails the build during dependency resolution with an error
+# that names a path rather than the mistake.
+#
+# SCOPE RULE, learned the hard way: only exclude what is provably
+# irrelevant AND large. An earlier version of this file also excluded
+# `cairo/`, which broke the build — `zk-circuit` reads
+# `cairo/src/lib.cairo` at compile time. Prose directories total about
+# 35 MB against a 7 GB context, so excluding them saves nothing and
+# risks exactly that failure. Everything below is either a build output
+# directory, a version-control store, a Python environment, or agent
+# tooling state.
+
+# Build output and the local toolchain cache. By far the largest
+# source-tree-adjacent directory.
+target/
+**/target/
+
+# Version control and CI. `.git` alone is 1.6 GB.
+.git/
+.github/
+.gitignore
+
+# Local virtualenvs and Python caches. `.venv` alone is 5.5 GB.
+.venv/
+venv/
+**/__pycache__/
+.pytest_cache/
+.mypy_cache/
+
+# Agent tooling state and caches. Large, and none of it participates in
+# a cargo build.
+.claude/
+.clinerules/
+.agents/
+agents/
+.cocoindex_code/
+.continue/
+.cursor/
+.gitnexus/
+.jcode/
+.mimocode/
+.opencode/
+.openclaude/
+.playwright-mcp/
+
+# Local test and analysis scratch output.
+live-tests/
+check_arc3b/
+.octo/
+.audit/
+.audits/
+tarpaulin-report.json
+cobertura.xml
+*.profraw
+
+# NOT excluded, deliberately: `cairo/` (read by `zk-circuit` at compile
+# time), `docs/`, `rfcs/`, `missions/`, `memory/`, `python/`,
+# `examples/`, `packaging/`, `pipelines/`, and the root-level crates
+# `determin/`, `octo-sync/`, `octo-transport/`, `quota-router/`,
+# `quota-router-e2e-tests/`, `sync-e2e-tests/`. Several are read by
+# build scripts; the rest are small.
+#
+# `crates/octo-cli/tests/` is also not excluded: the runtime stage
+# copies `entrypoint.sh` out of the builder's filesystem, and that path
+# has to be in the context for the copy to resolve.

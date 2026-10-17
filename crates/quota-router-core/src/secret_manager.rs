@@ -7,6 +7,15 @@
 // Integration: RFC-0938's resolve_api_key() calls secret_reader.get_secret()
 // as the lowest-priority tier (after env vars).
 
+// Clippy `[disallowed-methods]` allowlist: this module talks to AWS
+// Secrets Manager / HashiCorp Vault over HTTPS using AWS SigV4 (not
+// Bearer). These are operator-IdP secret stores, NOT LLM model providers.
+// Cipherocto-internal keys never reach these endpoints; the responses
+// are HMAC-signed envelopes, not capability tokens. See
+// `clippy.toml` for the rationale + R3 audit (`docs/reviews/...`)
+// allowlist annotation.
+#![allow(clippy::disallowed_methods)]
+
 use crate::cache::StoolapCache;
 use crate::config::SecretManagerConfig;
 use async_trait::async_trait;
@@ -346,11 +355,7 @@ impl SecretReader for AwsSecretManager {
 
         // Calculate signing key
         fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
-            use hmac::{Hmac, Mac};
-            use sha2::Sha256;
-            let mut mac = Hmac::<Sha256>::new_from_slice(key).unwrap();
-            mac.update(data);
-            mac.finalize().into_bytes().to_vec()
+            hmac_sha256::HMAC::mac(data, key).to_vec()
         }
 
         let k_date = hmac_sha256(

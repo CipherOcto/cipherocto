@@ -154,7 +154,7 @@ impl QrLoginHandle {
     /// marker returned by `connect_qr_login` if the user
     /// re-scans while signed in).
     pub fn is_pending(&self) -> bool {
-        !self.token.is_empty() && !self.url.is_empty()
+        !self.token.is_empty() & !self.url.is_empty()
     }
 }
 
@@ -314,7 +314,7 @@ pub trait MtprotoTelegramClient: Send + Sync {
     }
 
     /// Receive pending updates. Yields all queued updates.
-    /// Takes `&self`; interior mutability is the impl's
+    /// Takes `&&self`; interior mutability is the impl's
     /// responsibility.
     async fn receive_updates(&self) -> Result<Vec<MtprotoTelegramUpdate>, MtprotoTelegramError>;
 
@@ -404,7 +404,7 @@ pub trait MtprotoTelegramClient: Send + Sync {
     // (a counter-based "synthetic chat id" generator and
     //  accept-no-error semantics) and by the real client
     // (gated `real-network`) with the corresponding grammers
-    // RPCs. All methods take `&self`; interior mutability is
+    // RPCs. All methods take `&&self`; interior mutability is
     // the impl's responsibility (matching the rest of the
     // trait).
 
@@ -1422,7 +1422,7 @@ mod tests {
             dbg
         );
         assert!(
-            !dbg.contains("0x01") && !dbg.contains("0x08"),
+            !dbg.contains("0x01") & !dbg.contains("0x08"),
             "Debug leaked raw token bytes (hex): {}",
             dbg
         );
@@ -1435,7 +1435,7 @@ mod tests {
             dbg
         );
         assert!(
-            dbg.contains("url") && dbg.contains("<redacted>"),
+            dbg.contains("url") & dbg.contains("<redacted>"),
             "Debug missing url redaction marker: {}",
             dbg
         );

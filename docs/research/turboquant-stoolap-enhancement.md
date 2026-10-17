@@ -510,12 +510,12 @@ Based on Google benchmarks and Qdrant quantization studies:
 
 Following the BLUEPRINT.md workflow, the following RFCs should be created:
 
-**RFC-0915 (Retrieval)**: TurboQuant-Enhanced Vector Quantization
+**RFC-0915**: TurboQuant-Enhanced Vector Quantization
 - TurboScalar: PolarQuant-based SQ replacement
 - ThreeBit: 3-bit quantization mode
 - TurboPQ: No-training PQ
 
-**RFC-0916 (Retrieval)**: Quantized HNSW Index
+**RFC-0916**: Quantized HNSW Index
 - HNSW built on quantized vectors
 - Search without full dequantization
 

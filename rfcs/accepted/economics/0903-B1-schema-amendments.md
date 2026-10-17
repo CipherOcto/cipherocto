@@ -387,7 +387,7 @@ The `UNIQUE(key_id, request_id)` constraint scopes `request_id` to a single key.
 
 If multi-provider key scoping becomes required, a future RFC-0903 amendment must change the constraint scope before this can be adopted as a budget enforcement guarantee.
 
-## Changelog
+## Version History
 
 | Version | Date       | Changes |
 |---------|------------|-------|

@@ -40,7 +40,7 @@ Medium
 
 ## Reference
 
-- RFC-0104 §SQRT Algorithm (lines 413-481)
+- RFC-0104 §SQRT Algorithm
 - RFC-0104 §Gas/Fee Modeling table (lists DFP_SQRT)
 - docs/reviews/rfc-0104-dfp-code-review.md (S5 finding)
 - `/home/mmacedoeu/_w/ai/cipherocto/determin/src/arithmetic.rs` dfp_sqrt implementation
@@ -50,15 +50,18 @@ Medium
 ### Changes Made
 
 **vm.rs (line ~1001):**
+
 - Added `dfp_sqrt` to imports from `octo_determin`
 - Added `Op::DfpSqrt` dispatch handler
 - Stack pops value, extracts DFP via `extract_dfp_from_extension()`, calls `dfp_sqrt()`, returns DFP Extension or Null on error
 
 **ops.rs:**
+
 - Added `DfpSqrt` opcode variant after DqaCmp
 - Added Display impl: `Op::DfpSqrt => write!(f, "DfpSqrt")`
 
 **program.rs:**
+
 - Added `Op::DfpSqrt => 0` to stack depth calculation
 
 ### Test Results

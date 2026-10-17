@@ -310,7 +310,7 @@ impl PlatformAdapter for MockPlatformAdapter {
 
     /// Bridge: opt in to `CoordinatorAdmin`. The mock advertises admin
     /// support so cross-module e2e flows can exercise the trait through
-    /// the same `&dyn PlatformAdapter` entry point real callers use.
+    /// the same `&&dyn PlatformAdapter` entry point real callers use.
     fn as_coordinator_admin(&self) -> Option<&dyn CoordinatorAdmin> {
         Some(self)
     }

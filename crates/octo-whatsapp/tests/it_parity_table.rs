@@ -3,7 +3,6 @@
 //! handler. Design §2132.
 
 use std::collections::HashSet;
-use std::fs;
 use std::path::PathBuf;
 
 use octo_whatsapp::ipc::handlers::build_registry;
@@ -12,13 +11,21 @@ use octo_whatsapp::ipc::handlers::build_registry;
 fn parity_table_methods_all_have_registered_rpc_handlers() {
     // tests/ is at crates/octo-whatsapp/tests/. Two `.parent()` steps give
     // us the repo root: tests -> octo-whatsapp -> crates -> <repo root>.
+    //
+    // 2026-08-29 CI fix: `docs/plans/` is a local scratchpad (gitignored per
+    // the `docs-plans-scratchpad` memory + commit a10bbc6c which untracked
+    // the directory). CI runners do not have the design doc on disk; the
+    // original test panicked hard on missing file, which broke every CI run
+    // even when the registry itself is healthy. Resolution: treat the doc
+    // as OPTIONAL — registry assertions stay mandatory, but the section-
+    // heading sanity check is skipped when the scratchpad is absent. Local
+    // developers with the design doc on disk still get full coverage.
     let design_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent() // crates/
         .and_then(|p| p.parent()) // repo root
         .expect("CARGO_MANIFEST_DIR is at crates/octo-whatsapp; two parents reach repo root")
         .join("docs/plans/2026-07-04-whatsapp-runtime-cli-mcp-design.md");
-    let design = fs::read_to_string(&design_path)
-        .unwrap_or_else(|e| panic!("cannot read design doc at {design_path:?}: {e}"));
+    let design = std::fs::read_to_string(&design_path).ok();
 
     let registered: HashSet<String> = build_registry()
         .methods()
@@ -72,12 +79,20 @@ fn parity_table_methods_all_have_registered_rpc_handlers() {
 
     // Sanity-check: the design doc references the §API Parity Coverage
     // section (line 1712 per the plan). If the design doc is moved or
-    // renamed, fail loudly so this test stays in sync.
-    assert!(
-        design.contains("## API Parity Coverage"),
-        "design doc no longer contains the expected `## API Parity Coverage` \
-         section heading. Update this test path or regenerate the doc."
-    );
+    // renamed, fail loudly so this test stays in sync. CI hosts do not
+    // have the doc (see comment above); skip the section check there.
+    if let Some(ref design_text) = design {
+        assert!(
+            design_text.contains("## API Parity Coverage"),
+            "design doc no longer contains the expected `## API Parity Coverage` \
+             section heading. Update this test path or regenerate the doc."
+        );
+    } else {
+        eprintln!(
+            "skipping §API Parity Coverage sanity check: design doc absent at {design_path:?} \
+             (local scratchpad per docs-plans-scratchpad memory)"
+        );
+    }
 }
 
 #[test]

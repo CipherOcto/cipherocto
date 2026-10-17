@@ -40,7 +40,7 @@ Typical vector databases are nondeterministic due to approximate algorithms, par
 
 ```mermaid
 graph TB
-    subgraph "RFC-0106 Numeric Layer"
+    subgraph "RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) Numeric Layer"
         DQA[DQA]
     end
 
@@ -365,13 +365,13 @@ VVQE provides the query layer needed for:
 
 ## Related RFCs
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower (DNT) — Core numeric types
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower (DNT) — Core numeric types
 - RFC-0105 (Numeric/Math): Deterministic Quantized Arithmetic (DQA) — Scalar operations
 - RFC-0107 (Storage): Production Vector SQL Storage v2 — Vector storage engine
 - RFC-0148 (Numeric/Math): Deterministic Linear Algebra Engine — Distance primitives
 - RFC-0149 (Retrieval): Deterministic Vector Index (HNSW-D) — ANN index
 
-> **Note**: RFC-0150 completes the deterministic AI retrieval stack together with RFC-0106, RFC-0148, and RFC-0149.
+> **Note**: RFC-0304 completes the deterministic AI retrieval stack together with RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal), RFC-0148, and RFC-0149. (canonical replacement per numeric-tier phantom sweep)
 
 ## Related Use Cases
 

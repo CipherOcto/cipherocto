@@ -1,0 +1,16 @@
+[package]
+name = "octo-cap-poi"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Proof-of-in-boundary-execution capability subclass (RFC-0973). Layer E extension crate. Owns the `in_boundary_execution` attestation strategy."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# Macaroon + RFC-0973 attestation substrate (Layer B). The strategy traits,
+# the envelope and the expectation type are all declared here, so this crate
+# needs no dependency on the wallet and no Layer-E-to-Layer-E edge.
+octo-cap-macaroon = { path = "../octo-cap-macaroon" }

@@ -194,12 +194,12 @@ Reasoning traces connect to the knowledge lineage graph:
 
 ### Integration Points
 
-| Component                       | Integration                |
-| ------------------------------- | -------------------------- |
-| RFC-0110 (Agent Memory)         | Traces store in memory DAG |
-| RFC-0111 (Knowledge Market)     | Traces as licensed assets  |
-| RFC-0108 (Verifiable Retrieval) | Retrieval steps verified   |
-| RFC-0106 (Numeric Tower)        | Deterministic computation  |
+| Component                                                                                | Integration                |
+| ---------------------------------------------------------------------------------------- | -------------------------- |
+| RFC-0110 (Agent Memory)                                                                  | Traces store in memory DAG |
+| RFC-0111 (Knowledge Market)                                                              | Traces as licensed assets  |
+| RFC-0108 (Verifiable Retrieval)                                                          | Retrieval steps verified   |
+| RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric Tower) | Deterministic computation  |
 
 ## Example: Autonomous Trading Agent
 
@@ -366,7 +366,7 @@ Royalties propagate backward through the lineage.
 
 ## Related RFCs
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower
 - RFC-0108 (Retrieval): Verifiable AI Retrieval
 - RFC-0110 (Agents): Verifiable Agent Memory
 - RFC-0111 (Agents): Knowledge Market & Verifiable Data Assets

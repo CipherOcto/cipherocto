@@ -28,18 +28,19 @@ Integrate the existing `GasMeter` infrastructure into the stoolap expression VM 
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| G1 | Zero overhead when metering disabled | No gas meter = same performance as before |
-| G2 | Centralized metering | Single charge point in dispatch loop |
-| G3 | Opt-in metering | VM works without gas configuration |
-| G4 | Correct error propagation | OutOfGas returns `Error::OutOfGas` |
+| Goal | Target                               | Metric                                    |
+| ---- | ------------------------------------ | ----------------------------------------- |
+| G1   | Zero overhead when metering disabled | No gas meter = same performance as before |
+| G2   | Centralized metering                 | Single charge point in dispatch loop      |
+| G3   | Opt-in metering                      | VM works without gas configuration        |
+| G4   | Correct error propagation            | OutOfGas returns `Error::OutOfGas`        |
 
 ## Motivation
 
 The stoolap expression VM (`src/executor/expression/vm.rs`) executes SQL expressions as a bytecode dispatch loop. Gas metering exists at the execution context level (`ExecutionContext::insert`, `ExecutionContext::update`, etc.) but **has no integration with the VM dispatch loop**. Every `Op` handler runs unconditionally, including expensive operations like DFP square root.
 
 Specifically:
+
 - `Op::DfpSqrt` performs arbitrary-precision square root — this is expensive relative to add/sub/mul
 - `Op::DecimalSqrt` similarly performs decimal square root
 - `Op::DfpAdd/Sub/Mul/Div` and `Op::DecimalAdd/Sub/Mul/Div` are cheaper but still non-trivial
@@ -116,8 +117,8 @@ This is a single insertion point at the top of the match on `Op` — the dispatc
 
 If `charge` returns `Error::OutOfGas`, the VM returns `Err(Error::OutOfGas { ... })` from the dispatch function, propagating to the caller.
 
-| Error | Condition | Response |
-|-------|-----------|----------|
+| Error    | Condition              | Response                             |
+| -------- | ---------------------- | ------------------------------------ |
 | OutOfGas | `meter.charge()` fails | `Err(Error::OutOfGas)` from dispatch |
 
 ## Open Questions
@@ -126,23 +127,24 @@ None at this time.
 
 ## Performance Targets
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| Latency (no meter) | Same as before | Zero overhead when metering disabled |
-| Latency (with meter) | <5% overhead | Per-op charge is constant time |
+| Metric               | Target         | Notes                                |
+| -------------------- | -------------- | ------------------------------------ |
+| Latency (no meter)   | Same as before | Zero overhead when metering disabled |
+| Latency (with meter) | <5% overhead   | Per-op charge is constant time       |
 
 ## Security Considerations
 
 MUST document:
+
 - **Gas exhaustion**: Unbounded loop with no gas could DoS blockchain nodes. This RFC mitigates by adding metering to VM dispatch.
 - **Determinism violations**: Gas metering must not introduce non-determinism. The `op_gas_cost` function is pure and returns the same cost for the same `Op` variant.
 
 ## Adversarial Review
 
-| Threat | Impact | Mitigation |
-|--------|--------|------------|
-| Gas exhaustion attack | High | VM dispatches charge gas per opcode; no free infinite loops |
-| Non-deterministic gas | Critical | `op_gas_cost` is pure function, same Op = same cost |
+| Threat                | Impact   | Mitigation                                                  |
+| --------------------- | -------- | ----------------------------------------------------------- |
+| Gas exhaustion attack | High     | VM dispatches charge gas per opcode; no free infinite loops |
+| Non-deterministic gas | Critical | `op_gas_cost` is pure function, same Op = same cost         |
 
 ## Compatibility
 
@@ -158,11 +160,11 @@ MUST document:
 
 ## Alternatives Considered
 
-| Approach | Pros | Cons |
-|---------|------|------|
-| Per-handler charging | Fine-grained control | Risk of forgetting to charge in handlers |
-| Opt-in at constructor | Backward compatible | Requires VM reconstruction to enable |
-| Global meter | Simple | Not composable, affects all VMs |
+| Approach              | Pros                 | Cons                                     |
+| --------------------- | -------------------- | ---------------------------------------- |
+| Per-handler charging  | Fine-grained control | Risk of forgetting to charge in handlers |
+| Opt-in at constructor | Backward compatible  | Requires VM reconstruction to enable     |
+| Global meter          | Simple               | Not composable, affects all VMs          |
 
 ## Implementation Phases
 
@@ -187,10 +189,10 @@ MUST document:
 
 ## Key Files to Modify
 
-| File | Change |
-|------|--------|
-| `src/executor/expression/vm.rs` | Add gas_meter field, op_gas_cost function, dispatch charging |
-| `src/executor/expression/ops.rs` | Document gas costs per opcode |
+| File                             | Change                                                       |
+| -------------------------------- | ------------------------------------------------------------ |
+| `src/executor/expression/vm.rs`  | Add gas_meter field, op_gas_cost function, dispatch charging |
+| `src/executor/expression/ops.rs` | Document gas costs per opcode                                |
 
 ## Future Work
 
@@ -214,9 +216,9 @@ Not all consumers of the expression VM are blockchain nodes. SQL engines and tes
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0 | 2026-04-11 | Initial draft |
+| Version | Date       | Changes       |
+| ------- | ---------- | ------------- |
+| 1.0     | 2026-04-11 | Initial draft |
 
 ## Related RFCs
 
@@ -225,4 +227,4 @@ Not all consumers of the expression VM are blockchain nodes. SQL engines and tes
 
 ## Related Use Cases
 
-- [Mission 0202-d: Expression VM Bug Fixes + Gas Integration](../../missions/claimed/0202-d-bigint-decimal-vm.md)
+- [Mission 0202-d: Expression VM Bug Fixes + Gas Integration](../../missions/archived/0202-d-bigint-decimal-vm.md)

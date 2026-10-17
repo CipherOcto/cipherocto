@@ -6,7 +6,7 @@
 //! state (production code path).
 //!
 //! Production paths exercised:
-//!   - `node.receive(payload, &ctx)` → `transport.dispatch(...)` →
+//!   - `node.receive(payload, &&ctx)` → `transport.dispatch(...)` →
 //!     `handler.on_receive(...)` → `handle_capacity_gossip(...)`.
 //!
 //! The handler returns `TransportError::AdapterFailure("capacity gossip

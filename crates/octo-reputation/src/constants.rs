@@ -1,0 +1,296 @@
+//! Canonical constants for the reputation registry (RFC-0968 §10 declarations).
+//!
+//! Every constant is `pub const` so it is reachable from any crate without
+//! re-declaration. Mission 0968 acceptance criteria require these declarations
+//! to live in the RFC as canonical authority; the crate mirrors them to keep
+//! runtime invariants and spec invariants byte-identical.
+
+/// Minimum OCTO stake a recorder must post (RFC-0968 §10).
+pub const MIN_RECORDER_OCTO_STAKE: u64 = 4_000;
+
+/// Minimum role-token stake a recorder must post (RFC-0968 §10).
+pub const MIN_RECORDER_ROLE_STAKE: u64 = 1_000;
+
+/// Minimum dual-stake aggregate (octo + role) a recorder must post (RFC-0968 §10).
+pub const MIN_RECORDER_DUAL_STAKE: u64 = 5_000;
+
+/// Governance quorum: distinct signatures required on any authoritative proof
+/// (suspension, retirement, slash). RFC-0968 amendment 24.
+pub const GOVERNANCE_QUORUM: u32 = 3;
+
+/// Attestor quorum: distinct attestor DIDs required to have observed a
+/// gossip event before the federation accepts it as confirmed. RFC-0968
+/// amendment 22 (I-P7). Absence of quorum fails-closed; `query_attestations`
+/// + `attestor_quorum_reached` enforce this on the read path.
+pub const MIN_ATTESTOR_QUORUM: u32 = 3;
+
+/// Maximum candidates per attested `controller_id` per election (RFC-0968
+/// amendment 58, Round 9 / Round 11 R11-M5). Reduced from 32 to 1.
+pub const MAX_CANDIDATES_PER_CONTROLLER_PER_ELECTION: u64 = 1;
+
+/// Auditor nonce TTL in seconds (RFC-0968 §3, Round A1 audit canonical decl).
+/// Default 7 days.
+pub const MAX_AUDITOR_NONCE_TTL_SECS: u64 = 7 * 86_400;
+
+/// Maximum age of a `GovernanceSnapshot` before it is considered stale.
+/// Used by `verify_governance_suspension`, `slash_recorder`,
+/// `declare_retirement_eligible`. RFC-0968 amendment 24.
+pub const MAX_GOVERNANCE_SNAPSHOT_AGE_SECS: u64 = 600;
+
+/// Minimum finality depth (blocks) before a reputation anchor is considered
+/// final. RFC-0955-R1 §"Finality".
+pub const MIN_FINALITY_BLOCKS: u64 = 12;
+
+/// Minimum finality depth (blocks) before a reputation anchor is considered
+/// final. RFC-0955 §"Finality" — **deprecated**: use `MIN_FINALITY_BLOCKS`.
+/// Kept as an alias for the post-deprecation reorganisation; both names
+/// compile to the same value.
+#[deprecated(note = "use MIN_FINALITY_BLOCKS per RFC-0955-R1 §Constants")]
+pub const MIN_REPUTATION_ANCHOR_FINALITY_BLOCKS: u64 = MIN_FINALITY_BLOCKS;
+
+/// Default interval (seconds) between Merkle-root anchor submissions per
+/// attested `controller_id`. RFC-0955-R1 §"Constants".
+pub const DEFAULT_ANCHOR_INTERVAL_SECS: u64 = 300;
+
+/// Maximum anchor root submissions per `controller_id` per anchor window.
+/// RFC-0955-R1 §"Constants" — exactly one root per window.
+pub const MAX_ANCHOR_ROOTS_PER_CONTROLLER_PER_INTERVAL: u64 = 1;
+
+/// Maximum distinct `(did, signal_kind, layer)` tuples aggregated under a
+/// single Merkle root. RFC-0955-R1 §"Constants".
+pub const MAX_TUPLES_PER_ROOT: u64 = 100;
+
+/// Maximum distinct `(did, signal_kind, layer)` tuples anchored by a single
+/// attested `controller_id` in a rolling 24-hour window. RFC-0955-R1 §"Cost
+/// Model".
+pub const MAX_ANCHORED_TUPLES_PER_CONTROLLER_PER_DAY: u64 = 100;
+
+/// Per-root anchor fee (OCTO, non-refundable upper bound). RFC-0955-R1 §"Cost
+/// Model" — amendment 48.
+pub const ANCHOR_FEE_PER_ROOT: u64 = 5_000;
+
+/// Per-leaf anchor fee minimum (OCTO). RFC-0955-R1 §"Cost Model" — amendment
+/// 51.
+pub const MIN_FEE_PER_LEAF: u64 = 50;
+
+/// Maximum bootstrapped (fresh) subjects a single attested `controller_id`
+/// can register per day. RFC-0968 §28 amendment 49.
+pub const MAX_BOOTSTRAPPED_SUBJECTS_PER_CONTROLLER_PER_DAY: u64 = 5;
+
+/// Minimum floor on `score_ewma` for `election_priority_v2` eligibility
+/// (RFC-0968 §10 contract line 2547; Round 7 D4 update).
+pub const MIN_ELECTION_SCORE: f64 = 0.05;
+
+/// Sample count below which an aggregate's effective score is shrunk by the
+/// ratio `samples / MIN_CONFIDENCE_SAMPLES`. RFC-0968-A1 amendment 47.
+pub const MIN_CONFIDENCE_SAMPLES: u64 = 100;
+
+/// Maximum stake (in OCTO) the priority formula saturates at. Stakes
+/// greater than this are treated as `MAX_ELECTION_STAKE` to bound
+/// per-candidate priority in the same units as the legacy
+/// `stake / (1 + global_slash_count)` formula. RFC-0968-A1
+/// amendment 13 (Round 6 I10 stake-saturation cap) + amendment 27
+/// (Round 3 I-X5 `.div(MAX_ELECTION_STAKE)` normalization). Defines
+/// the constant version that both
+/// `SlashReputationStoreCompat::election_priority` and
+/// `election_priority_v2` should consume.
+pub const MAX_ELECTION_STAKE: u64 = 1_000_000;
+
+/// Per-recorder daily cap on positive signals to a single subject.
+/// RFC-0968-A1 amendment 9.
+pub const MAX_POSITIVE_SIGNALS_PER_RECORDER_PER_SUBJECT_PER_DAY: u64 = 100;
+
+/// Per-recorder daily cap on positive signals across all subjects.
+/// RFC-0968-A1 amendment 9.
+pub const MAX_POSITIVE_SIGNALS_PER_RECORDER_PER_DAY: u64 = 10_000;
+
+/// Daily anchor windows per attested `controller_id` (computed convenience;
+/// `86_400 / DEFAULT_ANCHOR_INTERVAL_SECS`). RFC-0955-R1 §"Constants" implies
+/// 288 at the default interval.
+pub const ANCHOR_WINDOWS_PER_CONTROLLER_PER_DAY: u64 = 86_400 / DEFAULT_ANCHOR_INTERVAL_SECS;
+
+// ---------------------------------------------------------------------------
+// RFC-0968-A1 / A2 amendment constants (Phase 1 AC line 48).
+//
+// Additive declarations. None of these renumber existing discriminants or
+// change the byte layout of any existing type. They pin the RFC values in
+// code so review-time comparisons against the RFC are byte-identical.
+// ---------------------------------------------------------------------------
+
+/// Maximum number of distinct bonded subjects a single recorder sponsor can
+/// back (RFC-0968-A1 amendment 11). Exceeding this returns
+/// `BondSponsorCapExceeded` (`0x2B`).
+pub const MAX_BONDED_SUBJECTS_PER_SPONSOR: u32 = 50;
+
+/// Number of historical blocks the rotation lineage audit walks back when
+/// resolving `old_did → new_did` lineage lookups (RFC-0968-A1 amendment 12).
+pub const ROTATION_LINEAGE_LOOKBACK_BLOCKS: u64 = 100_000;
+
+/// Maximum depth of a sponsor chain before `SponsorChainTooDeep` (`0x2F`)
+/// is returned (RFC-0968-A1 amendment 41).
+pub const MAX_SPONSOR_DEPTH: u32 = 3;
+
+/// Threshold for `CoalitionQuarantined` (`0x30`) — quarantines any coalition
+/// of `K` controllers and `M` candidates where `K × M > 100`
+/// (RFC-0968-A1 amendments 42 + 50).
+pub const MAX_COALITION_KM_PRODUCT: u32 = 100;
+
+/// Maximum grace revocations per recorder per 24-month window before the
+/// grace pathway is closed (RFC-0968-A1 amendment 43).
+pub const MAX_GRACE_REVOCATIONS_PER_24M: u32 = 3;
+
+/// Maximum drift (seconds) between `requested_at_unix` on a recorder
+/// registration request and the receiving service's `now_unix`
+/// (RFC-0968 §3 + Phase 1 AC).
+pub const MAX_REGISTRATION_DRIFT_SECS: u64 = 300;
+
+/// Maximum drift (seconds) between `resume_at_unix` on a `ResumeProof` and
+/// the receiving service's `now_unix`.
+pub const MAX_RESUME_DRIFT_SECS: u64 = 300;
+
+/// Maximum drift (seconds) between an `Attestation`'s `observed_at_unix` and
+/// the receiving service's `now_unix`.
+pub const MAX_ATTESTATION_DRIFT_SECS: u64 = 60;
+
+/// Threshold at which the per-recorder `severity_emitted_total` counter
+/// triggers `suspend_recorder_self_check` (RFC-0968-A1 amendment 4, I-1).
+pub const SUSPENSION_SEVERITY_THRESHOLD: u32 = 5;
+
+/// Maximum cross-layer sample count fed into Bayesian shrinkage. Samples
+/// above this are clipped to this value (RFC-0968-A1 amendment 15).
+pub const MAX_RELIABILITY_SAMPLES: u64 = 1_000;
+
+/// Threshold above which weighted-similarity correlation between two
+/// recorders' subject sets flags correlated creation (RFC-0968-A1
+/// amendment 46).
+pub const WEIGHTED_SIMILARITY_THRESHOLD: f64 = 0.60;
+
+// ---------------------------------------------------------------------------
+// BLAKE3 domain separators (RFC-0968 §21 + §10 Review Round 7).
+//
+// Each constant is a distinct byte string so domain-separated BLAKE3 calls
+// produce different digests for the same input bytes under different domains.
+// ---------------------------------------------------------------------------
+
+pub const BLAKE3_REPUTATION_EVENT_DOMAIN: &[u8] = b"cipherocto/reputation/event/v1";
+pub const BLAKE3_REPUTATION_AGGREGATE_DOMAIN: &[u8] = b"cipherocto/reputation/aggregate/v1";
+pub const BLAKE3_REPUTATION_RECORDER_DOMAIN: &[u8] = b"cipherocto/reputation/recorder/v1";
+pub const BLAKE3_REPUTATION_SUSPENSION_DOMAIN: &[u8] = b"cipherocto/reputation/suspension/v1";
+pub const BLAKE3_REPUTATION_SLASH_DOMAIN: &[u8] = b"cipherocto/reputation/slash/v1";
+pub const BLAKE3_REPUTATION_RETIREMENT_DOMAIN: &[u8] = b"cipherocto/reputation/retirement/v1";
+pub const BLAKE3_REPUTATION_ANCHOR_DOMAIN: &[u8] = b"cipherocto/reputation/anchor/v1";
+pub const BLAKE3_REPUTATION_AUDIT_NONCE_DOMAIN: &[u8] = b"cipherocto/reputation/audit_nonce/v1";
+pub const BLAKE3_REPUTATION_CROSS_LAYER_DOMAIN: &[u8] = b"cipherocto/reputation/cross_layer/v1";
+pub const BLAKE3_REPUTATION_SLIDING_WINDOW_DOMAIN: &[u8] =
+    b"cipherocto/reputation/sliding_window/v1";
+pub const BLAKE3_REPUTATION_PARITY_DOMAIN: &[u8] = b"cipherocto/reputation/parity/v1";
+pub const BLAKE3_REPUTATION_GOVERNANCE_SNAPSHOT_DOMAIN: &[u8] =
+    b"cipherocto/governance/snapshot/v1";
+pub const BLAKE3_REPUTATION_GOVERNANCE_PROOF_DOMAIN: &[u8] = b"cipherocto/governance/proof/v1";
+pub const BLAKE3_REPUTATION_RETENTION_DOMAIN: &[u8] = b"cipherocto/reputation/retention/v1";
+
+/// Separate family from reputation domains — the set of governance pubkeys
+/// authorised to sign authoritative proofs. RFC-0968 §10 Review Round 7.
+pub const BLAKE3_GOVERNANCE_SET_DOMAIN: &[u8] = b"cipherocto/governance/set/v1";
+
+/// Retention role bit (RFC-0968 §21 + mission 0968-p1-symbol-alignment).
+/// `AttestorAuth::role_bits` carries this value when the attestor is
+/// authorised to perform retention-prune operations. Distinct from
+/// attestor-read (0x01) / attestor-write (0x02) / governance (0x04)
+/// role bits so role checks at the retention boundary can branch
+/// on a single byte.
+pub const RETENTION_ROLE: u8 = 0x08;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// All domain separators must be byte-distinct: a digest computed
+    /// under one domain MUST never collide with a digest computed
+    /// under any other for the same input bytes.
+    #[test]
+    fn domains_are_byte_distinct() {
+        let all: &[(&str, &[u8])] = &[
+            ("event", BLAKE3_REPUTATION_EVENT_DOMAIN),
+            ("aggregate", BLAKE3_REPUTATION_AGGREGATE_DOMAIN),
+            ("recorder", BLAKE3_REPUTATION_RECORDER_DOMAIN),
+            ("suspension", BLAKE3_REPUTATION_SUSPENSION_DOMAIN),
+            ("slash", BLAKE3_REPUTATION_SLASH_DOMAIN),
+            ("retirement", BLAKE3_REPUTATION_RETIREMENT_DOMAIN),
+            ("anchor", BLAKE3_REPUTATION_ANCHOR_DOMAIN),
+            ("audit_nonce", BLAKE3_REPUTATION_AUDIT_NONCE_DOMAIN),
+            ("cross_layer", BLAKE3_REPUTATION_CROSS_LAYER_DOMAIN),
+            ("sliding_window", BLAKE3_REPUTATION_SLIDING_WINDOW_DOMAIN),
+            ("parity", BLAKE3_REPUTATION_PARITY_DOMAIN),
+            ("gov_snapshot", BLAKE3_REPUTATION_GOVERNANCE_SNAPSHOT_DOMAIN),
+            ("gov_proof", BLAKE3_REPUTATION_GOVERNANCE_PROOF_DOMAIN),
+            ("gov_set", BLAKE3_GOVERNANCE_SET_DOMAIN),
+        ];
+        assert_eq!(all.len(), 14, "must enumerate all 14 domain separators");
+        for i in 0..all.len() {
+            for j in (i + 1)..all.len() {
+                assert_ne!(
+                    all[i].1, all[j].1,
+                    "domain {} collides with {}",
+                    all[i].0, all[j].0
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn stake_minima_are_independent() {
+        // Per Round 8 rename: MIN_RECORDER_OCTO_STAKE and MIN_RECORDER_ROLE_STAKE
+        // are independent minima, NOT subsumed by MIN_RECORDER_DUAL_STAKE.
+        const { assert!(MIN_RECORDER_OCTO_STAKE < MIN_RECORDER_DUAL_STAKE) };
+        const { assert!(MIN_RECORDER_ROLE_STAKE < MIN_RECORDER_DUAL_STAKE) };
+        const {
+            assert!(
+                MIN_RECORDER_OCTO_STAKE + MIN_RECORDER_ROLE_STAKE == MIN_RECORDER_DUAL_STAKE,
+                "dual-stake aggregate = octo + role"
+            );
+        };
+    }
+
+    #[test]
+    fn candidates_per_controller_is_one() {
+        // Round 9 / Round 11 R11-M5 reduced from 32 to 1.
+        const { assert!(MAX_CANDIDATES_PER_CONTROLLER_PER_ELECTION == 1) };
+    }
+
+    #[test]
+    fn auditor_nonce_ttl_is_seven_days() {
+        const { assert!(MAX_AUDITOR_NONCE_TTL_SECS == 7 * 86_400) };
+    }
+
+    /// All RFC-0968-A1 / A2 amendment constants pin RFC values byte-exact.
+    /// Drift in any of these constants would silently change acceptance
+    /// criteria — assert each against its RFC-anchored value.
+    #[test]
+    fn amendment_constants_pin_rfc_values() {
+        const { assert!(MAX_BONDED_SUBJECTS_PER_SPONSOR == 50) };
+        const { assert!(ROTATION_LINEAGE_LOOKBACK_BLOCKS == 100_000) };
+        const { assert!(MAX_SPONSOR_DEPTH == 3) };
+        const { assert!(MAX_COALITION_KM_PRODUCT == 100) };
+        const { assert!(MAX_GRACE_REVOCATIONS_PER_24M == 3) };
+        const { assert!(MAX_REGISTRATION_DRIFT_SECS == 300) };
+        const { assert!(MAX_RESUME_DRIFT_SECS == 300) };
+        const { assert!(MAX_ATTESTATION_DRIFT_SECS == 60) };
+        const { assert!(SUSPENSION_SEVERITY_THRESHOLD == 5) };
+        const { assert!(MAX_RELIABILITY_SAMPLES == 1_000) };
+        // f64 equality is safe here because both the constant and the
+        // literal on the right side undergo the same IEEE-754 round-trip
+        // at compile time — they always produce identical bit patterns.
+        // 0.60 itself is NOT exactly representable in IEEE-754 (it rounds to
+        // 0x3FE3333333333333), but the comparison is `literal == literal`,
+        // not `literal == exact_decimal`, so the round-trip cancels.
+        // (If the RFC later defines 0.60 as a base-10 decimal with strict
+        // equality, switch this to `to_bits()` comparison.)
+        const {
+            assert!(
+                WEIGHTED_SIMILARITY_THRESHOLD == 0.60,
+                "weighted-similarity threshold drift"
+            );
+        }
+    }
+}

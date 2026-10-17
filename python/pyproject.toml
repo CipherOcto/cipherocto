@@ -11,3 +11,22 @@ requires-python = ">=3.12"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["quota_router*"]
+
+# Maturin reads this when invoking `maturin build` / `maturin develop`
+# against `crates/quota-router-pyo3/Cargo.toml`. The
+# `pyo3-extension-module` Cargo feature enables
+# `pyo3/extension-module`, which strips the libpython link from the
+# cdylib (maturin hard-fails wheel build if libpython is linked into
+# the cdylib — see .github/workflows/quota-router-python.yml job
+# `build`). Without this section, maturin sees the workspace
+# `[features].default = ["full"]` and the resulting wheel links
+# libpython, failing the build with:
+#   "Your library links libpython (libpython3.12.so.1.0), which
+#    libraries must not do. Have you forgotten to activate the
+#    extension-module feature?"
+[tool.maturin]
+features = ["pyo3-extension-module"]
+# maturin derives the wheel distribution name from the Cargo package
+# name (`quota-router-pyo3`); the Python module name comes from the
+# `#[pymodule]` function `quota_router_native` in
+# crates/quota-router-pyo3/src/lib.rs.

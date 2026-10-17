@@ -102,8 +102,8 @@ mod tests {
     use crate::daemon::Daemon;
     use crate::events::{EventEnvelope, InboundEvent};
     use crate::query::embedder::MockEmbedder;
+    use octo_storage_core::Database;
     use std::sync::Arc;
-    use stoolap::Database;
 
     fn handle_with_query() -> (tempfile::TempDir, DaemonHandle) {
         let tmp = tempfile::tempdir().expect("tmpdir");

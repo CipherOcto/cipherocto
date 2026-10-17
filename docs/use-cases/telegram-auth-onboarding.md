@@ -85,7 +85,7 @@ N/A. Existing env-var-based deployment continues to work. The onboard tool is an
 
 ## Related RFCs
 
-- RFC-0850 (Networking): Deterministic Overlay Transport, §8.1 (Platform Adapters)
+- RFC-0850: Deterministic Overlay Transport, §8.1 (Platform Adapters)
 - RFC-0850ab-a (Networking): Telegram Auth Onboarding (Accepted)
 
 ## Related Missions

@@ -3,20 +3,205 @@ name = "octo-cli"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "octo_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "octo"
 path = "src/main.rs"
 
+# RFC-0011-c §F.7.5 — opt-in cross-process revocation ledger.
+# Default builds use the zero-dep `InMemoryRevocationStore` (Layer B
+# default per §F.3 fork-fail-closed contract). Builds with this
+# feature enabled wire the Stoolap-backed Layer D adapter via
+# `install_revocation_store_default_with` so the `octo-runtime`
+# `revoke_attach_token` + `is_token_revoked` substrate writes
+# propagate across CLI processes that share the ledger path
+# (`$CIPHEROCTO_DATA_DIR/revocation.stoolap`).
+[features]
+default = []
+# Phase C paired amendment: enable cross-process revocation
+# propagation via the Stoolap-backed Layer D persistence adapter.
+revocation-store-stoolap = ["dep:octo-runtime-revocation-store"]
+# RFC-0011-w: slot 91 activation. Feature propagation to CLI per
+# RFC-0011-w §Detailed Design §Feature flag wiring. Required
+# for the translation arm in `From<octo_runtime::AttachError>`
+# (compiles only when the substrate feature is enabled in
+# `octo-runtime`). No `dep:` prefix because `octo-runtime` is
+# declared as a required dep at `crates/octo-cli/Cargo.toml`,
+# not `optional = true`; the plain `<dep-name>/<feature>`
+# syntax activates the substrate feature on the existing
+# required dep without re-declaring it as optional per
+# [[substrate-faithfulness-verification]] R3.A HIGH-1 finding.
+octo-attach-key-rotation = ["octo-runtime/octo-attach-key-rotation"]
+# Passthrough to the substrate-local `hex-ids` opt-in on `octo-cap-macaroon`,
+# following the RFC-0011-w precedent above. `octo-cap-macaroon` is a required
+# dep, so the plain `<dep>/<feature>` syntax applies with no `dep:` prefix.
+#
+# This exists for two reasons, and the second is the one that bit. First, it
+# lets the CLI be built in the configuration CI actually uses. Second, a test
+# that pins a FEATURE-DEPENDENT wire form needs a real `cfg!` to branch on, and
+# `cfg!(feature = ...)` can only see the current crate's own features. Without
+# this passthrough, `tv_vault_6` had no way to know whether `VaultId` was
+# rendering as a byte array or as hex.
+#
+# It also closes a reproduction gap: `cargo test -p octo-cli --all-features`
+# scopes `--all-features` to the named package, so it does NOT enable
+# `octo-cap-macaroon/hex-ids`. The coverage workflow uses
+# `--workspace --all-features`, which does. The two are not the same build.
+hex-ids = ["octo-cap-macaroon/hex-ids"]
+
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
-tokio = { version = "1.35", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Mission 0011-c-agent-create-subcommand: AgentAlreadyExists error
+# variant surfaces the deterministic `agent_id` (RFC-0011-c §9.10
+# UUIDv5 substrate signature).
+uuid = { version = "1", features = ["serde"] }
+# Async runtime for `octo_mesh::rpc_invoke` (RFC-0011-f `[ADD]` #5).
+# The substrate function is `async` for forward-compat with the
+# follow-on `NodeTransport::send_best` request/reply wiring; the
+# Phase 1 placeholder returns immediately. The CLI `mesh rpc`
+# dispatch drives the future via a per-call
+# `tokio::runtime::Builder::new_current_thread()` so the sync
+# `dispatch()` surface stays sync (no `async fn` propagation).
+tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
 
-octo-core = { path = "../octo-core" }
-octo-network = { path = "../octo-network" }
-octo-registry = { path = "../octo-registry" }
-octo-runtime = { path = "../octo-runtime" }
+# === Substrate (Layer B) — RFC-0011 §Dependencies ===
+# Pins match the actual substrate workspace version (0.1.0); impl-guide
+# L72-74 pins substrate versions at 0.1.0, matching the workspace.
+octo-wallet = { path = "../octo-wallet", version = "0.1.0" }                  # Layer B identity substrate — RFC-0009
+octo-cap-macaroon = { path = "../octo-cap-macaroon", version = "0.1.0" }      # Layer B capability substrate — RFC-0957
+octo-policy = { path = "../octo-policy", version = "0.1.0" }                  # Layer B policy substrate — RFC-0967
+octo-role = { path = "../octo-role", version = "0.1.0" }                      # Layer B role provisioning — RFC-0011-d
+octo-network = { path = "../octo-network", version = "0.2.0" }                # Layer B/C coordinator + DC substrate — M10 (RFC-0011-d §7.4 + RFC-0855p-c §5a)
+octo-coordinator-types = { path = "../octo-coordinator-types", version = "0.1.0" } # Layer A coordinator record + lifecycle substrate — RFC-0011-k §Substrate-Additions row G12b; `octo network coordinator show` calls `CoordinatorRecord::load` (substrate-faithful)
+octo-reputation = { path = "../octo-reputation", version = "0.7.0" }            # Layer B reputation registry — RFC-0968; `reputation show` consumes RFC-0011-b §7.4 `[ADD]` substrate (projection module + Role / ReputationRecord / AnchorRef / AttestationSummary re-exports). Crate version is 0.7.0 (local pin; substrate hasn't migrated to workspace version yet)
+octo-determin = { path = "../../determin", version = "0.1.0" }                 # Layer B deterministic floating-point — RFC-0104; ReputationShowOutput.score is the canonical Dfp wire form per RFC-0011-b §7.3
+# Layer A canonical DID codec (RFC-0010). `mesh peer` validates peer DID
+# wire form (`did:octo:z<base58btc>`) at the dispatch boundary.
+octo-ident = { path = "../octo-ident", version = "0.1.0" }                   # Layer A canonical DID codec — RFC-0010
+# Layer C mesh peer-table substrate — RFC-0011-f. Owns the local peer
+# table (`$OCTO_HOME/mesh/peers.toml`, 0700 perms, atomic write + fsync
+# + rename) and the typed-discriminator TrustLevel / EndpointUri types.
+octo-mesh = { path = "../octo-mesh", version = "0.1.0" }                     # Layer C mesh peer-table substrate — RFC-0011-f
+# Layer B vault substrate — RFC-0011-e. `vault list` consumes
+# `list_owned`; `vault balance` consumes `project_vault_balance`. The
+# substrate port traits `VaultOwnerIndex` / `VaultAssetResolver` /
+# `TransferEventLog` / `AssetRegistry` are the wire-typed boundary the
+# CLI plugs an in-process Phase 1 adapter into until `octo-vault-stoolap`
+# (Layer D production adapter) lands.
+octo-vault = { path = "../octo-vault", version = "0.1.0" }                   # Layer B vault substrate — RFC-0011-e
+# Layer B audit substrate — RFC-0011-a + RFC-0016-a. `octo_audit::AuditError`
+# re-export is consumed by the canonical `[ADD]` error envelope
+# conversion in `error.rs` (RFC-0011-a per-variant mapping pattern).
+octo-audit = { path = "../octo-audit", version = "0.1.0" }                   # Layer B audit substrate — RFC-0011-a + RFC-0016-a
+# Layer B settlement substrate — RFC-0014 / RFC-0959. `octo audit list/show`
+# consumes `octo_settlement::ReceiptId` (canonical u64 newtype) +
+# `octo_settlement::Receipt` for point-lookup projection per RFC-0011-a
+# §Substrate-truth dependency. Transitively available via octo-audit
+# (Layer B → Layer B) but the CLI's `commands/audit.rs` references
+# `octo_settlement::ReceiptId` directly in clap value_parser signatures
+# so the path dep is declared verbatim.
+octo-settlement = { path = "../octo-settlement", version = "0.1.0" }       # Layer B settlement substrate — RFC-0014 / RFC-0959
+# Layer B governance substrate — RFC-0011-g Phase 1. `octo governance snapshot`
+# consumes the `snapshot()` projection + `OctoGovernanceSnapshotCache`
+# (LRU + 600s TTL) per RFC-0011-g §Substrate `[ADD]`. Layer A frozen
+# canonical types (ProposalState, GovernancePolicy, etc.) reached via
+# façade re-exports — no direct `octo-governance-core` dep.
+octo-governance = { path = "../octo-governance", version = "0.1.0" }         # Layer B governance facade — RFC-0011-g + RFC-0013
+# Layer B runtime substrate — RFC-0011-c §9.10 [ADD] signatures.
+# `octo_runtime::attach` consumes a RuntimeHandle minted via
+# `spawn_agent` (RFC-0011-c §9.3.2); the `octo agent attach` CLI
+# subcommand gates on `read_agent_state` before the runtime attach
+# call so a non-Running agent surfaces `AgentNotRunning(uuid)`
+# (exit 48) per RFC-0011-c §9.8.
+octo-runtime = { path = "../octo-runtime", version = "0.1.0" }                 # Layer B runtime substrate — RFC-0011-c §9.1 + §9.10
+# Layer D persistence adapter — opt-in via the `revocation-store-stoolap`
+# feature. Default builds use the Layer B `InMemoryRevocationStore`
+# (per-extension-crates + registry pattern per
+# [[cipherocto-design-principles]] §User extensibility). When
+# enabled, `main.rs` wires `install_default()` into the Layer B
+# trait via `install_revocation_store_default_with` so revocation
+# writes propagate across CLI processes via the Stoolap ledger
+# (RFC-0011-c §F.7.5 paired amendment; see HARD RED LINE on the
+# Stoolap fork in [[stoolap-general-purpose-db]]).
+octo-runtime-revocation-store = { path = "../octo-runtime-revocation-store", version = "0.1.0", optional = true }
+
+# === Mesh forward substrate (Layer 1 + Layer C) — RFC-0011-f §Subcommand Taxonomy ===
+# Layer 1 stable: NodeEnvelope + RecipientRef + Authorization + PayloadKindId
+# consumed at the CLI boundary to deserialize the --envelope <PATH> JSON
+# input and validate shape before dispatch (RFC-0871 §Data Structures).
+octo-protocol = { path = "../octo-protocol", version = "0.1.0" }
+
+# === Stub substrate (Layer C/D) ===
+# The 213-line stub main.rs that called octo-registry::init() and
+# octo-runtime::execute_agent() was replaced by the RFC-0011 command surface
+# (mission 0011-core-output-envelope-redaction). Those deps are no longer
+# referenced; removed to keep `-D warnings` clean.
+
+# === Output + TTY ===
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+
+# === $OCTO_HOME resolution ===
+# RFC-0011-f §Substrate `peer add` / `remove` writes to
+# `$OCTO_HOME/mesh/peers.toml`; the CLI resolves the home dir the same
+# way as the wallet substrate (env override → `~/.octo` fallback).
+dirs = "5"
+
+# === Error envelope ===
+thiserror = "2.0"
+
+# === Hex32 newtype serialization ===
+hex = "0.4"
+
+# Deterministic digest for parse_did_hexbytes (no direct blake3 dep)
+# Layer B additive — same crate as octo-cap-macaroon (RFC-0957 §Algorithms).
+# Routed through `octo_cap_macaroon::blake3_hash` + `hmac_blake3` wrappers
+# (R17 Lens-4 F1 — parallel-abstraction ban). No direct `blake3` crate dep.
+
+# === Schemars for OutputEnvelope<T> ===
+schemars = { version = "0.8", features = ["chrono"] }
+
+# === Secret-zeroize on drop (SEC-13) ===
+# Derives Zeroize/ZeroizeOnDrop on RedactedHex so signature bytes retained in
+# the Vec<u8> backing storage are wiped when the value is dropped, not just
+# redacted in Debug/Display/Serialize. The substrate signature bytes are
+# already discarded after transport, but a debug panic or panic-during-unwrap
+# leaves the bytes in heap memory until the allocator recycles the page —
+# the Drop impl wipes them deterministically.
+zeroize = { version = "1", features = ["derive"] }
+
+# === Passphrase acquisition (RFC-0011-x + mission 0011-x-wallet-store-cli §AC-9) ===
+# rpassword handles the TTY prompt for interactive passphrase entry
+# (the operator's `--passphrase-stdin` path uses stdin directly so
+# rpassword is bypassed). Layer C dependency — `rpassword` lives in
+# `crates/octo-wallet/Cargo.toml` for the `octo-wallet` binary; the
+# CLI mission adds the same dep here per the standing dependency-
+# rationale convention. No passphrase flag exists on any subcommand
+# (mission §AC-9 second clause) — the secret NEVER enters argv.
+rpassword = "7"
+
+[dev-dependencies]
+assert_cmd = "2.0"        # CLI binary invocation
+predicates = "3.1"         # stdout/stderr assertions
+# Mission 0011-c-agent-create-subcommand: integration tests write
+# synthetic manifest JSON to a temp file and pass `--manifest-path`
+# to `octo agent create` so the substrate's read + parse path is
+# exercised end-to-end.
+tempfile = "3"
+# Layer B vault substrate `testing` feature — needed by the
+# `octo vault list` / `octo vault balance` integration tests that
+# exercise the substrate port traits via the in-memory stubs
+# (`StubVaultAssetResolver`, `StubTransferEventLog`).
+octo-vault = { path = "../octo-vault", version = "0.1.0", features = ["testing"] }
+# Async runtime for the `octo_mesh::rpc_invoke` unit tests
+# (`#[tokio::test]` in `commands/mesh.rs`). Runtime dep was moved to
+# `[dependencies]` so `mesh rpc` dispatch can drive the substrate
+# future via `tokio::runtime::Builder::new_current_thread()`; the
+# `rt-multi-thread` feature is only needed for tests.
+

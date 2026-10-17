@@ -6,7 +6,7 @@
 //! scope. This mirrors `octo-matrix-onboard-core::Session` making
 //! `access_token` private and exposing it only via `to_disk_json`.
 //!
-//! R2-C1: `to_disk_json` is a method on `WhatsAppSession` (`&self`),
+//! R2-C1: `to_disk_json` is a method on `WhatsAppSession` (`&&self`),
 //! matching the matrix-onboard pattern.
 
 use std::path::PathBuf;

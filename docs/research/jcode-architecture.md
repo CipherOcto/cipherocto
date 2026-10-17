@@ -39,26 +39,26 @@
 
 jcode is a multi-session, multi-provider, multi-client TUI-first coding agent harness written in Rust. It targets single-binary distribution across Linux, macOS, and Windows with a primary TUI, an optional desktop (Tauri) app, an iOS host, and a CLI surface. The product is positioned as "the next generation coding agent harness" with explicit focus on multi-session workflows, infinite customizability, and performance.
 
-| Property | Value | Evidence |
-|----------|-------|----------|
-| **Version** | 0.17.2 (working tree dirty on `next`) | `Cargo.toml:3` |
-| **Edition** | Rust 2024 | `Cargo.toml:5` |
-| **License** | MIT | `LICENSE` |
-| **Binaries** | `jcode`, `test_api`, `jcode-harness`, `session_memory_bench`, `mermaid_side_panel_probe`, `tui_bench` | `Cargo.toml:73-97` |
-| **Workspace crates** | 56 (root + 55 in `crates/`) | `Cargo.toml:8-67` |
-| **Source files (crates)** | 321 `.rs` files | `find crates -name '*.rs' \| wc -l` |
-| **LOC (crates, all paths)** | ~155,240 | aggregated `wc -l` |
-| **LOC (root `src/`)** | ~22,508 | aggregated `wc -l` |
-| **Server modules** | 47 files in `crates/jcode-app-core/src/server/` | `ls crates/jcode-app-core/src/server/ \| wc -l` |
-| **Agent submodules** | 14 files in `crates/jcode-app-core/src/agent/` | `ls crates/jcode-app-core/src/agent/` |
-| **Tools** | 33 first-class tools in `tool/mod.rs` (40+ including subtool variants) | `crates/jcode-app-core/src/tool/mod.rs:1-34` |
-| **Provider impls** | 13 concrete providers behind `MultiProvider` | `grep '^impl Provider for' crates/` |
-| **Wire variants** | 134 variants total (Request + ServerEvent) | `crates/jcode-protocol/src/wire.rs` |
-| **Default features** | `pdf`, `embeddings` | `Cargo.toml:243` |
-| **Allocator** | jemalloc (with tuned `malloc_conf`) under feature; glibc with `M_ARENA_MAX=4` fallback | `src/main.rs:1-47` |
-| **TUI** | ratatui 0.30 + crossterm 0.29 + arboard | `Cargo.toml:186-189` |
-| **HTTP** | reqwest 0.12 + rustls (aws_lc_rs) + tokio-tungstenite | `Cargo.toml:111-114` |
-| **AWS** | `aws-sdk-bedrockruntime` + `aws-sdk-bedrock` + `aws-sdk-sts` | `Cargo.toml:230-236` |
+| Property                    | Value                                                                                                 | Evidence                                        |
+| --------------------------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| **Version**                 | 0.17.2 (working tree dirty on `next`)                                                                 | `Cargo.toml:3`                                  |
+| **Edition**                 | Rust 2024                                                                                             | `Cargo.toml:5`                                  |
+| **License**                 | MIT                                                                                                   | `LICENSE`                                       |
+| **Binaries**                | `jcode`, `test_api`, `jcode-harness`, `session_memory_bench`, `mermaid_side_panel_probe`, `tui_bench` | `Cargo.toml:73-97`                              |
+| **Workspace crates**        | 56 (root + 55 in `crates/`)                                                                           | `Cargo.toml:8-67`                               |
+| **Source files (crates)**   | 321 `.rs` files                                                                                       | `find crates -name '*.rs' \| wc -l`             |
+| **LOC (crates, all paths)** | ~155,240                                                                                              | aggregated `wc -l`                              |
+| **LOC (root `src/`)**       | ~22,508                                                                                               | aggregated `wc -l`                              |
+| **Server modules**          | 47 files in `crates/jcode-app-core/src/server/`                                                       | `ls crates/jcode-app-core/src/server/ \| wc -l` |
+| **Agent submodules**        | 14 files in `crates/jcode-app-core/src/agent/`                                                        | `ls crates/jcode-app-core/src/agent/`           |
+| **Tools**                   | 33 first-class tools in `tool/mod.rs` (40+ including subtool variants)                                | `crates/jcode-app-core/src/tool/mod.rs:1-34`    |
+| **Provider impls**          | 13 concrete providers behind `MultiProvider`                                                          | `grep '^impl Provider for' crates/`             |
+| **Wire variants**           | 134 variants total (Request + ServerEvent)                                                            | `crates/jcode-protocol/src/wire.rs`             |
+| **Default features**        | `pdf`, `embeddings`                                                                                   | `Cargo.toml:243`                                |
+| **Allocator**               | jemalloc (with tuned `malloc_conf`) under feature; glibc with `M_ARENA_MAX=4` fallback                | `src/main.rs:1-47`                              |
+| **TUI**                     | ratatui 0.30 + crossterm 0.29 + arboard                                                               | `Cargo.toml:186-189`                            |
+| **HTTP**                    | reqwest 0.12 + rustls (aws_lc_rs) + tokio-tungstenite                                                 | `Cargo.toml:111-114`                            |
+| **AWS**                     | `aws-sdk-bedrockruntime` + `aws-sdk-bedrock` + `aws-sdk-sts`                                          | `Cargo.toml:230-236`                            |
 
 ### 1.1 Design Philosophy
 
@@ -80,19 +80,19 @@ graph LR
 
 ### 1.2 Key Differentiators
 
-| Dimension | jcode | Notable Peers |
-|-----------|-------|---------------|
-| **Language** | Rust (single binary, low RSS) | Python/Node (heavier) |
-| **Server model** | Single long-lived server, multi-client Unix-socket, hot-reload via `exec` | per-process agents |
-| **Providers** | 13 (Anthropic, Claude CLI, OpenAI, OpenRouter, Gemini, Bedrock, Copilot, Cursor, Antigravity, JCode, OpenAI-compatible profiles, …) | 1–3 typical |
-| **Tools** | 40+ (file/edit/bash/lsp/mcp/batch/swarm/memory/selfdev/…) | ~10–30 typical |
-| **Coordination** | First-class swarm with `Coordinator`/`WorktreeManager` roles and `VersionedPlan` DAG | none / ad-hoc |
-| **Self-extension** | `selfdev` mode with a focused prompt set + a `selfdev` tool that can reload via `exec` | none |
-| **Ambient mode** | Long-running autonomous cycle with scheduled queue + visible-cycle handoff | none |
-| **Memory** | Local ONNX embeddings + memory graph + activity pipeline + journal | none / cloud only |
-| **Hot reload** | `/reload` execs the new binary in place; clients auto-reconnect | restart |
-| **Desktop** | Tauri-style custom scene engine in `jcode-desktop` | webview wrappers |
-| **iOS** | Native iOS host that drives a mobile simulator and embeds the TUI | none |
+| Dimension          | jcode                                                                                                                               | Notable Peers         |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| **Language**       | Rust (single binary, low RSS)                                                                                                       | Python/Node (heavier) |
+| **Server model**   | Single long-lived server, multi-client Unix-socket, hot-reload via `exec`                                                           | per-process agents    |
+| **Providers**      | 13 (Anthropic, Claude CLI, OpenAI, OpenRouter, Gemini, Bedrock, Copilot, Cursor, Antigravity, JCode, OpenAI-compatible profiles, …) | 1–3 typical           |
+| **Tools**          | 40+ (file/edit/bash/lsp/mcp/batch/swarm/memory/selfdev/…)                                                                           | ~10–30 typical        |
+| **Coordination**   | First-class swarm with `Coordinator`/`WorktreeManager` roles and `VersionedPlan` DAG                                                | none / ad-hoc         |
+| **Self-extension** | `selfdev` mode with a focused prompt set + a `selfdev` tool that can reload via `exec`                                              | none                  |
+| **Ambient mode**   | Long-running autonomous cycle with scheduled queue + visible-cycle handoff                                                          | none                  |
+| **Memory**         | Local ONNX embeddings + memory graph + activity pipeline + journal                                                                  | none / cloud only     |
+| **Hot reload**     | `/reload` execs the new binary in place; clients auto-reconnect                                                                     | restart               |
+| **Desktop**        | Tauri-style custom scene engine in `jcode-desktop`                                                                                  | webview wrappers      |
+| **iOS**            | Native iOS host that drives a mobile simulator and embeds the TUI                                                                   | none                  |
 
 ---
 
@@ -288,13 +288,13 @@ Every lower layer is **downward-closed**: it depends only on crates in the same 
 
 The rule is also used to **invert dependencies** that would otherwise create cycles. Five such inversions are wired at startup in `src/cli/startup.rs:24-75`:
 
-| Inversion | Lower → Higher via | Reason |
-|-----------|--------------------|--------|
-| `provider_catalog` ↔ `auth` | `register_api_key_fallback_resolver` at `startup.rs:33-35` | catalog consults fallback resolvers; auth registers the external-CLI credential scan |
-| `safety` → `notifications` | `register_permission_notifier` at `startup.rs:40-46` | safety raises a permission request, notifications delivers it |
-| `memory` → `skill` | `register_synthetic_entry_provider` at `startup.rs:51-57` | memory collects synthetic entries, skill registry adapts |
-| `server` → `tui` | `register_invalidator` (session_list_cache) at `startup.rs:62-64` | TUI session picker owns cache, server invalidates |
-| `server_spawn` → `cli` | `register_default_server_spawner` at `startup.rs:70-75` | CLI owns provider-bootstrap spawn; TUI reconnect loop calls it |
+| Inversion                   | Lower → Higher via                                                | Reason                                                                               |
+| --------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `provider_catalog` ↔ `auth` | `register_api_key_fallback_resolver` at `startup.rs:33-35`        | catalog consults fallback resolvers; auth registers the external-CLI credential scan |
+| `safety` → `notifications`  | `register_permission_notifier` at `startup.rs:40-46`              | safety raises a permission request, notifications delivers it                        |
+| `memory` → `skill`          | `register_synthetic_entry_provider` at `startup.rs:51-57`         | memory collects synthetic entries, skill registry adapts                             |
+| `server` → `tui`            | `register_invalidator` (session_list_cache) at `startup.rs:62-64` | TUI session picker owns cache, server invalidates                                    |
+| `server_spawn` → `cli`      | `register_default_server_spawner` at `startup.rs:70-75`           | CLI owns provider-bootstrap spawn; TUI reconnect loop calls it                       |
 
 ### 3.2 Re-export chain
 
@@ -316,41 +316,41 @@ Consequence: every existing `crate::<module>` path (e.g. `crate::config`, `crate
 
 The 56 workspace crates fall into the following categories (from `Cargo.toml:8-67`):
 
-| Category | Crates | Purpose |
-|----------|--------|---------|
-| **Root** | `jcode` | binary + cli |
-| **Presentation** | `jcode-tui` | TUI / video export |
-| **Application** | `jcode-app-core` | server / tool / agent / ambient / overnight |
-| **Foundation** | `jcode-base` | provider / auth / config / session / memory / message / telemetry / bus / storage / transport / … |
-| **Type-only** | `jcode-memory-types`, `jcode-message-types`, `jcode-session-types`, `jcode-task-types`, `jcode-tool-types`, `jcode-config-types`, `jcode-usage-types`, `jcode-side-panel-types`, `jcode-selfdev-types`, `jcode-ambient-types`, `jcode-auth-types`, `jcode-gateway-types`, `jcode-background-types`, `jcode-batch-types` | Pure data definitions |
-| **Provider** | `jcode-provider-core`, `jcode-provider-openai`, `jcode-provider-openrouter`, `jcode-provider-gemini`, `jcode-provider-metadata` | Provider trait, request shaping, model catalog |
-| **Protocol** | `jcode-protocol` | wire types, comm format |
-| **Swarm** | `jcode-swarm-core` | `SwarmMemberRecord`, `ChannelIndex` |
-| **Tool** | `jcode-tool-core` | `Tool` trait, `ToolContext`, `intent_schema_property` |
-| **Plan** | `jcode-plan` | `VersionedPlan`, `PlanItem`, `next_runnable_item_ids` |
-| **Storage** | `jcode-storage`, `jcode-core` | runtime dir, secret IO, fs hardening |
-| **TUI sub-presenters** | `jcode-tui-markdown`, `jcode-tui-messages`, `jcode-tui-mermaid`, `jcode-tui-core`, `jcode-tui-render`, `jcode-tui-style`, `jcode-tui-workspace`, `jcode-tui-account-picker`, `jcode-tui-session-picker`, `jcode-tui-tool-display`, `jcode-tui-usage-overlay` | Modular TUI components |
-| **Auth helpers** | `jcode-azure-auth`, `jcode-notify-email` | Azure OAuth, email notifications |
-| **Build / dev** | `jcode-build-meta`, `jcode-build-support`, `jcode-compaction-core`, `jcode-import-core`, `jcode-logging`, `jcode-update-core`, `jcode-terminal-launch`, `jcode-terminal-image` | Build metadata, import, logging, update, terminal launch, image rendering |
-| **Desktop** | `jcode-desktop` | Tauri-style desktop scene engine |
-| **Mobile** | `jcode-mobile-core`, `jcode-mobile-sim` | iOS host + mobile simulator |
-| **Embedding** | `jcode-embedding` | Local ONNX/tokenizer embeddings (feature-gated) |
-| **PDF** | `jcode-pdf` | PDF parsing (feature-gated) |
+| Category               | Crates                                                                                                                                                                                                                                                                                                                  | Purpose                                                                                           |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| **Root**               | `jcode`                                                                                                                                                                                                                                                                                                                 | binary + cli                                                                                      |
+| **Presentation**       | `jcode-tui`                                                                                                                                                                                                                                                                                                             | TUI / video export                                                                                |
+| **Application**        | `jcode-app-core`                                                                                                                                                                                                                                                                                                        | server / tool / agent / ambient / overnight                                                       |
+| **Foundation**         | `jcode-base`                                                                                                                                                                                                                                                                                                            | provider / auth / config / session / memory / message / telemetry / bus / storage / transport / … |
+| **Type-only**          | `jcode-memory-types`, `jcode-message-types`, `jcode-session-types`, `jcode-task-types`, `jcode-tool-types`, `jcode-config-types`, `jcode-usage-types`, `jcode-side-panel-types`, `jcode-selfdev-types`, `jcode-ambient-types`, `jcode-auth-types`, `jcode-gateway-types`, `jcode-background-types`, `jcode-batch-types` | Pure data definitions                                                                             |
+| **Provider**           | `jcode-provider-core`, `jcode-provider-openai`, `jcode-provider-openrouter`, `jcode-provider-gemini`, `jcode-provider-metadata`                                                                                                                                                                                         | Provider trait, request shaping, model catalog                                                    |
+| **Protocol**           | `jcode-protocol`                                                                                                                                                                                                                                                                                                        | wire types, comm format                                                                           |
+| **Swarm**              | `jcode-swarm-core`                                                                                                                                                                                                                                                                                                      | `SwarmMemberRecord`, `ChannelIndex`                                                               |
+| **Tool**               | `jcode-tool-core`                                                                                                                                                                                                                                                                                                       | `Tool` trait, `ToolContext`, `intent_schema_property`                                             |
+| **Plan**               | `jcode-plan`                                                                                                                                                                                                                                                                                                            | `VersionedPlan`, `PlanItem`, `next_runnable_item_ids`                                             |
+| **Storage**            | `jcode-storage`, `jcode-core`                                                                                                                                                                                                                                                                                           | runtime dir, secret IO, fs hardening                                                              |
+| **TUI sub-presenters** | `jcode-tui-markdown`, `jcode-tui-messages`, `jcode-tui-mermaid`, `jcode-tui-core`, `jcode-tui-render`, `jcode-tui-style`, `jcode-tui-workspace`, `jcode-tui-account-picker`, `jcode-tui-session-picker`, `jcode-tui-tool-display`, `jcode-tui-usage-overlay`                                                            | Modular TUI components                                                                            |
+| **Auth helpers**       | `jcode-azure-auth`, `jcode-notify-email`                                                                                                                                                                                                                                                                                | Azure OAuth, email notifications                                                                  |
+| **Build / dev**        | `jcode-build-meta`, `jcode-build-support`, `jcode-compaction-core`, `jcode-import-core`, `jcode-logging`, `jcode-update-core`, `jcode-terminal-launch`, `jcode-terminal-image`                                                                                                                                          | Build metadata, import, logging, update, terminal launch, image rendering                         |
+| **Desktop**            | `jcode-desktop`                                                                                                                                                                                                                                                                                                         | Tauri-style desktop scene engine                                                                  |
+| **Mobile**             | `jcode-mobile-core`, `jcode-mobile-sim`                                                                                                                                                                                                                                                                                 | iOS host + mobile simulator                                                                       |
+| **Embedding**          | `jcode-embedding`                                                                                                                                                                                                                                                                                                       | Local ONNX/tokenizer embeddings (feature-gated)                                                   |
+| **PDF**                | `jcode-pdf`                                                                                                                                                                                                                                                                                                             | PDF parsing (feature-gated)                                                                       |
 
 ### 4.2 Top-10 Largest Crates (by LOC)
 
-| Crate | Files | Approx. LOC |
-|-------|-------|-------------|
-| `jcode-tui` | 77 in `tui/` | 132,061 (incl. `crates/jcode-tui/src/tui/`) |
-| `jcode-base` | 60+ modules | 101,645 |
-| `jcode-app-core` | 47 in `server/` + 14 in `agent/` + … | 95,188 |
-| `jcode-desktop` | 28 in `src/` | 66,214 |
-| `jcode-protocol` | 7 in `src/` | 3,925 |
-| `jcode-provider-core` | 9 in `src/` | 3,211 |
-| `jcode-core` | 1 | 1,217 |
-| `jcode-session-types` | 1 | 938 |
-| `jcode-agent-runtime` | 1 | 91 |
-| `jcode-tool-core` | 1 | 93 |
+| Crate                 | Files                                | Approx. LOC                                 |
+| --------------------- | ------------------------------------ | ------------------------------------------- |
+| `jcode-tui`           | 77 in `tui/`                         | 132,061 (incl. `crates/jcode-tui/src/tui/`) |
+| `jcode-base`          | 60+ modules                          | 101,645                                     |
+| `jcode-app-core`      | 47 in `server/` + 14 in `agent/` + … | 95,188                                      |
+| `jcode-desktop`       | 28 in `src/`                         | 66,214                                      |
+| `jcode-protocol`      | 7 in `src/`                          | 3,925                                       |
+| `jcode-provider-core` | 9 in `src/`                          | 3,211                                       |
+| `jcode-core`          | 1                                    | 1,217                                       |
+| `jcode-session-types` | 1                                    | 938                                         |
+| `jcode-agent-runtime` | 1                                    | 91                                          |
+| `jcode-tool-core`     | 1                                    | 93                                          |
 
 (Counts include `crates/<name>/src/**` aggregated; `jcode-app-core` counts include all submodules.)
 
@@ -416,19 +416,19 @@ The server is the heart of jcode. It is a long-lived process that owns all sessi
 
 `crates/jcode-app-core/src/server.rs` (1,800+ lines) declares 47 submodules:
 
-| Group | Modules |
-|-------|---------|
-| **Core runtime** | `runtime` (`ServerRuntime`), `state`, `durable_state`, `lifecycle`, `socket`, `reload`, `reload_state`, `reload_recovery`, `reload_trace`, `startup_tests` |
-| **Client session** | `client_session`, `client_state`, `client_writer`, `client_actions`, `client_lifecycle`, `client_lifecycle_logging`, `client_disconnect_cleanup`, `client_lightweight_control`, `client_comm_channels`, `client_comm_context`, `client_comm_message` |
-| **AI-to-AI comm** | `client_comm` (3 variants), `comm_await`, `comm_control`, `comm_plan`, `comm_session`, `comm_sync` |
-| **Swarm** | `swarm`, `swarm_channels`, `swarm_mutation_state`, `swarm_persistence` |
-| **Background** | `background_tasks`, `provider_control` |
-| **Headless** | `headless` |
-| **Long-poll relay** | `jade_relay` |
-| **Debug** | `debug`, `debug_ambient`, `debug_command_exec`, `debug_events`, `debug_help`, `debug_jobs`, `debug_server_state`, `debug_session_admin`, `debug_swarm_read`, `debug_swarm_write`, `debug_testers` |
-| **Tests** | `client_actions_tests`, `client_comm_tests`, `client_lifecycle_tests`, `client_session_tests`, `client_state_tests`, `comm_control_tests`, `comm_session_tests`, `comm_sync` tests, `comm_plan`, `file_activity_tests`, `provider_control_tests`, `queue_tests`, `reload_tests`, `socket_tests`, `startup_tests`, `swarm_mutation_state_tests`, `swarm_persistence_tests`, `tests` |
-| **Await** | `await_members_state` |
-| **Util** | `util` |
+| Group               | Modules                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Core runtime**    | `runtime` (`ServerRuntime`), `state`, `durable_state`, `lifecycle`, `socket`, `reload`, `reload_state`, `reload_recovery`, `reload_trace`, `startup_tests`                                                                                                                                                                                                                         |
+| **Client session**  | `client_session`, `client_state`, `client_writer`, `client_actions`, `client_lifecycle`, `client_lifecycle_logging`, `client_disconnect_cleanup`, `client_lightweight_control`, `client_comm_channels`, `client_comm_context`, `client_comm_message`                                                                                                                               |
+| **AI-to-AI comm**   | `client_comm` (3 variants), `comm_await`, `comm_control`, `comm_plan`, `comm_session`, `comm_sync`                                                                                                                                                                                                                                                                                 |
+| **Swarm**           | `swarm`, `swarm_channels`, `swarm_mutation_state`, `swarm_persistence`                                                                                                                                                                                                                                                                                                             |
+| **Background**      | `background_tasks`, `provider_control`                                                                                                                                                                                                                                                                                                                                             |
+| **Headless**        | `headless`                                                                                                                                                                                                                                                                                                                                                                         |
+| **Long-poll relay** | `jade_relay`                                                                                                                                                                                                                                                                                                                                                                       |
+| **Debug**           | `debug`, `debug_ambient`, `debug_command_exec`, `debug_events`, `debug_help`, `debug_jobs`, `debug_server_state`, `debug_session_admin`, `debug_swarm_read`, `debug_swarm_write`, `debug_testers`                                                                                                                                                                                  |
+| **Tests**           | `client_actions_tests`, `client_comm_tests`, `client_lifecycle_tests`, `client_session_tests`, `client_state_tests`, `comm_control_tests`, `comm_session_tests`, `comm_sync` tests, `comm_plan`, `file_activity_tests`, `provider_control_tests`, `queue_tests`, `reload_tests`, `socket_tests`, `startup_tests`, `swarm_mutation_state_tests`, `swarm_persistence_tests`, `tests` |
+| **Await**           | `await_members_state`                                                                                                                                                                                                                                                                                                                                                              |
+| **Util**            | `util`                                                                                                                                                                                                                                                                                                                                                                             |
 
 ### 5.2 ServerRuntime
 
@@ -468,12 +468,12 @@ graph LR
 
 `crates/jcode-storage/src/lib.rs:20-37` resolves the runtime directory as follows:
 
-| Platform | Path |
-|----------|------|
-| Linux | `$XDG_RUNTIME_DIR` (typically `/run/user/<uid>`) |
-| macOS | `$TMPDIR` (per-user) |
+| Platform | Path                                                |
+| -------- | --------------------------------------------------- |
+| Linux    | `$XDG_RUNTIME_DIR` (typically `/run/user/<uid>`)    |
+| macOS    | `$TMPDIR` (per-user)                                |
 | Fallback | `std::env::temp_dir()` (sanitized to `jcode-<uid>`) |
-| Override | `$JCODE_RUNTIME_DIR` |
+| Override | `$JCODE_RUNTIME_DIR`                                |
 
 The runtime dir is created with owner-only permissions via `jcode_core::fs::set_directory_permissions_owner_only` (`crates/jcode-storage/src/lib.rs:65-71`).
 
@@ -516,30 +516,30 @@ Clients have a built-in reconnect loop (`crates/jcode-tui/src/tui/app/`). When t
 
 `src/cli/startup.rs:12-99` (`pub async fn run()`) executes the following ordered initialization before `dispatch::run_main`:
 
-| Order | Step | Source |
-|-------|------|--------|
-| 1 | `startup_profile::init()` — high-resolution timing | `startup.rs:13` |
-| 2 | `terminal::install_panic_hook()` — pretty panic messages | `startup.rs:15` |
-| 3 | `logging::init()` + `cleanup_old_logs()` | `startup.rs:18-21` |
-| 4 | 5 dependency-inversion registrations (catalog/auth/safety/memory/server) | `startup.rs:24-75` |
-| 5 | `platform::raise_nofile_limit_best_effort(8_192)` | `startup.rs:77` |
-| 6 | `storage::harden_user_config_permissions()` — owner-only on `~/.jcode` | `startup.rs:80` |
-| 7 | `perf::init_background()` | `startup.rs:83` |
-| 8 | `telemetry::record_install_if_first_run()` + `record_upgrade_if_needed()` | `startup.rs:86-87` |
-| 9 | `parse_and_prepare_args()` + `spawn_background_update_check(&args)` | `startup.rs:90-91` |
-| 10 | `dispatch::run_main(args)` — actual command execution | `startup.rs:93` |
+| Order | Step                                                                      | Source             |
+| ----- | ------------------------------------------------------------------------- | ------------------ |
+| 1     | `startup_profile::init()` — high-resolution timing                        | `startup.rs:13`    |
+| 2     | `terminal::install_panic_hook()` — pretty panic messages                  | `startup.rs:15`    |
+| 3     | `logging::init()` + `cleanup_old_logs()`                                  | `startup.rs:18-21` |
+| 4     | 5 dependency-inversion registrations (catalog/auth/safety/memory/server)  | `startup.rs:24-75` |
+| 5     | `platform::raise_nofile_limit_best_effort(8_192)`                         | `startup.rs:77`    |
+| 6     | `storage::harden_user_config_permissions()` — owner-only on `~/.jcode`    | `startup.rs:80`    |
+| 7     | `perf::init_background()`                                                 | `startup.rs:83`    |
+| 8     | `telemetry::record_install_if_first_run()` + `record_upgrade_if_needed()` | `startup.rs:86-87` |
+| 9     | `parse_and_prepare_args()` + `spawn_background_update_check(&args)`       | `startup.rs:90-91` |
+| 10    | `dispatch::run_main(args)` — actual command execution                     | `startup.rs:93`    |
 
 ### 5.7 Persistence Model
 
-| Surface | Path | Format | Source |
-|---------|------|--------|--------|
-| Sessions | `~/.jcode/sessions/<id>/` | JSON per session | `session/storage_paths.rs` |
-| Server registry | `~/.jcode/servers.json` | JSON (server name ↔ socket) | `SERVER_ARCHITECTURE.md:54` |
-| Provider credentials | `~/.config/jcode/credentials.json` (mode 0600) | JSON secret | `storage.rs:harden_secret_file_permissions` |
-| Ambient visible cycle | `~/.jcode/ambient/visible_cycle.json` | JSON | `ambient.rs:42-58` |
-| MCP config | `~/.jcode/mcp.json` | JSON | `mcp/manager.rs` |
-| Telemetry state | `~/.jcode/telemetry.json` | JSON | `telemetry/state_support.rs` |
-| Build metadata | embedded in binary | `build.rs` of each crate | `jcode-build-meta` |
+| Surface               | Path                                           | Format                      | Source                                      |
+| --------------------- | ---------------------------------------------- | --------------------------- | ------------------------------------------- |
+| Sessions              | `~/.jcode/sessions/<id>/`                      | JSON per session            | `session/storage_paths.rs`                  |
+| Server registry       | `~/.jcode/servers.json`                        | JSON (server name ↔ socket) | `SERVER_ARCHITECTURE.md:54`                 |
+| Provider credentials  | `~/.config/jcode/credentials.json` (mode 0600) | JSON secret                 | `storage.rs:harden_secret_file_permissions` |
+| Ambient visible cycle | `~/.jcode/ambient/visible_cycle.json`          | JSON                        | `ambient.rs:42-58`                          |
+| MCP config            | `~/.jcode/mcp.json`                            | JSON                        | `mcp/manager.rs`                            |
+| Telemetry state       | `~/.jcode/telemetry.json`                      | JSON                        | `telemetry/state_support.rs`                |
+| Build metadata        | embedded in binary                             | `build.rs` of each crate    | `jcode-build-meta`                          |
 
 `storage::write_json_secret` (`crates/jcode-storage/src/lib.rs:198-205`) uses **owner-only** parent + file permissions on Unix. `storage::write_json_fast` (line 251-253) is the **non-fsync** variant used for frequent saves (e.g. during tool execution) where crash-safety via atomic rename is enough. `append_json_line_fast` (line 368-380) is the append-only journal variant.
 
@@ -602,34 +602,34 @@ The protocol is declared as such in `crates/jcode-protocol/src/lib.rs:1-9`:
 
 The `Request` enum in `crates/jcode-protocol/src/wire.rs` has 67+ variants. Highlights:
 
-| Category | Variants |
-|----------|----------|
-| **Message lifecycle** | `Message`, `Cancel`, `BackgroundTool`, `SoftInterrupt`, `CancelSoftInterrupts`, `Clear`, `Rewind`, `RewindUndo` |
-| **State** | `Ping`, `GetState`, `GetHistory`, `GetModelCatalog`, `GetCompactedHistory`, `Subscribe` |
-| **Debug** | `DebugCommand`, `ClientDebugCommand`, `ClientDebugResponse` |
-| **Session** | `ResumeSession`, `NotifySession`, `Transcript`, `InputShell`, `RenameSession`, `Split`, `Transfer`, `Compact`, `TriggerMemoryExtraction` |
-| **Model** | `CycleModel`, `RefreshModels`, `SetModel`, `SetRoute`, `SetSubagentModel`, `SetReasoningEffort`, `SetServiceTier`, `SetTransport`, `SetPremiumMode`, `SetFeature`, `SetCompactionMode` |
-| **Auth** | `NotifyAuthChanged`, `SwitchAnthropicAccount`, `SwitchOpenAiAccount`, `StdinResponse` |
-| **Reload** | `Reload` |
+| Category                         | Variants                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Message lifecycle**            | `Message`, `Cancel`, `BackgroundTool`, `SoftInterrupt`, `CancelSoftInterrupts`, `Clear`, `Rewind`, `RewindUndo`                                                                                                                                                                                                                                                                                                                                                                                   |
+| **State**                        | `Ping`, `GetState`, `GetHistory`, `GetModelCatalog`, `GetCompactedHistory`, `Subscribe`                                                                                                                                                                                                                                                                                                                                                                                                           |
+| **Debug**                        | `DebugCommand`, `ClientDebugCommand`, `ClientDebugResponse`                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| **Session**                      | `ResumeSession`, `NotifySession`, `Transcript`, `InputShell`, `RenameSession`, `Split`, `Transfer`, `Compact`, `TriggerMemoryExtraction`                                                                                                                                                                                                                                                                                                                                                          |
+| **Model**                        | `CycleModel`, `RefreshModels`, `SetModel`, `SetRoute`, `SetSubagentModel`, `SetReasoningEffort`, `SetServiceTier`, `SetTransport`, `SetPremiumMode`, `SetFeature`, `SetCompactionMode`                                                                                                                                                                                                                                                                                                            |
+| **Auth**                         | `NotifyAuthChanged`, `SwitchAnthropicAccount`, `SwitchOpenAiAccount`, `StdinResponse`                                                                                                                                                                                                                                                                                                                                                                                                             |
+| **Reload**                       | `Reload`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | **AI-to-AI comm (16+ variants)** | `AgentRegister`, `AgentTask`, `AgentCapabilities`, `AgentContext`, `CommShare`, `CommRead`, `CommMessage`, `CommList`, `CommListChannels`, `CommChannelMembers`, `CommProposePlan`, `CommApprovePlan`, `CommRejectPlan`, `CommSpawn`, `CommStop`, `CommAssignRole`, `CommSummary`, `CommStatus`, `CommReport`, `CommReadContext`, `CommResyncPlan`, `CommPlanStatus`, `CommAssignTask`, `CommAssignNext`, `CommTaskControl`, `CommSubscribeChannel`, `CommUnsubscribeChannel`, `CommAwaitMembers` |
 
 ### 6.3 ServerEvent Enum (Server → Client)
 
 The `ServerEvent` enum has 67+ variants streamed back during message processing. Highlights:
 
-| Category | Variants |
-|----------|----------|
-| **Streaming text** | `TextDelta { text }`, `TextReplace { text }` |
-| **Streaming tool** | `ToolStart`, `ToolInput { delta }`, `ToolExec`, `ToolDone`, `GeneratedImage`, `BatchProgress` |
-| **Lifecycle** | `Ack`, `Done`, `Error`, `Pong`, `State`, `Compaction`, `McpStatus`, `CompactedHistory` |
-| **Session** | `SessionId`, `SessionCloseRequested`, `SessionRenamed`, `SplitResponse`, `CompactResult` |
-| **Reload** | `Reloading`, `ReloadProgress` |
-| **Model state** | `ModelChanged`, `ReasoningEffortChanged`, `ServiceTierChanged`, `TransportChanged`, `CompactionModeChanged`, `AvailableModelsUpdated` |
-| **Notifications** | `Notification`, `Transcript`, `InputShellResult`, `StdinRequest` |
+| Category                         | Variants                                                                                                                                                                                                                                                              |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Streaming text**               | `TextDelta { text }`, `TextReplace { text }`                                                                                                                                                                                                                          |
+| **Streaming tool**               | `ToolStart`, `ToolInput { delta }`, `ToolExec`, `ToolDone`, `GeneratedImage`, `BatchProgress`                                                                                                                                                                         |
+| **Lifecycle**                    | `Ack`, `Done`, `Error`, `Pong`, `State`, `Compaction`, `McpStatus`, `CompactedHistory`                                                                                                                                                                                |
+| **Session**                      | `SessionId`, `SessionCloseRequested`, `SessionRenamed`, `SplitResponse`, `CompactResult`                                                                                                                                                                              |
+| **Reload**                       | `Reloading`, `ReloadProgress`                                                                                                                                                                                                                                         |
+| **Model state**                  | `ModelChanged`, `ReasoningEffortChanged`, `ServiceTierChanged`, `TransportChanged`, `CompactionModeChanged`, `AvailableModelsUpdated`                                                                                                                                 |
+| **Notifications**                | `Notification`, `Transcript`, `InputShellResult`, `StdinRequest`                                                                                                                                                                                                      |
 | **AI-to-AI comm (15+ variants)** | `CommContext`, `CommMembers`, `CommChannels`, `CommSummaryResponse`, `CommStatusResponse`, `CommReportResponse`, `CommPlanStatusResponse`, `CommAssignTaskResponse`, `CommTaskControlResponse`, `CommContextHistory`, `CommSpawnResponse`, `CommAwaitMembersResponse` |
-| **Debug** | `DebugResponse`, `ClientDebugRequest` |
-| **UI** | `SidePanelState` |
-| **History** | `History` |
+| **Debug**                        | `DebugResponse`, `ClientDebugRequest`                                                                                                                                                                                                                                 |
+| **UI**                           | `SidePanelState`                                                                                                                                                                                                                                                      |
+| **History**                      | `History`                                                                                                                                                                                                                                                             |
 
 ### 6.4 Comm Format Helpers
 
@@ -671,13 +671,13 @@ The `ServerEvent` enum has 67+ variants streamed back during message processing.
 
 The agent runtime lives in `crates/jcode-app-core/src/agent/` and consists of 14 submodules that together implement a turn-based, interruptible, streaming agent loop. The largest three files account for ~4,158 LOC:
 
-| File | LOC | Purpose |
-|------|-----|---------|
-| `turn_loops.rs` | 1,098 | The main turn loop and tool-execution loop |
-| `turn_streaming_mpsc.rs` | 1,279 | Per-client mpsc streaming variant |
-| `turn_streaming_broadcast.rs` | 1,014 | Broadcast streaming variant (server-wide) |
-| `turn_execution.rs` | 767 | Public turn entry points |
-| `compaction.rs`, `environment.rs`, `interrupts.rs`, `messages.rs`, `prompting.rs`, `provider.rs`, `response_recovery.rs`, `status.rs`, `streaming.rs`, `tools.rs`, `utils.rs` | — | Supporting modules |
+| File                                                                                                                                                                          | LOC   | Purpose                                    |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | ------------------------------------------ |
+| `turn_loops.rs`                                                                                                                                                               | 1,098 | The main turn loop and tool-execution loop |
+| `turn_streaming_mpsc.rs`                                                                                                                                                      | 1,279 | Per-client mpsc streaming variant          |
+| `turn_streaming_broadcast.rs`                                                                                                                                                 | 1,014 | Broadcast streaming variant (server-wide)  |
+| `turn_execution.rs`                                                                                                                                                           | 767   | Public turn entry points                   |
+| `compaction.rs`, `environment.rs`, `interrupts.rs`, `messages.rs`, `prompting.rs`, `provider.rs`, `response_recovery.rs`, `status.rs`, `streaming.rs`, `tools.rs`, `utils.rs` | —     | Supporting modules                         |
 
 ### 7.1 Agent Public API
 
@@ -855,18 +855,18 @@ pub struct ToolImage { ... }
 
 33 first-class tools are registered in `tool/mod.rs:1-34`. Some are further sub-tooled (e.g. `selfdev` exposes `launch` / `reload` / `status` / `build_queue`):
 
-| Group | Tools | Source |
-|-------|-------|--------|
-| **File** | `read`, `read/` (subdir), `edit`, `write`, `multiedit`, `apply_patch`, `patch`, `glob`, `grep`, `ls`, `agentgrep` | `tool/read.rs` + subdir |
-| **Shell** | `bash`, `batch`, `bg` | `tool/bash.rs`, `tool/batch.rs`, `tool/bg.rs` |
-| **Network** | `webfetch`, `websearch`, `browser` | `tool/webfetch.rs`, `tool/websearch.rs`, `tool/browser.rs` |
-| **Search** | `agentgrep` (high-perf), `codesearch`, `conversation_search`, `session_search` | `tool/agentgrep/`, `tool/codesearch.rs` |
-| **Memory** | `memory` (recall / store), `memory_agent` (recurring jobs) | `tool/memory.rs` |
-| **Swarm / comm** | `communicate` (AI-to-AI), `task` (swarm task), `side_panel` | `tool/communicate.rs`, `tool/task.rs` |
-| **Self-extension** | `selfdev` (modify jcode itself) | `tool/selfdev/mod.rs` |
-| **Ambient** | `ambient` (long-running autonomous) | `tool/ambient.rs` |
-| **MCP** | `mcp` (Model Context Protocol client) | `tool/mcp.rs` |
-| **Misc** | `lsp` (LSP queries), `todo`, `goal`, `gmail`, `dictation`, `open`, `invalid`, `debug_socket`, `skill` | `tool/lsp.rs`, `tool/todo.rs`, `tool/goal.rs`, `tool/gmail.rs`, `tool/dictation.rs`, `tool/open.rs`, `tool/invalid.rs`, `tool/debug_socket.rs`, `tool/skill.rs` |
+| Group              | Tools                                                                                                             | Source                                                                                                                                                          |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **File**           | `read`, `read/` (subdir), `edit`, `write`, `multiedit`, `apply_patch`, `patch`, `glob`, `grep`, `ls`, `agentgrep` | `tool/read.rs` + subdir                                                                                                                                         |
+| **Shell**          | `bash`, `batch`, `bg`                                                                                             | `tool/bash.rs`, `tool/batch.rs`, `tool/bg.rs`                                                                                                                   |
+| **Network**        | `webfetch`, `websearch`, `browser`                                                                                | `tool/webfetch.rs`, `tool/websearch.rs`, `tool/browser.rs`                                                                                                      |
+| **Search**         | `agentgrep` (high-perf), `codesearch`, `conversation_search`, `session_search`                                    | `tool/agentgrep/`, `tool/codesearch.rs`                                                                                                                         |
+| **Memory**         | `memory` (recall / store), `memory_agent` (recurring jobs)                                                        | `tool/memory.rs`                                                                                                                                                |
+| **Swarm / comm**   | `communicate` (AI-to-AI), `task` (swarm task), `side_panel`                                                       | `tool/communicate.rs`, `tool/task.rs`                                                                                                                           |
+| **Self-extension** | `selfdev` (modify jcode itself)                                                                                   | `tool/selfdev/mod.rs`                                                                                                                                           |
+| **Ambient**        | `ambient` (long-running autonomous)                                                                               | `tool/ambient.rs`                                                                                                                                               |
+| **MCP**            | `mcp` (Model Context Protocol client)                                                                             | `tool/mcp.rs`                                                                                                                                                   |
+| **Misc**           | `lsp` (LSP queries), `todo`, `goal`, `gmail`, `dictation`, `open`, `invalid`, `debug_socket`, `skill`             | `tool/lsp.rs`, `tool/todo.rs`, `tool/goal.rs`, `tool/gmail.rs`, `tool/dictation.rs`, `tool/open.rs`, `tool/invalid.rs`, `tool/debug_socket.rs`, `tool/skill.rs` |
 
 ### 8.4 Tool Policy
 
@@ -980,21 +980,21 @@ The slot pattern lets the auth subsystem install a new provider in place when th
 
 `grep '^impl Provider for' crates/` shows 13 concrete `Provider` implementations (and one `MockProvider` for tests, and one `SetModelAuthRefreshMockProvider` for tests, plus the `MultiProvider` facade itself):
 
-| # | Provider | File | Auth | Notes |
-|---|----------|------|------|-------|
-| 1 | `AnthropicProvider` | `provider/anthropic.rs` | OAuth + API key | Native Anthropic API |
-| 2 | `ClaudeProvider` | `provider/claude.rs` | Claude Code CLI | Spawns the Claude CLI as a child process |
-| 3 | `OpenAIProvider` | `provider/openai_provider_impl.rs` | API key, OAuth, Azure | Generic OpenAI-protocol |
-| 4 | `OpenRouterProvider` | `provider/openrouter_provider_impl.rs` | API key | OpenRouter aggregation |
-| 5 | `GeminiProvider` | `provider/gemini.rs` | OAuth | Google Gemini |
-| 6 | `BedrockProvider` | `provider/bedrock.rs` | IAM / SigV4, AWS_BEARER_TOKEN_BEDROCK | `aws-sdk-bedrockruntime` Converse/ConverseStream |
-| 7 | `CopilotApiProvider` | `provider/copilot.rs` | OAuth | GitHub Copilot direct API |
-| 8 | `CursorCliProvider` | `provider/cursor.rs` | OAuth | Cursor native |
-| 9 | `AntigravityProvider` | `provider/antigravity.rs` | OAuth | Antigravity HTTPS |
-| 10 | `JcodeProvider` | `provider/jcode.rs` | API key | First-party jcode API |
-| 11+ | OpenAI-compatible profiles | `openrouter::OpenRouterProvider` reused | per-profile | Arbitrary OpenAI-compatible endpoints |
-| 12 | `MultiProvider` (facade) | `provider/mod.rs` | aggregates above | Implements `Provider` and delegates |
-| 13 | Test mocks | `provider/gemini_tests.rs`, `provider/tests/auth_refresh.rs` | — | Not production |
+| #   | Provider                   | File                                                         | Auth                                  | Notes                                            |
+| --- | -------------------------- | ------------------------------------------------------------ | ------------------------------------- | ------------------------------------------------ |
+| 1   | `AnthropicProvider`        | `provider/anthropic.rs`                                      | OAuth + API key                       | Native Anthropic API                             |
+| 2   | `ClaudeProvider`           | `provider/claude.rs`                                         | Claude Code CLI                       | Spawns the Claude CLI as a child process         |
+| 3   | `OpenAIProvider`           | `provider/openai_provider_impl.rs`                           | API key, OAuth, Azure                 | Generic OpenAI-protocol                          |
+| 4   | `OpenRouterProvider`       | `provider/openrouter_provider_impl.rs`                       | API key                               | OpenRouter aggregation                           |
+| 5   | `GeminiProvider`           | `provider/gemini.rs`                                         | OAuth                                 | Google Gemini                                    |
+| 6   | `BedrockProvider`          | `provider/bedrock.rs`                                        | IAM / SigV4, AWS_BEARER_TOKEN_BEDROCK | `aws-sdk-bedrockruntime` Converse/ConverseStream |
+| 7   | `CopilotApiProvider`       | `provider/copilot.rs`                                        | OAuth                                 | GitHub Copilot direct API                        |
+| 8   | `CursorCliProvider`        | `provider/cursor.rs`                                         | OAuth                                 | Cursor native                                    |
+| 9   | `AntigravityProvider`      | `provider/antigravity.rs`                                    | OAuth                                 | Antigravity HTTPS                                |
+| 10  | `JcodeProvider`            | `provider/jcode.rs`                                          | API key                               | First-party jcode API                            |
+| 11+ | OpenAI-compatible profiles | `openrouter::OpenRouterProvider` reused                      | per-profile                           | Arbitrary OpenAI-compatible endpoints            |
+| 12  | `MultiProvider` (facade)   | `provider/mod.rs`                                            | aggregates above                      | Implements `Provider` and delegates              |
+| 13  | Test mocks                 | `provider/gemini_tests.rs`, `provider/tests/auth_refresh.rs` | —                                     | Not production                                   |
 
 ### 9.4 Account Failover
 
@@ -1056,11 +1056,11 @@ The `openai_compatible_profiles` slot (`crates/jcode-base/src/provider/mod.rs`) 
 
 The pipeline has three runtime modules:
 
-| File | Purpose |
-|------|---------|
+| File                 | Purpose                                                                  |
+| -------------------- | ------------------------------------------------------------------------ |
 | `memory/activity.rs` | Tracks recent activity (last-used tools, recent files, recent sessions). |
-| `memory/cache.rs` | Caches embedding computations and recall results. |
-| `memory/pending.rs` | Holds pending memory entries awaiting extraction/commit. |
+| `memory/cache.rs`    | Caches embedding computations and recall results.                        |
+| `memory/pending.rs`  | Holds pending memory entries awaiting extraction/commit.                 |
 
 ### 10.2 Memory Graph
 
@@ -1117,7 +1117,7 @@ It is exposed to the agent as the `memory` and `memory_agent` tools.
 
 ### 10.8 Runtime Memory Log
 
-`crates/jcode-base/src/runtime_memory_log.rs` is a **separate, in-memory ring buffer** that tracks very recent activity for the ambient cycle and the prompt builder. It is *not* persisted — it is rebuilt on every process start.
+`crates/jcode-base/src/runtime_memory_log.rs` is a **separate, in-memory ring buffer** that tracks very recent activity for the ambient cycle and the prompt builder. It is _not_ persisted — it is rebuilt on every process start.
 
 ---
 
@@ -1138,12 +1138,12 @@ pub enum SwarmRole {
 }
 ```
 
-| Role | Purpose |
-|------|---------|
-| **Agent** | A worker session that executes one or more plan items. |
-| **Coordinator** | A session that owns the plan, dispatches tasks, and aggregates reports. |
-| **WorktreeManager** | A session that creates and manages git worktrees for parallel work. |
-| **Other** | Extensibility escape hatch. |
+| Role                | Purpose                                                                 |
+| ------------------- | ----------------------------------------------------------------------- |
+| **Agent**           | A worker session that executes one or more plan items.                  |
+| **Coordinator**     | A session that owns the plan, dispatches tasks, and aggregates reports. |
+| **WorktreeManager** | A session that creates and manages git worktrees for parallel work.     |
+| **Other**           | Extensibility escape hatch.                                             |
 
 The role is set on the `SwarmMemberRecord` and propagates through the comm protocol and the side-panel UI.
 
@@ -1266,12 +1266,12 @@ stateDiagram-v2
 
 `crates/jcode-app-core/src/server/` contains four swarm-related modules:
 
-| Module | Purpose |
-|--------|---------|
-| `swarm.rs` | Top-level swarm logic: `broadcast_swarm_plan`, `broadcast_swarm_status`, `record_swarm_event`, `refresh_swarm_task_staleness`, `remove_session_from_swarm`, `rename_plan_participant`, `update_member_status`, `update_member_status_with_report`. Staleness is detected every `swarm_task_sweep_interval` (`pub(super) fn swarm_task_sweep_interval() -> Duration`). |
-| `swarm_channels.rs` | Channel subscription helpers: `subscribe_session_to_channel`, `unsubscribe_session_from_channel`, `remove_session_channel_subscriptions`. |
-| `swarm_mutation_state.rs` | Per-session mutation lock to prevent concurrent swarm state changes from racing. |
-| `swarm_persistence.rs` | Load / save swarm state to `~/.jcode/swarms/<id>/state.json`. |
+| Module                    | Purpose                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `swarm.rs`                | Top-level swarm logic: `broadcast_swarm_plan`, `broadcast_swarm_status`, `record_swarm_event`, `refresh_swarm_task_staleness`, `remove_session_from_swarm`, `rename_plan_participant`, `update_member_status`, `update_member_status_with_report`. Staleness is detected every `swarm_task_sweep_interval` (`pub(super) fn swarm_task_sweep_interval() -> Duration`). |
+| `swarm_channels.rs`       | Channel subscription helpers: `subscribe_session_to_channel`, `unsubscribe_session_from_channel`, `remove_session_channel_subscriptions`.                                                                                                                                                                                                                             |
+| `swarm_mutation_state.rs` | Per-session mutation lock to prevent concurrent swarm state changes from racing.                                                                                                                                                                                                                                                                                      |
+| `swarm_persistence.rs`    | Load / save swarm state to `~/.jcode/swarms/<id>/state.json`.                                                                                                                                                                                                                                                                                                         |
 
 ### 11.9 Comm (AI-to-AI) on Top of Swarm
 
@@ -1343,19 +1343,19 @@ The presentation is structured as **one rustc compilation unit** (jcode-tui) tha
 
 Eleven TUI sub-crates isolate frequently-changing presentation logic so they compile as separate rustc units:
 
-| Crate | Purpose |
-|-------|---------|
-| `jcode-tui-markdown` | Markdown rendering |
-| `jcode-tui-messages` | Message list rendering |
-| `jcode-tui-mermaid` | Mermaid diagram rendering |
-| `jcode-tui-core` | Core TUI primitives |
-| `jcode-tui-render` | Render pipeline |
-| `jcode-tui-style` | Style/theme |
-| `jcode-tui-workspace` | Workspace UI |
-| `jcode-tui-account-picker` | Account picker |
-| `jcode-tui-session-picker` | Session picker |
-| `jcode-tui-tool-display` | Tool call/result display |
-| `jcode-tui-usage-overlay` | Usage overlay |
+| Crate                      | Purpose                   |
+| -------------------------- | ------------------------- |
+| `jcode-tui-markdown`       | Markdown rendering        |
+| `jcode-tui-messages`       | Message list rendering    |
+| `jcode-tui-mermaid`        | Mermaid diagram rendering |
+| `jcode-tui-core`           | Core TUI primitives       |
+| `jcode-tui-render`         | Render pipeline           |
+| `jcode-tui-style`          | Style/theme               |
+| `jcode-tui-workspace`      | Workspace UI              |
+| `jcode-tui-account-picker` | Account picker            |
+| `jcode-tui-session-picker` | Session picker            |
+| `jcode-tui-tool-display`   | Tool call/result display  |
+| `jcode-tui-usage-overlay`  | Usage overlay             |
 
 ### 12.5 Info Widgets
 
@@ -1420,16 +1420,16 @@ Ambient mode is a **long-running autonomous cycle** that runs while the user is 
 
 `crates/jcode-app-core/src/ambient/` contains 7 submodules:
 
-| File | Purpose |
-|------|---------|
-| `directives.rs` | User-issued directives for the ambient cycle (e.g. "always check for X"). |
-| `manager.rs` | The `AmbientManager` — top-level coordinator. |
-| `paths.rs` | Path resolution for ambient state. |
-| `persistence.rs` | `AmbientLock` + `ScheduledQueue` (persisted state for the cycle). |
-| `prompt.rs` | System prompt builder for ambient cycles. |
-| `runner.rs` | The actual cycle executor. |
-| `scheduler.rs` | Wakes the runner on schedule. |
-| `runner_tests.rs` | Tests. |
+| File              | Purpose                                                                   |
+| ----------------- | ------------------------------------------------------------------------- |
+| `directives.rs`   | User-issued directives for the ambient cycle (e.g. "always check for X"). |
+| `manager.rs`      | The `AmbientManager` — top-level coordinator.                             |
+| `paths.rs`        | Path resolution for ambient state.                                        |
+| `persistence.rs`  | `AmbientLock` + `ScheduledQueue` (persisted state for the cycle).         |
+| `prompt.rs`       | System prompt builder for ambient cycles.                                 |
+| `runner.rs`       | The actual cycle executor.                                                |
+| `scheduler.rs`    | Wakes the runner on schedule.                                             |
+| `runner_tests.rs` | Tests.                                                                    |
 
 `crates/jcode-app-core/src/ambient_runner.rs` re-exports `runner::*` for convenience.
 
@@ -1496,27 +1496,27 @@ Selfdev mode lets the agent **modify jcode itself**. The agent is given a focuse
 
 `crates/jcode-base/src/prompt/`:
 
-| File | Purpose |
-|------|---------|
-| `selfdev_mode.txt` | The base selfdev mode prompt. |
-| `selfdev_focus_desktop.txt` | Desktop-specific focus areas. |
-| `selfdev_focus_tui.txt` | TUI-specific focus areas. |
-| `selfdev_hint.txt` | Hint text for the agent. |
-| `mission_continuation.md` | Used when a selfdev cycle continues an in-flight mission. |
-| `system_prompt.md` | The base system prompt. |
+| File                        | Purpose                                                   |
+| --------------------------- | --------------------------------------------------------- |
+| `selfdev_mode.txt`          | The base selfdev mode prompt.                             |
+| `selfdev_focus_desktop.txt` | Desktop-specific focus areas.                             |
+| `selfdev_focus_tui.txt`     | TUI-specific focus areas.                                 |
+| `selfdev_hint.txt`          | Hint text for the agent.                                  |
+| `mission_continuation.md`   | Used when a selfdev cycle continues an in-flight mission. |
+| `system_prompt.md`          | The base system prompt.                                   |
 
 ### 14.3 Selfdev Tool
 
 `crates/jcode-app-core/src/tool/selfdev/` (6 files):
 
-| File | Purpose |
-|------|---------|
-| `mod.rs` | Top-level entry. |
-| `build_queue.rs` | Queue of pending selfdev builds. |
-| `launch.rs` | Launch a selfdev cycle. |
-| `reload.rs` | Trigger a server reload after a selfdev change. |
-| `status.rs` | Report selfdev build status. |
-| `tests.rs` | Tests. |
+| File             | Purpose                                         |
+| ---------------- | ----------------------------------------------- |
+| `mod.rs`         | Top-level entry.                                |
+| `build_queue.rs` | Queue of pending selfdev builds.                |
+| `launch.rs`      | Launch a selfdev cycle.                         |
+| `reload.rs`      | Trigger a server reload after a selfdev change. |
+| `status.rs`      | Report selfdev build status.                    |
+| `tests.rs`       | Tests.                                          |
 
 The `reload.rs` submodule chains to the server's `/reload` path — the agent calls the selfdev tool, the tool chains to `ServerRuntime::reload`, the server `exec`s into the new binary, and the new behavior takes effect.
 
@@ -1548,36 +1548,36 @@ The desktop app lives in `crates/jcode-desktop/`. It is a **native desktop app**
 
 ### 15.2 Module List
 
-| File | Purpose |
-|------|---------|
-| `animation.rs` | Animation primitives. |
-| `desktop_app_driver.rs` | Top-level app driver. |
-| `desktop_benchmark.rs` | Benchmarking. |
-| `desktop_config.rs` | Desktop-specific config. |
-| `desktop_gallery.rs` | Demo gallery. |
-| `desktop_ipc.rs` | IPC to the jcode server. |
-| `desktop_issue_browser.rs` | Browse issues from a project tracker. |
-| `desktop_issue_cache.rs` | Local issue cache. |
-| `desktop_log.rs` | Logging. |
-| `desktop_prefs.rs` | User preferences. |
-| `desktop_protocol.rs` | Desktop ↔ server protocol (extends `jcode-protocol`). |
-| `desktop_rich_text.rs` | Rich text rendering. |
-| `desktop_scene.rs` | Scene graph. |
-| `desktop_session_events.rs` | Session event stream. |
-| `desktop_ui_engine.rs` | UI engine (rendering, hit testing, focus). |
-| `desktop_worker_host.rs` | Worker process host. |
-| `main.rs` | Binary entry. |
-| `main_tests.rs` | Tests. |
-| `power_inhibit.rs` | Power inhibit (prevent sleep during long ops). |
-| `render_helpers.rs` | Render helpers. |
-| `session_data.rs` | Session data model. |
-| `session_launch/` | Session launch helpers. |
-| `session_launch.rs` | Session launch. |
-| `single_session_render/` | Single-session render helpers. |
-| `single_session_render.rs` | Single-session render. |
-| `single_session.rs` | Single-session mode. |
-| `workspace.rs` | Workspace (multi-session). |
-| `workspace_tests.rs` | Tests. |
+| File                        | Purpose                                               |
+| --------------------------- | ----------------------------------------------------- |
+| `animation.rs`              | Animation primitives.                                 |
+| `desktop_app_driver.rs`     | Top-level app driver.                                 |
+| `desktop_benchmark.rs`      | Benchmarking.                                         |
+| `desktop_config.rs`         | Desktop-specific config.                              |
+| `desktop_gallery.rs`        | Demo gallery.                                         |
+| `desktop_ipc.rs`            | IPC to the jcode server.                              |
+| `desktop_issue_browser.rs`  | Browse issues from a project tracker.                 |
+| `desktop_issue_cache.rs`    | Local issue cache.                                    |
+| `desktop_log.rs`            | Logging.                                              |
+| `desktop_prefs.rs`          | User preferences.                                     |
+| `desktop_protocol.rs`       | Desktop ↔ server protocol (extends `jcode-protocol`). |
+| `desktop_rich_text.rs`      | Rich text rendering.                                  |
+| `desktop_scene.rs`          | Scene graph.                                          |
+| `desktop_session_events.rs` | Session event stream.                                 |
+| `desktop_ui_engine.rs`      | UI engine (rendering, hit testing, focus).            |
+| `desktop_worker_host.rs`    | Worker process host.                                  |
+| `main.rs`                   | Binary entry.                                         |
+| `main_tests.rs`             | Tests.                                                |
+| `power_inhibit.rs`          | Power inhibit (prevent sleep during long ops).        |
+| `render_helpers.rs`         | Render helpers.                                       |
+| `session_data.rs`           | Session data model.                                   |
+| `session_launch/`           | Session launch helpers.                               |
+| `session_launch.rs`         | Session launch.                                       |
+| `single_session_render/`    | Single-session render helpers.                        |
+| `single_session_render.rs`  | Single-session render.                                |
+| `single_session.rs`         | Single-session mode.                                  |
+| `workspace.rs`              | Workspace (multi-session).                            |
+| `workspace_tests.rs`        | Tests.                                                |
 
 ### 15.3 Architecture
 
@@ -1621,10 +1621,10 @@ The workspace is the default mode for power users; the single-session mode is th
 
 ### 16.1 Crates
 
-| Crate | Purpose |
-|-------|---------|
-| `jcode-mobile-core` | iOS host logic. |
-| `jcode-mobile-sim` | Mobile simulator (desktop-side). |
+| Crate               | Purpose                          |
+| ------------------- | -------------------------------- |
+| `jcode-mobile-core` | iOS host logic.                  |
+| `jcode-mobile-sim`  | Mobile simulator (desktop-side). |
 
 ### 16.2 iOS Host
 
@@ -1672,10 +1672,10 @@ const MAX_RESPONSE_CHARS: usize = 12_000;
 
 `src/main.rs:1-47` configures the allocator based on the feature set:
 
-| Configuration | Source |
-|---------------|--------|
+| Configuration          | Source                                                                                                                                                           |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `feature = "jemalloc"` | `src/main.rs:1-19` — uses `tikv-jemallocator` with `dirty_decay_ms:1000,muzzy_decay_ms:1000,narenas:4` (or + `prof:true,prof_active:false` for `jemalloc-prof`). |
-| `linux && !jemalloc` | `src/main.rs:30-47` — uses glibc with `mallopt(M_ARENA_MAX, 4)` (overridable via `JCODE_GLIBC_ARENA_MAX`). |
+| `linux && !jemalloc`   | `src/main.rs:30-47` — uses glibc with `mallopt(M_ARENA_MAX, 4)` (overridable via `JCODE_GLIBC_ARENA_MAX`).                                                       |
 
 The comment at `src/main.rs:5-13` explains the tuning:
 
@@ -1761,13 +1761,13 @@ The bus is used for cross-module events that do not need to cross the process bo
 
 `Cargo.toml:269-296` defines five profiles:
 
-| Profile | `opt-level` | `debug` | `codegen-units` | `incremental` | `lto` |
-|---------|-------------|---------|------------------|----------------|-------|
-| `release` | 1 | 0 | 256 | true | — |
-| `release-lto` | 1 (inherits) | 0 (inherits) | 16 | false | thin |
-| `selfdev` | 0 | — | — | — | — |
-| `dev` | — | 0 | — | true | — |
-| `test` | — | 0 | 256 | true | — |
+| Profile       | `opt-level`  | `debug`      | `codegen-units` | `incremental` | `lto` |
+| ------------- | ------------ | ------------ | --------------- | ------------- | ----- |
+| `release`     | 1            | 0            | 256             | true          | —     |
+| `release-lto` | 1 (inherits) | 0 (inherits) | 16              | false         | thin  |
+| `selfdev`     | 0            | —            | —               | —             | —     |
+| `dev`         | —            | 0            | —               | true          | —     |
+| `test`        | —            | 0            | 256             | true          | —     |
 
 The release profile is optimized for **fast compile + low RSS** (not maximum perf), while `release-lto` is the stable distribution build with thin LTO and 16 codegen units.
 
@@ -1779,10 +1779,10 @@ The release profile is optimized for **fast compile + low RSS** (not maximum per
 
 The README documents the following RSS numbers (1 active session, local embedding on):
 
-| Tool | RSS | Comparison |
-|------|-----|------------|
-| jcode (local embedding off) | 27.8 MB | baseline |
-| jcode | 167.1 MB | 6.0× more RAM |
+| Tool                        | RSS      | Comparison    |
+| --------------------------- | -------- | ------------- |
+| jcode (local embedding off) | 27.8 MB  | baseline      |
+| jcode                       | 167.1 MB | 6.0× more RAM |
 
 (README is at `README.md:58-100`.)
 
@@ -2060,27 +2060,27 @@ stateDiagram-v2
 
 ## 21. Failure Modes
 
-| Failure | Detection | Mitigation | Source |
-|---------|-----------|------------|--------|
-| Corrupt session JSON | `serde_json::Error` on load | Auto-recover from `.bak` (atomic rename), copy back to primary | `storage::read_json_with_recovery_handler` (`crates/jcode-storage/src/lib.rs:331-364`) |
-| Server reload mid-response | Disconnect on client | `response_recovery.rs` re-issues request with marker; `RECOVERED_TEXT_WRAPPED_TOOL_CALLS` counter | `agent/response_recovery.rs` |
-| Rate limit (429) | HTTP 429 from provider | `account_failover.rs` switches to next account | `crates/jcode-base/src/provider/account_failover.rs` |
-| Provider 5xx | HTTP 5xx | Same as above; also retry with backoff | `crates/jcode-base/src/provider/failover.rs` |
-| Network drop | Stream disconnect | Stream keepalive ticker; client reconnects | `agent/streaming.rs` |
-| Server idle 5 min | No clients | Server shuts down gracefully; state persisted | `lifecycle.rs`, `SERVER_ARCHITECTURE.md:85` |
-| Open file limit | `EMFILE` | `raise_nofile_limit_best_effort(8_192)` at startup | `startup.rs:77`, `platform.rs` |
-| User config world-readable | `ls -l` reveals it | `harden_user_config_permissions()` at startup | `startup.rs:80` |
-| External auth file is symlink | `symlink_metadata` reveals it | `validate_external_auth_file` rejects symlinks | `storage/lib.rs:161-188` |
-| Embedding model load OOM | High RSS spike | jemalloc tuning (`dirty_decay_ms:1000`) | `src/main.rs:5-19` |
-| Selfdev build fails | `cargo build` exit ≠ 0 | Selfdev tool reports failure to user; no reload | `tool/selfdev/status.rs` |
-| Swarm task heartbeat lost | `now_unix_ms() - last_heartbeat > stale_after` | Mark `RunningStale`, then `Failed` if no recovery | `server/swarm.rs` constants `swarm_task_heartbeat_interval`, `swarm_task_stale_after` |
-| `JCODE_HOME` set but `runtime_dir` not | `jcode_dir()` checks `JCODE_HOME` | Sandbox all paths under it | `storage/lib.rs:73-141` |
-| macOS hotkey listener loses run loop | Hotkey silently dead | Intercept invocation before tokio runtime, run on main thread | `src/main.rs:53-60` |
-| Concurrent swarm mutations | Two coordinators update same plan | `swarm_mutation_state.rs` per-session mutation lock | `server/swarm_mutation_state.rs` |
-| Agent lock held during tool | Long tool blocks agent | `BackgroundToolSignal` + soft interrupt queue | `crates/jcode-agent-runtime/src/lib.rs:23-27` |
-| Tool result exceeds budget | Provider errors | `cap_tool_output_for_history` truncates to model context | `agent/tools.rs` |
-| Compaction lost context | History summarized too aggressively | `VersionedPlan`-style marker persisted; recovery via `Request::GetCompactedHistory` | `agent/compaction.rs` + `compaction-core` crate |
-| Stale `~/.jcode/servers.json` | Old server name entries | Auto-cleanup on startup | `SERVER_ARCHITECTURE.md:54` |
+| Failure                                | Detection                                      | Mitigation                                                                                        | Source                                                                                 |
+| -------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Corrupt session JSON                   | `serde_json::Error` on load                    | Auto-recover from `.bak` (atomic rename), copy back to primary                                    | `storage::read_json_with_recovery_handler` (`crates/jcode-storage/src/lib.rs:331-364`) |
+| Server reload mid-response             | Disconnect on client                           | `response_recovery.rs` re-issues request with marker; `RECOVERED_TEXT_WRAPPED_TOOL_CALLS` counter | `agent/response_recovery.rs`                                                           |
+| Rate limit (429)                       | HTTP 429 from provider                         | `account_failover.rs` switches to next account                                                    | `crates/jcode-base/src/provider/account_failover.rs`                                   |
+| Provider 5xx                           | HTTP 5xx                                       | Same as above; also retry with backoff                                                            | `crates/jcode-base/src/provider/failover.rs`                                           |
+| Network drop                           | Stream disconnect                              | Stream keepalive ticker; client reconnects                                                        | `agent/streaming.rs`                                                                   |
+| Server idle 5 min                      | No clients                                     | Server shuts down gracefully; state persisted                                                     | `lifecycle.rs`, `SERVER_ARCHITECTURE.md:85`                                            |
+| Open file limit                        | `EMFILE`                                       | `raise_nofile_limit_best_effort(8_192)` at startup                                                | `startup.rs:77`, `platform.rs`                                                         |
+| User config world-readable             | `ls -l` reveals it                             | `harden_user_config_permissions()` at startup                                                     | `startup.rs:80`                                                                        |
+| External auth file is symlink          | `symlink_metadata` reveals it                  | `validate_external_auth_file` rejects symlinks                                                    | `storage/lib.rs:161-188`                                                               |
+| Embedding model load OOM               | High RSS spike                                 | jemalloc tuning (`dirty_decay_ms:1000`)                                                           | `src/main.rs:5-19`                                                                     |
+| Selfdev build fails                    | `cargo build` exit ≠ 0                         | Selfdev tool reports failure to user; no reload                                                   | `tool/selfdev/status.rs`                                                               |
+| Swarm task heartbeat lost              | `now_unix_ms() - last_heartbeat > stale_after` | Mark `RunningStale`, then `Failed` if no recovery                                                 | `server/swarm.rs` constants `swarm_task_heartbeat_interval`, `swarm_task_stale_after`  |
+| `JCODE_HOME` set but `runtime_dir` not | `jcode_dir()` checks `JCODE_HOME`              | Sandbox all paths under it                                                                        | `storage/lib.rs:73-141`                                                                |
+| macOS hotkey listener loses run loop   | Hotkey silently dead                           | Intercept invocation before tokio runtime, run on main thread                                     | `src/main.rs:53-60`                                                                    |
+| Concurrent swarm mutations             | Two coordinators update same plan              | `swarm_mutation_state.rs` per-session mutation lock                                               | `server/swarm_mutation_state.rs`                                                       |
+| Agent lock held during tool            | Long tool blocks agent                         | `BackgroundToolSignal` + soft interrupt queue                                                     | `crates/jcode-agent-runtime/src/lib.rs:23-27`                                          |
+| Tool result exceeds budget             | Provider errors                                | `cap_tool_output_for_history` truncates to model context                                          | `agent/tools.rs`                                                                       |
+| Compaction lost context                | History summarized too aggressively            | `VersionedPlan`-style marker persisted; recovery via `Request::GetCompactedHistory`               | `agent/compaction.rs` + `compaction-core` crate                                        |
+| Stale `~/.jcode/servers.json`          | Old server name entries                        | Auto-cleanup on startup                                                                           | `SERVER_ARCHITECTURE.md:54`                                                            |
 
 ---
 
@@ -2088,94 +2088,94 @@ stateDiagram-v2
 
 ### 22.1 Entry Points
 
-| Surface | File | Purpose |
-|---------|------|---------|
-| Binary | `src/main.rs:49` | `fn main() -> Result<()>` — jemalloc/glibc config, TLS, tokio runtime, `jcode::run().await` |
-| Library | `src/lib.rs:29` | `pub async fn run() -> Result<()>` — delegates to `cli::startup::run` |
-| Startup | `src/cli/startup.rs:12` | `pub async fn run()` — 10-step ordered initialization, then `dispatch::run_main` |
-| App core | `crates/jcode-app-core/src/lib.rs:21` | `pub use jcode_base::*` — re-export chain |
-| Base | `crates/jcode-base/src/lib.rs:20-79` | 60+ foundational modules |
-| TUI | `crates/jcode-tui/src/lib.rs` | re-exports `tui` + `video_export` |
+| Surface  | File                                  | Purpose                                                                                     |
+| -------- | ------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Binary   | `src/main.rs:49`                      | `fn main() -> Result<()>` — jemalloc/glibc config, TLS, tokio runtime, `jcode::run().await` |
+| Library  | `src/lib.rs:29`                       | `pub async fn run() -> Result<()>` — delegates to `cli::startup::run`                       |
+| Startup  | `src/cli/startup.rs:12`               | `pub async fn run()` — 10-step ordered initialization, then `dispatch::run_main`            |
+| App core | `crates/jcode-app-core/src/lib.rs:21` | `pub use jcode_base::*` — re-export chain                                                   |
+| Base     | `crates/jcode-base/src/lib.rs:20-79`  | 60+ foundational modules                                                                    |
+| TUI      | `crates/jcode-tui/src/lib.rs`         | re-exports `tui` + `video_export`                                                           |
 
 ### 22.2 Key Types by Crate
 
-| Crate | Key Types |
-|-------|-----------|
-| `jcode-protocol` | `Request`, `ServerEvent`, `NotificationType`, `FeatureToggle`, `HistoryMessage`, `MemoryStateSnapshot`, `MemoryPipelineSnapshot`, `PlanGraphStatus`, `AgentInfo`, `AgentStatusSnapshot`, `SwarmMemberStatus`, `AwaitedMemberStatus` |
-| `jcode-message-types` | `Message`, `Role`, `ContentBlock`, `ToolCall`, `ToolDefinition`, `InputShellResult`, `StreamEvent`, `CacheControl` |
-| `jcode-tool-types` | `ToolOutput`, `ToolImage` |
-| `jcode-tool-core` | `Tool` trait, `ToolContext`, `ToolExecutionMode`, `StdinInputRequest`, `intent_schema_property` |
-| `jcode-session-types` | `SessionStatus`, `SessionImproveMode`, `GitState`, `EnvSnapshot`, `StoredMemoryInjection`, `StoredMessage`, `RenderedMessage`, `RenderedCompactedHistoryInfo`, `RenderedImage`, `RenderedImageSource` |
-| `jcode-memory-types` | `MemoryGraph`, `Edge`, `EdgeKind`, `TagEntry`, `ClusterEntry`, `GraphMetadata`, `MemoryActivity`, `StepStatus`, `StepResult`, `PipelineState` |
-| `jcode-task-types` | `BatchProgress` (and other task types) |
-| `jcode-config-types` | (config types) |
-| `jcode-usage-types` | (usage types) |
-| `jcode-side-panel-types` | `SidePanelSnapshot`, `snapshot_is_empty` |
-| `jcode-selfdev-types` | (selfdev types) |
-| `jcode-ambient-types` | (ambient types) |
-| `jcode-auth-types` | (auth types) |
-| `jcode-gateway-types` | (gateway types) |
-| `jcode-background-types` | (background task types) |
-| `jcode-batch-types` | `BatchProgress` |
-| `jcode-plan` | `PlanItem`, `VersionedPlan`, `SwarmTaskProgress`, `SwarmPlanItemSpec`, `SwarmPlanDefinition`, `SwarmExecutionItemState`, `SwarmExecutionState`, `PlanGraphSummary`, `TaskControlAction`, `AssignmentAffinities`, `summarize_plan_graph`, `next_runnable_item_ids`, `next_unassigned_runnable_item_id`, `assignment_loads`, `explicit_task_blocked_reason` |
-| `jcode-swarm-core` | `SwarmRole`, `SwarmLifecycleStatus`, `SwarmMemberRecord`, `ChannelIndex`, `append_swarm_completion_report_instructions`, `format_structured_completion_report`, `normalize_completion_report`, `completion_notification_message`, `truncate_detail`, `summarize_plan_items`, `SWARM_COMPLETION_REPORT_MARKER`, `MAX_SWARM_COMPLETION_REPORT_CHARS` |
-| `jcode-agent-runtime` | `SoftInterruptMessage`, `SoftInterruptSource`, `SoftInterruptQueue`, `BackgroundToolSignal`, `GracefulShutdownSignal`, `InterruptSignal`, `StreamError` |
-| `jcode-storage` | `runtime_dir`, `jcode_dir`, `logs_dir`, `app_config_dir`, `user_home_path`, `harden_user_config_permissions`, `harden_secret_file_permissions`, `validate_external_auth_file`, `ensure_dir`, `write_text_secret`, `write_json`, `write_json_secret`, `write_json_fast`, `read_json`, `read_json_with_recovery_handler`, `append_json_line_fast`, `StorageRecoveryEvent`, `active_pids::*` |
-| `jcode-provider-core` | `Provider` trait, `EventStream`, `ModelCapabilities`, `ModelCatalogRefreshSummary`, `ModelRoute`, `ModelRouteApiMethod`, `NativeCompactionResult`, `NativeToolResult`, `NativeToolResultSender`, `PremiumMode`, `ProviderFailoverPrompt`, `ProviderAvailability`, `FailoverDecision`, `RuntimeKey`, `RouteBillingKind`, `RouteCheapnessEstimate`, `RouteCostConfidence`, `RouteCostSource`, `RouteSelection`, `CHEAPNESS_REFERENCE_INPUT_TOKENS`, `CHEAPNESS_REFERENCE_OUTPUT_TOKENS`, `DEFAULT_CONTEXT_LIMIT`, `ALL_CLAUDE_MODELS`, `ALL_OPENAI_MODELS`, `JCODE_USER_AGENT`, `dedupe_model_routes`, `explicit_model_provider_prefix`, `model_name_for_provider`, `normalize_copilot_model_name`, `provider_from_model_key`, `shared_http_client`, `summarize_model_catalog_refresh`, `parse_failover_prompt_message` |
+| Crate                    | Key Types                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `jcode-protocol`         | `Request`, `ServerEvent`, `NotificationType`, `FeatureToggle`, `HistoryMessage`, `MemoryStateSnapshot`, `MemoryPipelineSnapshot`, `PlanGraphStatus`, `AgentInfo`, `AgentStatusSnapshot`, `SwarmMemberStatus`, `AwaitedMemberStatus`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `jcode-message-types`    | `Message`, `Role`, `ContentBlock`, `ToolCall`, `ToolDefinition`, `InputShellResult`, `StreamEvent`, `CacheControl`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `jcode-tool-types`       | `ToolOutput`, `ToolImage`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `jcode-tool-core`        | `Tool` trait, `ToolContext`, `ToolExecutionMode`, `StdinInputRequest`, `intent_schema_property`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `jcode-session-types`    | `SessionStatus`, `SessionImproveMode`, `GitState`, `EnvSnapshot`, `StoredMemoryInjection`, `StoredMessage`, `RenderedMessage`, `RenderedCompactedHistoryInfo`, `RenderedImage`, `RenderedImageSource`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `jcode-memory-types`     | `MemoryGraph`, `Edge`, `EdgeKind`, `TagEntry`, `ClusterEntry`, `GraphMetadata`, `MemoryActivity`, `StepStatus`, `StepResult`, `PipelineState`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `jcode-task-types`       | `BatchProgress` (and other task types)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `jcode-config-types`     | (config types)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `jcode-usage-types`      | (usage types)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `jcode-side-panel-types` | `SidePanelSnapshot`, `snapshot_is_empty`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `jcode-selfdev-types`    | (selfdev types)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `jcode-ambient-types`    | (ambient types)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `jcode-auth-types`       | (auth types)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `jcode-gateway-types`    | (gateway types)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `jcode-background-types` | (background task types)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `jcode-batch-types`      | `BatchProgress`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `jcode-plan`             | `PlanItem`, `VersionedPlan`, `SwarmTaskProgress`, `SwarmPlanItemSpec`, `SwarmPlanDefinition`, `SwarmExecutionItemState`, `SwarmExecutionState`, `PlanGraphSummary`, `TaskControlAction`, `AssignmentAffinities`, `summarize_plan_graph`, `next_runnable_item_ids`, `next_unassigned_runnable_item_id`, `assignment_loads`, `explicit_task_blocked_reason`                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `jcode-swarm-core`       | `SwarmRole`, `SwarmLifecycleStatus`, `SwarmMemberRecord`, `ChannelIndex`, `append_swarm_completion_report_instructions`, `format_structured_completion_report`, `normalize_completion_report`, `completion_notification_message`, `truncate_detail`, `summarize_plan_items`, `SWARM_COMPLETION_REPORT_MARKER`, `MAX_SWARM_COMPLETION_REPORT_CHARS`                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `jcode-agent-runtime`    | `SoftInterruptMessage`, `SoftInterruptSource`, `SoftInterruptQueue`, `BackgroundToolSignal`, `GracefulShutdownSignal`, `InterruptSignal`, `StreamError`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `jcode-storage`          | `runtime_dir`, `jcode_dir`, `logs_dir`, `app_config_dir`, `user_home_path`, `harden_user_config_permissions`, `harden_secret_file_permissions`, `validate_external_auth_file`, `ensure_dir`, `write_text_secret`, `write_json`, `write_json_secret`, `write_json_fast`, `read_json`, `read_json_with_recovery_handler`, `append_json_line_fast`, `StorageRecoveryEvent`, `active_pids::*`                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `jcode-provider-core`    | `Provider` trait, `EventStream`, `ModelCapabilities`, `ModelCatalogRefreshSummary`, `ModelRoute`, `ModelRouteApiMethod`, `NativeCompactionResult`, `NativeToolResult`, `NativeToolResultSender`, `PremiumMode`, `ProviderFailoverPrompt`, `ProviderAvailability`, `FailoverDecision`, `RuntimeKey`, `RouteBillingKind`, `RouteCheapnessEstimate`, `RouteCostConfidence`, `RouteCostSource`, `RouteSelection`, `CHEAPNESS_REFERENCE_INPUT_TOKENS`, `CHEAPNESS_REFERENCE_OUTPUT_TOKENS`, `DEFAULT_CONTEXT_LIMIT`, `ALL_CLAUDE_MODELS`, `ALL_OPENAI_MODELS`, `JCODE_USER_AGENT`, `dedupe_model_routes`, `explicit_model_provider_prefix`, `model_name_for_provider`, `normalize_copilot_model_name`, `provider_from_model_key`, `shared_http_client`, `summarize_model_catalog_refresh`, `parse_failover_prompt_message` |
 
 ### 22.3 Module Counts (Quick Reference)
 
-| Layer / Surface | Files |
-|-----------------|-------|
-| Root `src/` | ~10 (main, lib, cli/*, bin/*) |
-| `crates/jcode-tui/src/tui/` | 77 |
-| `crates/jcode-tui/src/tui/app/` | 40+ |
-| `crates/jcode-app-core/src/server/` | 47 |
-| `crates/jcode-app-core/src/agent/` | 14 |
-| `crates/jcode-app-core/src/tool/` | 33 first-class |
-| `crates/jcode-app-core/src/ambient/` | 7 |
-| `crates/jcode-base/src/` | 60+ modules |
-| `crates/jcode-base/src/provider/` | 20+ |
-| `crates/jcode-base/src/memory/` | 3 runtime + higher-level modules in `memory.rs`, `memory_agent.rs`, `memory_graph.rs`, `memory_log.rs`, `memory_prompt.rs` |
-| `crates/jcode-base/src/auth/` | 10+ |
-| `crates/jcode-base/src/config/` | 4 |
-| `crates/jcode-base/src/mcp/` | 5 |
-| `crates/jcode-base/src/protocol/` | 2 (re-exports + notifications) |
-| `crates/jcode-desktop/src/` | 28 |
-| `crates/jcode-base/src/transport/` | 3 (mod + unix + windows) |
-| `crates/jcode-protocol/src/` | 5 (lib, wire, comm_format, notifications, protocol_memory, protocol_tests) |
+| Layer / Surface                      | Files                                                                                                                      |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| Root `src/`                          | ~10 (main, lib, cli/_, bin/_)                                                                                              |
+| `crates/jcode-tui/src/tui/`          | 77                                                                                                                         |
+| `crates/jcode-tui/src/tui/app/`      | 40+                                                                                                                        |
+| `crates/jcode-app-core/src/server/`  | 47                                                                                                                         |
+| `crates/jcode-app-core/src/agent/`   | 14                                                                                                                         |
+| `crates/jcode-app-core/src/tool/`    | 33 first-class                                                                                                             |
+| `crates/jcode-app-core/src/ambient/` | 7                                                                                                                          |
+| `crates/jcode-base/src/`             | 60+ modules                                                                                                                |
+| `crates/jcode-base/src/provider/`    | 20+                                                                                                                        |
+| `crates/jcode-base/src/memory/`      | 3 runtime + higher-level modules in `memory.rs`, `memory_agent.rs`, `memory_graph.rs`, `memory_log.rs`, `memory_prompt.rs` |
+| `crates/jcode-base/src/auth/`        | 10+                                                                                                                        |
+| `crates/jcode-base/src/config/`      | 4                                                                                                                          |
+| `crates/jcode-base/src/mcp/`         | 5                                                                                                                          |
+| `crates/jcode-base/src/protocol/`    | 2 (re-exports + notifications)                                                                                             |
+| `crates/jcode-desktop/src/`          | 28                                                                                                                         |
+| `crates/jcode-base/src/transport/`   | 3 (mod + unix + windows)                                                                                                   |
+| `crates/jcode-protocol/src/`         | 5 (lib, wire, comm_format, notifications, protocol_memory, protocol_tests)                                                 |
 
 ### 22.4 Where to Find Things
 
-| You want to find… | Look in… |
-|--------------------|----------|
-| The turn loop | `crates/jcode-app-core/src/agent/turn_execution.rs`, `turn_loops.rs`, `turn_streaming_*.rs` |
-| The provider trait | `crates/jcode-provider-core/src/lib.rs` |
-| The provider list | `crates/jcode-base/src/provider/mod.rs` (`MultiProvider`) |
-| The server main loop | `crates/jcode-app-core/src/server/runtime.rs` (`ServerRuntime`) |
-| The wire types | `crates/jcode-protocol/src/wire.rs` |
-| The TUI | `crates/jcode-tui/src/tui/mod.rs` → `app.rs` → `core.rs` |
-| The interrupt model | `crates/jcode-agent-runtime/src/lib.rs` |
-| The swarm types | `crates/jcode-swarm-core/src/lib.rs` |
-| The plan DAG | `crates/jcode-plan/src/lib.rs` |
-| The memory types | `crates/jcode-memory-types/src/{lib.rs,graph.rs}` |
-| The session types | `crates/jcode-session-types/src/lib.rs` |
-| The tool trait | `crates/jcode-tool-core/src/lib.rs` |
-| The desktop app | `crates/jcode-desktop/src/main.rs` → `desktop_app_driver.rs` → `desktop_ui_engine.rs` |
-| The iOS host | `ios/` |
-| The startup sequence | `src/cli/startup.rs` |
-| The CLI dispatch | `src/cli/dispatch.rs` |
-| The CLI commands | `src/cli/commands.rs` |
-| The login flow | `src/cli/login.rs` + `src/cli/login/*` |
-| The selfdev CLI | `src/cli/selfdev.rs` |
-| The update check | `crates/jcode-app-core/src/update.rs` |
-| The performance plan | `docs/COMPILE_PERFORMANCE_PLAN.md` |
-| The server architecture | `docs/SERVER_ARCHITECTURE.md` |
-| The swarm architecture | `docs/SWARM_ARCHITECTURE.md` |
-| The multi-session architecture | `docs/MULTI_SESSION_CLIENT_ARCHITECTURE.md` |
-| The memory architecture | `docs/MEMORY_ARCHITECTURE.md` |
-| The memory budget | `docs/MEMORY_BUDGET.md` |
-| The iOS client | `docs/IOS_CLIENT.md` |
+| You want to find…              | Look in…                                                                                    |
+| ------------------------------ | ------------------------------------------------------------------------------------------- |
+| The turn loop                  | `crates/jcode-app-core/src/agent/turn_execution.rs`, `turn_loops.rs`, `turn_streaming_*.rs` |
+| The provider trait             | `crates/jcode-provider-core/src/lib.rs`                                                     |
+| The provider list              | `crates/jcode-base/src/provider/mod.rs` (`MultiProvider`)                                   |
+| The server main loop           | `crates/jcode-app-core/src/server/runtime.rs` (`ServerRuntime`)                             |
+| The wire types                 | `crates/jcode-protocol/src/wire.rs`                                                         |
+| The TUI                        | `crates/jcode-tui/src/tui/mod.rs` → `app.rs` → `core.rs`                                    |
+| The interrupt model            | `crates/jcode-agent-runtime/src/lib.rs`                                                     |
+| The swarm types                | `crates/jcode-swarm-core/src/lib.rs`                                                        |
+| The plan DAG                   | `crates/jcode-plan/src/lib.rs`                                                              |
+| The memory types               | `crates/jcode-memory-types/src/{lib.rs,graph.rs}`                                           |
+| The session types              | `crates/jcode-session-types/src/lib.rs`                                                     |
+| The tool trait                 | `crates/jcode-tool-core/src/lib.rs`                                                         |
+| The desktop app                | `crates/jcode-desktop/src/main.rs` → `desktop_app_driver.rs` → `desktop_ui_engine.rs`       |
+| The iOS host                   | `ios/`                                                                                      |
+| The startup sequence           | `src/cli/startup.rs`                                                                        |
+| The CLI dispatch               | `src/cli/dispatch.rs`                                                                       |
+| The CLI commands               | `src/cli/commands.rs`                                                                       |
+| The login flow                 | `src/cli/login.rs` + `src/cli/login/*`                                                      |
+| The selfdev CLI                | `src/cli/selfdev.rs`                                                                        |
+| The update check               | `crates/jcode-app-core/src/update.rs`                                                       |
+| The performance plan           | `docs/COMPILE_PERFORMANCE_PLAN.md`                                                          |
+| The server architecture        | `docs/SERVER_ARCHITECTURE.md`                                                               |
+| The swarm architecture         | `docs/SWARM_ARCHITECTURE.md`                                                                |
+| The multi-session architecture | `docs/MULTI_SESSION_CLIENT_ARCHITECTURE.md`                                                 |
+| The memory architecture        | `docs/MEMORY_ARCHITECTURE.md`                                                               |
+| The memory budget              | `docs/MEMORY_BUDGET.md`                                                                     |
+| The iOS client                 | `docs/IOS_CLIENT.md`                                                                        |
 
 ---
 
@@ -2185,7 +2185,7 @@ Working tree is dirty on `next`. The git session header shows:
 
 ```
 M crates/octo-telegram-onboard-core/src/output.rs        (unrelated cleanup)
-D missions/open/0850ab-a-telegram-auth-onboarding.md    (mission closed)
+D missions/claimed/0850ab-a-telegram-auth-onboarding.md    (mission closed)
 ?? .jcode/skills/adversarial-audit/                      (new skill)
 ?? .jcode/skills/rust-ci-check/                          (new skill)
 ?? re                                                    (untracked scratch dir)
@@ -2202,27 +2202,27 @@ These are part of the Jcode harness and not part of the public jcode distributio
 
 ## Appendix B: Glossary
 
-| Term | Definition |
-|------|------------|
-| **Turn** | One user message + the agent's full response (which may include multiple provider calls and tool dispatches). |
-| **Subagent** | A short-lived agent spawned by a parent agent to handle a subtask. |
-| **Coordinator** | A swarm role: a session that owns the plan and dispatches tasks to agents. |
-| **WorktreeManager** | A swarm role: a session that creates and manages git worktrees. |
-| **Visible Cycle** | An ambient cycle that decides to escalate and show its message to the user. |
-| **Server** | The long-lived `jcode serve` process that owns all session state. |
-| **Daemon** | Synonym for "server" in jcode's context. |
-| **TUI** | Terminal UI (ratatui/crossterm). |
-| **MCP** | Model Context Protocol (Anthropic's standard for tool integration). |
-| **Selfdev** | A mode where the agent modifies jcode itself. |
-| **Ambient** | A mode where the agent runs long-running background cycles. |
-| **Swarm** | Multiple cooperating sessions coordinated by a coordinator. |
-| **Channel** | A pub/sub topic for swarm members (e.g. "build", "tests"). |
-| **Plan** | A versioned DAG of tasks (`PlanItem` nodes). |
-| **Jade Relay** | The long-poll HTTPS relay for the iOS host (`jade_relay.rs`). |
-| **OpenAI-Compatible Profile** | An arbitrary OpenAI-protocol endpoint that jcode can talk to. |
-| **Hot Reload** | The `/reload` command that execs the new binary in place. |
-| **Jemalloc** | The default allocator (when feature enabled), tuned for low RSS. |
-| **Reconnect Loop** | The client-side loop that handles disconnects with exponential backoff. |
+| Term                          | Definition                                                                                                    |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| **Turn**                      | One user message + the agent's full response (which may include multiple provider calls and tool dispatches). |
+| **Subagent**                  | A short-lived agent spawned by a parent agent to handle a subtask.                                            |
+| **Coordinator**               | A swarm role: a session that owns the plan and dispatches tasks to agents.                                    |
+| **WorktreeManager**           | A swarm role: a session that creates and manages git worktrees.                                               |
+| **Visible Cycle**             | An ambient cycle that decides to escalate and show its message to the user.                                   |
+| **Server**                    | The long-lived `jcode serve` process that owns all session state.                                             |
+| **Daemon**                    | Synonym for "server" in jcode's context.                                                                      |
+| **TUI**                       | Terminal UI (ratatui/crossterm).                                                                              |
+| **MCP**                       | Model Context Protocol (Anthropic's standard for tool integration).                                           |
+| **Selfdev**                   | A mode where the agent modifies jcode itself.                                                                 |
+| **Ambient**                   | A mode where the agent runs long-running background cycles.                                                   |
+| **Swarm**                     | Multiple cooperating sessions coordinated by a coordinator.                                                   |
+| **Channel**                   | A pub/sub topic for swarm members (e.g. "build", "tests").                                                    |
+| **Plan**                      | A versioned DAG of tasks (`PlanItem` nodes).                                                                  |
+| **Jade Relay**                | The long-poll HTTPS relay for the iOS host (`jade_relay.rs`).                                                 |
+| **OpenAI-Compatible Profile** | An arbitrary OpenAI-protocol endpoint that jcode can talk to.                                                 |
+| **Hot Reload**                | The `/reload` command that execs the new binary in place.                                                     |
+| **Jemalloc**                  | The default allocator (when feature enabled), tuned for low RSS.                                              |
+| **Reconnect Loop**            | The client-side loop that handles disconnects with exponential backoff.                                       |
 
 ---
 

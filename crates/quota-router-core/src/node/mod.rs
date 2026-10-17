@@ -1,4 +1,5 @@
 pub mod announce;
+pub mod envelope_v2;
 pub mod forward;
 pub mod gossip;
 pub mod handler;
@@ -6,6 +7,9 @@ pub mod metrics;
 pub mod provider;
 pub mod ratelimit;
 pub mod request;
+pub mod role_binding;
+pub mod role_binding_audit;
+pub mod role_binding_consumer_audit;
 pub mod scorer;
 #[cfg(any(test, feature = "test-helpers"))]
 pub mod testing;
@@ -15,7 +19,8 @@ use std::sync::{Arc, Mutex};
 use octo_transport::node_transport::NodeTransport;
 use octo_transport::sender::{NetworkSender, SendContext};
 
-use announce::{RouterAnnouncePayload, SignedPayload};
+use announce::SignedPayload;
+use envelope_v2::wrap_outbound_envelope;
 use forward::{ForwardOutcome, ForwardRequestPayload, PendingRequests};
 use gossip::{monotonic_now, CapacityGossipPayload, GossipCache};
 use provider::{
@@ -397,7 +402,18 @@ impl QuotaRouterNode {
 
     pub async fn broadcast_gossip(&self) -> Result<usize, octo_transport::sender::TransportError> {
         let gossip = self.build_capacity_gossip();
-        let payload = envelope(DISC_CAPACITY_GOSSIP, &gossip)?;
+        let payload_body = bincode::serialize(&gossip).map_err(|e| {
+            octo_transport::sender::TransportError::EnvelopeConstruction(e.to_string())
+        })?;
+        let payload = wrap_outbound_envelope(
+            &self.identity_key,
+            &self.config.network_id,
+            octo_protocol::payload_kind::QUOTA_CAPACITY_GOSSIP,
+            payload_body,
+            60,
+            monotonic_now().saturating_mul(1000),
+        )
+        .map_err(|e| octo_transport::sender::TransportError::EnvelopeConstruction(e.to_string()))?;
         if let Some(m) = &self.metrics {
             m.add_gossip_bytes(payload.len());
         }
@@ -408,21 +424,38 @@ impl QuotaRouterNode {
     pub async fn broadcast_announce(
         &self,
     ) -> Result<usize, octo_transport::sender::TransportError> {
-        let mut announce = RouterAnnouncePayload {
-            node_id: self.config.node_id,
-            network_id: self.config.network_id,
-            supported_models: self.local_provider_models(),
-            capacities: self
-                .config
-                .providers
-                .iter()
-                .map(|p| ProviderCapacity::from_config(p, self.config.node_id))
-                .collect(),
-            timestamp: monotonic_now(),
-            hmac: [0u8; 32],
-        };
-        announce.hmac = announce.compute_hmac(&self.network_key());
-        let payload = envelope(DISC_ROUTER_ANNOUNCE, &announce)?;
+        let announce =
+            announce::RouterAnnounceBuilder::new(self.config.node_id, self.config.network_id)
+                .supported_models(self.local_provider_models())
+                .capacities(
+                    self.config
+                        .providers
+                        .iter()
+                        .map(|p| ProviderCapacity::from_config(p, self.config.node_id))
+                        .collect(),
+                )
+                // Mission 0871e-phase5c: router advertises a default
+                // pricing policy. Drain = 0 (rate-limit-only) until the
+                // economic policy module lands.
+                .pricing_policy(Some(announce::PricingPolicy {
+                    drain_per_query: 0,
+                    accepted_payment_capabilities: vec![],
+                    settlement_recipient: None,
+                }))
+                .timestamp(monotonic_now())
+                .build(&self.network_key());
+        let payload_body = bincode::serialize(&announce).map_err(|e| {
+            octo_transport::sender::TransportError::EnvelopeConstruction(e.to_string())
+        })?;
+        let payload = wrap_outbound_envelope(
+            &self.identity_key,
+            &self.config.network_id,
+            octo_protocol::payload_kind::QUOTA_ROUTER_ANNOUNCE,
+            payload_body,
+            60,
+            monotonic_now().saturating_mul(1000),
+        )
+        .map_err(|e| octo_transport::sender::TransportError::EnvelopeConstruction(e.to_string()))?;
         if let Some(m) = &self.metrics {
             m.add_gossip_bytes(payload.len());
         }
@@ -518,8 +551,17 @@ impl QuotaRouterNode {
                 fwd.hmac = fwd.compute_hmac(&self.network_key());
                 let (tx, rx) = tokio::sync::oneshot::channel();
                 self.pending.insert(request_id, tx, self.config.node_id);
-                let fwd_bytes = envelope(DISC_FORWARD_REQUEST, &fwd)
+                let fwd_body = bincode::serialize(&fwd)
                     .map_err(|e| RouterNodeError::Serialization(e.to_string()))?;
+                let fwd_bytes = wrap_outbound_envelope(
+                    &self.identity_key,
+                    &self.config.network_id,
+                    octo_protocol::payload_kind::QUOTA_FORWARD_REQUEST,
+                    fwd_body,
+                    u64::from(self.config.forwarding.max_ttl),
+                    monotonic_now().saturating_mul(1000),
+                )
+                .map_err(|e| RouterNodeError::Serialization(e.to_string()))?;
                 if let Some(m) = &self.metrics {
                     m.active_forwards.inc();
                 }

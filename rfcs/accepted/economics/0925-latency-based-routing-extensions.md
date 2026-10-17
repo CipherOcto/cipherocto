@@ -19,10 +19,12 @@ Define latency-based routing with TTFT (time-to-first-token) tracking, cooldown 
 ## Dependencies
 
 **Requires:**
+
 - RFC-0917: Dual-Mode Query Router (LatencyTracker, LatencyBased routing)
 - RFC-0924: Provider Metrics Bucket Tracking (for bucketed RPM/TPM)
 
 **Optional:**
+
 - RFC-0905: Observability and Logging (Prometheus integration)
 
 ## Motivation
@@ -37,11 +39,11 @@ litellm implements this via `LowestLatencyLoggingHandler` + cooldown callbacks +
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| G1 | Cooldown decision in <1ms | hot-path latency |
-| G2 | No false positives | healthy deployment never enters cooldown incorrectly |
-| G3 | Configurable thresholds | failure_threshold_percent + failure_threshold_min_requests per model group |
+| Goal | Target                    | Metric                                                                     |
+| ---- | ------------------------- | -------------------------------------------------------------------------- |
+| G1   | Cooldown decision in <1ms | hot-path latency                                                           |
+| G2   | No false positives        | healthy deployment never enters cooldown incorrectly                       |
+| G3   | Configurable thresholds   | failure_threshold_percent + failure_threshold_min_requests per model group |
 
 ## Specification
 
@@ -361,6 +363,7 @@ Cooldown ──(cooldown TTL elapsed)──> Healthy
 ```
 
 **Transitions (litellm TTL-based pattern):**
+
 1. `Healthy → Cooldown`: 429 response OR failure rate > threshold (50% + 5 min requests) OR retryable error (408, 409, 429, 500+)
 2. `Cooldown → Healthy`: Cooldown TTL expired (automatic, no health check)
 
@@ -477,10 +480,10 @@ pub fn update_latency_state(
 
 ## Key Files to Modify
 
-| File | Change |
-|------|--------|
-| `crates/quota-router-core/src/router.rs` | Add `LatencyConfig`, `CooldownTracker`, `DeploymentState` |
-| `crates/quota-router-core/src/router.rs` | Modify `LatencyTracker` with TTFT tracking |
+| File                                     | Change                                                                     |
+| ---------------------------------------- | -------------------------------------------------------------------------- |
+| `crates/quota-router-core/src/router.rs` | Add `LatencyConfig`, `CooldownTracker`, `DeploymentState`                  |
+| `crates/quota-router-core/src/router.rs` | Modify `LatencyTracker` with TTFT tracking                                 |
 | `crates/quota-router-core/src/router.rs` | Integrate cooldown into `Router::route()` and add `update_latency_state()` |
 
 ## Open Questions
@@ -496,26 +499,27 @@ pub fn update_latency_state(
 
 **Design Decisions Made:**
 
-1. **Cooldown callback**: NOT implemented in v1. litellm calls `router_cooldown_event_callback` via `asyncio.create_task()` on every cooldown trigger (cooldown_handlers.py:311). quota-router v1 does not trigger external callbacks — cooldown is internal-only. External alerting can be added via RFC-0905 (Prometheus integration) if needed.
+1. **Cooldown callback**: NOT implemented in v1. litellm calls `router_cooldown_event_callback` via `asyncio.create_task()` on every cooldown trigger (cooldown_handlers.py). quota-router v1 does not trigger external callbacks — cooldown is internal-only. External alerting can be added via RFC-0905 (Prometheus integration) if needed.
 
 2. **RPM/TPM integration**: YES, integrated. `Router::route()` checks both cooldown state AND `ProviderMetrics::can_accept_request()` before selecting a deployment. RPM/TPM limits are enforced at routing time, not just completion time.
 
 3. **Safety net bypass**: NOT implemented. If all deployments are in cooldown, routing returns `None` and the caller gets a `RouterRateLimitError`. litellm's bypass is for health-check-routing edge cases — not needed for quota-router's use case.
+
 - **`lowest_latency_buffer=0`** (litellm default) — fastest-only selection, no randomization among equal-latency deployments
 - **429 Rate Limit handling**: litellm triggers cooldown on 429 if deployment is NOT in a single-deployment model group. Single-deployment groups are exempt (they need the traffic). Add `is_single_deployment_model_group` check to cooldown logic.
 - **Concurrent access**: litellm has no mutex protecting cache operations (only Redis batch tracking uses a lock). Accept lock-free model with race condition caveat — document this.
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 14 | 2026-05-12 | Fix: remove dead `ttft_weight` field from LatencyConfig AND from `best_provider_with_ttft()` signature; add `get_penalty_latencies()` and `clear_penalty_latencies()` methods (used by RFC-0926) |
-| 13 | 2026-05-11 | Fix: cooldown callback is NOT implemented (not "optional") - litellm always triggers router_cooldown_event_callback via asyncio.create_task() at cooldown_handlers.py:311, but quota-router v1 has no callback; corrected from v12 "optional" which was incorrect |
-| 8 | 2026-05-11 | Fix stale v4 header to v7; fix should_enter_cooldown to check `state == Healthy` (was dead code checking removed Degraded state); remove Degraded from record_latency and is_available match arms; add should_enter_cooldown_on_429 for 429 handling |
-| 7 | 2026-05-11 | Remove Degraded state (litellm has only Healthy/Cooldown); add best_provider_among() method for available set filtering; finalize design decisions: no cooldown callback, yes RPM/TPM integration, no safety bypass |
-| 6 | 2026-05-11 | Major refactor per litellm: remove Recovering state (TTL-based cooldown only); replace consecutive_high_latency with failure_rate tracking; remove latency_threshold_us (no default threshold); update update_latency_state to use success/failure pattern |
-| 5 | 2026-05-11 | Answer open questions via litellm research: buffer=0, 429 cooldown, concurrent lock-free |
-| 4 | 2026-05-11 | Fix penalty_latencies storage; fix route() best-available filter; add 429/concurrent open questions |
-| 3 | 2026-05-11 | Add lowest_latency_buffer; add record_timeout_penalty; update best_provider_with_ttft with buffer |
-| 2 | 2026-05-11 | Fix state machine diagram; add state transition logic; use Instant for cooldown timing |
-| 1 | 2026-05-11 | Initial draft |
+| Version | Date       | Changes                                                                                                                                                                                                                                                       |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 14      | 2026-05-12 | Fix: remove dead `ttft_weight` field from LatencyConfig AND from `best_provider_with_ttft()` signature; add `get_penalty_latencies()` and `clear_penalty_latencies()` methods (used by RFC-0926)                                                              |
+| 13      | 2026-05-11 | Fix: cooldown callback is NOT implemented (not "optional") - litellm always triggers router_cooldown_event_callback via asyncio.create_task() at cooldown_handlers.py, but quota-router v1 has no callback; corrected from v12 "optional" which was incorrect |
+| 8       | 2026-05-11 | Fix stale v4 header to v7; fix should_enter_cooldown to check `state == Healthy` (was dead code checking removed Degraded state); remove Degraded from record_latency and is_available match arms; add should_enter_cooldown_on_429 for 429 handling          |
+| 7       | 2026-05-11 | Remove Degraded state (litellm has only Healthy/Cooldown); add best_provider_among() method for available set filtering; finalize design decisions: no cooldown callback, yes RPM/TPM integration, no safety bypass                                           |
+| 6       | 2026-05-11 | Major refactor per litellm: remove Recovering state (TTL-based cooldown only); replace consecutive_high_latency with failure_rate tracking; remove latency_threshold_us (no default threshold); update update_latency_state to use success/failure pattern    |
+| 5       | 2026-05-11 | Answer open questions via litellm research: buffer=0, 429 cooldown, concurrent lock-free                                                                                                                                                                      |
+| 4       | 2026-05-11 | Fix penalty_latencies storage; fix route() best-available filter; add 429/concurrent open questions                                                                                                                                                           |
+| 3       | 2026-05-11 | Add lowest_latency_buffer; add record_timeout_penalty; update best_provider_with_ttft with buffer                                                                                                                                                             |
+| 2       | 2026-05-11 | Fix state machine diagram; add state transition logic; use Instant for cooldown timing                                                                                                                                                                        |
+| 1       | 2026-05-11 | Initial draft                                                                                                                                                                                                                                                 |

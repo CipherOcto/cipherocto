@@ -10,12 +10,12 @@
 
 ## Depends on
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower
 - RFC-0108 (Retrieval): Verifiable AI Retrieval
 - RFC-0148 (Numeric/Math): Deterministic Linear Algebra Engine
 - RFC-0149 (Retrieval): Deterministic Vector Index
-- RFC-0150 (Retrieval): Verifiable Vector Query Execution
-- RFC-0151 (AI Execution): Verifiable RAG Execution
+- RFC-0304 (Retrieval): Verifiable Vector Query Execution
+- RFC-0550 (AI Execution): Verifiable RAG Execution
 
 ## Summary
 
@@ -53,11 +53,11 @@ Current agent implementations are nondeterministic. VAR enables:
 
 ```mermaid
 graph TB
-    subgraph "RFC-0151 VRE"
+    subgraph "RFC-0550 VRE"
         MODEL_INFER[Model Inference]
     end
 
-    subgraph "RFC-0150 VVQE"
+    subgraph "RFC-0304 VVQE"
         VECTOR_SEARCH[Vector Search]
     end
 
@@ -151,7 +151,7 @@ Execution halts when:
 
 ### Policy Execution
 
-Agent reasoning uses a deterministic model defined in RFC-0151:
+Agent reasoning uses a deterministic model defined in RFC-0550:
 
 ```
 decision = MODEL_INFER(prompt)
@@ -167,7 +167,7 @@ Prompt includes:
 Inference must follow:
 
 - Greedy decoding (no sampling)
-- Deterministic arithmetic (RFC-0106)
+- Deterministic arithmetic (RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal))
 - Canonical prompt format
 
 ### Agent Memory
@@ -244,7 +244,7 @@ Allowed deterministic tools include:
 
 | Tool Type          | Description                |
 | ------------------ | -------------------------- |
-| Vector search      | RFC-0150 VVQE operations   |
+| Vector search      | RFC-0304 VVQE operations   |
 | SQL queries        | Deterministic database ops |
 | Cryptographic ops  | Hashing, signatures        |
 | Blockchain reads   | On-chain state queries     |
@@ -389,7 +389,7 @@ Each step becomes a verifiable agent transition.
 | Metric           | Target | Notes               |
 | ---------------- | ------ | ------------------- |
 | Step execution   | <10ms  | Per agent step      |
-| Memory retrieval | <1ms   | RFC-0150 latency    |
+| Memory retrieval | <1ms   | RFC-0304 latency    |
 | Tool invocation  | <5ms   | Deterministic tools |
 | Proof generation | <1ms   | Hash computation    |
 
@@ -466,15 +466,15 @@ VAR completes the verifiable AI stack by providing:
 
 ## Related RFCs
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower (DNT) — Numeric types
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower (DNT) — Numeric types
 - RFC-0108 (Retrieval): Verifiable AI Retrieval — Retrieval foundations
 - RFC-0148 (Numeric/Math): Deterministic Linear Algebra Engine — Math primitives
 - RFC-0149 (Retrieval): Deterministic Vector Index (HNSW-D) — Memory storage
-- RFC-0150 (Retrieval): Verifiable Vector Query Execution — Query engine
-- RFC-0151 (AI Execution): Verifiable RAG Execution — Model inference
+- RFC-0304 (Retrieval): Verifiable Vector Query Execution — Query engine
+- RFC-0550 (AI Execution): Verifiable RAG Execution — Model inference
 - RFC-0110 (Agents): Verifiable Agent Memory — Memory layer
 
-> **Note**: RFC-0152 completes the verifiable AI stack.
+> **Note**: RFC-0450 completes the verifiable AI stack. (canonical replacement per numeric-tier phantom sweep)
 
 ## Related Use Cases
 

@@ -75,7 +75,7 @@ DTC defines:
 Implementation follows the existing stack:
 
 ```
-RFC-0106 (Numeric Tower)
+RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric Tower)
        ↓
 RFC-0120 (Deterministic AI-VM)
        ↓
@@ -616,7 +616,7 @@ FRI (Fast Reed-Solomon Interactive Oracle Proof of Proximity) provides:
 
 ## Related RFCs
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower
 - RFC-0120 (AI Execution): Deterministic AI Virtual Machine
 - RFC-0121 (AI Execution): Verifiable Large Model Execution
 - RFC-0122 (AI Execution): Mixture-of-Experts
@@ -667,7 +667,7 @@ FRI (Fast Reed-Solomon Interactive Oracle Proof of Proximity) provides:
 └─────────────────────────┬───────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────┐
-│        Deterministic Numeric Tower (RFC-0106)        │
+│        Deterministic Numeric Tower (RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal))        │
 └─────────────────────────────────────────────────────┘
 ```
 

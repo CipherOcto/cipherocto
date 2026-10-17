@@ -20,27 +20,28 @@ Per RFC-0917 §native_http Module, the `native_http` module provides liteLLM Mod
 ### Architecture Overview
 
 Per RFC-0917, **BOTH interfaces (HTTP proxy AND Python SDK) are unconditionally available in ALL modes**:
+
 - HTTP Proxy Server | (always) | `hyper`/`axum` OpenAI-compatible proxy endpoints
 - Python SDK Interface | (always) | PyO3 bindings for `pip install` Python SDK
 
 The **feature gate** controls which **provider integration strategy** is compiled:
 
-| Mode | Provider Backend | Feature Gate |
-|------|-----------------|--------------|
+| Mode         | Provider Backend                    | Feature Gate   |
+| ------------ | ----------------------------------- | -------------- |
 | liteLLM Mode | `native_http` (reqwest → REST APIs) | `litellm-mode` |
-| any-llm Mode | `py_bridge` (PyO3 → Python SDKs) | `any-llm-mode` |
-| full | Both (for testing/comparison) | `full` |
+| any-llm Mode | `py_bridge` (PyO3 → Python SDKs)    | `any-llm-mode` |
+| full         | Both (for testing/comparison)       | `full`         |
 
 **Per RFC-0917 §Mode Configuration:** `mode: both` in config means "both, 'proxy', or 'sdk'" — `full` build enables testing both strategies in one binary.
 
 ### What Already Exists vs What's New
 
-| Component | Status | Location |
-|-----------|--------|----------|
-| HTTP Proxy Server (`proxy.rs`) | ALREADY EXISTS — unconditional | `quota-router-core/src/proxy.rs` |
-| Python SDK (`python_sdk_entry`) | ALREADY EXISTS — unconditional | `quota-router-core/src/python_sdk_entry/` |
-| `py_bridge` providers (any-llm) | ALREADY EXISTS | `quota-router-core/src/py_bridge/` |
-| `native_http` providers (liteLLM) | ALREADY EXISTS | `quota-router-core/src/native_http/` |
+| Component                         | Status                         | Location                                  |
+| --------------------------------- | ------------------------------ | ----------------------------------------- |
+| HTTP Proxy Server (`proxy.rs`)    | ALREADY EXISTS — unconditional | `quota-router-core/src/proxy.rs`          |
+| Python SDK (`python_sdk_entry`)   | ALREADY EXISTS — unconditional | `quota-router-core/src/python_sdk_entry/` |
+| `py_bridge` providers (any-llm)   | ALREADY EXISTS                 | `quota-router-core/src/py_bridge/`        |
+| `native_http` providers (liteLLM) | ALREADY EXISTS                 | `quota-router-core/src/native_http/`      |
 
 ## Current State
 
@@ -53,6 +54,7 @@ The **feature gate** controls which **provider integration strategy** is compile
 **File:** `crates/quota-router-core/src/native_http/mod.rs`
 
 #### HttpProvider Trait (per RFC-0917 §HttpProvider Interface) — CORRECTED SIGNATURE:
+
 ```rust
 use async_trait::async_trait;
 
@@ -162,6 +164,7 @@ pub trait HttpProvider: Send + Sync {
 ```
 
 #### Provider Registry (Static Factory Pattern)
+
 ```rust
 use std::sync::LazyLock;
 use std::collections::HashMap;
@@ -208,29 +211,29 @@ pub fn init_providers() {
 
 // NOTE: init_providers() must be called at binary startup (in main.rs or lib.rs init)
 ```
-```
 
 ### 2. Provider Implementations
 
 Each provider is a separate file under `native_http/`:
 
-| File | Provider | Notes |
-|------|----------|-------|
-| `native_http/mod.rs` | HttpProvider trait + factory | Core interface |
-| `native_http/openai.rs` | OpenAI | reqwest → `https://api.openai.com/v1/chat/completions` |
-| `native_http/anthropic.rs` | Anthropic | reqwest → `https://api.anthropic.com/v1/messages` |
-| `native_http/mistral.rs` | Mistral | reqwest → Mistral API |
-| `native_http/gemini.rs` | Google Gemini | reqwest → Generative Language API |
-| `native_http/azure.rs` | Azure OpenAI | reqwest → Azure endpoint |
-| `native_http/bedrock.rs` | AWS Bedrock | reqwest → Bedrock endpoint |
-| `native_http/ollama.rs` | Ollama | reqwest → local/remote Ollama |
-| `native_http/groq.rs` | Groq | reqwest → Groq API |
-| `native_http/together.rs` | Together AI | reqwest → Together API |
-| `native_http/replicate.rs` | Replicate | reqwest → Replicate API |
+| File                       | Provider                     | Notes                                                  |
+| -------------------------- | ---------------------------- | ------------------------------------------------------ |
+| `native_http/mod.rs`       | HttpProvider trait + factory | Core interface                                         |
+| `native_http/openai.rs`    | OpenAI                       | reqwest → `https://api.openai.com/v1/chat/completions` |
+| `native_http/anthropic.rs` | Anthropic                    | reqwest → `https://api.anthropic.com/v1/messages`      |
+| `native_http/mistral.rs`   | Mistral                      | reqwest → Mistral API                                  |
+| `native_http/gemini.rs`    | Google Gemini                | reqwest → Generative Language API                      |
+| `native_http/azure.rs`     | Azure OpenAI                 | reqwest → Azure endpoint                               |
+| `native_http/bedrock.rs`   | AWS Bedrock                  | reqwest → Bedrock endpoint                             |
+| `native_http/ollama.rs`    | Ollama                       | reqwest → local/remote Ollama                          |
+| `native_http/groq.rs`      | Groq                         | reqwest → Groq API                                     |
+| `native_http/together.rs`  | Together AI                  | reqwest → Together API                                 |
+| `native_http/replicate.rs` | Replicate                    | reqwest → Replicate API                                |
 
 ### 3. Request Routing (per RFC-0917 §Request Routing)
 
 When a completion request arrives:
+
 1. Parse model identifier (e.g., `"openai/gpt-4"` or `"provider:model"`)
 2. Extract provider name from prefix (before `/` or `:`, defaulting to `"openai"`)
 3. If `custom_llm_provider` is set in config, use that instead
@@ -241,6 +244,7 @@ When a completion request arrives:
 ### 4. Feature Gate Integration
 
 **File:** `crates/quota-router-core/src/lib.rs`
+
 ```rust
 // native_http — reqwest-based providers for liteLLM mode
 #[cfg(any(feature = "litellm-mode", feature = "full"))]
@@ -248,6 +252,7 @@ pub mod native_http;
 ```
 
 **File:** `crates/quota-router-core/Cargo.toml`
+
 ```toml
 litellm-mode = ["tokio", "hyper", "hyper-util", "http", "http-body", "http-body-util",
                 "rustls", "rustls-pemfile", "reqwest", "axum", "pyo3",
@@ -268,21 +273,21 @@ This is a **runtime dispatch** — Router doesn't need to know if it's using `na
 
 ## Key Files (Verified Existing)
 
-| File | Change |
-|------|--------|
-| `crates/quota-router-core/src/native_http/mod.rs` | HttpProvider trait + ProviderError + ProviderFactory + init_providers() |
-| `crates/quota-router-core/src/native_http/openai.rs` | OpenAI via reqwest |
-| `crates/quota-router-core/src/native_http/anthropic.rs` | Anthropic via reqwest |
-| `crates/quota-router-core/src/native_http/mistral.rs` | Mistral via reqwest |
-| `crates/quota-router-core/src/native_http/gemini.rs` | Gemini via reqwest |
-| `crates/quota-router-core/src/native_http/azure.rs` | Azure OpenAI via reqwest |
-| `crates/quota-router-core/src/native_http/bedrock.rs` | AWS Bedrock via reqwest |
-| `crates/quota-router-core/src/native_http/ollama.rs` | Ollama via reqwest |
-| `crates/quota-router-core/src/native_http/groq.rs` | Groq via reqwest |
-| `crates/quota-router-core/src/native_http/together.rs` | Together AI via reqwest |
-| `crates/quota-router-core/src/native_http/replicate.rs` | Replicate via reqwest |
-| `crates/quota-router-core/src/lib.rs` | Add `#[cfg(any(feature = "litellm-mode", feature = "full"))] pub mod native_http;` |
-| `crates/quota-router-core/Cargo.toml` | Add `async-trait` to litellm-mode and full features |
+| File                                                    | Change                                                                             |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `crates/quota-router-core/src/native_http/mod.rs`       | HttpProvider trait + ProviderError + ProviderFactory + init_providers()            |
+| `crates/quota-router-core/src/native_http/openai.rs`    | OpenAI via reqwest                                                                 |
+| `crates/quota-router-core/src/native_http/anthropic.rs` | Anthropic via reqwest                                                              |
+| `crates/quota-router-core/src/native_http/mistral.rs`   | Mistral via reqwest                                                                |
+| `crates/quota-router-core/src/native_http/gemini.rs`    | Gemini via reqwest                                                                 |
+| `crates/quota-router-core/src/native_http/azure.rs`     | Azure OpenAI via reqwest                                                           |
+| `crates/quota-router-core/src/native_http/bedrock.rs`   | AWS Bedrock via reqwest                                                            |
+| `crates/quota-router-core/src/native_http/ollama.rs`    | Ollama via reqwest                                                                 |
+| `crates/quota-router-core/src/native_http/groq.rs`      | Groq via reqwest                                                                   |
+| `crates/quota-router-core/src/native_http/together.rs`  | Together AI via reqwest                                                            |
+| `crates/quota-router-core/src/native_http/replicate.rs` | Replicate via reqwest                                                              |
+| `crates/quota-router-core/src/lib.rs`                   | Add `#[cfg(any(feature = "litellm-mode", feature = "full"))] pub mod native_http;` |
+| `crates/quota-router-core/Cargo.toml`                   | Add `async-trait` to litellm-mode and full features                                |
 
 ## Acceptance Criteria
 
@@ -330,9 +335,9 @@ This is a **runtime dispatch** — Router doesn't need to know if it's using `na
 
 ## Completed Items (Moved to Separate Missions)
 
-| Item | Reason | Next Step |
-|------|--------|-----------|
-| SSE Streaming | Handled in mission 0917-d | See 0917-d for status |
+| Item                            | Reason                    | Next Step             |
+| ------------------------------- | ------------------------- | --------------------- |
+| SSE Streaming                   | Handled in mission 0917-d | See 0917-d for status |
 | Anthropic→OpenAI SSE conversion | Handled in mission 0917-d | See 0917-d for status |
 
 ## All 42 Providers

@@ -2,14 +2,23 @@
 
 ## Status
 
-**Version:** 1.9 (2026-03-19)
+**Version:** 2.3 (2026-08-19)
 **Status:** Accepted
 
 > **Note:** This RFC was originally numbered RFC-0105 under the legacy numbering system. It remains at 0105 as it belongs to the Numeric/Math category.
 
 > **Cross-RFC Amendment v1.9:**
+>
 > - Added §NumericScalar Implementation — establishes Dqa as canonical implementation of the RFC-0113 NumericScalar trait
 > - Documents cross-RFC relationships: RFC-0112 (original trait), RFC-0113 (canonical trait), RFC-0105 (implementation)
+
+> **Cross-RFC Amendment v2.0:**
+>
+> - Added §Asset ID Derivation — establishes `asset_id_for(role_token)` as the canonical BLAKE3-256 derivation rule for role-token identity (Layer A frozen substrate, mission 0105-v)
+> - Pinned 9-role-token enumeration (Sovereign `OCTO` excluded per cross-layer capability-attestation path): `OCTO-A/B/D/M/N/O/S/H/W`
+> - Anchored in central TV registry: TV-D9 (9 byte-exact BLAKE3-256 vectors) + TV-D10 (100 DQA arithmetic determinism fixtures)
+> - Cross-RFC relationships established: RFC-0960 (vault identity substrate), RFC-0964 (constraint encoding) — both reuse `asset_id_for` for vault/constraint identity binding
+> - `octo_determin::asset_id_for` becomes canonical Layer A identity primitive; `octo_determin::ROLE_TOKENS` becomes canonical 9-token enumeration; TV-D9 anchors byte-exact cross-implementation behavior
 
 ## Summary
 
@@ -248,6 +257,63 @@ INSERT INTO trades (price) VALUES (123.4567894);  -- rounds to 123.456789
 | Scale exceeds column | Round to column scale using `DQA_ASSIGN_TO_COLUMN` (RoundHalfEven) |
 
 This ensures deterministic storage regardless of input precision.
+
+#### DQA Typed Literal Syntax
+
+A `DQA` typed literal is a SQL expression that denotes a DQA value
+inline in a query. The grammar is:
+
+```
+DQA <literal>      ::= DQA [ <scale_spec> ] <string_literal>
+<scale_spec>       ::= '(' <unsigned_integer> ')'
+<string_literal>   ::= <quoted_sql_string>
+```
+
+Where:
+
+- `DQA` is the case-insensitive keyword.
+- `<scale_spec>` is optional. When present, it MUST be a non-negative
+  integer in `[0, 18]`. When absent, the scale is inferred from the
+  decimal point in the string (count of digits after the point), or
+  defaults to `0` if no decimal point is present.
+- `<string_literal>` is a single-quoted SQL string. The contents MUST
+  match the regular expression `^-?[0-9]+(\.[0-9]+)?$` after
+  unescaping. Leading `+` is permitted and ignored. Whitespace inside
+  the quoted string is forbidden.
+
+The mantissa is computed as: drop the decimal point, prepend a `-` if
+the literal began with `-`, interpret the result as a base-10 integer.
+This integer MUST fit in `i64` (range `[-2^63, 2^63 - 1]`); literals
+outside this range raise `DqaError::Overflow`.
+
+Examples:
+
+```sql
+DQA '12345'             -- Dqa { value:  12345, scale: 0 }
+DQA '1.5'               -- Dqa { value:     15, scale: 1 }
+DQA(6) '1.234567'       -- Dqa { value: 1234567, scale: 6 }
+DQA(0) '-7'             -- Dqa { value:     -7, scale: 0 }
+DQA(3) '1.5'            -- Dqa { value:   1500, scale: 3 } (padded with zeros)
+```
+
+`CAST` interactions:
+
+| Expression                           | Result                                                           |
+| ------------------------------------ | ---------------------------------------------------------------- |
+| `CAST(BIGINT '42' AS DQA(0))`        | `DQA { value: 42, scale: 0 }` (BIGINT always scale=0)            |
+| `CAST(DQA '12345' AS BIGINT)`        | `BIGINT 12345` (raw mantissa; requires `scale == 0`)             |
+| `CAST(DQA '1.5' AS BIGINT)`          | Error: `DqaError::Overflow` (scale > 0, loss of `0.5`)           |
+| `CAST(DQA(6) '1.234567' AS BIGINT)`  | Error: `DqaError::Overflow` (non-zero scale → truncation loss)   |
+| `CAST(DQA '1.5' AS DECIMAL)`         | `DECIMAL '1.5'` (scale=1 → DECIMAL scale=1)                      |
+| `CAST(DQA(6) '1.234567' AS DECIMAL)` | `DECIMAL '1.234567'` (scale=6 → DECIMAL scale=6)                 |
+| `CAST(DQA '12345' AS DQA(6))`        | `DQA { value: 12345000000, scale: 6 }` (scale-up pads mantissa)  |
+| `CAST(DQA(6) '1.234567' AS DQA(0))`  | `DQA { value: 1, scale: 0 }` (RoundHalfEven rounding to scale=0) |
+
+The literal form is the canonical ingress path for DQA test vectors
+and SQL fixtures; programmatic construction via
+`Dqa::new(value, scale)` remains valid for in-process Rust code.
+Implementations MUST accept the literal syntax in expression
+contexts (`SELECT`, `WHERE`, `CAST`, `INSERT VALUES`, `CASE`).
 
 ### Scale Alignment Rules
 
@@ -574,6 +640,108 @@ For hot paths in VM execution, canonicalization after every operation can be exp
 ```
 
 **VM Canonicalization Rule (Normative)**: VM registers MAY contain non-canonical DQA values during intermediate evaluation. Before a value is used for comparison, serialization, hashing, storage, control-flow evaluation, or returning from a VM frame, it MUST be canonicalized. This guarantees cross-node state equivalence.
+
+### Asset ID Derivation
+
+> **Section added in v2.0 (mission 0105-v).** Establishes the canonical
+> BLAKE3-256 derivation rule for role-token identity primitives. This
+> section lives in Layer A frozen substrate (per
+> ``docs/architecture/design-principles.md`.md`) — semver-major changes to the
+> derivation rule, namespace, or role-token enumeration require an RFC
+> revision.
+
+#### Canonical derivation rule
+
+```text
+asset_id = BLAKE3-256("cipherocto/asset/v1/" || role_token_bytes)[:32]
+```
+
+The output is a 32-byte sequence (BLAKE3-256 truncated to its native
+output length — the truncation is defensive; BLAKE3-256's natural
+output is already 32 bytes). Inputs MUST be a non-empty ASCII string;
+the canonical role-token enumeration is fixed at 9 slots (see §Role-token
+enumeration).
+
+#### Domain-separated namespace
+
+The namespace prefix `"cipherocto/asset/v1/"` (constant
+`ASSET_ID_DOMAIN_V1` in `octo_determin::asset_id`) is the only
+normative namespace. Future version bumps (`v2`, `v3`, ...) MUST
+change this string to guarantee collision-free asset IDs across
+ecosystem forks. Any namespace change is a semver-major break for
+`octo-determin`.
+
+#### Role-token enumeration
+
+The canonical 9-role-token enumeration (cross-section reconciliation
+per review §1336):
+
+| Role-token | Function       |
+| ---------- | -------------- |
+| `OCTO-A`   | AI Compute     |
+| `OCTO-B`   | Bandwidth      |
+| `OCTO-D`   | Developers     |
+| `OCTO-M`   | Marketing      |
+| `OCTO-N`   | Node Operators |
+| `OCTO-O`   | Orchestrator   |
+| `OCTO-S`   | Storage        |
+| `OCTO-H`   | Historical     |
+| `OCTO-W`   | AI Wholesale   |
+
+Sovereign `OCTO` is EXCLUDED from this enumeration — it follows a
+separate cross-layer capability-attestation path (review §1362). Future
+token additions (`OCTO-X`, ...) expand the TV-D9 fixture count via an
+additive v2.x enumeration extension.
+
+#### Layer placement
+
+The `asset_id_for` function lives in `octo_determin::asset_id`
+(Layer A frozen substrate). Consumer crates (Layer B/C/D) reach it via
+the canonical re-export chain:
+
+```text
+octo_determin::asset_id::asset_id_for   (canonical definition)
+    └─ octo_determin::asset_id_for       (re-export at crate root)
+        └─ consumer crates via git dep   (octo-determin)
+```
+
+The Layer B `octo-vault::AssetId::derive` MUST agree byte-by-byte
+with `octo_determin::asset_id_for` for every role-token — this is
+cross-implementation drift detection (regression: silent identity-key
+drift across vault substrate + canonical Layer A).
+
+#### Test vectors (TV-D9)
+
+9 byte-exact BLAKE3-256 fixtures pinned in the central registry
+(`crates/octo-vault/tests/test_vectors.rs::tv_d9_asset_id`):
+
+```text
+("OCTO-A", "161e52f483cf25de1163a0d6dccce98c50404971065de3b1013aaeaa64e1a01b")
+("OCTO-B", "5ca7f59fe932648a0327c29060326a2fe6ad60131d5b38639f15c720d9ce3c0a")
+("OCTO-D", "c5180b712f27cc8e0d72dc7d91217e6526fd8eaaa526ac5d83b62c29ffe7a581")
+("OCTO-M", "8aa463d5d06c35ea75abca875ef7787945db0c321d609e6e6e1a8fec21caf64a")
+("OCTO-N", "b940c7dc0087fd559a626d8047881ac4e620282e112bdcf6fb437a374cf64091")
+("OCTO-O", "d2cf354857f5612e78a35c9d307885a1e3428804c5bda2c4b3cb4ae2e1e2ca4a")
+("OCTO-S", "fc97983dcb4b30e8cd9d893f4784ffcaaa6d3fc585129b6554a658dac40f5f36")
+("OCTO-H", "72a20d851da06aaeaa34451a79bf70633d8e3b2553e4c86606864d98ef4a2483")
+("OCTO-W", "24fadb2b4f5eebc5f6199f3ee4625f64d8d7c822413c700309f09b0ad1b281b0")
+```
+
+These vectors are anchored at the central registry (§8.10). Any
+namespace, hash-function, or role-token enumeration change MUST
+re-anchor all 9 vectors (the failure mode: vector mismatch surfaces in
+`tv_d9_asset_id_vectors_match_pinned_hex`).
+
+#### Cross-RFC relationships
+
+- **RFC-0960 (vault identity substrate)**: vault identity binding
+  uses `asset_id_for(role_token)` for role-aware vault-key derivation.
+- **RFC-0964 (constraint encoding)**: constraint-encoding layer
+  pins the role-token enumeration as the canonical constraint
+  discriminator set.
+
+Both consumers MUST route through `octo_determin::asset_id_for` — no
+parallel re-implementations.
 
 ### Deterministic Power Table
 
@@ -1116,13 +1284,13 @@ This RFC defines the concrete `Dqa` type with canonicalization and arithmetic op
 
 ### Relationship to NumericScalar Trait
 
-| Property | Value |
-|----------|-------|
-| Type | Dqa (concrete, RFC-0105) |
-| NumericScalar Version | RFC-0113 (canonical, supersedes RFC-0112) |
-| MAX_SCALE | 18 |
-| SQRT Support | No (returns Error::Unsupported) |
-| Canonicalization | Enforced at construction and after every operation |
+| Property              | Value                                              |
+| --------------------- | -------------------------------------------------- |
+| Type                  | Dqa (concrete, RFC-0105)                           |
+| NumericScalar Version | RFC-0113 (canonical, supersedes RFC-0112)          |
+| MAX_SCALE             | 18                                                 |
+| SQRT Support          | No (returns Error::Unsupported)                    |
+| Canonicalization      | Enforced at construction and after every operation |
 
 ### RFC-0113 Trait Implementation
 
@@ -1154,22 +1322,24 @@ impl NumericScalar for Dqa {
 ### Canonicalization Invariant (CRITICAL)
 
 > **Canonicalization is MANDATORY at serialization time.** `Dqa::new(...)` does NOT canonicalize — it is a low-level constructor. Canonicalization happens at three points:
+>
 > 1. **Arithmetic operations** (`add`, `sub`, `mul`, `div`) canonicalize results before returning
 > 2. **`DqaEncoding::from_dqa()`** canonicalizes before encoding to bytes
 > 3. **Before serialization**, users MUST call `canonicalize()` or use `DqaEncoding::from_dqa()`
 
 This invariant ensures:
+
 1. **Deterministic Merkle hashes** — same logical value always encodes identically
 2. **TRAP canonicalization** — TRAP sentinel `(0x8000000000000000, 0xFF)` is the canonical TRAP representation
 3. **Consensus safety** — no two distinct Dqa values can have identical encodings
 
 ### Cross-RFC References
 
-| RFC | Relationship |
-|-----|--------------|
-| RFC-0112 | Original `NumericScalar` trait definition (superseded) |
+| RFC      | Relationship                                                                   |
+| -------- | ------------------------------------------------------------------------------ |
+| RFC-0112 | Original `NumericScalar` trait definition (superseded)                         |
 | RFC-0113 | Canonical `NumericScalar` trait definition; defines trait for DMAT composition |
-| RFC-0105 | Dqa provides the concrete implementation of NumericScalar |
+| RFC-0105 | Dqa provides the concrete implementation of NumericScalar                      |
 
 ## Related Use Cases
 
@@ -1198,28 +1368,31 @@ The original RFC specified 7 type-specific DQA opcodes (`OP_DQA_ADD/SUB/MUL/DIV/
 ### B2. Cross-Type Numeric Comparison (Resolves: S1, S10)
 
 **Previous behavior:** Cross-type comparison used `as_float64().unwrap()`, which:
+
 1. Returned `None` for all Extension types (including Quant), causing server panics
 2. For DQA: `(q.value as f64) / 10^q.scale` overflows f64 for large values with high scale
 
 **New behavior:** Cross-type comparison uses type promotion:
 
-| Left Type | Right Type | Comparison Strategy |
-|-----------|------------|---------------------|
-| Quant | Integer | Promote Integer → Quant(scale=0), compare via `dqa_cmp` |
-| Quant | Float | Convert Quant → f64 (lossy but explicit), compare as f64 |
-| Quant | DFP | `Error::IncomparableTypes` (explicit CAST required) |
-| Quant | Quant | Same-type `dqa_cmp` after canonicalization |
+| Left Type | Right Type | Comparison Strategy                                      |
+| --------- | ---------- | -------------------------------------------------------- |
+| Quant     | Integer    | Promote Integer → Quant(scale=0), compare via `dqa_cmp`  |
+| Quant     | Float      | Convert Quant → f64 (lossy but explicit), compare as f64 |
+| Quant     | DFP        | `Error::IncomparableTypes` (explicit CAST required)      |
+| Quant     | Quant      | Same-type `dqa_cmp` after canonicalization               |
 
 **Warning:** Quant → f64 conversion for comparison is lossy for values exceeding f64 integer precision (2^53) at high scales. A query like `WHERE quant_col > 9007199254740993` may produce incorrect results for values near the precision boundary. This is documented as a known limitation — use `CAST(float_col AS DQA)` for exact comparison.
 
 ### B3. Single Casting Truth (Resolves: S2, S3, S4, S7)
 
 Three code paths previously implemented independent type coercion for Quant:
+
 1. `Value::cast_to_type()` — borrowing, was a stub returning NULL
 2. `Value::into_coerce_to_type()` — consuming, was a stub returning NULL
 3. `CastExpr::perform_cast()` — was returning Error
 
 **Requirement:** All three paths delegate to a single implementation in `Value::cast_to_type()`:
+
 - `into_coerce_to_type()` calls `cast_to_type()` internally, inlining only the same-type fast-path
 - `perform_cast()` delegates to `Value::cast_to_type()` via `Ok(value.cast_to_type(target))`
 
@@ -1243,6 +1416,7 @@ DFP payloads are also validated (expected 24 bytes for `DfpEncoding`).
 ### B6. Display and String Representation (Resolves: S5, S10)
 
 Quant values display as their decimal representation:
+
 - `Dqa { value: 123, scale: 2 }` → `"1.23"`
 - `Dqa { value: 42, scale: 0 }` → `"42"`
 - `Dqa { value: -100, scale: 2 }` → `"-1"`
@@ -1253,20 +1427,23 @@ The `format_dqa()` and `parse_string_to_dqa()` helpers handle the bidirectional 
 
 DQA integration MUST include:
 
-| Category | Tests Required | Coverage |
-|----------|---------------|----------|
-| Value API | Round-trip, Display, as_string, as_float64, coercion | Per type conversion |
-| VM Arithmetic | add/sub/mul/div/mod (via arithmetic_op_quant) | Per operation |
-| Cross-type comparison | Quant vs Int, Quant vs Float | Per combination |
-| Format/parse | format_dqa ↔ parse_string_to_dqa round-trip | Scale 0, 1, 2, 9, 18 |
-| SQL round-trip | CREATE → INSERT → SELECT → WHERE | End-to-end |
-| Persistence | Serialization → deserialization with validation | Corrupted payloads rejected |
+| Category              | Tests Required                                       | Coverage                    |
+| --------------------- | ---------------------------------------------------- | --------------------------- |
+| Value API             | Round-trip, Display, as_string, as_float64, coercion | Per type conversion         |
+| VM Arithmetic         | add/sub/mul/div/mod (via arithmetic_op_quant)        | Per operation               |
+| Cross-type comparison | Quant vs Int, Quant vs Float                         | Per combination             |
+| Format/parse          | format_dqa ↔ parse_string_to_dqa round-trip          | Scale 0, 1, 2, 9, 18        |
+| SQL round-trip        | CREATE → INSERT → SELECT → WHERE                     | End-to-end                  |
+| Persistence           | Serialization → deserialization with validation      | Corrupted payloads rejected |
 
 ---
 
 **Submission Date:** 2025-03-06
 **Last Updated:** 2026-04-01
+**Revision:** v2.3 - R1 adversarial review fixes (mission `0105-dqa-literal-syntax`): (a) `DqaError::MantissaOverflow` → `DqaError::Overflow` (phantom variant; existing enum variant covers literal mantissa overflow); (b) `DqaError::ConversionLoss` → `DqaError::Overflow` (phantom variant; same reason); (c) CAST interaction table expanded with 3 missing rows: `CAST(BIGINT AS DQA(0))`, `CAST(DQA '1.5' AS DECIMAL)`, `CAST(DQA(6) AS BIGINT)` (truncation error case).
+**Revision:** v2.2 - Formalize §DQA Typed Literal Syntax (`DQA '...'` / `DQA(n) '...'`) — establishes the canonical SQL ingress grammar for DQA literals; CAST interaction table with BIGINT/DECIMAL/DQA targets; mantissa overflow range `i64`. Spec-only; parser implementation lands in fork per mission `0105-dqa-literal-syntax` AC-2/AC-3.
 **Revision:** v2.14 - Architecture amendment: unified runtime dispatch, cross-type comparison, single casting truth, validation on extraction, persistence validation, display/string representation, verification requirements
+**Revision:** v2.1 - Canonicalize role-token literal form: `OCTO_W` / `OCTO_A` → `OCTO-W` / `OCTO-A` (hyphen form, per §Asset ID Derivation enumeration). Affects 8 fixture/crate sites; TV-D9 + TV-V1-01..10 hex constants regenerated (BLAKE3 input string change). No spec text change — `asset_id_for` derivation rule unchanged. Mission `0105-v2`.
 **Revision:** v2.13 - Tightened MUL clamping wording, added large-value chain test, added >90% note to DQA_CMP fast-path
 **Revision:** v2.12 - Added SQL vs canonical representation clarification, fixed division rounding wording (TARGET_SCALE precision), strengthened SIMD determinism rule, enforced canonicalization in encoding API, added control-flow to VM canonicalization rule, added power<=36 invariant, added scale alignment overflow test vector
 **Revision:** v2.11 - Fixed DIV negative test vector (-12 not -13), added i64 range check to DQA_ASSIGN_TO_COLUMN, added CANONICALIZE to DIV return, unified scale overflow references, fixed test vector notes, added DIV canonicalization test vector, fixed MAX_I128_DIGITS to 39
@@ -1279,3 +1456,10 @@ DQA integration MUST include:
 **Revision:** v2.4 - Fixed comparison overflow guard, tightened lazy canonicalization rule, added explicit constants, fixed division precision claim
 **Revision:** v2.3 - Added derives to Dqa struct, fixed division overflow guard, fixed comparison overflow, corrected test vectors
 **Revision:** v2.2 - Added rounding trade-off note, guard-digit variant, additional test vectors, lazy canonicalization, fast-path implementation
+
+## Version History
+
+| Version | Date       | Change                                                                                 |
+| ------- | ---------- | -------------------------------------------------------------------------------------- |
+| 2.3     | 2026-08-19 | Status block: v2.3 (2026-08-19) — DQA NumericScalar implementation per RFC-0113.       |
+| 1.0     | 2026-08-22 | Retroactive VH table addition (per long-horizon plan v1.3 Phase 1 + Option C per M37). |

@@ -1,0 +1,45 @@
+[package]
+name = "octo-role"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "CipherOcto role provisioning substrate — Layer B per RFC-0011-d §7.4"
+
+[lib]
+name = "octo_role"
+path = "src/lib.rs"
+
+[dependencies]
+# Layer A/B crypto substrate
+# Layer B identity substrate (Did type)
+octo-ident = { path = "../octo-ident", version = "0.1.0" }
+# Layer B capability substrate (CapabilitySigner trait per RFC-0957)
+octo-cap-macaroon = { path = "../octo-cap-macaroon", version = "0.1.0" }
+# Layer B wallet substrate (next_nonce_counter per RFC-0009)
+octo-wallet = { path = "../octo-wallet", version = "0.1.0" }
+# Layer B coordinator handover substrate (RFC-0855p-e):
+# `HandoverRequestEnvelope` is emitted by M10 `select_coordinator` /
+# `select_domain_coordinator` as the canonical post-binding envelope per
+# RFC-0011-d §7.4. Also re-exports `bind_domain_coordinator` from
+# `octo_network::dc::admin_attest` (M11, RFC-0855p-c §5a + RFC-0011-d v1.7.1
+# §7.4 Substrate `[ADD]`). Layer direction: octo-role (B) → octo-network (B
+# coordinator substrate); no upward dependency.
+octo-network = { path = "../octo-network", version = "0.2.0" }
+# Layer D adapter — Stoolap BEGIN IMMEDIATE tx primitive (RFC-0010)
+# Per [[feedback_stoolap_persistence]] — CipherOcto fork, never raw SQLite.
+stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
+
+# Serialization + JSON Schema export (RFC-0011-d §Key Files row "JSON Schema export")
+serde = { version = "1.0", features = ["derive"] }
+schemars = "0.8"
+# Substrate error type (RFC-0011-d §Error Handling)
+thiserror = "1.0"
+# Hashing for canonical binding envelope (RFC-0104 DFP)
+blake3 = "1.5"
+# UUIDv5 derivation per RFC-4122 §4.3 (RFC-0855 namespaced UUID anchor)
+uuid = { version = "1.10", features = ["v5"] }
+
+[dev-dependencies]
+# Phase 1 acceptance requires no external dev deps; serde_json only
+serde_json = "1.0"

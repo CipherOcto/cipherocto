@@ -3,14 +3,85 @@ name = "octo-runtime"
 version = "0.1.0"
 edition = "2021"
 
-[dependencies]
-tokio = { version = "1.35", features = ["full"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-async-trait = "0.1"
-tracing = "0.1"
-anyhow = "1.0"
-thiserror = "2.0"
+# Mission `0011-c-octo-runtime-substrate` (RFC-0011-c §9.10 Substrate
+# `[ADD]` Signatures; Layer B substrate-authoritative). Per
+# [[cipherocto-design-principles]] §Layer direction, this crate is Layer
+# B; consumed by Layer C/D `octo-cli` (one-way; no reverse dep).
 
-octo-core = { path = "../octo-core" }
-octo-registry = { path = "../octo-registry" }
+[dependencies]
+# Async runtime (Layer D transport substrate). Narrowed to
+# `rt + sync + macros` per Layer-model hygiene: substrate stays
+# filesystem-free + socket-IO-free. The `net`/`process`/`signal`
+# features are pulled in only by Layer D transport crates
+# (`octo-runtime-transport-unix`, …) at the layer boundary.
+tokio = { version = "1.35", features = ["rt", "sync", "macros"] }
+# Async trait dispatch — Layer D transport substrate (RFC-0011 §Dependencies).
+async-trait = "0.1"
+# Envelope codec (Layer B; RFC-0011 §Output Envelope).
+serde = { version = "1.0", features = ["derive"] }
+# JSON round-trip property testing for Layer B types (`AgentState`,
+# `RuntimeEvent`, `AttachHandle`); pairs with the `serde` `derive`
+# macros two lines above. Test-only in this crate — production
+# codec path is custom binary per `encoding.rs`. The canonical
+# `OutputEnvelope<T>` envelope lives in octo-cli Layer C.
+serde_json = "1.0"
+# Error enum derivation (Layer C/D operator envelope; substrate surfaces).
+thiserror = "2.0"
+# Typed UUID discriminator (RFC-0855 §Typed UUID discriminators).
+uuid = { version = "1", features = ["v4", "serde"] }
+# Timestamps (RFC-0011 §Output Envelope; substrate signatures).
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+# Tracing (Layer D transport substrate).
+tracing = "0.1"
+# BLAKE3 hash for canonical encoding integrity check (RFC-0011-c §F.1).
+# Layer A frozen hashing primitive; direct dep per
+# [[cipherocto-design-principles]] §Stable Abstractions Principle:
+# Layer B consumes Layer A frozen primitives without rewrapping.
+blake3 = { version = "1", features = ["std"] }
+# Hex encoding (Debug impls on `RuntimeHandle` + `RuntimeHandleBinding`
+# session-id surface; mirrors the wallet substrate convention).
+hex = "0.4"
+
+# Layer B sibling edge per RFC-0011-c §F.5 sign_attach_handle_payload
+# composition (octo_runtime → octo_wallet::identity::IdentityKey::sign).
+# octo-core + octo-registry were previously declared here but unused in
+# this crate's source; removed to keep the dependency graph substrate-
+# faithful (Layer B substrate consumes only what it references).
+octo-wallet = { path = "../octo-wallet", version = "0.1.0" }
+# Workspace-standard byte-array serde adapter composed inside the local
+# `signature_bytes_serde` const-generic wrapper (`#[serde(with = "...")]
+# requires a concrete module path; const-generic `serde_bytes::ByteArray<N>`
+# can't be referenced directly). Per [[cipherocto-design-principles]]
+# §No parallel abstractions: thin wrapper around
+# `serde_bytes::ByteArray<64>` rather than a hand-rolled length-prefix impl.
+serde_bytes = "0.11"
+
+[features]
+# Stoolap cursor persistence per RFC-0011-c §F.3. Opt out with
+# `default-features = false` for a stoolap-free build.
+default = ["octo-runtime-persistence"]
+octo-runtime-persistence = ["dep:stoolap"]
+# Key rotation discriminator substrate (RFC-0011-c §F.5.1 +
+# RFC-0015-a §6.5 paired-acceptance bridge). When enabled, exposes
+# `sign_attach_handle_payload_v2` + `verify_attach_handle_payload_v2`
+# + `AttachError::UnknownKeyId`. When disabled (default), the v1
+# single-pubkey verify path is byte-identical to the pre-D2.1
+# baseline. Population POLICY for the `key_set` registry is OUT OF
+# SCOPE here — see `handle::key_id` module rustdoc.
+octo-attach-key-rotation = []
+
+[dependencies.stoolap]
+# CipherOcto fork per [[feedback_stoolap_persistence]] (workspace pinned at rev 527e8eb).
+# Conditional: only compiled when `octo-runtime-persistence` feature enabled.
+optional = true
+git = "https://github.com/cipherocto/stoolap"
+rev = "527e8eb"
+
+[dev-dependencies]
+# Second registered algorithm (Layer A, RFC-0009 AC#11). Dev-only. Every other
+# vector in this module verifies an Ed25519 key, and a verifier that ignored
+# its `algorithm_id` argument would pass all of them. A stark-schnorr key is
+# 33 bytes, which makes the difference observable, and the attach-handle token
+# path carries the key as a slice so it can carry one.
+octo-algo-stark-schnorr = { path = "../octo-algo-stark-schnorr" }
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }

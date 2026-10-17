@@ -14,8 +14,18 @@ async-trait = "0.1"
 blake3 = "1.5"
 tracing = { workspace = true }
 octo-network = { path = "../octo-network" }
+# The envelope carries no algorithm, so a verifying adapter supplies it
+# (RFC-0009 AC#11). DOT envelopes are signed with ed25519-dalek, so Ed25519
+# is the algorithm these call sites verify under. This call site was
+# stranded when the signature changed; `cargo clippy --all-targets` is
+# what surfaced it, because the dispatch missions gated on `--lib` only.
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
 
 # QUIC transport (RFC 9000, RFC-0850 §8.7)
 quinn = "0.11"
 rustls = "0.23"
+# PEM decoding for operator-supplied TLS material (audit H-8: tls_cert_path /
+# tls_key_path were silently ignored). Already a workspace dependency — using
+# the workspace entry keeps one version of the rustls PEM stack in the graph.
+rustls-pemfile.workspace = true
 rcgen = "0.13"

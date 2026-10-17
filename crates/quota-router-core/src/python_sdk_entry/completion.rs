@@ -16,6 +16,7 @@ use pyo3::prelude::*;
 #[pyfunction]
 #[pyo3(name = "completion", text_signature = "(model, messages, **kwargs)")]
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_lines)]
 pub fn completion(
     model: String,
     messages: Vec<Message>,
@@ -39,6 +40,14 @@ pub fn completion(
     _prompt_cache_key: Option<String>,
     _prompt_cache_retention: Option<String>,
     _conversation: Option<String>,
+    // Prompt management (RFC-0948) — accepted at the Python SDK boundary
+    // for parity with the HTTP API surface. Prompt resolution lives in
+    // the proxy layer (`proxy.rs::resolve_prompt`); when the SDK caller
+    // routes through the local HTTP proxy the kwargs take effect, when
+    // calling a provider directly via py_bridge the params are accepted
+    // but not applied (no proxy layer in front of the provider SDK).
+    _prompt_id: Option<String>,
+    _prompt_variables: Option<std::collections::HashMap<String, String>>,
 ) -> PyResult<Py<PyAny>> {
     // Parse model string to determine provider
     let parsed = crate::model::ParsedModel::parse(&model)

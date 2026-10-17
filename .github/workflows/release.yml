@@ -20,18 +20,18 @@ jobs:
     if: "!contains(github.event.head_commit.message, '[skip release]')"
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Check if tags exist
         id: check_tags
         run: |
-          if [ $(git tag -l | wc -l) -eq 0 ]; then
-            echo "has_tags=false" >> $GITHUB_OUTPUT
+          if [ "$(git tag -l | wc -l)" -eq 0 ]; then
+            echo "has_tags=false" >> "$GITHUB_OUTPUT"
             echo "No tags found, creating initial release"
           else
-            echo "has_tags=true" >> $GITHUB_OUTPUT
+            echo "has_tags=true" >> "$GITHUB_OUTPUT"
             echo "Tags found, generating changelog"
           fi
 
@@ -46,21 +46,28 @@ jobs:
         if: steps.check_tags.outputs.has_tags == 'false'
         id: initial_changelog
         run: |
-          echo "changelog<<EOF" >> $GITHUB_OUTPUT
-          echo "## 🎉 Initial Release" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "This is the first automated release for CipherOcto." >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "### What's Included" >> $GITHUB_OUTPUT
-          echo "- Production-grade CI/CD workflows" >> $GITHUB_OUTPUT
-          echo "- Rust-first architecture setup" >> $GITHUB_OUTPUT
-          echo "- Branch protection and strategy" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "### Changes since inception" >> $GITHUB_OUTPUT
-          echo '```' >> $GITHUB_OUTPUT
-          git log --pretty=format:"- %s" --reverse >> $GITHUB_OUTPUT
-          echo '```' >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          # shellcheck disable=SC2129
+          # Sequential appends are deliberate: the block builds a heredoc
+          # (`changelog<<EOF` … `EOF`) for the step output, and collapsing
+          # it into SC2129's `{ …; } >> file` form would restructure working
+          # release automation to satisfy a style preference. Appends are
+          # also the idiom GitHub documents for multi-line step output.
+          # See audit §8 R15.
+          echo "changelog<<EOF" >> "$GITHUB_OUTPUT"
+          echo "## 🎉 Initial Release" >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "This is the first automated release for CipherOcto." >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "### What's Included" >> "$GITHUB_OUTPUT"
+          echo "- Production-grade CI/CD workflows" >> "$GITHUB_OUTPUT"
+          echo "- Rust-first architecture setup" >> "$GITHUB_OUTPUT"
+          echo "- Branch protection and strategy" >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "### Changes since inception" >> "$GITHUB_OUTPUT"
+          echo '```' >> "$GITHUB_OUTPUT"
+          git log --pretty=format:"- %s" --reverse >> "$GITHUB_OUTPUT"
+          echo '```' >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Create Release
         # Only create actual releases on push to main, not on PRs

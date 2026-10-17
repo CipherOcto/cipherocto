@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v1.7) — 9-round adversarial review complete; 28 issues fixed
+Accepted (v1.9) — Status header synced with §Version History per M35 corpus-wide sync check (prior header read v1.7; VH row latest is v1.9)
 
 ## Authors
 

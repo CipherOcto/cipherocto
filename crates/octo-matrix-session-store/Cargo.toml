@@ -12,7 +12,14 @@ edition = "2021"
 # `Database::open(path)` / `Database::open_in_memory()` + `db.execute(sql, params)`
 # and `db.query(sql, params) -> stoolap::Rows`. See
 # `crates/quota-router-core/src/storage.rs` for the canonical pattern.
-stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
+# Layer A storage substrate (mission 0206-001). Re-exports `Database`
+# newtype wrapping `stoolap::Database`. The store uses
+# `octo_storage_core::Database` in field/return positions.
+octo-storage-core = { path = "../octo-storage-core" }
+
+# RFC-0206 §Substrate Re-export Block: `Error`, `ResultRow`,
+# `Value` (and `ApiTransaction`, `Rows`) are now reached via
+# `octo_storage_core::stoolap::*`. No direct fork dep needed.
 # Serialization for the row model.
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -61,7 +61,7 @@ impl RpcHandler for MessagesReadViewOnce {
         // Note: we deliberately drive the row iterator with a
         // `while let Some(...)` loop rather than `match rows.next()`
         // for the first row. Empirically, when this query is the first
-        // stoolap::Database::query call against the ingester's
+        // octo_storage_core::Database::query call against the ingester's
         // in-memory file, the `match` form reports `None` even when
         // the underlying drain loop (identical SQL) returns exactly
         // one row. `while let` consistently observes the row, so we
@@ -228,9 +228,9 @@ mod tests {
     use crate::events::{EventEnvelope, InboundEvent};
     use crate::query::embedder::MockEmbedder;
     use crate::test_mock_adapter::MockAdapter;
+    use octo_storage_core::Database;
     use std::path::PathBuf;
     use std::sync::Arc;
-    use stoolap::Database;
 
     fn handle() -> DaemonHandle {
         let tmp = tempfile::tempdir().expect("tempdir");

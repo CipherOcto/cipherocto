@@ -1,0 +1,32 @@
+[package]
+name = "octo-settlement"
+version = "0.1.0"
+edition = "2021"
+description = "Layer B settlement facade — re-exports octo-settlement-core (RFC-0014 §Module Layout)"
+license = "Apache-2.0"
+authors = ["CipherOcto"]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# Layer B facade → Layer A substrate (RFC-0014 §Module Layout).
+octo-settlement-core = { path = "../octo-settlement-core" }
+# Per-façade scrubber compilation posture (RFC-0014-v3 §S5.1 / RFC-0012-v3 §S5.1; Layer B façade)
+regex = { workspace = true }
+# Lazy static regex compilation (RFC-0014-v3 §S5.1 / RFC-0012-v3 §S5.1; Layer B façade)
+once_cell = { workspace = true }
+
+[dev-dependencies]
+# Shadow 8-variant `SettlementError` at `quota-router-sm-engine` (Layer C
+# specialized node) — required for `workspace_redaction_regression`
+# Display-coverage tests per mission 0014-v3 Deliverable 1. Cross-crate
+# dev-dep only (not propagated to non-test builds).
+quota-router-sm-engine = { path = "../quota-router-sm-engine" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+empty_line_after_doc_comments = "allow"
+doc_lazy_continuation = "allow"

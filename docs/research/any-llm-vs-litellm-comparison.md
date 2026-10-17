@@ -747,12 +747,12 @@ graph TD
 
 | RFC | Recommendation |
 | --- | --- |
-| RFC-0902 (Routing) | Adopt LiteLLM's 7 routing approaches as reference spec; add OCTO-W balance strategy |
-| RFC-0903 (Virtual Keys) | Adopt LiteLLM's key scoping model (org → team → key → model allowlist) |
-| RFC-0904 (Cost Tracking) | Adopt LiteLLM's cost attribution hierarchy; extend with OCTO-W denomination |
-| RFC-0905 (Observability) | Target Prometheus + OpenTelemetry as primary; LiteLLM callback pattern as template |
-| RFC-0906 (Caching) | Implement Redis + semantic cache; use LiteLLM's DualCache pattern |
-| RFC-0907 (Config) | Support LiteLLM's YAML config format for drop-in compatibility |
+| RFC-0902 | Adopt LiteLLM's 7 routing approaches as reference spec; add OCTO-W balance strategy |
+| RFC-0903 | Adopt LiteLLM's key scoping model (org → team → key → model allowlist) |
+| RFC-0904 | Adopt LiteLLM's cost attribution hierarchy; extend with OCTO-W denomination |
+| RFC-0905 | Target Prometheus + OpenTelemetry as primary; LiteLLM callback pattern as template |
+| RFC-0906 | Implement Redis + semantic cache; use LiteLLM's DualCache pattern |
+| RFC-0907 | Support LiteLLM's YAML config format for drop-in compatibility |
 
 ### Risks
 

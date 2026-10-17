@@ -6,6 +6,7 @@ use octo_transport::receiver::{NetworkReceiver, ReceiveContext};
 use octo_transport::sender::{SendContext, TransportError};
 
 use super::announce::{RouterAnnouncePayload, RouterWithdrawPayload, SignedPayload};
+use super::envelope_v2::wrap_outbound_envelope;
 use super::forward::{
     ForwardRejectPayload, ForwardRejectReason, ForwardRequestPayload, ForwardResponsePayload,
 };
@@ -13,10 +14,6 @@ use super::gossip::CapacityGossipPayload;
 use super::provider::{LocalProvider, PeerTrust, ProviderCapacity, RouterNodeId};
 use super::scorer::{Destination, SelectionState};
 use super::QuotaRouterNode;
-use super::{
-    envelope, DISC_CAPACITY_GOSSIP, DISC_FORWARD_REJECT, DISC_FORWARD_REQUEST,
-    DISC_FORWARD_RESPONSE,
-};
 
 fn deserialize<'a, T: serde::Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, TransportError> {
     bincode::deserialize(bytes).map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))
@@ -91,19 +88,91 @@ enum DropAction {
 #[async_trait]
 impl NetworkReceiver for QuotaRouterHandler {
     async fn on_receive(&self, payload: &[u8], ctx: &ReceiveContext) -> Result<(), TransportError> {
-        let (discriminator, body) = payload
-            .split_first()
-            .ok_or_else(|| TransportError::EnvelopeConstruction("empty payload".into()))?;
+        use borsh::BorshDeserialize;
+        use octo_protocol::payload_kind::{
+            QUOTA_CAPACITY_GOSSIP, QUOTA_CAPACITY_REQUEST, QUOTA_FORWARD_REJECT,
+            QUOTA_FORWARD_REQUEST, QUOTA_FORWARD_RESPONSE, QUOTA_ROUTER_ANNOUNCE,
+            QUOTA_ROUTER_WITHDRAW,
+        };
+        use octo_protocol::NodeEnvelope;
 
-        match discriminator {
-            0xC3 => self.handle_forward_request(body, ctx).await,
-            0xC4 => self.handle_forward_response(body).await,
-            0xC5 => self.handle_forward_reject(body).await,
-            0xC6 => self.handle_capacity_gossip(body).await,
-            0xC7 => self.handle_capacity_request(body, ctx).await,
-            0xCA => self.handle_router_announce(body).await,
-            0xCB => self.handle_router_withdraw(body).await,
-            _ => Ok(()),
+        use super::envelope_v2::classify_envelope;
+
+        // Empty payload is a contract violation per the existing
+        // `handler_empty_payload_is_err` unit test — preserve the
+        // `Err(EnvelopeConstruction)` behavior rather than silently
+        // dropping (AC-4 only covers invalid borsh on the New path,
+        // not zero-length payloads).
+        if payload.is_empty() {
+            return Err(TransportError::EnvelopeConstruction("empty payload".into()));
+        }
+
+        // Mission 0870-c: classify the inbound payload via the
+        // `classify_envelope` heuristic. Legacy form keeps the existing
+        // discriminator-byte dispatch (RFC-0870 v1.x backward compat);
+        // new form borsh-decodes the RFC-0871 `NodeEnvelope` and maps
+        // the `payload_kind` UUID to the matching legacy handler.
+        let envelope_form = classify_envelope(payload)
+            .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
+
+        match envelope_form {
+            super::envelope_v2::EnvelopeForm::Legacy { disc, body } => match disc {
+                0xC3 => self.handle_forward_request(body, ctx).await,
+                0xC4 => self.handle_forward_response(body).await,
+                0xC5 => self.handle_forward_reject(body).await,
+                0xC6 => self.handle_capacity_gossip(body).await,
+                0xC7 => self.handle_capacity_request(body, ctx).await,
+                0xCA => self.handle_router_announce(body).await,
+                0xCB => self.handle_router_withdraw(body).await,
+                // AC-2: unknown legacy discriminator → silent drop
+                // (preserves the existing unit-test contract).
+                _ => Ok(()),
+            },
+            super::envelope_v2::EnvelopeForm::New(bytes) => {
+                // Borsh-decode the RFC-0871 NodeEnvelope. The inner
+                // `envelope.payload` carries the bincode-serialized
+                // handler-specific payload (same wire form as legacy
+                // bodies, by RFC-0870 §NodeEnvelope Adoption).
+                let envelope = match NodeEnvelope::try_from_slice(bytes) {
+                    Ok(env) => env,
+                    // AC-4: invalid borsh bytes that slipped past
+                    // classify_envelope → silent drop (fallback to
+                    // legacy no-op semantics).
+                    Err(_) => return Ok(()),
+                };
+
+                // AC-3: unknown payload_kind UUID →
+                // `Err(TransportError::AdapterFailure)` per RFC-0871
+                // §Compatibility fail-closed. Map known UUIDs to
+                // legacy handlers; reject unknown UUIDs.
+                match &envelope.payload_kind {
+                    k if k == &QUOTA_FORWARD_REQUEST => {
+                        self.handle_forward_request(&envelope.payload, ctx).await
+                    }
+                    k if k == &QUOTA_FORWARD_RESPONSE => {
+                        self.handle_forward_response(&envelope.payload).await
+                    }
+                    k if k == &QUOTA_FORWARD_REJECT => {
+                        self.handle_forward_reject(&envelope.payload).await
+                    }
+                    k if k == &QUOTA_CAPACITY_GOSSIP => {
+                        self.handle_capacity_gossip(&envelope.payload).await
+                    }
+                    k if k == &QUOTA_CAPACITY_REQUEST => {
+                        self.handle_capacity_request(&envelope.payload, ctx).await
+                    }
+                    k if k == &QUOTA_ROUTER_ANNOUNCE => {
+                        self.handle_router_announce(&envelope.payload).await
+                    }
+                    k if k == &QUOTA_ROUTER_WITHDRAW => {
+                        self.handle_router_withdraw(&envelope.payload).await
+                    }
+                    _ => Err(TransportError::AdapterFailure(format!(
+                        "unknown payload_kind UUID: {:?}",
+                        envelope.payload_kind
+                    ))),
+                }
+            }
         }
     }
 
@@ -150,11 +219,19 @@ impl QuotaRouterHandler {
         // When the sender is identifiable we charge its bucket; otherwise
         // we fall back to a synthetic per-consumer bucket derived from
         // the consumer_id inside the request context.
+        //
+        // On denial we send a `ForwardReject` with `RateLimited` reason
+        // so the sender's `route()` resolves via the oneshot channel
+        // instead of timing out. Pre-fix the handler returned
+        // `TransportError::AdapterFailure` here without sending a
+        // reject, which caused sender-side `ForwardTimeout` errors that
+        // were indistinguishable from generic transport timeouts and
+        // broke the L2 T29 forwarded-rate-limit test.
         if let Some(sender) = sender_node_id {
             if !node.rate_limiter.lock().unwrap().check_peer(&sender) {
-                return Err(TransportError::AdapterFailure(
-                    "peer rate limit exceeded".into(),
-                ));
+                self.send_forward_reject(req.request_id, ForwardRejectReason::RateLimited)
+                    .await?;
+                return Ok(());
             }
         } else if !node
             .rate_limiter
@@ -162,9 +239,9 @@ impl QuotaRouterHandler {
             .unwrap()
             .check_consumer(&req.context.consumer_id)
         {
-            return Err(TransportError::AdapterFailure(
-                "consumer rate limit exceeded".into(),
-            ));
+            self.send_forward_reject(req.request_id, ForwardRejectReason::RateLimited)
+                .await?;
+            return Ok(());
         }
 
         if req.ttl == 0 {
@@ -220,7 +297,17 @@ impl QuotaRouterHandler {
                     let mut fwd = req.clone();
                     fwd.ttl -= 1;
                     fwd.hop_count += 1;
-                    envelope(DISC_FORWARD_REQUEST, &fwd)?
+                    let body = bincode::serialize(&fwd)
+                        .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
+                    wrap_outbound_envelope(
+                        &node.identity_key,
+                        &node.config.network_id,
+                        octo_protocol::payload_kind::QUOTA_FORWARD_REQUEST,
+                        body,
+                        u64::from(node.config.forwarding.max_ttl),
+                        crate::node::gossip::monotonic_now().saturating_mul(1000),
+                    )
+                    .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?
                 };
                 node.transport
                     .send_best(&fwd_bytes, &SendContext::default())
@@ -308,7 +395,17 @@ impl QuotaRouterHandler {
     ) -> Result<(), TransportError> {
         let node = self.upgrade_node()?;
         let gossip = node.build_capacity_gossip();
-        let payload_bytes = envelope(DISC_CAPACITY_GOSSIP, &gossip)?;
+        let body = bincode::serialize(&gossip)
+            .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
+        let payload_bytes = wrap_outbound_envelope(
+            &node.identity_key,
+            &node.config.network_id,
+            octo_protocol::payload_kind::QUOTA_CAPACITY_GOSSIP,
+            body,
+            60,
+            crate::node::gossip::monotonic_now().saturating_mul(1000),
+        )
+        .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
         node.transport
             .send_best(&payload_bytes, &SendContext::default())
             .await
@@ -340,7 +437,17 @@ impl QuotaRouterHandler {
             executed_by: node.primary_provider_id(),
             latency_ms: 0,
         };
-        let payload_bytes = envelope(DISC_FORWARD_RESPONSE, &payload)?;
+        let body = bincode::serialize(&payload)
+            .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
+        let payload_bytes = wrap_outbound_envelope(
+            &node.identity_key,
+            &node.config.network_id,
+            octo_protocol::payload_kind::QUOTA_FORWARD_RESPONSE,
+            body,
+            60,
+            crate::node::gossip::monotonic_now().saturating_mul(1000),
+        )
+        .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
         node.transport
             .send_best(&payload_bytes, &SendContext::default())
             .await
@@ -357,7 +464,17 @@ impl QuotaRouterHandler {
             peer_id: node.config.node_id,
             reason,
         };
-        let payload_bytes = envelope(DISC_FORWARD_REJECT, &payload)?;
+        let body = bincode::serialize(&payload)
+            .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
+        let payload_bytes = wrap_outbound_envelope(
+            &node.identity_key,
+            &node.config.network_id,
+            octo_protocol::payload_kind::QUOTA_FORWARD_REJECT,
+            body,
+            60,
+            crate::node::gossip::monotonic_now().saturating_mul(1000),
+        )
+        .map_err(|e| TransportError::EnvelopeConstruction(e.to_string()))?;
         node.transport
             .send_best(&payload_bytes, &SendContext::default())
             .await
@@ -370,6 +487,9 @@ mod tests {
     use crate::node::provider::{ProviderAuth, ProviderConfig, RouterNodeId};
     use crate::node::request::{ForwardingConfig, RequestContext, RoutingPolicy};
     use crate::node::QuotaRouterNode;
+    use crate::node::{
+        envelope, DISC_CAPACITY_GOSSIP, DISC_FORWARD_REQUEST, DISC_FORWARD_RESPONSE,
+    };
     use std::sync::Arc;
 
     fn make_node() -> Arc<QuotaRouterNode> {
@@ -428,7 +548,6 @@ mod tests {
         let r = node.receive(&[], &ctx).await;
         assert!(r.is_err());
     }
-
     #[tokio::test]
     async fn handle_forward_request_ttl_zero_rejects() {
         let node = make_node();
@@ -548,6 +667,7 @@ mod tests {
             capacities: vec![],
             timestamp: 100,
             hmac: [0u8; 32],
+            pricing_policy: None,
         };
         let payload = envelope(super::super::DISC_ROUTER_ANNOUNCE, &announce).unwrap();
         let r = node.receive(&payload, &ctx).await;
@@ -582,5 +702,34 @@ mod tests {
         let payload = envelope(DISC_FORWARD_RESPONSE, &resp).unwrap();
         let r = node.receive(&payload, &ctx).await;
         assert!(r.is_ok());
+    }
+
+    /// Regression: `RouterAnnouncePayload.pricing_policy` must bincode
+    /// round-trip when `Some(...)`. An earlier `skip_serializing_if`
+    /// on `PricingPolicy::settlement_recipient` caused the producer to
+    /// write 0 bytes for `None` while the consumer still read the
+    /// `Option` tag → `UnexpectedEof` on every announce with a
+    /// pricing_policy. See mission 0870-c.
+    #[test]
+    fn router_announce_payload_pricing_policy_roundtrip() {
+        use super::super::announce::RouterAnnouncePayload;
+        use super::super::provider::NetworkId;
+
+        let announce = RouterAnnouncePayload {
+            node_id: RouterNodeId([1u8; 32]),
+            network_id: NetworkId([2u8; 32]),
+            supported_models: vec!["gpt-4o".into()],
+            capacities: vec![],
+            timestamp: 100,
+            hmac: [0u8; 32],
+            pricing_policy: Some(super::super::announce::PricingPolicy {
+                drain_per_query: 0,
+                accepted_payment_capabilities: vec![],
+                settlement_recipient: None,
+            }),
+        };
+        let bytes = bincode::serialize(&announce).expect("serialize");
+        let back: RouterAnnouncePayload = bincode::deserialize(&bytes).expect("deserialize");
+        assert_eq!(back.pricing_policy, announce.pricing_policy);
     }
 }

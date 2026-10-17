@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -42,12 +42,60 @@ jobs:
         run: |
           if [ -f Cargo.toml ]; then cargo fmt --all -- --check; fi
 
+      # GitHub Actions workflow lint (audit §8 R11).
+      #
+      # Deliberately the ONLY step in this job without a `|| true` suffix. The
+      # clippy, prettier, black and flake8 steps above all swallow their exit
+      # code, so a failure in any of them is invisible — that is a separate
+      # finding (R9), raised and left for the owner, and it is the reason this
+      # step is called out rather than following the local convention.
+      #
+      # Running actionlint found four real defects in workflows that read
+      # correctly and did not do what they said, including a `github.before`
+      # that is not a GitHub context property and so silently resolved to the
+      # empty string. The image is version-pinned to the same release the
+      # fixes were verified against, so the gate cannot drift under the
+      # workflow it is checking.
+      #
+      # `-shellcheck=` is deliberately NOT passed: the image's shellcheck pass
+      # is fully enabled. It previously surfaced 22 findings (17 unquoted
+      # `>> $GITHUB_OUTPUT` redirects, 4 `$(…)` word-splits, 1 SC2129) in
+      # `release.yml` and `sync-e2e.yml`; all 22 are now resolved — the
+      # redirects are quoted, and the four that are false positives for their
+      # idiom carry a `# shellcheck disable=` with the reason inline. See
+      # audit §8 R15.
+      - name: Lint GitHub Actions workflows
+        uses: docker://rhysd/actionlint:1.7.7
+
       - name: Rust clippy
         run: |
           if [ -f Cargo.toml ]; then cargo clippy --all-targets --all-features -- -D warnings || true; fi
 
       - name: Run Prettier
         run: prettier --check . || true
+
+      # RFC specification lints.
+      #
+      # These are gating — no `|| true` — for the same reason actionlint is.
+      # The sweep this job documents above found that every other step in it
+      # swallows its exit code, so a failure in any of them is invisible. A
+      # check that cannot fail is not a check, and adding two more would have
+      # made the file worse while looking busier.
+      #
+      # Both lints are BASELINED. Each reports the pre-existing corpus and
+      # exits non-zero only on NEW findings, because a lint that fails on
+      # arrival gets switched off and leaves the defect class exactly where it
+      # was. `--strict` reports the full backlog.
+      #
+      # They exist because two R41 reviews in one session found the same class
+      # of defect repeatedly, and in every instance it was checkable in seconds:
+      # an RFC asserting a type or a section that resolves nowhere. See the
+      # module docstrings for the scope and the stated limits of each.
+      - name: Lint RFC section anchors
+        run: python3 scripts/lint-rfc-anchors.py
+
+      - name: Lint RFC type references
+        run: python3 scripts/lint-rfc-type-refs.py
 
       - name: Run Python format checks
         run: |

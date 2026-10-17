@@ -17,6 +17,7 @@ Accepted (v2.50 — 2026-05-10)
 ## Summary
 
 Define a dual-mode query router that operates under Rust feature gates: **LiteLLM Mode** (native Rust HTTP forwarding to provider REST APIs, like LiteLLM's custom HTTP clients) and **any-llm Mode** (Python SDK delegation via PyO3 to official provider SDKs, like any-llm's delegation approach). **Both modes expose BOTH interfaces (HTTP proxy and Python SDK).** The modes differ only in **how providers are called** (integration strategy), not which interfaces are available:
+
 - **LiteLLM Mode** uses `reqwest` (native Rust HTTP) to call provider REST APIs.
 - **any-llm Mode** uses PyO3 to call official Python SDKs.
 - Both modes provide **both** HTTP proxy (`/v1/chat/completions`) **and** Python SDK (`pip install quota_router` → `completion()`).
@@ -36,6 +37,7 @@ Based on `docs/research/any-llm-vs-litellm-comparison.md`:
 **any-llm** (Mozilla AI) is a lean correctness-first SDK that **delegates to official provider SDKs** (Anthropic SDK, OpenAI SDK, etc.). It has no router, no fallback, but maximum protocol correctness via SDK delegation. It exposes a Python SDK with an optional FastAPI gateway.
 
 **CipherOcto Opportunity:** The dual-mode distinction should mirror the architectural difference between the reference implementations:
+
 - **LiteLLM Mode:** Native Rust HTTP forwarding (like LiteLLM's custom HTTP approach, but in Rust) — no Python SDK dependency for provider calls, protocol control, lightweight
 - **any-llm Mode:** Python SDK delegation via PyO3 (like any-llm's SDK delegation approach) — maximum correctness via official SDKs, familiar Python API
 
@@ -45,26 +47,27 @@ Enterprise features are available in all modes (interface differs per mode). The
 
 The dual-mode architecture differentiates **how providers are called**, not which client interface is exposed:
 
-| Dimension | LiteLLM Mode | any-llm Mode |
-|-----------|--------------|--------------|
-| Provider integration | Native Rust HTTP forwarding (`reqwest`) | Python SDK delegation (PyO3 → official SDKs) |
-| Reference approach | LiteLLM's custom HTTP clients | any-llm's SDK delegation |
-| Python dependency | None for provider calls | Official provider SDKs (Anthropic, OpenAI, etc.) |
-| Protocol control | Full (custom HTTP implementation) | Delegated to SDK |
-| Correctness guarantee | Via audit + test | Via official SDK |
+| Dimension             | LiteLLM Mode                            | any-llm Mode                                     |
+| --------------------- | --------------------------------------- | ------------------------------------------------ |
+| Provider integration  | Native Rust HTTP forwarding (`reqwest`) | Python SDK delegation (PyO3 → official SDKs)     |
+| Reference approach    | LiteLLM's custom HTTP clients           | any-llm's SDK delegation                         |
+| Python dependency     | None for provider calls                 | Official provider SDKs (Anthropic, OpenAI, etc.) |
+| Protocol control      | Full (custom HTTP implementation)       | Delegated to SDK                                 |
+| Correctness guarantee | Via audit + test                        | Via official SDK                                 |
 
 **Interface availability depends on build configuration:**
 
-| Interface | LiteLLM Mode | any-llm Mode | `full` (default) |
-|-----------|:------------:|:------------:|:-----------------:|
-| HTTP proxy (`/v1/chat/completions`) | ✅ | ✅ | ✅ |
-| Python SDK (`pip install`) | ✅ | ✅ | ✅ |
+| Interface                           | LiteLLM Mode | any-llm Mode | `full` (default) |
+| ----------------------------------- | :----------: | :----------: | :--------------: |
+| HTTP proxy (`/v1/chat/completions`) |      ✅      |      ✅      |        ✅        |
+| Python SDK (`pip install`)          |      ✅      |      ✅      |        ✅        |
 
 The modes differ in **provider integration strategy** (`reqwest` vs. PyO3). Both interfaces are **always** available in all modes.
 
 **Note:** The `pip install quota-router` package is an `any-llm-mode` build — the HTTP proxy calls Rust core directly (which may internally delegate to PyO3 for provider calls). The `quota-router-gateway` binary is a `litellm-mode` build — it also has the Python SDK available. The `full` build has both interfaces. Mode selects the provider integration strategy (reqwest vs PyO3), NOT which interfaces exist.
 
 **Both modes enforce identical enterprise features:**
+
 - Virtual API keys (RFC-0903) — **HTTP proxy only** (Python SDK callers bypass proxy, no virtual key enforcement)
 - Budget enforcement (RFC-0904)
 - Rate limiting (RFC-0902)
@@ -114,20 +117,21 @@ flowchart TB
 ```
 
 **Key architectural point:** The `Shared` core is always compiled. **Both modes expose BOTH interfaces (HTTP proxy and Python SDK).** The feature gate selects the **provider integration strategy** (reqwest HTTP vs PyO3 SDK), NOT the interface:
+
 - `litellm-mode`: Uses `reqwest` (native Rust HTTP) to call providers. Both interfaces available.
 - `any-llm-mode`: Uses PyO3 to call official Python SDKs. Both interfaces available.
 - `full`: Uses both `reqwest` AND PyO3 strategies simultaneously. Both interfaces available.
 
 **What each mode builds:**
 
-| Feature | `litellm-mode` | `any-llm-mode` | `full` |
-|---------|:--------------:|:--------------:|:------:|
-| Native Rust HTTP (`reqwest`) | ✅ | ❌ | ✅ |
-| Python SDK delegation (PyO3) | ❌ | ✅ | ✅ |
-| HTTP proxy interface (`hyper`/`axum`) | ✅ | ✅ | ✅ |
-| Python SDK interface (`py-o3`) | ✅ | ✅ | ✅ |
-| Enterprise features | ✅ | ✅ | ✅ |
-| stoolap storage | ✅ | ✅ | ✅ |
+| Feature                               | `litellm-mode` | `any-llm-mode` | `full` |
+| ------------------------------------- | :------------: | :------------: | :----: |
+| Native Rust HTTP (`reqwest`)          |       ✅       |       ❌       |   ✅   |
+| Python SDK delegation (PyO3)          |       ❌       |       ✅       |   ✅   |
+| HTTP proxy interface (`hyper`/`axum`) |       ✅       |       ✅       |   ✅   |
+| Python SDK interface (`py-o3`)        |       ✅       |       ✅       |   ✅   |
+| Enterprise features                   |       ✅       |       ✅       |   ✅   |
+| stoolap storage                       |       ✅       |       ✅       |   ✅   |
 
 **Both modes have BOTH interfaces.** The difference is in provider integration strategy (reqwest vs PyO3).
 
@@ -154,18 +158,18 @@ full = []                     # Both provider integration strategies simultaneou
 
 **What each feature controls (provider integration strategy only):**
 
-| Feature | Provider Integration | Python Provider SDKs |
-|---------|:-------------------|:-------------------|
-| `litellm-mode` | Native Rust HTTP (`reqwest`) to provider REST APIs | ❌ Not used |
-| `any-llm-mode` | Python SDK delegation via PyO3 (Anthropic, OpenAI, Mistral, etc.) | ✅ Via PyO3 |
-| `full` (default) | Both strategies simultaneously | Both |
+| Feature          | Provider Integration                                              | Python Provider SDKs |
+| ---------------- | :---------------------------------------------------------------- | :------------------- |
+| `litellm-mode`   | Native Rust HTTP (`reqwest`) to provider REST APIs                | ❌ Not used          |
+| `any-llm-mode`   | Python SDK delegation via PyO3 (Anthropic, OpenAI, Mistral, etc.) | ✅ Via PyO3          |
+| `full` (default) | Both strategies simultaneously                                    | Both                 |
 
 **Interfaces (UNCONDITIONALLY available in ALL modes — NOT controlled by feature flags):**
 
-| Interface | `litellm-mode` | `any-llm-mode` | `full` |
-|-----------|:--------------:|:---------------:|:------:|
-| HTTP proxy (`/v1/chat/completions`) | ✅ | ✅ | ✅ |
-| Python SDK (`pip install`) | ✅ | ✅ | ✅ |
+| Interface                           | `litellm-mode` | `any-llm-mode` | `full` |
+| ----------------------------------- | :------------: | :------------: | :----: |
+| HTTP proxy (`/v1/chat/completions`) |       ✅       |       ✅       |   ✅   |
+| Python SDK (`pip install`)          |       ✅       |       ✅       |   ✅   |
 
 **The feature flag selects the provider integration strategy, NOT the interface. All interfaces are unconditionally compiled in all modes.**
 
@@ -175,15 +179,15 @@ full = []                     # Both provider integration strategies simultaneou
 
 #### Feature-Gated Components
 
-| Component | Feature Gate | Description |
-|-----------|-------------|-------------|
+| Component              | Feature Gate   | Description                                                                 |
+| ---------------------- | -------------- | --------------------------------------------------------------------------- |
 | Native HTTP Forwarding | `litellm-mode` | `reqwest`-based HTTP calls to provider REST APIs (Rust, no Python SDK deps) |
-| Python SDK Delegation | `any-llm-mode` | PyO3 bridge calling official Python SDKs (Anthropic, OpenAI, Mistral, etc.) |
-| HTTP Proxy Server | (always) | `hyper`/`axum` OpenAI-compatible proxy endpoints |
-| Python SDK Interface | (always) | PyO3 bindings for `pip install` Python SDK |
-| Shared Router | (none) | RFC-0902 router + all 7 routing strategies |
-| Enterprise Features | (none) | Virtual keys, budgets, rate limiting, Prometheus, RFC-0903/0904/0909/0910 |
-| stoolap Storage | (none) | RFC-0903-B1/C1 persistence |
+| Python SDK Delegation  | `any-llm-mode` | PyO3 bridge calling official Python SDKs (Anthropic, OpenAI, Mistral, etc.) |
+| HTTP Proxy Server      | (always)       | `hyper`/`axum` OpenAI-compatible proxy endpoints                            |
+| Python SDK Interface   | (always)       | PyO3 bindings for `pip install` Python SDK                                  |
+| Shared Router          | (none)         | RFC-0902 router + all 7 routing strategies                                  |
+| Enterprise Features    | (none)         | Virtual keys, budgets, rate limiting, Prometheus, RFC-0903/0904/0909/0910   |
+| stoolap Storage        | (none)         | RFC-0903-B1/C1 persistence                                                  |
 
 #### Provider Integration Strategy
 
@@ -197,15 +201,15 @@ Router → reqwest HTTP → Provider REST API (OpenAI, Anthropic, Mistral, etc.)
 
 Like LiteLLM's approach: custom HTTP implementation in Rust for protocol control. No Python dependency for provider calls. Single HTTP stack (`reqwest`) for all providers.
 
-| Provider | LiteLLM Mode Implementation | Notes |
-|----------|--------------------------|-------|
-| OpenAI | `reqwest` | REST API — chat completions, embeddings |
-| Anthropic | `reqwest` | REST API — messages, embeddings |
-| Mistral | `reqwest` | REST API — official Mistral API |
-| Ollama | `reqwest` | REST API — local and remote Ollama |
-| Google (Gemini) | `reqwest` | REST API — Vertex AI or maker suite |
-| Azure OpenAI | `reqwest` | REST API — Azure-hosted models |
-| AWS Bedrock | `reqwest` | REST API — Claude, Llama via Bedrock |
+| Provider        | LiteLLM Mode Implementation | Notes                                   |
+| --------------- | --------------------------- | --------------------------------------- |
+| OpenAI          | `reqwest`                   | REST API — chat completions, embeddings |
+| Anthropic       | `reqwest`                   | REST API — messages, embeddings         |
+| Mistral         | `reqwest`                   | REST API — official Mistral API         |
+| Ollama          | `reqwest`                   | REST API — local and remote Ollama      |
+| Google (Gemini) | `reqwest`                   | REST API — Vertex AI or maker suite     |
+| Azure OpenAI    | `reqwest`                   | REST API — Azure-hosted models          |
+| AWS Bedrock     | `reqwest`                   | REST API — Claude, Llama via Bedrock    |
 
 **any-llm Mode — Python SDK Delegation:**
 
@@ -215,21 +219,22 @@ Router → PyO3 Bridge → Official Python SDK (Anthropic, OpenAI, Mistral, etc.
 
 Like any-llm's approach: delegation to official provider SDKs for maximum HTTP transport correctness. The PyO3 bridge calls into Python SDKs that handle HTTP internally.
 
-| Provider | any-llm Mode Implementation | Notes |
-|----------|----------------------------|-------|
-| OpenAI | `openai` Python SDK | Official OpenAI SDK |
-| Anthropic | `anthropic` Python SDK | Official Anthropic SDK |
-| Mistral | `mistralai` Python SDK | Official Mistral SDK |
-| Ollama | `ollama` Python SDK | Official Ollama SDK |
-| Google (Gemini) | `google-genai` Python SDK | Official Google SDK |
-| Azure OpenAI | `openai` Python SDK (Azure endpoint) | Official SDK with Azure config |
-| AWS Bedrock | `boto3` + `botocore` | Official AWS SDK |
+| Provider        | any-llm Mode Implementation          | Notes                          |
+| --------------- | ------------------------------------ | ------------------------------ |
+| OpenAI          | `openai` Python SDK                  | Official OpenAI SDK            |
+| Anthropic       | `anthropic` Python SDK               | Official Anthropic SDK         |
+| Mistral         | `mistralai` Python SDK               | Official Mistral SDK           |
+| Ollama          | `ollama` Python SDK                  | Official Ollama SDK            |
+| Google (Gemini) | `google-genai` Python SDK            | Official Google SDK            |
+| Azure OpenAI    | `openai` Python SDK (Azure endpoint) | Official SDK with Azure config |
+| AWS Bedrock     | `boto3` + `botocore`                 | Official AWS SDK               |
 
 > **Why two strategies?** LiteLLM Mode's native HTTP is lightweight (no Python dependency for providers). any-llm Mode's SDK delegation is correct by construction (official SDK owns HTTP transport). Both are available; the mode gate selects which is used.
 
 #### LiteLLM Mode: Native HTTP Forwarding
 
 LiteLLM Mode calls providers via native Rust HTTP (`reqwest`). **Both interfaces are available:** HTTP proxy AND Python SDK. The mode controls the provider integration strategy only.
+
 ```mermaid
 sequenceDiagram
     participant Client as HTTP Client<br/>(any language)
@@ -259,6 +264,7 @@ sequenceDiagram
 any-llm Mode calls providers via official Python SDKs through PyO3. **Both interfaces are available:** HTTP proxy AND Python SDK.
 
 **Via Python SDK:**
+
 ```python
 # any-llm Mode — Python SDK with official SDK delegation
 from quota_router import completion
@@ -1411,11 +1417,12 @@ providers:
   ollama: sync
   deepinfra: async
   groq: async
-  bedrock: sync  # N18 fix: AWS boto3/botocore — sync SDK via spawn_blocking
+  bedrock: sync # N18 fix: AWS boto3/botocore — sync SDK via spawn_blocking
 default: sync
 ```
 
 **Codegen (Rust):**
+
 ```rust
 const PROVIDER_SDK_TYPES: &[(&str, &str)] = &[
     ("openai", "async"),
@@ -1435,6 +1442,7 @@ const PROVIDER_SDK_TYPES: &[(&str, &str)] = &[
 For async SDKs, use `pyo3-asyncio` to bridge Python async to Rust async:
 
 **Python side (exposed via PyO3):**
+
 ```python
 # python_sdk_bridge.py
 import asyncio
@@ -1494,6 +1502,7 @@ class PythonSDKBridge:
 ```
 
 **Rust side (PyO3 bridge):**
+
 ```rust
 use pyo3_asyncio::tokio::into_future;
 use pyo3::prelude::*;
@@ -1548,10 +1557,10 @@ fn call_python_sync_sdk(py: Python, request: &SyncRequest) -> PyResult<Py<PyAny>
 
 The GIL (Global Interpreter Lock) must be managed carefully:
 
-| SDK Type | Pattern | Rationale |
-|---------|---------|-----------|
+| SDK Type   | Pattern                        | Rationale                                                            |
+| ---------- | ------------------------------ | -------------------------------------------------------------------- |
 | Async SDKs | `pyo3-asyncio` (`into_future`) | Async SDKs release GIL during network I/O; only marshaling needs GIL |
-| Sync SDKs | `spawn_blocking` | Blocking SDKs hold GIL; must not block async executor |
+| Sync SDKs  | `spawn_blocking`               | Blocking SDKs hold GIL; must not block async executor                |
 
 **Critical: Never call sync Python SDKs directly from async Rust context.**
 
@@ -1592,6 +1601,7 @@ def map_python_exception(exc: Exception, provider: str) -> Exception:
 Python async SDKs return async iterators for streaming. Bridge to Rust async iterator:
 
 **Python side:**
+
 ```python
 async def stream_completion(provider: str, model: str, messages: List[Dict], **kwargs):
     if provider == "openai":
@@ -1603,6 +1613,7 @@ async def stream_completion(provider: str, model: str, messages: List[Dict], **k
 ```
 
 **Rust side (using `futures::Stream` for stable async iteration):**
+
 ```rust
 use futures::{Stream, Poll};
 use tokio::sync::oneshot;
@@ -1645,25 +1656,27 @@ impl Stream for AsyncChunkIterator {
 ```
 
 **IMPORTANT:** `AsyncIterator` with `async fn next()` is NOT stable Rust. Do NOT use:
+
 ```rust
 // WRONG — does not compile on stable Rust:
 impl AsyncIterator for AsyncChunkIterator {
     async fn next(&mut self) -> Option<Self::Item> { ... }
 }
 ```
+
 Always implement `futures::Stream` via `poll_next` with `Pin<&mut Self>` and `Context<'_>`. For PyO3 bridging, use `tokio::task::spawn_blocking` + oneshot channel as shown above. The `spawn_blocking` pattern correctly releases the Tokio worker thread while the GIL is held by the Python call.
 
 #### any-llm-mode: Provider SDK Support Matrix (Normative)
 
-| Provider | Python SDK | SDK Type | Auth | Streaming |
-|----------|-----------|----------|------|-----------|
-| OpenAI | `openai` | async | api_key | async iterator |
-| Anthropic | `anthropic` | async | api_key | async iterator |
-| Mistral | `mistralai` | async | api_key | async iterator |
-| Google AI | `google-generativeai` | async | api_key | async iterator |
-| Ollama | `ollama` | sync | none | sync iterator |
-| DeepInfra | `openai` | async | api_key | async iterator |
-| Groq | `openai` | async | api_key | async iterator |
+| Provider  | Python SDK            | SDK Type | Auth    | Streaming      |
+| --------- | --------------------- | -------- | ------- | -------------- |
+| OpenAI    | `openai`              | async    | api_key | async iterator |
+| Anthropic | `anthropic`           | async    | api_key | async iterator |
+| Mistral   | `mistralai`           | async    | api_key | async iterator |
+| Google AI | `google-generativeai` | async    | api_key | async iterator |
+| Ollama    | `ollama`              | sync     | none    | sync iterator  |
+| DeepInfra | `openai`              | async    | api_key | async iterator |
+| Groq      | `openai`              | async    | api_key | async iterator |
 
 ### LiteLLM Mode: HTTP Gateway
 
@@ -1756,6 +1769,7 @@ async fn chat_completions(
 ```
 
 **Optimizations applied (A6 + A7 FIXED):**
+
 - **A6 FIXED:** Storage called twice (budget check in auth + record_spend after) — not three times. Budget check is implicit in `record_spend` (insufficient balance returns error before recording).
 - **A7 FIXED:** Router shared via `Arc<Router>` at gateway level. Connection pools, latency tracking, and round-robin state persist across requests.
 
@@ -2465,7 +2479,7 @@ pub struct KeyStorage {
 impl KeyStorage {
     /// Validate API key and return key metadata
     pub async fn validate_key(&self, key_hash: &[u8; 32]) -> Result<ApiKey, KeyError>;
-    
+
     /// Check if key has sufficient budget for request
     pub async fn check_budget(&self, key_id: &[u8; 16], cost: u64) -> Result<(), BudgetError>;
 
@@ -2494,11 +2508,11 @@ cargo build --features "full" --release  # any-llm-mode + litellm-mode
 
 **What gets compiled:**
 
-| Build | HTTP Proxy (`:8000`) | Python SDK (`pip install`) | Enterprise Features |
-|-------|---------------------|---------------------------|---------------------|
-| `any-llm-mode` | ✅ | ✅ | ✅ (always) |
-| `litellm-mode` | ✅ | ✅ | ✅ (always) |
-| `full` (default) | ✅ | ✅ | ✅ (always) |
+| Build            | HTTP Proxy | Python SDK (`pip install`) | Enterprise Features |
+| ---------------- | ---------- | -------------------------- | ------------------- |
+| `any-llm-mode`   | ✅         | ✅                         | ✅ (always)         |
+| `litellm-mode`   | ✅         | ✅                         | ✅ (always)         |
+| `full` (default) | ✅         | ✅                         | ✅ (always)         |
 
 **Note:** Mode selects **provider integration strategy** only. `any-llm-mode` uses PyO3 → Python SDKs for provider calls; `litellm-mode` uses reqwest for direct HTTP. Both interfaces are **always** compiled in all modes — they are unconditional dependencies.
 
@@ -2506,7 +2520,7 @@ cargo build --features "full" --release  # any-llm-mode + litellm-mode
 
 ```yaml
 # config.yaml — applies to whichever interface(s) are compiled in
-mode: both              # 'both', 'proxy', or 'sdk'
+mode: both # 'both', 'proxy', or 'sdk'
 proxy:
   host: "0.0.0.0"
   port: 8000
@@ -2517,6 +2531,7 @@ sdk:
 ```
 
 For `full` build (both interfaces):
+
 - `mode: both` — HTTP server running + Python SDK importable
 - `mode: proxy` — HTTP server only
 - `mode: sdk` — HTTP server disabled, SDK only
@@ -2525,20 +2540,20 @@ For `full` build (both interfaces):
 
 Based on `docs/research/any-llm-vs-litellm-comparison.md`. The dual-mode distinction is **provider integration strategy** only (native HTTP via reqwest vs SDK delegation via PyO3). Both interfaces (HTTP proxy and Python SDK) are **always** available in all modes.
 
-| Feature | LiteLLM | this RFC (LiteLLM Mode) | any-llm | this RFC (any-llm Mode) |
-|---------|---------|------------------------|---------|------------------------|
-| Provider integration | Custom HTTP (Python) | Native Rust HTTP (`reqwest`) | Official SDKs | Python SDK delegation (PyO3) |
-| OpenAI-compatible API (HTTP) | Yes | ✅ | No | ✅ |
-| Python SDK (`pip install`) | Yes | ✅ | Yes | ✅ |
-| Virtual API keys | Yes | ✅ (RFC-0903) | Basic | ❌ (SDK callers bypass proxy) |
-| Budget enforcement | Yes | ✅ (RFC-0904) | Yes | ✅ (RFC-0904) |
-| Load balancing | Yes (7 strategies) | ✅ (RFC-0902) | No | ✅ (RFC-0902) |
-| Fallback routing | Yes | ✅ (RFC-0902) | No | ✅ (RFC-0902) |
-| 100+ providers | Yes | 10+ initially | 43 | 10+ initially |
-| stoolap persistence | No | ✅ | No | ✅ |
-| OCTO-W integration | No | ✅ | No | ✅ |
-| Prometheus metrics | Yes | ✅ | Yes | ✅ |
-| Streaming support | Yes | ✅ | Yes | ✅ |
+| Feature                      | LiteLLM              | this RFC (LiteLLM Mode)      | any-llm       | this RFC (any-llm Mode)       |
+| ---------------------------- | -------------------- | ---------------------------- | ------------- | ----------------------------- |
+| Provider integration         | Custom HTTP (Python) | Native Rust HTTP (`reqwest`) | Official SDKs | Python SDK delegation (PyO3)  |
+| OpenAI-compatible API (HTTP) | Yes                  | ✅                           | No            | ✅                            |
+| Python SDK (`pip install`)   | Yes                  | ✅                           | Yes           | ✅                            |
+| Virtual API keys             | Yes                  | ✅ (RFC-0903)                | Basic         | ❌ (SDK callers bypass proxy) |
+| Budget enforcement           | Yes                  | ✅ (RFC-0904)                | Yes           | ✅ (RFC-0904)                 |
+| Load balancing               | Yes (7 strategies)   | ✅ (RFC-0902)                | No            | ✅ (RFC-0902)                 |
+| Fallback routing             | Yes                  | ✅ (RFC-0902)                | No            | ✅ (RFC-0902)                 |
+| 100+ providers               | Yes                  | 10+ initially                | 43            | 10+ initially                 |
+| stoolap persistence          | No                   | ✅                           | No            | ✅                            |
+| OCTO-W integration           | No                   | ✅                           | No            | ✅                            |
+| Prometheus metrics           | Yes                  | ✅                           | Yes           | ✅                            |
+| Streaming support            | Yes                  | ✅                           | Yes           | ✅                            |
 
 **Interface parity:** Enterprise features are identical across both modes. Both interfaces (HTTP proxy and Python SDK) are available in all modes. The only difference is provider integration strategy: LiteLLM Mode uses reqwest for direct HTTP; any-llm Mode uses PyO3 to delegate to official Python SDKs.
 
@@ -2566,7 +2581,7 @@ Both modes support multiple model string formats:
 completion(model="openai/gpt-4o", messages=[...])
 completion(model="anthropic/claude-opus-4", messages=[...])
 
-# any-llm style (provider:model)  
+# any-llm style (provider:model)
 completion(model="openai:gpt-4o", messages=[...])
 
 # Explicit provider parameter (any-llm style)
@@ -2578,17 +2593,17 @@ completion(model="mistral:mistral-small-latest", messages=[...])
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| G1 | HTTP proxy compatibility (LiteLLM Mode) | 90%+ endpoint compatibility |
-| G2 | Python SDK compatibility (any-llm Mode) | 90%+ function signature match |
-| G3 | Shared enterprise features | Identical feature set in both modes |
-| G4 | HTTP forwarding correctness | REST API equivalence to official SDKs |
-| G5 | Feature-gated build | Zero overhead for disabled interface |
-| G6 | <10ms proxy latency | LiteLLM Mode gateway overhead |
-| G7 | <50ms SDK call overhead | PyO3 boundary + router |
-| G8 | Binary size | <15MB for single-mode, <25MB for `full` |
-| G9 | Python wheel size | <10MB for any-llm-mode |
+| Goal | Target                                  | Metric                                  |
+| ---- | --------------------------------------- | --------------------------------------- |
+| G1   | HTTP proxy compatibility (LiteLLM Mode) | 90%+ endpoint compatibility             |
+| G2   | Python SDK compatibility (any-llm Mode) | 90%+ function signature match           |
+| G3   | Shared enterprise features              | Identical feature set in both modes     |
+| G4   | HTTP forwarding correctness             | REST API equivalence to official SDKs   |
+| G5   | Feature-gated build                     | Zero overhead for disabled interface    |
+| G6   | <10ms proxy latency                     | LiteLLM Mode gateway overhead           |
+| G7   | <50ms SDK call overhead                 | PyO3 boundary + router                  |
+| G8   | Binary size                             | <15MB for single-mode, <25MB for `full` |
+| G9   | Python wheel size                       | <10MB for any-llm-mode                  |
 
 ## Key Files to Modify
 
@@ -2691,18 +2706,18 @@ watsonx, xai, zai
 
 #### API Functions — 20 (all must be callable via PyO3)
 
-| Function | Description |
-|----------|-------------|
-| `completion()` / `acompletion()` | Text completion |
-| `responses()` / `aresponses()` | Responses API |
-| `messages()` / `amessages()` | Messages API (Claude-style) |
-| `embedding()` / `aembedding()` | Embeddings |
-| `list_models()` / `alist_models()` | List available models |
-| `create_batch()` / `acreate_batch()` | Create batch job |
-| `retrieve_batch()` / `aretrieve_batch()` | Retrieve batch status |
-| `cancel_batch()` / `acancel_batch()` | Cancel batch job |
-| `list_batches()` / `alist_batches()` | List batch jobs |
-| `retrieve_batch_results()` / `aretrieve_batch_results()` | Get batch results |
+| Function                                                 | Description                 |
+| -------------------------------------------------------- | --------------------------- |
+| `completion()` / `acompletion()`                         | Text completion             |
+| `responses()` / `aresponses()`                           | Responses API               |
+| `messages()` / `amessages()`                             | Messages API (Claude-style) |
+| `embedding()` / `aembedding()`                           | Embeddings                  |
+| `list_models()` / `alist_models()`                       | List available models       |
+| `create_batch()` / `acreate_batch()`                     | Create batch job            |
+| `retrieve_batch()` / `aretrieve_batch()`                 | Retrieve batch status       |
+| `cancel_batch()` / `acancel_batch()`                     | Cancel batch job            |
+| `list_batches()` / `alist_batches()`                     | List batch jobs             |
+| `retrieve_batch_results()` / `aretrieve_batch_results()` | Get batch results           |
 
 #### Phase 3 Checklist
 
@@ -2762,13 +2777,13 @@ This section specifies the unified error type for RFC-0917's public API surface.
 
 **Source error types (wrapped):**
 
-| Error Type | Source RFC | Variant in QuotaRouterError |
-|------------|------------|---------------------------|
-| `KeyError` | RFC-0903 | `Key(KeyError)` |
-| `BudgetError` | RFC-0904 | `Budget(BudgetError)` |
-| `RouterError` | RFC-0917 (fallback.rs) | `Router(RouterError)` |
-| `RegistryError` | RFC-0910 | `Registry(RegistryError)` |
-| `StorageError` | RFC-0903/0904 | `Storage(StorageError)` |
+| Error Type      | Source RFC             | Variant in QuotaRouterError |
+| --------------- | ---------------------- | --------------------------- |
+| `KeyError`      | RFC-0903               | `Key(KeyError)`             |
+| `BudgetError`   | RFC-0904               | `Budget(BudgetError)`       |
+| `RouterError`   | RFC-0917 (fallback.rs) | `Router(RouterError)`       |
+| `RegistryError` | RFC-0910               | `Registry(RegistryError)`   |
+| `StorageError`  | RFC-0903/0904          | `Storage(StorageError)`     |
 
 **RouterError enum (RFC-0917):**
 
@@ -2923,37 +2938,37 @@ impl From<StorageError> for QuotaRouterError {
 
 **HTTP status code mapping:**
 
-| QuotaRouterError Variant | HTTP Status | Condition |
-|-------------------------|-------------|-----------|
-| `Key(KeyError::NotFound)` | 404 | API key not found |
-| `Key(KeyError::Expired(_))` | 401 | API key expired |
-| `Key(KeyError::Revoked(_))` | 401 | API key revoked |
-| `Key(KeyError::BudgetExceeded { .. })` | 403 | Budget exceeded |
-| `Key(KeyError::RateLimited { .. })` | 429 | Rate limited |
-| `Key(KeyError::InvalidFormat)` | 400 | Invalid key format |
-| `Key(KeyError::MissingKey)` | 401 | Missing API key |
-| `Budget(BudgetError::KeyBudgetExceeded { .. })` | 403 | Per-key budget exceeded |
-| `Budget(BudgetError::TeamBudgetExceeded { .. })` | 403 | Team budget exceeded |
-| `Budget(BudgetError::InsufficientBalance { .. })` | 403 | OCTO-W balance insufficient |
-| `Budget(BudgetError::CostOverflow)` | 422 | Cost computation overflow (deployment misconfiguration — do not retry) |
-| `Budget(BudgetError::ModelNotFound(_))` | 404 | Model not in pricing table |
-| `Router(RouterError::RateLimit)` | 429 | Provider rate limited |
-| `Router(RouterError::ProviderUnavailable)` | 503 | Provider unavailable |
-| `Router(RouterError::AuthError)` | 401 | Provider auth failed |
-| `Router(RouterError::ContextWindowExceeded)` | 400 | Context window exceeded |
-| `Router(RouterError::Timeout)` | 504 | Provider timeout |
-| `Router(RouterError::Unknown)` | 500 | Unknown router error |
-| `Registry(RegistryError::DuplicateVersion { .. })` | 409 | Duplicate version registration |
-| `Registry(RegistryError::VersionNotIncrement { .. })` | 409 | Version not incrementing |
-| `Registry(RegistryError::EffectiveFromNotIncrement { .. })` | 409 | effective_from not incrementing |
-| `Registry(RegistryError::TableIdTooLong { .. })` | 400 | table_id exceeds 128 bytes |
-| `Registry(RegistryError::MetadataTooLarge { .. })` | 400 | metadata exceeds 4096 bytes |
-| `Registry(RegistryError::TooManyVersions { .. })` | 500 | Version count exceeded |
-| `Storage(StorageError::KeyNotFound)` | 404 | Key not found in storage |
-| `Storage(StorageError::OctoWNotEnabled)` | 403 | OCTO-W not enabled for key |
-| `Storage(StorageError::InsufficientBalance { .. })` | 403 | Insufficient balance |
-| `Storage(StorageError::Database(_))` | 500 | Database error |
-| `ProviderError { .. }` | 502 | Provider returned error |
+| QuotaRouterError Variant                                    | HTTP Status | Condition                                                              |
+| ----------------------------------------------------------- | ----------- | ---------------------------------------------------------------------- |
+| `Key(KeyError::NotFound)`                                   | 404         | API key not found                                                      |
+| `Key(KeyError::Expired(_))`                                 | 401         | API key expired                                                        |
+| `Key(KeyError::Revoked(_))`                                 | 401         | API key revoked                                                        |
+| `Key(KeyError::BudgetExceeded { .. })`                      | 403         | Budget exceeded                                                        |
+| `Key(KeyError::RateLimited { .. })`                         | 429         | Rate limited                                                           |
+| `Key(KeyError::InvalidFormat)`                              | 400         | Invalid key format                                                     |
+| `Key(KeyError::MissingKey)`                                 | 401         | Missing API key                                                        |
+| `Budget(BudgetError::KeyBudgetExceeded { .. })`             | 403         | Per-key budget exceeded                                                |
+| `Budget(BudgetError::TeamBudgetExceeded { .. })`            | 403         | Team budget exceeded                                                   |
+| `Budget(BudgetError::InsufficientBalance { .. })`           | 403         | OCTO-W balance insufficient                                            |
+| `Budget(BudgetError::CostOverflow)`                         | 422         | Cost computation overflow (deployment misconfiguration — do not retry) |
+| `Budget(BudgetError::ModelNotFound(_))`                     | 404         | Model not in pricing table                                             |
+| `Router(RouterError::RateLimit)`                            | 429         | Provider rate limited                                                  |
+| `Router(RouterError::ProviderUnavailable)`                  | 503         | Provider unavailable                                                   |
+| `Router(RouterError::AuthError)`                            | 401         | Provider auth failed                                                   |
+| `Router(RouterError::ContextWindowExceeded)`                | 400         | Context window exceeded                                                |
+| `Router(RouterError::Timeout)`                              | 504         | Provider timeout                                                       |
+| `Router(RouterError::Unknown)`                              | 500         | Unknown router error                                                   |
+| `Registry(RegistryError::DuplicateVersion { .. })`          | 409         | Duplicate version registration                                         |
+| `Registry(RegistryError::VersionNotIncrement { .. })`       | 409         | Version not incrementing                                               |
+| `Registry(RegistryError::EffectiveFromNotIncrement { .. })` | 409         | effective_from not incrementing                                        |
+| `Registry(RegistryError::TableIdTooLong { .. })`            | 400         | table_id exceeds 128 bytes                                             |
+| `Registry(RegistryError::MetadataTooLarge { .. })`          | 400         | metadata exceeds 4096 bytes                                            |
+| `Registry(RegistryError::TooManyVersions { .. })`           | 500         | Version count exceeded                                                 |
+| `Storage(StorageError::KeyNotFound)`                        | 404         | Key not found in storage                                               |
+| `Storage(StorageError::OctoWNotEnabled)`                    | 403         | OCTO-W not enabled for key                                             |
+| `Storage(StorageError::InsufficientBalance { .. })`         | 403         | Insufficient balance                                                   |
+| `Storage(StorageError::Database(_))`                        | 500         | Database error                                                         |
+| `ProviderError { .. }`                                      | 502         | Provider returned error                                                |
 
 **Python exception mapping (any-llm Mode SDK):**
 
@@ -3047,11 +3062,12 @@ Use single `proxy` feature instead of dual `litellm-mode`/`any-llm-mode`.
 
 **Severity:** Critical (Architectural Contradiction)
 
-**Finding:** The RFC originally stated Mistral uses "Python SDK via PyO3" (line 137), but PyO3 bridges go **from Rust to Python**, not from Rust to Python SDKs. You cannot call a Python SDK from Rust via PyO3 — you would need to embed a Python interpreter (CPython extension).
+**Finding:** The RFC originally stated Mistral uses "Python SDK via PyO3", but PyO3 bridges go **from Rust to Python**, not from Rust to Python SDKs. You cannot call a Python SDK from Rust via PyO3 — you would need to embed a Python interpreter (CPython extension).
 
 **Original contradiction:**
-- Line 137: "Mistral | Python SDK via PyO3 | Official SDK"
-- Line 249: `pub mod py_providers;  // Python SDK bridges via PyO3`
+
+- "Mistral | Python SDK via PyO3 | Official SDK"
+- `pub mod py_providers;  // Python SDK bridges via PyO3`
 - Mermaid diagram: "Provider SDK Bridge | PyO3 → Rust → official provider SDKs"
 
 If PyO3 bridges Python → Rust, calling a Python SDK from Rust requires embedding a Python interpreter.
@@ -3067,6 +3083,7 @@ If PyO3 bridges Python → Rust, calling a Python SDK from Rust requires embeddi
 **Finding (ORIGINAL):** Feature gates were defined in `quota-router-core/Cargo.toml`, but `py_bridge` was placed in `quota-router-pyo3/` (a separate crate). Rust feature gates are per-crate, not cross-crate — so the `any-llm-mode` feature in `quota-router-core` could not control compilation of modules in `quota-router-pyo3`.
 
 **Original problematic structure:**
+
 ```toml
 # quota-router-core/Cargo.toml
 [features]
@@ -3105,6 +3122,7 @@ The Python SDK wheel is built by placing `py_bridge` behind the `any-llm-mode` f
 **Finding (ORIGINAL):** The RFC's PyO3 bridge called `Router::global().route_and_forward(request)` but `route_and_forward` took `&mut self`. A global `Router` via `Arc<Mutex<>>` would require `&self`, not `&mut self`.
 
 **Original problematic code:**
+
 ```rust
 pub async fn route_and_forward(
     &mut self,  // <-- Mutex conflict with global singleton
@@ -3112,7 +3130,7 @@ pub async fn route_and_forward(
 ) -> Result<CompletionResponse, RouterError>
 ```
 
-**Resolution (FIXED):** Changed to interior mutability pattern with `&self` using `ProviderHandle` enum dispatch. The normative `Router` struct definition is at §Router Struct (lines 583–598). Pseudocode illustration:
+**Resolution (FIXED):** Changed to interior mutability pattern with `&self` using `ProviderHandle` enum dispatch. The normative `Router` struct definition is at §Router Struct. Pseudocode illustration:
 
 ```rust
 // ⚠️ PSEUDOCODE — not normative. See normative definition at lines 583–598.
@@ -3145,6 +3163,7 @@ pub async fn route_and_forward(
 **Finding:** The RFC's LiteLLM compatibility table shows `stream: ✅` but does not specify how streaming works. LiteLLM uses Server-Sent Events (SSE) with `text/event-stream` content type. The RFC has no streaming specification.
 
 **Missing:**
+
 - SSE chunk format per provider
 - How to handle provider-specific streaming differences (Anthropic uses different SSE format than OpenAI)
 - How the PyO3 bridge handles streaming responses (yielding chunks vs returning complete response)
@@ -3163,24 +3182,26 @@ pub async fn route_and_forward(
 The HTTP proxy uses SSE for streaming responses (per LiteLLM compatibility requirement).
 
 **SSE format (OpenAI-compatible):**
+
 ```
 data: {"id":"chatcmpl-xxx","choices":[{"index":0,"delta":{"content":"token"},"finish_reason":null}]}\n\n
 ```
 
 **Chunk termination:** `[DONE]` marker:
+
 ```
 data: [DONE]\n\n
 ```
 
 **Per-provider streaming differences:**
 
-| Provider | SSE Format | Event Types | Notes |
-|----------|-----------|-------------|-------|
-| OpenAI | Standard SSE `data: {...}` | `delta.content` | Standard chat completions format |
+| Provider  | SSE Format                 | Event Types                                           | Notes                                      |
+| --------- | -------------------------- | ----------------------------------------------------- | ------------------------------------------ |
+| OpenAI    | Standard SSE `data: {...}` | `delta.content`                                       | Standard chat completions format           |
 | Anthropic | Standard SSE `data: {...}` | `type: content_block_delta`, `delta.type: text_delta` | SDK does message→content.blocks conversion |
-| Mistral | Standard SSE | `delta.content` | OpenAI-compatible format |
-| Ollama | Standard SSE | `delta.content` | OpenAI-compatible format |
-| Gemini | Server-Sent Events | Provider-specific | Depends on API version |
+| Mistral   | Standard SSE               | `delta.content`                                       | OpenAI-compatible format                   |
+| Ollama    | Standard SSE               | `delta.content`                                       | OpenAI-compatible format                   |
+| Gemini    | Server-Sent Events         | Provider-specific                                     | Depends on API version                     |
 
 **Anthropic SSE conversion:** The `reqwest`-based Anthropic implementation receives raw SSE events from the Anthropic API. These must be **transformed** to OpenAI-compatible SSE format before returning to the HTTP proxy client:
 
@@ -3270,16 +3291,17 @@ def completion(model: str, messages: list, stream: bool = True, **kwargs):
 
 **Streaming response types per provider:**
 
-| Provider | SDK Streaming API | PyO3 Bridge Output |
-|----------|------------------|-------------------|
-| OpenAI | `openai.StreamingChatCompletion` | `Iterator[ChatCompletionChunk]` |
-| Anthropic | `anthropic.MessageStream` | `AsyncIterator[Chunk]` → SSE via FastAPI |
-| Mistral | `mistralai.StreamingChatCompletion` | `Iterator[ChatCompletionChunk]` |
-| Ollama | `ollama.AsyncGenerate` | `AsyncIterator[GenerateResponse]` |
+| Provider  | SDK Streaming API                   | PyO3 Bridge Output                       |
+| --------- | ----------------------------------- | ---------------------------------------- |
+| OpenAI    | `openai.StreamingChatCompletion`    | `Iterator[ChatCompletionChunk]`          |
+| Anthropic | `anthropic.MessageStream`           | `AsyncIterator[Chunk]` → SSE via FastAPI |
+| Mistral   | `mistralai.StreamingChatCompletion` | `Iterator[ChatCompletionChunk]`          |
+| Ollama    | `ollama.AsyncGenerate`              | `AsyncIterator[GenerateResponse]`        |
 
 **Streaming via HTTP proxy (any-llm Mode, `full` build only):**
 
 When any-llm Mode is compiled in a `full` build with the HTTP proxy enabled, streaming requires the PyO3 bridge to:
+
 1. Call the Python SDK's streaming method
 2. Receive Python chunk objects
 3. Convert each chunk to OpenAI SSE format
@@ -3289,11 +3311,11 @@ This requires both `py-o3` (for calling Python SDKs) and `hyper` (for HTTP respo
 
 #### Per-Mode Streaming Availability
 
-| Mode | Streaming via HTTP Proxy | Streaming via Python SDK |
-|------|-------------------------|-------------------------|
-| `litellm-mode` | ✅ SSE via tokio-tower | ✅ Python generator |
-| `any-llm-mode` | ✅ SSE via PyO3 bridge | ✅ Python generator |
-| `full` | ✅ SSE (both bridges available) | ✅ Python generator |
+| Mode           | Streaming via HTTP Proxy        | Streaming via Python SDK |
+| -------------- | ------------------------------- | ------------------------ |
+| `litellm-mode` | ✅ SSE via tokio-tower          | ✅ Python generator      |
+| `any-llm-mode` | ✅ SSE via PyO3 bridge          | ✅ Python generator      |
+| `full`         | ✅ SSE (both bridges available) | ✅ Python generator      |
 
 **Note:** `hyper` and `py-o3` are **unconditional dependencies** — streaming via HTTP proxy is available in ALL modes, not just `full`.
 
@@ -3304,10 +3326,12 @@ This requires both `py-o3` (for calling Python SDKs) and `hyper` (for HTTP respo
 **Severity:** High (Semantic Confusion)
 
 **Finding (ORIGINAL):** The RFC conflated two distinct concepts:
-- **RFC-0903 budgets:** Daily/weekly/monthly virtual limits per API key (`budget_limit` field in `api_keys` table — a *limit*, not a balance)
-- **OCTO-W:** Token/currency balance for marketplace settlement (a *balance* from RFC-0900)
+
+- **RFC-0903 budgets:** Daily/weekly/monthly virtual limits per API key (`budget_limit` field in `api_keys` table — a _limit_, not a balance)
+- **OCTO-W:** Token/currency balance for marketplace settlement (a _balance_ from RFC-0900)
 
 The confusion was in the storage interface:
+
 ```rust
 pub async fn check_budget(&self, key_id: &[u8; 16], cost: u64) -> Result<(), BudgetError>;
 pub async fn get_balance(&self, key_id: &[u8; 16]) -> Result<u64, StorageError>;  // OCTO-W
@@ -3316,6 +3340,7 @@ pub async fn get_balance(&self, key_id: &[u8; 16]) -> Result<u64, StorageError>;
 **Resolution (FIXED):** Separated into two distinct concepts with clear semantics:
 
 **1. Budget Enforcement (per RFC-0903/0904):**
+
 ```rust
 /// Check if adding `cost` would exceed the key's budget_limit
 /// Uses the `budget_limit` from api_keys table (per RFC-0903)
@@ -3327,6 +3352,7 @@ pub async fn check_budget_limit(
 ```
 
 **2. OCTO-W Balance (per RFC-0900/0902):**
+
 ```rust
 /// Get current OCTO-W balance for marketplace settlement
 /// OCTO-W is a separate balance from the budget limit
@@ -3338,10 +3364,11 @@ pub async fn deduct_octo_w(&self, key_id: &[u8; 16], amount: u64) -> Result<u64,
 ```
 
 **Two separate concepts:**
-| Concept | Type | Source RFC | Field/Table |
-|---------|------|------------|-------------|
-| Budget limit | Limit (`$100/month`) | RFC-0903/0904 | `api_keys.budget_limit` |
-| OCTO-W balance | Balance (tokens) | RFC-0900/0902 | `octo_w_ledger` |
+
+| Concept        | Type                 | Source RFC    | Field/Table             |
+| -------------- | -------------------- | ------------- | ----------------------- |
+| Budget limit   | Limit (`$100/month`) | RFC-0903/0904 | `api_keys.budget_limit` |
+| OCTO-W balance | Balance (tokens)     | RFC-0900/0902 | `octo_w_ledger`         |
 
 ---
 
@@ -3363,6 +3390,7 @@ Router->>Storage: Check budget (async)  [third call]
 ```
 
 **Three storage calls per request** in LiteLLM Mode:
+
 1. Auth middleware checks budget
 2. Router checks budget (redundant with #1)
 3. Router records usage
@@ -3383,6 +3411,7 @@ let mut router = Router::new(config.clone());
 ```
 
 Creating a new `Router` per request loses:
+
 - Provider connection pools (HTTP keepalive connections)
 - Latency tracking state
 - RPM/TPM counters
@@ -3415,6 +3444,7 @@ There's no auth enforcement — the SDK accepts any string as an API key.
 **Budget identity in SDK mode:** Virtual key validation (RFC-0903) applies only in LiteLLM Mode (HTTP proxy). In SDK mode, budgets are tracked using the provider API key as the budget identity.
 
 **Key derivation for SDK mode:**
+
 1. `set_api_key(provider_key)` is called with the provider API key (e.g., `sk-...`)
 2. `key_id = HMAC-SHA256(server_secret, provider_key)[..16]` — 16-byte budget identity; HMAC-SHA256 is used (not BLAKE3) because the input is an arbitrary provider API key string, not a virtual key object
 3. `key_hash = HMAC-SHA256(server_secret, provider_key)` — stored in `api_keys.key_hash` for validation
@@ -3433,12 +3463,12 @@ There's no auth enforcement — the SDK accepts any string as an API key.
 
 **Finding:** RFC references non-Final RFCs without explicit status requirements:
 
-| RFC | Referenced Status | Actual Status |
-|-----|-------------------|---------------|
-| RFC-0903-B1 | Required (line 25) | **Accepted** (just moved) |
-| RFC-0903-C1 | Required (line 26) | **Accepted** (just moved) |
-| RFC-0904 | Optional (line 30) | **Planned** |
-| RFC-0909 | Optional (line 34) | **Final** |
+| RFC         | Referenced Status | Actual Status             |
+| ----------- | ----------------- | ------------------------- |
+| RFC-0903-B1 | Required          | **Accepted** (just moved) |
+| RFC-0903-C1 | Required          | **Accepted** (just moved) |
+| RFC-0904    | Optional          | **Planned**               |
+| RFC-0909    | Optional          | **Final**                 |
 
 **Issue:** RFC-0909 (Final) is marked optional but is required for `record_spend()` in storage. RFC-0904 (Planned) is needed for budget enforcement but is optional.
 
@@ -3446,12 +3476,12 @@ There's no auth enforcement — the SDK accepts any string as an API key.
 
 #### RFC Dependencies
 
-| RFC | Status | Used In | Notes |
-|-----|--------|---------|-------|
-| RFC-0903 | Accepted | Storage interface, key validation | Schema: api_keys, teams tables |
-| RFC-0904 | **Planned** | Budget enforcement | **PROVISIONAL** — pending acceptance |
-| RFC-0909 | Final | record_spend() interface | Required for storage |
-| RFC-0910 | Accepted | Pricing table registry | compute_cost delegation |
+| RFC      | Status      | Used In                           | Notes                                |
+| -------- | ----------- | --------------------------------- | ------------------------------------ |
+| RFC-0903 | Accepted    | Storage interface, key validation | Schema: api_keys, teams tables       |
+| RFC-0904 | **Planned** | Budget enforcement                | **PROVISIONAL** — pending acceptance |
+| RFC-0909 | Final       | record_spend() interface          | Required for storage                 |
+| RFC-0910 | Accepted    | Pricing table registry            | compute_cost delegation              |
 
 ---
 
@@ -3476,6 +3506,7 @@ There's no auth enforcement — the SDK accepts any string as an API key.
 **Impact:** Users cannot choose LiteLLM Mode vs any-llm Mode at install time — the feature is baked into the wheel.
 
 **Resolution (FIXED):** Documented distribution model clearly:
+
 - `quota-router` (PyPI): `any-llm-mode` binary — both interfaces available (both HTTP proxy and Python SDK), uses PyO3 provider strategy
 - `quota-router-gateway` (crates.io): `litellm-mode` binary — both interfaces available (both HTTP proxy and Python SDK), uses reqwest provider strategy
 - `full` (dev build): Both interfaces, both strategies simultaneously
@@ -3486,12 +3517,13 @@ There's no auth enforcement — the SDK accepts any string as an API key.
 
 **Severity:** High (Architectural Clarity)
 
-**Finding:** The RFC's LiteLLM compatibility matrix claims "Provider SDK delegation: Partial ✅ (any-llm approach)" — implying delegation to official provider SDKs. But the actual provider table (lines 132-140) shows ALL providers using `reqwest` HTTP forwarding. No Python SDK is used in either mode.
+**Finding:** The RFC's LiteLLM compatibility matrix claims "Provider SDK delegation: Partial ✅ (any-llm approach)" — implying delegation to official provider SDKs. But the actual provider table shows ALL providers using `reqwest` HTTP forwarding. No Python SDK is used in either mode.
 
 **Contradiction:**
-- Line 499: "Provider SDK delegation | Partial | ✅ (any-llm approach)"
-- Lines 132-140: All 7 providers are `reqwest` HTTP forwarding
-- Line 130: "Follow any-llm's insight: use official provider SDKs where available"
+
+- "Provider SDK delegation | Partial | ✅ (any-llm approach)"
+- All 7 providers are `reqwest` HTTP forwarding
+- "Follow any-llm's insight: use official provider SDKs where available"
 
 But there ARE NO provider SDKs in the implementation. The "any-llm approach" is the HTTP forwarding strategy (delegation via REST API equivalence), not actual SDK delegation.
 
@@ -3571,6 +3603,7 @@ But the slash (`/`) and colon (`:`) are both valid in model strings. If a provid
 **Finding:** The RFC doesn't address the binary size implications of building with `full` (both modes + enterprise features). A binary with `hyper`, `axum`, `pyo3`, and all enterprise storage features could be 20+ MB.
 
 **Missing:**
+
 - Expected binary size for each feature combination
 - Whether LiteLLM Mode can be deployed as a lean binary (without any-llm-mode)
 - Whether any-llm-mode Python wheel size is documented
@@ -3590,7 +3623,7 @@ But the slash (`/`) and colon (`:`) are both valid in model strings. If a provid
 
 ```yaml
 # If both modes are compiled in, which wins?
-mode: sdk  # or proxy?
+mode: sdk # or proxy?
 litellm_mode:
   host: "0.0.0.0"
   port: 8000
@@ -3599,6 +3632,7 @@ anyllm_mode:
 ```
 
 **Resolution:** Document that `full` build enables BOTH HTTP server AND SDK. The config determines which is primary:
+
 - `mode: both` — HTTP server running + SDK importable
 - `mode: proxy` — HTTP server only (SDK import fails gracefully)
 - `mode: sdk` — HTTP server disabled, SDK only
@@ -3609,39 +3643,39 @@ anyllm_mode:
 
 ### New Issues Summary
 
-| ID | Severity | Issue |
-|----|----------|-------|
-| B1 | High | HTTP forwarding is core but "Provider SDK delegation" in matrix is misleading |
-| B2 | High | Enterprise features (keys, budgets, rate limiting) only accessible in LiteLLM Mode |
-| B3 | Medium | `enterprise` feature gate is redundant with mode gates — enterprise features should be in BOTH modes |
-| B4 | Medium | HTTP forwarding as shared core not explicitly named |
-| B5 | Medium | `provider/model` vs `provider:model` format collision ambiguous |
-| B6 | Low | Binary size not specified |
-| B7 | Low | Dual-mode config conflicts not resolved |
+| ID  | Severity | Issue                                                                                                |
+| --- | -------- | ---------------------------------------------------------------------------------------------------- |
+| B1  | High     | HTTP forwarding is core but "Provider SDK delegation" in matrix is misleading                        |
+| B2  | High     | Enterprise features (keys, budgets, rate limiting) only accessible in LiteLLM Mode                   |
+| B3  | Medium   | `enterprise` feature gate is redundant with mode gates — enterprise features should be in BOTH modes |
+| B4  | Medium   | HTTP forwarding as shared core not explicitly named                                                  |
+| B5  | Medium   | `provider/model` vs `provider:model` format collision ambiguous                                      |
+| B6  | Low      | Binary size not specified                                                                            |
+| B7  | Low      | Dual-mode config conflicts not resolved                                                              |
 
 ### Combined Status (All Issues)
 
-| ID | Severity | Status | Issue |
-|----|----------|--------|-------|
-| A1 | Critical | **FIXED** | Unified LLMProvider trait impossible — LiteLLM Mode uses reqwest HTTP, any-llm Mode uses PyO3 SDK delegation; traits are feature-gated per strategy (C2) |
-| A2 | Critical | **FIXED** | Feature gate location → py_bridge in quota-router-core |
-| A3 | Critical | **FIXED** | &mut self → &self with interior mutability |
-| A4 | High | **FIXED** | Streaming SSE transformation now specified for both modes |
-| A5 | High | **FIXED** | Budget vs OCTO-W semantics separated |
-| A6 | Medium | **FIXED** | Storage 3x → 2x calls |
-| A7 | Medium | **FIXED** | Per-request router → Arc<Router> shared |
-| A8 | Medium | **FIXED** | set_api_key() security model documented with format validation matrix |
-| A9 | Low | **FIXED** | RFC-0904 dependency documented as provisional |
-| A10 | Low | **FIXED** | PyO3 experimental async risk documented with mitigation strategy |
-| A11 | Low | **FIXED** | Distribution model documented |
-| B1 | High | **FIXED** | HTTP forwarding core — matrix fixed, "SDK delegation" → "HTTP forwarding" |
-| B2 | High | **FIXED** | Enterprise features in both modes — shared core, not per-mode |
-| B3 | Medium | **FIXED** | enterprise gate removed — features in shared core |
-| B4 | Medium | **FIXED** | HTTP forwarding named as shared core |
-| B5 | Medium | **FIXED** | provider/model vs provider:model parsing clarified with examples |
-| B6 | Low | **FIXED** | Binary size added to Design Goals |
-| B7 | Low | **FIXED** | Dual-mode config conflicts resolved |
-| C1 | Critical | **RESOLVED** | Both interfaces available in all modes — hyper and py-o3 unconditional |
+| ID  | Severity | Status       | Issue                                                                                                                                                    |
+| --- | -------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A1  | Critical | **FIXED**    | Unified LLMProvider trait impossible — LiteLLM Mode uses reqwest HTTP, any-llm Mode uses PyO3 SDK delegation; traits are feature-gated per strategy (C2) |
+| A2  | Critical | **FIXED**    | Feature gate location → py_bridge in quota-router-core                                                                                                   |
+| A3  | Critical | **FIXED**    | &mut self → &self with interior mutability                                                                                                               |
+| A4  | High     | **FIXED**    | Streaming SSE transformation now specified for both modes                                                                                                |
+| A5  | High     | **FIXED**    | Budget vs OCTO-W semantics separated                                                                                                                     |
+| A6  | Medium   | **FIXED**    | Storage 3x → 2x calls                                                                                                                                    |
+| A7  | Medium   | **FIXED**    | Per-request router → Arc<Router> shared                                                                                                                  |
+| A8  | Medium   | **FIXED**    | set_api_key() security model documented with format validation matrix                                                                                    |
+| A9  | Low      | **FIXED**    | RFC-0904 dependency documented as provisional                                                                                                            |
+| A10 | Low      | **FIXED**    | PyO3 experimental async risk documented with mitigation strategy                                                                                         |
+| A11 | Low      | **FIXED**    | Distribution model documented                                                                                                                            |
+| B1  | High     | **FIXED**    | HTTP forwarding core — matrix fixed, "SDK delegation" → "HTTP forwarding"                                                                                |
+| B2  | High     | **FIXED**    | Enterprise features in both modes — shared core, not per-mode                                                                                            |
+| B3  | Medium   | **FIXED**    | enterprise gate removed — features in shared core                                                                                                        |
+| B4  | Medium   | **FIXED**    | HTTP forwarding named as shared core                                                                                                                     |
+| B5  | Medium   | **FIXED**    | provider/model vs provider:model parsing clarified with examples                                                                                         |
+| B6  | Low      | **FIXED**    | Binary size added to Design Goals                                                                                                                        |
+| B7  | Low      | **FIXED**    | Dual-mode config conflicts resolved                                                                                                                      |
+| C1  | Critical | **RESOLVED** | Both interfaces available in all modes — hyper and py-o3 unconditional                                                                                   |
 
 ---
 
@@ -3654,14 +3688,16 @@ anyllm_mode:
 **Finding:** The RFC formerly made two contradictory claims about what feature gates produce:
 
 **Claim 1 — Old feature gate table (pre-v2.31):**
-| Interface | `litellm-mode` | `any-llm-mode` | `full` |
-|-----------|:--------------:|:---------------:|:------:|
-| HTTP proxy | ✅ | ❌ | ✅ |
-| Python SDK | ❌ | ✅ | ✅ |
+
+| Interface  | `litellm-mode` | `any-llm-mode` | `full` |
+| ---------- | :------------: | :------------: | :----: |
+| HTTP proxy |       ✅       |       ❌       |   ✅   |
+| Python SDK |       ❌       |       ✅       |   ✅   |
 
 This table claimed `litellm-mode` alone produces HTTP proxy only, and `any-llm-mode` produces Python SDK only.
 
-**Claim 2 — Cargo features (lines 707-718, pre-v2.31):**
+**Claim 2 — Cargo features (pre-v2.31):**
+
 ```toml
 litellm-mode = ["hyper", "axum"]  # No py-o3!
 any-llm-mode = ["py-o3"]          # No hyper!
@@ -3671,12 +3707,12 @@ This defined the modes as mutually exclusive per code path.
 
 **Root cause (pre-v2.31):** The RFC said "Both modes expose both interfaces" but the feature gates were defined as mutually exclusive per code path.
 
-**Resolution (v2.31):** Both `hyper` and `py-o3` are now **unconditional dependencies** (always compiled). The corrected feature gate table at lines 60-61 now shows:
+**Resolution (v2.31):** Both `hyper` and `py-o3` are now **unconditional dependencies** (always compiled). The corrected feature gate table now shows:
 
-| Interface | LiteLLM Mode | any-llm Mode | `full` (default) |
-|-----------|:------------:|:------------:|:-----------------:|
-| HTTP proxy (`/v1/chat/completions`) | ✅ | ✅ | ✅ |
-| Python SDK (`pip install`) | ✅ | ✅ | ✅ |
+| Interface                           | LiteLLM Mode | any-llm Mode | `full` (default) |
+| ----------------------------------- | :----------: | :----------: | :--------------: |
+| HTTP proxy (`/v1/chat/completions`) |      ✅      |      ✅      |        ✅        |
+| Python SDK (`pip install`)          |      ✅      |      ✅      |        ✅        |
 
 Mode selects **provider integration strategy** (`reqwest` vs. PyO3), NOT which interfaces exist. Both interfaces are **always** available in all modes. The `full` composite feature enables both strategies simultaneously for concurrent routing.
 
@@ -3688,7 +3724,7 @@ Mode selects **provider integration strategy** (`reqwest` vs. PyO3), NOT which i
 
 **Severity:** Critical (Architectural Contradiction)
 
-**Finding:** The RFC defines a unified `LLMProvider` trait (lines 332-359) as the shared abstraction for all provider implementations:
+**Finding:** The RFC defines a unified `LLMProvider` trait as the shared abstraction for all provider implementations:
 
 ```rust
 pub trait LLMProvider: Send + Sync {
@@ -3700,9 +3736,9 @@ pub trait LLMProvider: Send + Sync {
 
 But the mode distinction requires this trait to simultaneously support two fundamentally different HTTP call paths for the **same provider**:
 
-| Provider | LiteLLM Mode | any-llm Mode |
-|----------|-------------|--------------|
-| OpenAI | `reqwest` (Rust HTTP) | `openai` Python SDK via PyO3 |
+| Provider  | LiteLLM Mode          | any-llm Mode                    |
+| --------- | --------------------- | ------------------------------- |
+| OpenAI    | `reqwest` (Rust HTTP) | `openai` Python SDK via PyO3    |
 | Anthropic | `reqwest` (Rust HTTP) | `anthropic` Python SDK via PyO3 |
 
 **Problem:** The unified `LLMProvider` trait hides the integration strategy difference. But the actual call — `provider.completion(&request)` — must produce the same HTTP request regardless of which strategy is compiled in. If `OpenAI` is compiled as `reqwest` in one build and `PyO3→openai SDK` in another, the same `LLMProvider::completion()` call must reach the same endpoint with the same body. This is only possible if:
@@ -3712,11 +3748,13 @@ But the mode distinction requires this trait to simultaneously support two funda
 
 For OpenAI, both can produce correct requests. But for Anthropic, the SDK does automatic message format conversion (`OpenAI messages → Anthropic content.blocks`) that `reqwest` code cannot replicate without reimplementing the same conversion logic. The `LLMProvider` trait's `CompletionRequest` type must encode all the provider-specific translation logic — meaning the trait is NOT provider-agnostic; it must be specialized per integration strategy.
 
-**Further problem:** The Provider implementations in `providers/mod.rs` (lines 361-368) show ALL providers as `reqwest`-based:
+**Further problem:** The Provider implementations in `providers/mod.rs` show ALL providers as `reqwest`-based:
+
 ```rust
 pub mod openai;        // reqwest-based OpenAI
 pub mod anthropic;    // reqwest-based Anthropic
 ```
+
 In any-llm mode, these would need to be different implementations wrapping Python SDKs via PyO3 — but they can't coexist with the `reqwest` versions.
 
 **Resolution:** The `LLMProvider` trait must be feature-gated itself, with separate traits for `native_http` and `py_bridge` strategies. Or the trait must be parameterized by the integration strategy:
@@ -3755,7 +3793,7 @@ Returning `Py<PyAny>` for a streaming response means returning a Python iterator
 
 **C3b: Streaming via HTTP proxy in any-llm mode**
 
-The HTTP proxy sequence diagram (lines 267-292) shows streaming via the PyO3 bridge:
+The HTTP proxy sequence diagram shows streaming via the PyO3 bridge:
 
 ```
 Router->>SDK: PyO3 call
@@ -3768,6 +3806,7 @@ Router-->>Gateway: SSE chunk
 ```
 
 **Problem:** The official Python SDK streaming API (e.g., `AsyncAnthropic.messages.stream()`) yields Python objects, not HTTP bytes. Converting these to SSE format for the HTTP response requires:
+
 1. Detecting streaming response in PyO3 bridge
 2. Converting Python SDK chunk objects to OpenAI SSE format
 3. Streaming those chunks back through the Rust router
@@ -3777,7 +3816,8 @@ This is an entirely new code path not shown in the spec. The SSE conversion laye
 
 **C3c: SSE format inconsistency**
 
-The spec states (line 891):
+The spec states:
+
 ```
 OpenAI: data: {"choices":[{"delta":{"content":"token"}}]}\n\n
 Anthropic: data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"token"}}\n\n
@@ -3785,7 +3825,7 @@ Anthropic: data: {"type":"content_block_delta","delta":{"type":"text_delta","tex
 
 But these are **different JSON structures** — not just different field names. An HTTP proxy receiving an Anthropic SSE stream cannot naively forward OpenAI-format chunks. The conversion from Anthropic's event types to OpenAI's streaming format requires a transformation layer that doesn't exist in the spec.
 
-**Resolution (FIXED):** Streaming architecture specified for all mode × interface combinations. Per-Mode Streaming Availability table (lines 1596-1602) clarifies HTTP proxy streaming requires `full` build. SSE transformation table covers both modes.
+**Resolution (FIXED):** Streaming architecture specified for all mode × interface combinations. Per-Mode Streaming Availability table clarifies HTTP proxy streaming requires `full` build. SSE transformation table covers both modes.
 
 ---
 
@@ -3793,7 +3833,7 @@ But these are **different JSON structures** — not just different field names. 
 
 **Severity:** High (Dependency)
 
-**Finding:** The storage interface (lines 549-561) defines `check_budget_limit` referencing RFC-0903/0904 budget semantics. But RFC-0904 is in **Planned** status (not Accepted or Final). RFC-0909 (Final) depends on RFC-0904 for `record_spend()` which uses pricing. The dependency chain:
+**Finding:** The storage interface defines `check_budget_limit` referencing RFC-0903/0904 budget semantics. But RFC-0904 is in **Planned** status (not Accepted or Final). RFC-0909 (Final) depends on RFC-0904 for `record_spend()` which uses pricing. The dependency chain:
 
 ```
 RFC-0917 → requires → RFC-0904 (Planned)
@@ -3819,10 +3859,12 @@ set_api_key("sk-...")  # Registers with storage, enforces budget
 ```
 
 **Problem:** Registration and validation are different operations:
+
 - **Registration:** Associate a key hash with storage (creates a virtual key entry)
 - **Validation:** Check if a presented key is valid and has budget remaining
 
 The current SDK flow:
+
 ```python
 set_api_key("sk-...")  # This just REGISTERS a key
 response = completion(...)  # Router validates... but where?
@@ -3836,7 +3878,7 @@ If `set_api_key` only registers, then any string can be "registered" before use.
 
 1. **SDK deployment context:** The SDK is deployed in a trusted environment (user's server). The caller is authenticated to the SDK via their own auth system. `set_api_key()` stores the user's provider credentials locally.
 
-2. **Virtual key vs provider key:** The SDK stores *provider* API keys (OpenAI, Anthropic, etc.), not virtual keys. Virtual keys (RFC-0903) are a LiteLLM Mode (HTTP proxy) concept where the proxy mediates access. In any-llm Mode (SDK), the client has direct provider credentials.
+2. **Virtual key vs provider key:** The SDK stores _provider_ API keys (OpenAI, Anthropic, etc.), not virtual keys. Virtual keys (RFC-0903) are a LiteLLM Mode (HTTP proxy) concept where the proxy mediates access. In any-llm Mode (SDK), the client has direct provider credentials.
 
 3. **Validation timing:** `set_api_key()` stores the key. The first `completion()` call uses it — if invalid, the provider returns an auth error which surfaces to the caller.
 
@@ -3849,7 +3891,7 @@ If `set_api_key` only registers, then any string can be "registered" before use.
 ```python
 def set_api_key(key: str, provider: str = "openai"):
     """Store provider API key for subsequent calls.
-    
+
     Validates key format matches the provider's expected format.
     Does NOT validate key with provider (first completion() call does that).
     """
@@ -3869,9 +3911,10 @@ def set_api_key(key: str, provider: str = "openai"):
 
 **Severity:** High (Implementation Blocker)
 
-**Finding:** The any-llm mode HTTP proxy streaming sequence (lines 267-292) requires the PyO3 bridge to convert Python SDK streaming responses to SSE. But `hyper` is only listed as a dependency of `litellm-mode` (not `any-llm-mode`).
+**Finding:** The any-llm mode HTTP proxy streaming sequence requires the PyO3 bridge to convert Python SDK streaming responses to SSE. But `hyper` is only listed as a dependency of `litellm-mode` (not `any-llm-mode`).
 
 **From Cargo features:**
+
 ```toml
 any-llm-mode = ["py-o3"]    # Python SDK delegation via PyO3
 litellm-mode = ["hyper", "axum"]  # HTTP proxy server
@@ -3884,6 +3927,7 @@ Building with `--features any-llm-mode` alone does NOT compile `hyper`/`axum`. T
 **Impact:** Streaming via HTTP proxy in any-llm mode is only possible with `full` builds. The table claiming HTTP proxy is available in `any-llm-mode` alone is false.
 
 **Resolution (RESOLVED in v2.31):** Both `hyper` and `py-o3` are now unconditional dependencies — always compiled regardless of mode. The feature gate tables have been corrected to reflect that all interfaces are available in all modes:
+
 - `litellm-mode`: HTTP proxy ✅, Python SDK ✅
 - `any-llm-mode`: HTTP proxy ✅, Python SDK ✅
 - `full`: HTTP proxy ✅, Python SDK ✅
@@ -3896,7 +3940,7 @@ Mode selects **provider integration strategy** only (reqwest vs PyO3), NOT which
 
 **Severity:** Medium (Documentation Error)
 
-**Finding:** The Feature-Gated Structure (lines 677-704) shows:
+**Finding:** The Feature-Gated Structure shows:
 
 ```
 providers/
@@ -3910,11 +3954,13 @@ These are `reqwest`-based implementations for LiteLLM mode. But in any-llm mode,
 **Problem:** The file tree implies a single set of provider implementations that work for both modes. This is false — any-llm mode providers are Python SDK wrappers in the PyO3 bridge, not Rust files in `providers/`.
 
 **Resolution (FIXED):** The Feature-Gated Structure has been updated to show:
+
 - `providers/` directory is feature-gated `[feature = "litellm-mode"]` only
 - `py_bridge/providers/` subdirectory holds Python SDK wrappers, feature-gated `[feature = "any-llm-mode"]`
 - These are mutually exclusive per build flag
 
 The updated structure shows:
+
 ```
 providers/             # [feature = "litellm-mode"] ONLY
 py_bridge/providers/  # [feature = "any-llm-mode"] ONLY
@@ -3933,6 +3979,7 @@ py_bridge/providers/  # [feature = "any-llm-mode"] ONLY
 3. If both → reject as ambiguous
 
 **Problem:** Real provider model names contain these characters:
+
 - `openai/gpt-4o-0613` (slash for version/date)
 - `anthropic/claude-opus-4-250624` (slash for model versioning)
 - `mistral-small-latest` (no separator — bare model name)
@@ -4001,15 +4048,15 @@ fn parse_model_string(model: &str, default_provider: &str) -> Result<(&str, &str
 
 **Per-provider model name conventions:**
 
-| Provider | Model Format | Examples |
-|----------|-------------|----------|
-| OpenAI | `gpt-4o`, `gpt-4o-mini`, `gpt-4o-0613` | No prefix (default), version suffix with `-` |
-| Anthropic | `claude-opus-4-250624`, `claude-sonnet-4` | Date suffixes, hyphen separator |
-| Mistral | `mistral-small-latest`, `mistral-large-latest` | Hypenated, `-latest` suffix |
-| Ollama | `llama3.1:8b`, `mistral:7b` | `model:size` format for local models |
-| Gemini | `gemini-1.5-pro`, `gemini-2.0-flash` | Provider prefix usually via config |
-| Azure | Via `api_base` config | No model prefix in model string |
-| AWS Bedrock | `anthropic.claude-3-sonnet-20240229-v1:0` | Provider.model:version format |
+| Provider    | Model Format                                   | Examples                                     |
+| ----------- | ---------------------------------------------- | -------------------------------------------- |
+| OpenAI      | `gpt-4o`, `gpt-4o-mini`, `gpt-4o-0613`         | No prefix (default), version suffix with `-` |
+| Anthropic   | `claude-opus-4-250624`, `claude-sonnet-4`      | Date suffixes, hyphen separator              |
+| Mistral     | `mistral-small-latest`, `mistral-large-latest` | Hypenated, `-latest` suffix                  |
+| Ollama      | `llama3.1:8b`, `mistral:7b`                    | `model:size` format for local models         |
+| Gemini      | `gemini-1.5-pro`, `gemini-2.0-flash`           | Provider prefix usually via config           |
+| Azure       | Via `api_base` config                          | No model prefix in model string              |
+| AWS Bedrock | `anthropic.claude-3-sonnet-20240229-v1:0`      | Provider.model:version format                |
 
 **Note:** If a future provider uses `provider/model:tag` format (like Ollama), the slash-delimiter branch correctly captures `model:tag` as the full model name because the provider check passes on `ollama`.
 
@@ -4022,6 +4069,7 @@ fn parse_model_string(model: &str, default_provider: &str) -> Result<(&str, &str
 **Finding:** LiteLLM supports `idempotency_key` for safe request retries. The RFC does not mention idempotency anywhere. Without idempotency keys, retrying a failed request could result in duplicate charges if the provider processed the original request but the response was lost.
 
 **Missing:**
+
 - Whether idempotency keys are supported
 - How they map to provider APIs (OpenAI supports idempotency, Anthropic does not)
 - Whether retry behavior is provider-aware
@@ -4056,12 +4104,14 @@ pub struct RequestOptions {
 ```
 
 **Retry with idempotency:** When retrying a failed request:
+
 1. Same `idempotency_key` is reused across retry attempts
 2. If provider returns 200 with a response (not error), idempotency guarantees same result
 3. If provider returns 409 Conflict (duplicate), return the cached response
 4. Storage records `idempotency_key` with each spend event for duplicate detection
 
 **Storage duplicate detection:**
+
 ```rust
 /// Record idempotency key with spend event
 pub async fn record_spend_with_idempotency(
@@ -4171,20 +4221,21 @@ pub const DEFAULT_MAX_RETRIES: u32 = 2;
 
 **Retry error classification:**
 
-| Error Type | Retry? | Notes |
-|------------|--------|-------|
-| `400 BadRequestError` | ❌ | Don't retry invalid requests |
-| `401 AuthenticationError` | ❌ | Don't retry auth failures |
-| `408 TimeoutError` | ✅ (2 retries) | Network timeout, provider slow |
-| `429 RateLimitError` | ✅ (3 retries) | With exponential backoff + `Retry-After` header |
-| `413 ContentPolicyViolationError` | ❌ | Don't retry content policy violations |
-| `500 InternalServerError` | ✅ (2 retries) | Provider internal error |
-| `502 BadGatewayError` | ✅ (2 retries) | Upstream provider error |
-| `503 ServiceUnavailableError` | ✅ (2 retries) | Provider temporarily unavailable |
+| Error Type                        | Retry?         | Notes                                           |
+| --------------------------------- | -------------- | ----------------------------------------------- |
+| `400 BadRequestError`             | ❌             | Don't retry invalid requests                    |
+| `401 AuthenticationError`         | ❌             | Don't retry auth failures                       |
+| `408 TimeoutError`                | ✅ (2 retries) | Network timeout, provider slow                  |
+| `429 RateLimitError`              | ✅ (3 retries) | With exponential backoff + `Retry-After` header |
+| `413 ContentPolicyViolationError` | ❌             | Don't retry content policy violations           |
+| `500 InternalServerError`         | ✅ (2 retries) | Provider internal error                         |
+| `502 BadGatewayError`             | ✅ (2 retries) | Upstream provider error                         |
+| `503 ServiceUnavailableError`     | ✅ (2 retries) | Provider temporarily unavailable                |
 
 **Timeout enforcement:** Timeout is enforced at the **provider implementation layer** (not router). The `reqwest` client has a built-in timeout. For streaming, a separate stream timeout tracks maximum time from first chunk to last chunk.
 
 **Retry behavior:**
+
 1. Retry with **exponential backoff**: `delay = base_delay * 2^attempt` (capped at 60s)
 2. Respect `Retry-After` header from rate limit responses
 3. Use same `idempotency_key` on retries (when provided)
@@ -4197,16 +4248,18 @@ pub const DEFAULT_MAX_RETRIES: u32 = 2;
 **Severity:** Medium (Stale Code)
 
 **Finding:** After the A5 fix, the storage interface should separate `check_budget_limit` (budget enforcement) from OCTO-W operations. The spec defines:
+
 ```rust
 pub async fn get_octo_w_balance(&self, key_id: &[u8; 16]) -> Result<u64, StorageError>;
 ```
 
-But the actual code in the spec (lines 559-560) still shows:
+But the actual code in the spec still shows:
+
 ```rust
 pub async fn get_balance(&self, key_id: &[u8; 16]) -> Result<u64, StorageError>;
 ```
 
-`get_balance` is ambiguous — is it OCTO-W or budget? The A5 fix was supposed to rename this to `get_octo_w_balance`. The trait in lines 549-554 still uses the old ambiguous name.
+`get_balance` is ambiguous — is it OCTO-W or budget? The A5 fix was supposed to rename this to `get_octo_w_balance`. The trait still uses the old ambiguous name.
 
 **Resolution:** Update all storage interface references to use the A5-resolved names.
 
@@ -4292,6 +4345,7 @@ async fn completion_impl(
 ```
 
 **Thread-local runtime for sync calls:**
+
 ```rust
 use std::cell::OnceCell;
 thread_local! {
@@ -4300,6 +4354,7 @@ thread_local! {
 ```
 
 **Streaming in sync mode:**
+
 ```rust
 #[pyfunction]
 pub fn completion(
@@ -4320,6 +4375,7 @@ pub fn completion(
 ```
 
 **Benefits of this approach:**
+
 1. **No experimental PyO3 async** — `#[pyfunction]` on sync `fn` is stable
 2. **Drop-in replacement** — `response = quota_router.completion(...)` works like LiteLLM
 3. **`acompletion()` for async callers** — `await quota_router.acompletion(...)` for asyncio users
@@ -4331,7 +4387,7 @@ pub fn completion(
 
 **Severity:** Low (Architectural Clarity)
 
-**Finding:** The Mermaid diagram (lines 68-95) shows:
+**Finding:** The Mermaid diagram shows:
 
 ```
 LiteLLM --> Shared
@@ -4354,108 +4410,108 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 
 ## Round 5 Issues Summary
 
-| ID | Severity | Issue |
-|----|----------|-------|
-| C1 | Critical | Feature gate table claims both modes have both interfaces — but gate definitions make this impossible |
-| C2 | Critical | `LLMProvider` trait cannot simultaneously support both integration strategies |
-| C3 | High | Streaming in any-llm mode via HTTP proxy is not specified (SSE conversion missing) |
-| C4 | High | `storage` module defines budget interface but RFC-0904 is Planned |
-| C5 | High | `set_api_key()` is registration not validation — auth model still broken |
-| C6 | High | HTTP proxy streaming in any-llm mode requires `hyper` — but `hyper` only compiled with `litellm-mode` |
-| C7 | Medium | Provider implementations listed in wrong module for any-llm mode |
-| C8 | Medium | B5 parsing rules fail silently for provider-specific model naming conventions |
-| C9 | Medium | idempotency_key missing — safe retries not specified |
-| C10 | Medium | Timeout and retry policy not specified |
-| C11 | Medium | `get_balance` name stale — A5 fix not applied to code |
-| C12 | Medium | PyO3 `async fn` incompatible with synchronous Python callers |
-| C13 | Low | Feature gate mutual exclusivity contradicts shared core diagram |
+| ID  | Severity | Issue                                                                                                 |
+| --- | -------- | ----------------------------------------------------------------------------------------------------- |
+| C1  | Critical | Feature gate table claims both modes have both interfaces — but gate definitions make this impossible |
+| C2  | Critical | `LLMProvider` trait cannot simultaneously support both integration strategies                         |
+| C3  | High     | Streaming in any-llm mode via HTTP proxy is not specified (SSE conversion missing)                    |
+| C4  | High     | `storage` module defines budget interface but RFC-0904 is Planned                                     |
+| C5  | High     | `set_api_key()` is registration not validation — auth model still broken                              |
+| C6  | High     | HTTP proxy streaming in any-llm mode requires `hyper` — but `hyper` only compiled with `litellm-mode` |
+| C7  | Medium   | Provider implementations listed in wrong module for any-llm mode                                      |
+| C8  | Medium   | B5 parsing rules fail silently for provider-specific model naming conventions                         |
+| C9  | Medium   | idempotency_key missing — safe retries not specified                                                  |
+| C10 | Medium   | Timeout and retry policy not specified                                                                |
+| C11 | Medium   | `get_balance` name stale — A5 fix not applied to code                                                 |
+| C12 | Medium   | PyO3 `async fn` incompatible with synchronous Python callers                                          |
+| C13 | Low      | Feature gate mutual exclusivity contradicts shared core diagram                                       |
 
 **Round 6 Status:** C3, C8, C9, C10, C12, C13, A4, B5 all FIXED. C4 and A9 remain open (RFC-0904 Planned dependency). |
 
 ### Combined Status (All Issues Through Round 5)
 
-| ID | Severity | Status | Issue |
-|----|----------|--------|-------|
-| A1 | Critical | **FIXED** | Unified LLMProvider trait impossible — LiteLLM Mode uses reqwest HTTP, any-llm Mode uses PyO3 SDK delegation; traits are feature-gated per strategy (C2) |
-| A2 | Critical | **FIXED** | Feature gate location → py_bridge in quota-router-core |
-| A3 | Critical | **FIXED** | &mut self → &self with interior mutability |
-| A4 | High | **FIXED** | Streaming fully specified: SSE format, per-provider differences, LiteLLM vs any-llm modes |
-| A5 | High | **FIXED** | Budget vs OCTO-W semantics separated |
-| A6 | Medium | **FIXED** | Storage 3x → 2x calls |
-| A7 | Medium | **FIXED** | Per-request router → Arc<Router> shared |
-| A8 | Medium | **FIXED** | `set_api_key()` auth — resolved by C5 fix (format validation + completion-time validation) |
-| A9 | Low | Open | RFC-0904 (Planned) dependency — budget enforcement interface is provisional |
-| A10 | Low | **FIXED** | PyO3 async — resolved by C12 (dual sync/async API, no experimental async needed) |
-| A11 | Low | Open | Feature flags baked into wheel — known limitation, documented |
-| B1 | High | **FIXED** | Provider SDK delegation → HTTP forwarding |
-| B2 | High | **FIXED** | Enterprise features in both modes |
-| B3 | Medium | **FIXED** | enterprise gate removed |
-| B4 | Medium | **FIXED** | HTTP forwarding named as shared core |
-| B5 | Medium | **FIXED** | Parsing rules — resolved by C8 (provider-list matching) |
-| B6 | Low | **FIXED** | Binary size added |
-| B7 | Low | **FIXED** | Config conflicts resolved |
-| C1 | Critical | **FIXED** | Feature gate table corrected — litellm-mode=HTTP only, any-llm-mode=SDK only, full=both |
-| C2 | Critical | **FIXED** | LLMProvider trait feature-gated — separate HttpProvider (reqwest) and SdkProvider (PyO3) traits |
-| C3 | High | **FIXED** | Streaming spec complete — per-mode availability, SSE format, any-llm HTTP proxy requires full build |
-| C4 | High | Open | RFC-0904 (Planned) dependency — storage interface provisional pending RFC-0904 acceptance |
-| C5 | High | **FIXED** | set_api_key() is format validation + storage; actual provider validation at completion() time |
-| C6 | High | **FIXED** | Tables corrected — HTTP proxy ❌ in any-llm-mode alone, ✅ only in full build |
-| C7 | Medium | **FIXED** | Feature-Gated Structure updated — providers/ (litellm-mode), py_bridge/providers/ (any-llm-mode) |
-| C8 | Medium | **FIXED** | Provider-list matching parsing algorithm — colon/slash only split if provider matches |
-| C9 | Medium | **FIXED** | Idempotency key — pass-through header (OpenAI/Gemini), local retry for others |
-| C10 | Medium | **FIXED** | RetryPolicy + TimeoutConfig fully specified (per litellm's approach) |
-| C11 | Medium | **FIXED** | `get_balance` → `get_octo_w_balance` in storage interface |
-| C12 | Medium | **FIXED** | Dual sync/async API — blocking sync fn + async fn, no experimental PyO3 async |
-| C13 | Low | **FIXED** | Diagram updated — mutual exclusivity shown explicitly |
+| ID  | Severity | Status    | Issue                                                                                                                                                    |
+| --- | -------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A1  | Critical | **FIXED** | Unified LLMProvider trait impossible — LiteLLM Mode uses reqwest HTTP, any-llm Mode uses PyO3 SDK delegation; traits are feature-gated per strategy (C2) |
+| A2  | Critical | **FIXED** | Feature gate location → py_bridge in quota-router-core                                                                                                   |
+| A3  | Critical | **FIXED** | &mut self → &self with interior mutability                                                                                                               |
+| A4  | High     | **FIXED** | Streaming fully specified: SSE format, per-provider differences, LiteLLM vs any-llm modes                                                                |
+| A5  | High     | **FIXED** | Budget vs OCTO-W semantics separated                                                                                                                     |
+| A6  | Medium   | **FIXED** | Storage 3x → 2x calls                                                                                                                                    |
+| A7  | Medium   | **FIXED** | Per-request router → Arc<Router> shared                                                                                                                  |
+| A8  | Medium   | **FIXED** | `set_api_key()` auth — resolved by C5 fix (format validation + completion-time validation)                                                               |
+| A9  | Low      | Open      | RFC-0904 (Planned) dependency — budget enforcement interface is provisional                                                                              |
+| A10 | Low      | **FIXED** | PyO3 async — resolved by C12 (dual sync/async API, no experimental async needed)                                                                         |
+| A11 | Low      | Open      | Feature flags baked into wheel — known limitation, documented                                                                                            |
+| B1  | High     | **FIXED** | Provider SDK delegation → HTTP forwarding                                                                                                                |
+| B2  | High     | **FIXED** | Enterprise features in both modes                                                                                                                        |
+| B3  | Medium   | **FIXED** | enterprise gate removed                                                                                                                                  |
+| B4  | Medium   | **FIXED** | HTTP forwarding named as shared core                                                                                                                     |
+| B5  | Medium   | **FIXED** | Parsing rules — resolved by C8 (provider-list matching)                                                                                                  |
+| B6  | Low      | **FIXED** | Binary size added                                                                                                                                        |
+| B7  | Low      | **FIXED** | Config conflicts resolved                                                                                                                                |
+| C1  | Critical | **FIXED** | Feature gate table corrected — litellm-mode=HTTP only, any-llm-mode=SDK only, full=both                                                                  |
+| C2  | Critical | **FIXED** | LLMProvider trait feature-gated — separate HttpProvider (reqwest) and SdkProvider (PyO3) traits                                                          |
+| C3  | High     | **FIXED** | Streaming spec complete — per-mode availability, SSE format, any-llm HTTP proxy requires full build                                                      |
+| C4  | High     | Open      | RFC-0904 (Planned) dependency — storage interface provisional pending RFC-0904 acceptance                                                                |
+| C5  | High     | **FIXED** | set_api_key() is format validation + storage; actual provider validation at completion() time                                                            |
+| C6  | High     | **FIXED** | Tables corrected — HTTP proxy ❌ in any-llm-mode alone, ✅ only in full build                                                                            |
+| C7  | Medium   | **FIXED** | Feature-Gated Structure updated — providers/ (litellm-mode), py_bridge/providers/ (any-llm-mode)                                                         |
+| C8  | Medium   | **FIXED** | Provider-list matching parsing algorithm — colon/slash only split if provider matches                                                                    |
+| C9  | Medium   | **FIXED** | Idempotency key — pass-through header (OpenAI/Gemini), local retry for others                                                                            |
+| C10 | Medium   | **FIXED** | RetryPolicy + TimeoutConfig fully specified (per litellm's approach)                                                                                     |
+| C11 | Medium   | **FIXED** | `get_balance` → `get_octo_w_balance` in storage interface                                                                                                |
+| C12 | Medium   | **FIXED** | Dual sync/async API — blocking sync fn + async fn, no experimental PyO3 async                                                                            |
+| C13 | Low      | **FIXED** | Diagram updated — mutual exclusivity shown explicitly                                                                                                    |
 
 ---
 
 ## Version History
 
-| Version | Date       | Changes |
-|---------|------------|---------|
-| 2.50    | 2026-05-10 | **FIX** M1: All 8 routing strategy impls (least_busy, latency_based, cost_based, usage_based, usage_based_v2, weighted) now use model-aware access pattern `providers.get(model).and_then(|v| v.get(idx))` — previously incorrectly used `providers.get(idx)` as if idx were a HashMap key. **FIX** M2: update_provider_state() now takes model name and uses proper model-aware access for provider state updates. **FIX** M6: SdkUsage token fields changed from u32 to u64 to avoid overflow on large responses (OpenAI can return millions of tokens). **FIX** Pseudocode at line 3132 now passes model name to update_provider_state (was missing model param). |
-| 2.49    | 2026-05-10 | **FIX** L9: UpdateGuard.new now takes model name as first arg to properly look up Vec then index into it (was incorrectly using idx as HashMap key directly). **FIX** L6: Added `arguments: Option<String>` to SdkMessage for Phase 4 tool_calls support (function call parameters JSON). |
-| 2.45    | 2026-05-09 | **FIX** G3: usage_based_v2_impl now uses SpendTracker.best_by_weighted_spend() (was placeholder fallback to UsageBased). **FIX** G6: update_provider_state() now implements real state updates (active_requests decrement, latency samples, success counters, spend recording). **ADD** spend_tracker: SpendTracker to RouterState for UsageBasedV2. **CLEAN** Removed dead imports from simple_shuffle_impl and weighted_impl. **CLEAN** Removed unused enumerate idx variable. |
-| 2.44    | 2026-05-09 | **ADD** ProviderWithState struct (lines ~1879-1900) — referenced but never defined in RFC. All routing decision state (active_requests, latencies, success_count, current_rpm/tpm, spend_μunits). **ADD** SpendTracker struct with exponential decay (lines ~2290-2370) — decay formula: spend *= 2^(-elapsed/3600.0), half-life of 1 hour. Implements best_by_weighted_spend() for UsageBasedV2 strategy. **ADD** RoutingStrategy enum with all 8 variants (lines ~1921-1949) and full algorithm implementations (lines ~2079-2197). All heavy lifting migrated from deprecated Python Router class in RFC-0920 v1.68 — RFC-0917 is now the single source of truth for router algorithms. |
-| 2.43    | 2026-05-09 | **FIX** F1: RouterHandle.batch_completion_models_all() now passes all 22 params (was dropping 20 params — now matches Client behavior). **FIX** F4: SdkMessage.name comment clarified ("function name for role=assistant or role=function"). **FIX** F6: Duplicate TODO comment removed from RouterHandle.completion() cost_amount line. |
-| 2.41    | 2026-05-09 | **FIX** D4/D7/D8: SdkMessage.role now specifies valid values (user|assistant|system|function|tool). SdkMessage.content notes multi-modal deferred to Phase 4. SdkMessage.name docs clarify usage. **FIX** D10: cost_amount: 0 now references RFC-0904 pricing registry tracking. Per deferred-vs-unspecified rule: no "Phase X" deferral without spec. |
-| 2.40    | 2026-05-09 | **FIX** D1/D3: RouterHandle.batch_completion_models() and batch_completion_models_all() now have all 22 params (was only temperature/max_tokens). **FIX** D9: batch_completion_models_all() now documents that failures are silently dropped. |
-| 2.39    | 2026-05-09 | **FIX** C1: Client.batch_completion_models() now uses tokio::sync::mpsc (was std::mpsc blocking). **FIX** C2: Client.get_metrics() now returns Result like RouterHandle (was direct HashMap). **FIX** C6: RouterHandle.batch_completion_models() now takes all 22 params (was dropping most to None). Documented fire-and-forget task pattern. |
-| 2.38    | 2026-05-09 | **FIX** B1: RouterHandle.completion() now has full 22 params (was only 4). **FIX** B10: RouterHandle.completion() now passes ALL params to SdkCompletionRequest (was dropping all except model/messages/stream). **FIX** B2: Added batch_completion_models() and batch_completion_models_all() to RouterHandle (was missing). **FIX** B5: Added RouterHandle::new() constructor. **FIX** B9: batch_completion_models uses tokio::sync::mpsc instead of std::mpsc. |
-| 2.37    | 2026-05-09 | **FIX** A8: Add `python_sdk_entry` module with concrete `RouterHandle` struct definition — the PyO3 entry point that `quota-router-pyo3` calls. RFC-0920 references `RouterHandle`/`RustRouterHandle` in 12+ places but it was never defined. This fix adds the missing entry point. Also clarifies the two PyO3 boundaries: Boundary #1 (internal, core→provider SDKs via `py_bridge`) and Boundary #2 (external, pyo3→core via `RouterHandle`). **FIX** A1: Added `client` module for direct Rust-to-core calls without HTTP proxy. External Rust clients (CLI, other crates) can now link against quota-router-core directly via `Client` struct with zero overhead. **FIX** A3: Expanded `SdkCompletionRequest` with all 22 parameters (per RFC-0920 lines 58-84, 3735-3751). **FIX** A4: Added `batch_completion_models()` and `batch_completion_models_all()` methods to `RouterHandle` and `Client`. **FIX** A5: Added `name: Option<String>` field to `SdkMessage` for function call support. |
-| 2.36    | 2026-05-06 | **FIX** N2: AsyncChunkIterator uses tokio::task::spawn_blocking + oneshot (not blocking std::thread::spawn + join). **FIX** N9: StreamAdapter removed — single AsyncChunkIterator with spawn_blocking/oneshot. **FIX** N10: GIL Management table updated to `into_future` (was `into_async`). **FIX** N11: execute_with_retry parse_response called as associated function (was via C::default()). **FIX** N12: Rust code fence closed before Rate limiting for streaming. **FIX** N18: bedrock added to PROVIDER_SDK_TYPES YAML + Rust + Python registry. |
-| 2.35    | 2026-04-30 | **FIX** D1 (Critical): compile_error! moved OUTSIDE struct body (top-level item, not inside struct). **FIX** D2: execute_with_retry added `+ Default` bound to C trait. **FIX** H1: AsyncIterator replaced with futures::Stream (stable Rust). **FIX** H2: ProviderHandle defined once via `pub use` in router module (removed duplicate). **FIX** H3: into_async removed from streaming section. **FIX** H4: ROUTER lazy_static now uses `Router::global()` (not `Router::new()` — was creating separate instance). **FIX** H10: compute_event_id documented as BLAKE3 per RFC-0909. **FIX** M1: LatencyTracker uses VecDeque(maxlen) for O(1) front eviction. |
-| 2.34    | 2026-04-30 | **FIX** 1 (Critical): Rust Feature Gates — hyper/axum/py-o3 are now UNCONDITIONAL dependencies (empty feature flags `[]`). Single-mode feature flags no longer enable/disable interfaces. **FIX** 2 (High): Per-Mode Streaming Availability table — any-llm-mode now ✅ for HTTP proxy streaming. **FIX** 3 (High): Feature-Gated Structure directory tree — gateway comment updated to "ALWAYS compiled". **FIX** 4 (High): Cargo Features block — updated to empty flags with explicit UNCONDITIONAL note. **FIX** 5 (Medium): lib.rs source comments — clarified provider strategies are exclusive per single-mode build. |
-| 2.33    | 2026-04-30 | **FIX** 1.1 (Critical): Update "What gets compiled" table (lines 1318-1324) — both interfaces available in all modes (not litellm-mode=HTTP-only, any-llm-mode=SDK-only). **FIX** 1.2: LiteLLM Compatibility Matrix (lines 1354-1355) — both cells corrected to ✅. **FIX** 2.1: A11 resolution text (lines 2299-2301) — clarify single-mode binaries have both interfaces. **FIX** 2.2: C6 resolution bullets (lines 2706-2711) — removed old stale per-flag table; replaced with corrected statement that all interfaces available in all modes. |
-| 2.32    | 2026-04-30 | **FIX** 0917-C1 (Round 5): Update embedded adversarial finding C1 with RESOLVED status — both interfaces now unconditionally available in all modes (hyper + py-o3 both compiled always). Old "litellm-mode=HTTP only, any-llm-mode=SDK only" table replaced with corrected architecture. Line 78 stale note corrected: "both interfaces available only in full builds" → "both interfaces always available in all modes". |
-| 2.31    | 2026-04-30 | **FIX** compile_error! confusion (lines 1105-1112): Added NOTE explaining compile_error! is never triggered because `full = ["hyper", "axum", "py-o3"]` does not enable litellm-mode/any-llm-mode. Mutual exclusivity already enforced at Cargo.toml level. No functional change, clarity only. |
-| 2.30    | 2026-04-30 | **FIX** 0917-C4: Update B5 model parsing rules to provider-list matching (per RFC-0920 §C8). Rule 3 "reject if both" replaced — `ollama/llama3.1:8b` now correctly parses via slash match. **FIX** 0917-C3: Sync deepinfra provider across RFCs — added to Phase 3 provider list. **FIX** 0920-C1/H1 (cross-impact): Corrected HTTP proxy constraint box in RFC-0920 — HTTP proxy IS available in any-llm-mode (via PyO3 bridge), not ❌ NO. Both RFCs now agree: HTTP proxy in all modes, Python SDK in all modes. |
-| 2.29    | 2026-04-30 | **FIX** 0917-C1: execute_with_retry — correct return type (CompletionResponse), fix instance method call (parse_response needs self), separate last_response/last_reqwest_error. **FIX** 0917-C2: Add ModelNotFound to RouterError enum. **FIX** 0917-C3: Correct Assertion A — single-mode builds have one interface, full build has both. **FIX** 0917-H1: pyo3-asyncio into_async → into_future with Python::with_gil. **FIX** 0917-H2/CROSS-1: google→gemini in provider SDK type registry; canonical YAML designated. **FIX** 0917-M1: SSE format_usage — non-raw string for \n\n, usage at root level. **FIX** 0920-C1: Exception base class unified to QuotaRouterError with optional status/provider fields. |
-| 2.27    | 2026-04-30 | **MERGE** Absorbed RFC-0921 and RFC-0922 implementation details: HttpClientConfig, ProviderRequest trait, RetryConfig, ProviderError enum, SSEParser trait (litellm-mode); PythonSDKBridge class, spawn_blocking pattern, GIL management table, AsyncChunkIterator (any-llm-mode). RFC-0921/0922 superseded. |
-| 2.26 | 2026-04-29 | **CRITICAL CONSTRAINT: Rust-owns-all-heavy-lifting.** Added top-level architectural constraint establishing ALL heavy lifting (routing, caching, telemetry, concurrency, state management) in Rust core. HTTP proxy and Python SDK are thin binding layers. |
-| 2.25 | 2026-04-27 | Round 43: FIX CRITICAL SELF-CONTRADICTION — both modes have BOTH interfaces. Removed all claims that litellm-mode lacks Python SDK and any-llm-mode lacks HTTP proxy. Feature tables, notes, mermaid diagrams, and rust code updated to make clear: modes differ only in PROVIDER INTEGRATION STRATEGY (reqwest vs PyO3), NOT in interface availability. |
-| 2.24 | 2026-04-27 | Round 42 remaining: fix X4 (PyO3 GIL release at .await points); fix X6 (compile_error! arm for mutually exclusive features); fix X11 (Router::global() init order + singleton identity) |
-| 2.23 | 2026-04-27 | Round 42: fix X7 (Critical) — add `.to_lowercase()` before `get_canonical_tokenizer` (tokenizer lookup is case-sensitive; uppercase model names fall through to wrong fallback) |
-| 2.22 | 2026-04-26 | Round 41: fix HI-04 (CostOverflow → HTTP 422, not 500 — deployment misconfiguration should not trigger retry); fix MD-04 (parse_model_string: use default_provider on unknown prefix, emit UnknownProviderPrefix WARN event; document dynamic KNOWN_PROVIDERS loading) |
-| 2.21 | 2026-04-26 | Round 39: fix R39-N1 (Phase 3 QuotaRouterError: replace PLANNED placeholder with FULL SPEC — complete enum definition, From implementations, HTTP status code mapping, Python exception class hierarchy) |
-| 2.20 | 2026-04-26 | Round 38: fix NEW-1 (Phase 3 QuotaRouterError checklist item marked PLANNED per deferred-work rule); fix NEW-2 (line 929: clarify 'full-mode' is alias for default 'full' feature); fix NEW-5 (add SSEEvent/Ssedelta/SseUsage struct definitions to Anthropic SSE transform); fix NEW-7 (add "Router Struct Definition (Normative)" header at line 579); add RFC-0902 v1.3 to Related RFCs (7 routing strategies including Weighted) |
-| 2.19 | 2026-04-25 | Round 37: fix XH-1 (line 929: rename duplicate `full` feature to `full-mode` to avoid collision with §Rust Feature Gates definition at line 133) |
-| 2.18 | 2026-04-24 | Round 36: fix NC-4 (routing strategies count 6→7 in Mermaid, scope table, feature matrix, Phase 1 checklist); fix XH-1 (remove duplicate full feature TOML block at lines 111-123); fix NH-2 (mark A3 Router struct pseudocode as non-normative, see lines 583-598 for normative definition); fix NH-4 (add LatencyTracker struct with integer microseconds, eliminate floating-point non-determinism per RFC-0104); fix NM-5 (virtual keys compatibility matrix: any-llm mode cell changed ✅→❌ — SDK callers bypass proxy, not RFC-0903 enforced); fix XH-3 (QuotaRouterError status header corrected: item is Phase 3 PLANNED checklist, no enum defined in RFC body); fix XC-5 (line 480: replace phantom record_spend(&api_key.key_id, &response) with proper SpendEvent construction + STORAGE.record_spend(&event).await?) |
-| 2.17    | 2026-04-24 | Round 32: fix R2-5 (Design) per deferred-work rule — add QuotaRouterError unified error type to Phase 3 checklist; must be spec-ed (not just "deferred") per memory/deferred-vs-unspecified.md; defines enum wrapper with From implementations for KeyError, BudgetError, RouterError, StorageError; retrofitted across RFC-0903/0904/0909/0910/0917 |
-| 2.16    | 2026-04-24 | Round 30: fix 4.2 (Medium) — remove misleading "same derivation pattern as RFC-0903 virtual key generation" from SDK mode key derivation; clarify HMAC-SHA256 rationale (arbitrary provider key input, not virtual key object); add note that HMAC-SHA256 is used (not BLAKE3) because input is arbitrary provider key string |
-| 2.13    | 2026-04-23 | Round 13: fix 1.1 virtual keys self-contradiction — virtual keys apply to HTTP proxy callers only (Python SDK callers bypass proxy, no virtual key enforcement in any SDK path); corrected Summary and enterprise feature list; from comprehensive adversarial review |
-| 2.12    | 2026-04-23 | Round 12: fix 1.1 virtual keys self-contradiction — clarify in Summary and enterprise feature list that virtual keys (RFC-0903) apply only in LiteLLM Mode HTTP proxy, not in any-llm Mode SDK; from comprehensive adversarial review |
-| 2.9     | 2026-04-23 | Round 9: fix C1/C2 undefined LLMProvider/CompletionRequest types — add ProviderRequest/ProviderResponse/Message/Usage unified types, ProviderHandle enum dispatch in Router; fix C4 undefined sdk_types module — define SdkMessage/SdkUsage types; from external adversarial review |
-| 2.8     | 2026-04-23 | Round 8: fix C1 Feature Gate Architecture code block (gateway/python_sdk feature gates); fix C2 dynamic module shadowing (use crate:: paths); fix H3 redundant Python::with_gil; add RouterConfig struct definition; from external adversarial review |
-| 2.6     | 2026-04-21 | Round 6: A4 streaming spec; C8 provider-list parsing; C9 idempotency keys; C10 RetryPolicy; C12 dual sync/async API; C13 diagram mutual exclusivity |
-| 2.5     | 2026-04-21 | Round 5 fixes: C1 (feature gate table corrected), C2 (feature-gated provider traits), C5 (set_api_key format validation), C6/C7 (interface/module corrections) |
-| 2.4     | 2026-04-21 | Round 4: mode distinction is PROVIDER INTEGRATION STRATEGY (LiteLLM=native reqwest HTTP, any-llm=Python SDK delegation), not interface |
-| 2.3     | 2026-04-21 | Round 3: fix dual-mode misleading — enterprise in both modes, HTTP forwarding shared core |
-| 2.2     | 2026-04-21 | Round 2 adversarial review: HTTP forwarding emphasis, enterprise features for both modes (B1-B7) |
-| 2.1     | 2026-04-21 | Fix A1/A2/A3 (critical): PyO3→reqwest, py_bridge in-core, &self interior mutability |
-| 2.0     | 2026-04-21 | Revised with Rust feature gates, dual-mode emphasis |
-| 1.0     | 2026-04-21 | Initial draft |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2.50    | 2026-05-10 | **FIX** M1: All 8 routing strategy impls (least_busy, latency_based, cost_based, usage_based, usage_based_v2, weighted) now use model-aware access pattern `providers.get(model).and_then(                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | v         | v.get(idx))`— previously incorrectly used`providers.get(idx)` as if idx were a HashMap key. **FIX** M2: update_provider_state() now takes model name and uses proper model-aware access for provider state updates. **FIX** M6: SdkUsage token fields changed from u32 to u64 to avoid overflow on large responses (OpenAI can return millions of tokens). **FIX** Pseudocode now passes model name to update_provider_state (was missing model param). |
+| 2.49    | 2026-05-10 | **FIX** L9: UpdateGuard.new now takes model name as first arg to properly look up Vec then index into it (was incorrectly using idx as HashMap key directly). **FIX** L6: Added `arguments: Option<String>` to SdkMessage for Phase 4 tool_calls support (function call parameters JSON).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 2.45    | 2026-05-09 | **FIX** G3: usage_based_v2_impl now uses SpendTracker.best_by_weighted_spend() (was placeholder fallback to UsageBased). **FIX** G6: update_provider_state() now implements real state updates (active_requests decrement, latency samples, success counters, spend recording). **ADD** spend_tracker: SpendTracker to RouterState for UsageBasedV2. **CLEAN** Removed dead imports from simple_shuffle_impl and weighted_impl. **CLEAN** Removed unused enumerate idx variable.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 2.44    | 2026-05-09 | **ADD** ProviderWithState struct (lines ~1879-1900) — referenced but never defined in RFC. All routing decision state (active_requests, latencies, success_count, current_rpm/tpm, spend_μunits). **ADD** SpendTracker struct with exponential decay (lines ~2290-2370) — decay formula: spend *= 2^(-elapsed/3600.0), half-life of 1 hour. Implements best_by_weighted_spend() for UsageBasedV2 strategy. **ADD** RoutingStrategy enum with all 8 variants (lines ~1921-1949) and full algorithm implementations (lines ~2079-2197). All heavy lifting migrated from deprecated Python Router class in RFC-0920 v1.68 — RFC-0917 is now the single source of truth for router algorithms.                                                                                                                                                                                                                                                                                     |
+| 2.43    | 2026-05-09 | **FIX** F1: RouterHandle.batch_completion_models_all() now passes all 22 params (was dropping 20 params — now matches Client behavior). **FIX** F4: SdkMessage.name comment clarified ("function name for role=assistant or role=function"). **FIX** F6: Duplicate TODO comment removed from RouterHandle.completion() cost_amount line.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 2.41    | 2026-05-09 | **FIX** D4/D7/D8: SdkMessage.role now specifies valid values (user                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | assistant | system                                                                                                                                                                                                                                                                                                                                                                                                                                                  | function | tool). SdkMessage.content notes multi-modal deferred to Phase 4. SdkMessage.name docs clarify usage. **FIX** D10: cost_amount: 0 now references RFC-0904 pricing registry tracking. Per deferred-vs-unspecified rule: no "Phase X" deferral without spec. |
+| 2.40    | 2026-05-09 | **FIX** D1/D3: RouterHandle.batch_completion_models() and batch_completion_models_all() now have all 22 params (was only temperature/max_tokens). **FIX** D9: batch_completion_models_all() now documents that failures are silently dropped.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 2.39    | 2026-05-09 | **FIX** C1: Client.batch_completion_models() now uses tokio::sync::mpsc (was std::mpsc blocking). **FIX** C2: Client.get_metrics() now returns Result like RouterHandle (was direct HashMap). **FIX** C6: RouterHandle.batch_completion_models() now takes all 22 params (was dropping most to None). Documented fire-and-forget task pattern.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 2.38    | 2026-05-09 | **FIX** B1: RouterHandle.completion() now has full 22 params (was only 4). **FIX** B10: RouterHandle.completion() now passes ALL params to SdkCompletionRequest (was dropping all except model/messages/stream). **FIX** B2: Added batch_completion_models() and batch_completion_models_all() to RouterHandle (was missing). **FIX** B5: Added RouterHandle::new() constructor. **FIX** B9: batch_completion_models uses tokio::sync::mpsc instead of std::mpsc.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 2.37    | 2026-05-09 | **FIX** A8: Add `python_sdk_entry` module with concrete `RouterHandle` struct definition — the PyO3 entry point that `quota-router-pyo3` calls. RFC-0920 references `RouterHandle`/`RustRouterHandle` in 12+ places but it was never defined. This fix adds the missing entry point. Also clarifies the two PyO3 boundaries: Boundary #1 (internal, core→provider SDKs via `py_bridge`) and Boundary #2 (external, pyo3→core via `RouterHandle`). **FIX** A1: Added `client` module for direct Rust-to-core calls without HTTP proxy. External Rust clients (CLI, other crates) can now link against quota-router-core directly via `Client` struct with zero overhead. **FIX** A3: Expanded `SdkCompletionRequest` with all 22 parameters (per RFC-0920). **FIX** A4: Added `batch_completion_models()` and `batch_completion_models_all()` methods to `RouterHandle` and `Client`. **FIX** A5: Added `name: Option<String>` field to `SdkMessage` for function call support. |
+| 2.36    | 2026-05-06 | **FIX** N2: AsyncChunkIterator uses tokio::task::spawn_blocking + oneshot (not blocking std::thread::spawn + join). **FIX** N9: StreamAdapter removed — single AsyncChunkIterator with spawn_blocking/oneshot. **FIX** N10: GIL Management table updated to `into_future` (was `into_async`). **FIX** N11: execute_with_retry parse_response called as associated function (was via C::default()). **FIX** N12: Rust code fence closed before Rate limiting for streaming. **FIX** N18: bedrock added to PROVIDER_SDK_TYPES YAML + Rust + Python registry.                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 2.35    | 2026-04-30 | **FIX** D1 (Critical): compile_error! moved OUTSIDE struct body (top-level item, not inside struct). **FIX** D2: execute_with_retry added `+ Default` bound to C trait. **FIX** H1: AsyncIterator replaced with futures::Stream (stable Rust). **FIX** H2: ProviderHandle defined once via `pub use` in router module (removed duplicate). **FIX** H3: into_async removed from streaming section. **FIX** H4: ROUTER lazy_static now uses `Router::global()` (not `Router::new()` — was creating separate instance). **FIX** H10: compute_event_id documented as BLAKE3 per RFC-0909. **FIX** M1: LatencyTracker uses VecDeque(maxlen) for O(1) front eviction.                                                                                                                                                                                                                                                                                                                |
+| 2.34    | 2026-04-30 | **FIX** 1 (Critical): Rust Feature Gates — hyper/axum/py-o3 are now UNCONDITIONAL dependencies (empty feature flags `[]`). Single-mode feature flags no longer enable/disable interfaces. **FIX** 2 (High): Per-Mode Streaming Availability table — any-llm-mode now ✅ for HTTP proxy streaming. **FIX** 3 (High): Feature-Gated Structure directory tree — gateway comment updated to "ALWAYS compiled". **FIX** 4 (High): Cargo Features block — updated to empty flags with explicit UNCONDITIONAL note. **FIX** 5 (Medium): lib.rs source comments — clarified provider strategies are exclusive per single-mode build.                                                                                                                                                                                                                                                                                                                                                   |
+| 2.33    | 2026-04-30 | **FIX** 1.1 (Critical): Update "What gets compiled" table — both interfaces available in all modes (not litellm-mode=HTTP-only, any-llm-mode=SDK-only). **FIX** 1.2: LiteLLM Compatibility Matrix — both cells corrected to ✅. **FIX** 2.1: A11 resolution text — clarify single-mode binaries have both interfaces. **FIX** 2.2: C6 resolution bullets — removed old stale per-flag table; replaced with corrected statement that all interfaces available in all modes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 2.32    | 2026-04-30 | **FIX** 0917-C1 (Round 5): Update embedded adversarial finding C1 with RESOLVED status — both interfaces now unconditionally available in all modes (hyper + py-o3 both compiled always). Old "litellm-mode=HTTP only, any-llm-mode=SDK only" table replaced with corrected architecture. stale note corrected: "both interfaces available only in full builds" → "both interfaces always available in all modes".                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 2.31    | 2026-04-30 | **FIX** compile_error! confusion: Added NOTE explaining compile_error! is never triggered because `full = ["hyper", "axum", "py-o3"]` does not enable litellm-mode/any-llm-mode. Mutual exclusivity already enforced at Cargo.toml level. No functional change, clarity only.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 2.30    | 2026-04-30 | **FIX** 0917-C4: Update B5 model parsing rules to provider-list matching (per RFC-0920 §C8). Rule 3 "reject if both" replaced — `ollama/llama3.1:8b` now correctly parses via slash match. **FIX** 0917-C3: Sync deepinfra provider across RFCs — added to Phase 3 provider list. **FIX** 0920-C1/H1 (cross-impact): Corrected HTTP proxy constraint box in RFC-0920 — HTTP proxy IS available in any-llm-mode (via PyO3 bridge), not ❌ NO. Both RFCs now agree: HTTP proxy in all modes, Python SDK in all modes.                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 2.29    | 2026-04-30 | **FIX** 0917-C1: execute_with_retry — correct return type (CompletionResponse), fix instance method call (parse_response needs self), separate last_response/last_reqwest_error. **FIX** 0917-C2: Add ModelNotFound to RouterError enum. **FIX** 0917-C3: Correct Assertion A — single-mode builds have one interface, full build has both. **FIX** 0917-H1: pyo3-asyncio into_async → into_future with Python::with_gil. **FIX** 0917-H2/CROSS-1: google→gemini in provider SDK type registry; canonical YAML designated. **FIX** 0917-M1: SSE format_usage — non-raw string for \n\n, usage at root level. **FIX** 0920-C1: Exception base class unified to QuotaRouterError with optional status/provider fields.                                                                                                                                                                                                                                                           |
+| 2.27    | 2026-04-30 | **MERGE** Absorbed RFC-0921 and RFC-0922 implementation details: HttpClientConfig, ProviderRequest trait, RetryConfig, ProviderError enum, SSEParser trait (litellm-mode); PythonSDKBridge class, spawn_blocking pattern, GIL management table, AsyncChunkIterator (any-llm-mode). RFC-0921/0922 superseded.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 2.26    | 2026-04-29 | **CRITICAL CONSTRAINT: Rust-owns-all-heavy-lifting.** Added top-level architectural constraint establishing ALL heavy lifting (routing, caching, telemetry, concurrency, state management) in Rust core. HTTP proxy and Python SDK are thin binding layers.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 2.25    | 2026-04-27 | Round 43: FIX CRITICAL SELF-CONTRADICTION — both modes have BOTH interfaces. Removed all claims that litellm-mode lacks Python SDK and any-llm-mode lacks HTTP proxy. Feature tables, notes, mermaid diagrams, and rust code updated to make clear: modes differ only in PROVIDER INTEGRATION STRATEGY (reqwest vs PyO3), NOT in interface availability.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 2.24    | 2026-04-27 | Round 42 remaining: fix X4 (PyO3 GIL release at .await points); fix X6 (compile_error! arm for mutually exclusive features); fix X11 (Router::global() init order + singleton identity)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 2.23    | 2026-04-27 | Round 42: fix X7 (Critical) — add `.to_lowercase()` before `get_canonical_tokenizer` (tokenizer lookup is case-sensitive; uppercase model names fall through to wrong fallback)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 2.22    | 2026-04-26 | Round 41: fix HI-04 (CostOverflow → HTTP 422, not 500 — deployment misconfiguration should not trigger retry); fix MD-04 (parse_model_string: use default_provider on unknown prefix, emit UnknownProviderPrefix WARN event; document dynamic KNOWN_PROVIDERS loading)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 2.21    | 2026-04-26 | Round 39: fix R39-N1 (Phase 3 QuotaRouterError: replace PLANNED placeholder with FULL SPEC — complete enum definition, From implementations, HTTP status code mapping, Python exception class hierarchy)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 2.20    | 2026-04-26 | Round 38: fix NEW-1 (Phase 3 QuotaRouterError checklist item marked PLANNED per deferred-work rule); fix NEW-2 (clarify 'full-mode' is alias for default 'full' feature); fix NEW-5 (add SSEEvent/Ssedelta/SseUsage struct definitions to Anthropic SSE transform); fix NEW-7 (add "Router Struct Definition (Normative)" header); add RFC-0902 v1.3 to Related RFCs (7 routing strategies including Weighted)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 2.19    | 2026-04-25 | Round 37: fix XH-1 (rename duplicate `full` feature to `full-mode` to avoid collision with §Rust Feature Gates definition)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 2.18    | 2026-04-24 | Round 36: fix NC-4 (routing strategies count 6→7 in Mermaid, scope table, feature matrix, Phase 1 checklist); fix XH-1 (remove duplicate full feature TOML block); fix NH-2 (mark A3 Router struct pseudocode as non-normative, for normative definition); fix NH-4 (add LatencyTracker struct with integer microseconds, eliminate floating-point non-determinism per RFC-0104); fix NM-5 (virtual keys compatibility matrix: any-llm mode cell changed ✅→❌ — SDK callers bypass proxy, not RFC-0903 enforced); fix XH-3 (QuotaRouterError status header corrected: item is Phase 3 PLANNED checklist, no enum defined in RFC body); fix XC-5 (replace phantom record_spend(&api_key.key_id, &response) with proper SpendEvent construction + STORAGE.record_spend(&event).await?)                                                                                                                                                                                          |
+| 2.17    | 2026-04-24 | Round 32: fix R2-5 (Design) per deferred-work rule — add QuotaRouterError unified error type to Phase 3 checklist; must be spec-ed (not just "deferred") per memory/deferred-vs-unspecified.md; defines enum wrapper with From implementations for KeyError, BudgetError, RouterError, StorageError; retrofitted across RFC-0903/0904/0909/0910/0917                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| 2.16    | 2026-04-24 | Round 30: fix 4.2 (Medium) — remove misleading "same derivation pattern as RFC-0903 virtual key generation" from SDK mode key derivation; clarify HMAC-SHA256 rationale (arbitrary provider key input, not virtual key object); add note that HMAC-SHA256 is used (not BLAKE3) because input is arbitrary provider key string                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 2.13    | 2026-04-23 | Round 13: fix 1.1 virtual keys self-contradiction — virtual keys apply to HTTP proxy callers only (Python SDK callers bypass proxy, no virtual key enforcement in any SDK path); corrected Summary and enterprise feature list; from comprehensive adversarial review                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 2.12    | 2026-04-23 | Round 12: fix 1.1 virtual keys self-contradiction — clarify in Summary and enterprise feature list that virtual keys (RFC-0903) apply only in LiteLLM Mode HTTP proxy, not in any-llm Mode SDK; from comprehensive adversarial review                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 2.9     | 2026-04-23 | Round 9: fix C1/C2 undefined LLMProvider/CompletionRequest types — add ProviderRequest/ProviderResponse/Message/Usage unified types, ProviderHandle enum dispatch in Router; fix C4 undefined sdk_types module — define SdkMessage/SdkUsage types; from external adversarial review                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 2.8     | 2026-04-23 | Round 8: fix C1 Feature Gate Architecture code block (gateway/python_sdk feature gates); fix C2 dynamic module shadowing (use crate:: paths); fix H3 redundant Python::with_gil; add RouterConfig struct definition; from external adversarial review                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 2.6     | 2026-04-21 | Round 6: A4 streaming spec; C8 provider-list parsing; C9 idempotency keys; C10 RetryPolicy; C12 dual sync/async API; C13 diagram mutual exclusivity                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 2.5     | 2026-04-21 | Round 5 fixes: C1 (feature gate table corrected), C2 (feature-gated provider traits), C5 (set_api_key format validation), C6/C7 (interface/module corrections)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 2.4     | 2026-04-21 | Round 4: mode distinction is PROVIDER INTEGRATION STRATEGY (LiteLLM=native reqwest HTTP, any-llm=Python SDK delegation), not interface                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 2.3     | 2026-04-21 | Round 3: fix dual-mode misleading — enterprise in both modes, HTTP forwarding shared core                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 2.2     | 2026-04-21 | Round 2 adversarial review: HTTP forwarding emphasis, enterprise features for both modes (B1-B7)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 2.1     | 2026-04-21 | Fix A1/A2/A3 (critical): PyO3→reqwest, py_bridge in-core, &self interior mutability                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 2.0     | 2026-04-21 | Revised with Rust feature gates, dual-mode emphasis                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 1.0     | 2026-04-21 | Initial draft                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 ## Related RFCs
 
@@ -4478,4 +4534,3 @@ In `full` builds, both modules are compiled simultaneously and selected at runti
 
 - `docs/research/any-llm-vs-litellm-comparison.md`
 - `docs/research/litellm-analysis-and-quota-router-comparison.md`
-

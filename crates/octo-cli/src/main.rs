@@ -1,213 +1,112 @@
-use anyhow::Result;
-use clap::{Parser, Subcommand};
+//! `octo` binary entrypoint — RFC-0011 §Binary Surface.
 
-/// CipherOcto CLI - The entry point to the decentralized intelligence network
-#[derive(Parser, Debug)]
-#[command(name = "octo")]
-#[command(about = "CipherOcto CLI - Decentralized AI infrastructure", long_about = None)]
-#[command(version)]
-struct Octo {
-    #[command(subcommand)]
-    command: Commands,
-}
+use clap::Parser;
+use octo_cli::flags::OperatorMode;
+use octo_cli::redact::OctoCliRedactor;
+use octo_cli::{commands, Octo};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::EnvFilter;
 
-#[derive(Subcommand, Debug)]
-enum Commands {
-    /// Initialize your CipherOcto identity
-    Init,
-    /// Join the CipherOcto network
-    Join,
-    /// Select your ecosystem role
-    Role {
-        #[command(subcommand)]
-        action: RoleAction,
-    },
-    /// Manage agents
-    Agent {
-        #[command(subcommand)]
-        action: AgentAction,
-    },
-    /// Show network status
-    Status,
-}
+fn main() {
+    // Initialise the redacting tracing layer so secrets never reach the
+    // operator's terminal. We register ONLY the redactor (no default
+    // `fmt::Layer`) so the redactor is the sole writer — see `redact.rs`
+    // for the design rationale. Init errors are swallowed silently:
+    // a second invocation in tests legitimately fails with
+    // `TryInitError`, and we don't want to pre-empt that.
+    let _ = tracing_subscriber::registry()
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with(OctoCliRedactor)
+        .try_init();
 
-#[derive(Subcommand, Debug)]
-enum RoleAction {
-    /// Register as a builder
-    Builder,
-    /// Register as a compute provider
-    Provider,
-    /// Register as a storage provider
-    Storage,
-    /// Register as a bandwidth provider
-    Bandwidth,
-    /// Register as an orchestrator
-    Orchestrator,
-}
-
-#[derive(Subcommand, Debug)]
-enum AgentAction {
-    /// Create a new agent
-    Create {
-        /// Agent name
-        name: String,
-    },
-    /// Run an agent
-    Run {
-        /// Agent name
-        name: String,
-    },
-    /// List available agents
-    List,
-}
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter("octo=info")
-        .init();
-
-    let cli = Octo::parse();
-
-    match cli.command {
-        Commands::Init => {
-            init().await?;
-        }
-        Commands::Join => {
-            join().await?;
-        }
-        Commands::Role { action } => {
-            role(action).await?;
-        }
-        Commands::Agent { action } => {
-            agent(action).await?;
-        }
-        Commands::Status => {
-            status().await?;
+    // RFC-0011-c §F.7.5 — opt-in cross-process revocation ledger
+    // wiring. When the `revocation-store-stoolap` feature is enabled,
+    // install the Stoolap-backed Layer D adapter via the factory
+    // closure façade in `octo-runtime`. Default builds (no feature)
+    // skip this block and rely on the Layer B
+    // `InMemoryRevocationStore` (per-extension-crates + registry
+    // pattern per `docs/architecture/design-principles.md` §User
+    // extensibility). On install failure we WARN and fall back to
+    // the Layer B default — a corrupted / read-only ledger must
+    // NOT prevent the CLI from running.
+    #[cfg(feature = "revocation-store-stoolap")]
+    {
+        if let Err(e) = octo_runtime::install_revocation_store_default_with(
+            octo_runtime_revocation_store::install_default,
+        ) {
+            tracing::warn!(
+                reason = %e,
+                "revocation store install failed; falling back to InMemoryRevocationStore \
+                 (process-local revocation, no cross-process propagation)"
+            );
         }
     }
 
-    Ok(())
-}
+    // `--help` / `--version` are not failures: clap renders them itself and
+    // the process exits 0.
+    let mut cli = match Octo::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => e.exit(),
+    };
 
-async fn init() -> Result<()> {
-    println!("🐙 Initializing CipherOcto...");
+    // Disable ANSI colouring whenever the operator sets --no-color OR
+    // the environment variable OCTO_FORCE_JSON is set (TTY-aware output).
+    if std::env::var_os("NO_COLOR").is_some() {
+        cli.output.no_color = true;
+    }
 
-    // Initialize registry
-    octo_registry::init()?;
-
-    println!("✓ Identity created");
-    println!("✓ Local registry initialized");
-    println!();
-    println!("Next steps:");
-    println!("  octo role select builder  - Choose your role");
-    println!("  octo agent create <name>   - Create your first agent");
-    println!("  octo network status        - Check network status");
-
-    Ok(())
-}
-
-async fn join() -> Result<()> {
-    println!("🌐 Joining CipherOcto network...");
-
-    // Simulate network connection
-    // In full implementation: libp2p peer discovery
-
-    println!("✓ Connected to CipherOcto Devnet");
-    println!("✓ Peer discovery active");
-    println!();
-    println!("Network: Devnet (simulated)");
-    println!("Peers: 1 (local)");
-
-    Ok(())
-}
-
-async fn role(action: RoleAction) -> Result<()> {
-    match action {
-        RoleAction::Builder => {
-            println!("🧠 Registering as Builder...");
-            octo_registry::set_role("builder")?;
-            println!("✓ Registered as Builder (OCTO-D)");
-            println!();
-            println!("Builder capabilities:");
-            println!("  • Create and publish agents");
-            println!("  • Earn OCTO-D tokens from execution");
-            println!("  • Shape the agent marketplace");
-        }
-        RoleAction::Provider => {
-            println!("🖥️  Registering as Compute Provider...");
-            octo_registry::set_role("provider")?;
-            println!("✓ Registered as Compute Provider (OCTO-A)");
-        }
-        RoleAction::Storage => {
-            println!("💾 Registering as Storage Provider...");
-            octo_registry::set_role("storage")?;
-            println!("✓ Registered as Storage Provider (OCTO-S)");
-        }
-        RoleAction::Bandwidth => {
-            println!("🌐 Registering as Bandwidth Provider...");
-            octo_registry::set_role("bandwidth")?;
-            println!("✓ Registered as Bandwidth Provider (OCTO-B)");
-        }
-        RoleAction::Orchestrator => {
-            println!("⚙️  Registering as Orchestrator...");
-            octo_registry::set_role("orchestrator")?;
-            println!("✓ Registered as Orchestrator (OCTO-O)");
+    // R16 Lens-1 F4: RFC-0011 §Roles and Authorities auto-detect operator
+    // mode from environment when `--mode` is not explicit. `OCTO_AUDIT=1`
+    // triggers Auditor (read-only); `CI=true` triggers Ci (CI-bot). Both
+    // only override the clap default (Human) when the operator did not
+    // pass `--mode` explicitly.
+    //
+    // 2026-08-29 fix (Coverage + CI workflow failure post-mortem):
+    // GitHub Actions runners set `CI=true` by default. Without the
+    // carve-out below, the env-driven override flipped mode to Ci on
+    // every runner invocation, including the `assert_cmd` integration
+    // tests that explicitly invoke the binary with
+    // `--confirm --confirm-acknowledge` to exercise Human-mode
+    // confirmation. Those tests then failed the Ci-arm check
+    // (`--allow-write` not set) with `ConfirmationRequired` even though
+    // the test args matched the Human contract verbatim. The carve-out:
+    // when the operator has already signaled Human-mode confirmation
+    // intent (via `--confirm` or `--confirm-acknowledge`), respect that
+    // intent and skip the env override. CI-bot operators use
+    // `--allow-write` (the canonical CI gate), not `--confirm`, so the
+    // carve-out does not affect real CI pipelines. The Auditor override
+    // still fires unconditionally — read-only semantics must not be
+    // silently bypassable by a stray confirmation flag.
+    if std::env::var_os("OCTO_AUDIT")
+        .filter(|v| v == "1")
+        .is_some()
+    {
+        // `OCTO_AUDIT=1` is a read-only enforcement switch, so it
+        // wins over an explicit `--mode` as well as over the clap
+        // default. Honouring it only in the Human arm (the previous
+        // shape) let any caller that also passed `--mode ci`
+        // silently defeat a fleet-wide audit setting — the exact
+        // "silently bypassable read-only semantics" outcome the
+        // carve-out above was written to prevent.
+        cli.mode.mode = OperatorMode::Auditor;
+    } else if matches!(cli.mode.mode, OperatorMode::Human) {
+        let human_mode_explicit = cli.mode.confirm || cli.mode.confirm_acknowledge;
+        if !human_mode_explicit && std::env::var_os("CI").filter(|v| v == "true").is_some() {
+            cli.mode.mode = OperatorMode::Ci;
         }
     }
 
-    Ok(())
-}
-
-async fn agent(action: AgentAction) -> Result<()> {
-    match action {
-        AgentAction::Create { name } => {
-            println!("🤖 Creating agent: {}", name);
-
-            // In full implementation: copy agent template, register in registry
-            println!("✓ Agent registered");
-            println!();
-            println!("Agent location: agents/{}", name);
-        }
-        AgentAction::Run { name } => {
-            println!("🚀 Running agent: {}", name);
-
-            // In full implementation: spawn runtime, execute agent
-            octo_runtime::execute_agent(&name).await?;
-        }
-        AgentAction::List => {
-            println!("📋 Available agents:");
-            // In full implementation: query registry
-            println!("  hello-agent  - Example greeting agent");
-        }
+    // R16 Lens-1 F3: previously only the error branch honoured
+    // `OCTO_FORCE_JSON`; the success envelope read only `cli.output.json`.
+    // Hoist the env-var OR into `cli.output.json` so both paths use the
+    // same source. No `force_json` shadowing needed downstream.
+    if std::env::var_os("OCTO_FORCE_JSON").is_some() {
+        cli.output.json = true;
     }
+    let force_json = cli.output.json;
 
-    Ok(())
-}
-
-async fn status() -> Result<()> {
-    println!("🌐 CipherOcto Network Status");
-    println!();
-
-    println!("Network: Devnet (simulated)");
-    println!("Phase: 1 - Builder Activation");
-    println!();
-
-    println!("Components:");
-    println!("  ✓ Registry     Local");
-    println!("  ✓ Core        Operational");
-    println!("  ✓ Runtime     Ready");
-    println!("  ✓ Network     Simulated");
-    println!();
-
-    println!(
-        "Your Role: {}",
-        octo_registry::get_role().unwrap_or_else(|| "None".to_string())
-    );
-    println!(
-        "Your Identity: {}",
-        octo_registry::get_identity().unwrap_or_else(|| "Not initialized".to_string())
-    );
-
-    Ok(())
+    if let Err(e) = commands::dispatch(&cli) {
+        e.render(force_json);
+    }
 }

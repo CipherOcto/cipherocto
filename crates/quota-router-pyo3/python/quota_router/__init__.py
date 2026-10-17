@@ -50,6 +50,16 @@ from ._quota_router import (
     set_api_key,
     get_budget_status,
     get_metrics,
+    # Callbacks (RFC-0947 §Python SDK)
+    set_input_callback,
+    set_success_callback,
+    set_failure_callback,
+    set_service_callback,
+    set_start_callback,
+    set_end_callback,
+    set_custom_callback,
+    callback_dropped_count,
+    callback_registry_snapshot,
     # Exceptions
     QuotaRouterError,
     RateLimitError,
@@ -111,6 +121,16 @@ __all__ = [
     "set_api_key",
     "get_budget_status",
     "get_metrics",
+    # Callbacks (RFC-0947 §Python SDK)
+    "set_input_callback",
+    "set_success_callback",
+    "set_failure_callback",
+    "set_service_callback",
+    "set_start_callback",
+    "set_end_callback",
+    "set_custom_callback",
+    "callback_dropped_count",
+    "callback_registry_snapshot",
     # Exceptions
     "QuotaRouterError",
     "RateLimitError",

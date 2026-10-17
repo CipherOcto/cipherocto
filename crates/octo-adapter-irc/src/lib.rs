@@ -88,7 +88,7 @@ impl IrcConfig {
     /// - `port` is non-zero
     /// - `nickname` is non-empty and contains no whitespace
     /// - `channels` entries are non-empty
-    /// - `channels` entries start with `#`, `&`, `+`, or `!` (IRC channel
+    /// - `channels` entries start with `#`, `&&`, `+`, or `!` (IRC channel
     ///   name prefixes)
     /// - `channels` entries contain no spaces, commas, colons, or NUL
     /// - `channels` entries are not the IRC "JOIN 0" special token
@@ -144,9 +144,9 @@ fn validate_server(server: &str) -> std::result::Result<(), String> {
 ///
 /// Rules:
 /// - Non-empty
-/// - Must start with `#`, `&`, `+`, or `!` (IRC channel-name prefixes)
+/// - Must start with `#`, `&&`, `+`, or `!` (IRC channel-name prefixes)
 /// - No whitespace, commas, colons, or NUL
-/// - Must not be the IRC "JOIN 0" special token (`#0`, `&0`, `+0`, `!0`)
+/// - Must not be the IRC "JOIN 0" special token (`#0`, `&&0`, `+0`, `!0`)
 ///   which makes the client PART all channels.
 pub(crate) fn validate_channel_name(ch: &str) -> std::result::Result<(), String> {
     if ch.is_empty() {
@@ -638,7 +638,7 @@ impl IrcAdapter {
 ///
 /// Why an enum and not a trait object? `AsyncWrite` is a real trait,
 /// but splitting the read/write halves and using `select!` requires
-/// that the writer's `&mut self` borrow be held for the duration of
+/// that the writer's `&&mut self` borrow be held for the duration of
 /// the session. The enum is statically dispatched, the borrow is
 /// checked at compile time, and there's no boxing overhead.
 enum IrcWriter {
@@ -1247,15 +1247,29 @@ impl PlatformAdapter for IrcAdapter {
         &self,
         raw: &RawPlatformMessage,
     ) -> Result<DeterministicEnvelope, PlatformAdapterError> {
-        if raw.payload.is_empty() {
-            return Err(transport_err("Empty payload"));
-        }
-        DeterministicEnvelope::from_wire_bytes(&raw.payload).map_err(|e| {
-            PlatformAdapterError::ApiError {
-                code: 400,
-                message: format!("canonicalize failed: {e}"),
+        // M-15: `from_wire_bytes` validates STRUCTURE only — a well-formed
+        // frame with a forged signature or a mismatched `envelope_id` parses
+        // fine. Decoding is factored into a closure bound to a name first,
+        // because calling an inline `(|| { .. })()` trips
+        // `clippy::redundant_closure_call`.
+        let decode = || -> Result<DeterministicEnvelope, PlatformAdapterError> {
+            if raw.payload.is_empty() {
+                return Err(transport_err("Empty payload"));
             }
-        })
+            DeterministicEnvelope::from_wire_bytes(&raw.payload).map_err(|e| {
+                PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("canonicalize failed: {e}"),
+                }
+            })
+        };
+        let env = decode()?;
+        // Ed25519 named explicitly so this reads as an assumption rather than an
+        // accident. CD-6's peer registry binds the key AND names the algorithm
+        // it speaks, so this constant goes away when that registry lands.
+        env.verify(&octo_algo_ed25519::ed25519_algorithm_id(), &env.source_peer)
+            .map_err(|e| transport_err(format!("envelope verify failed: {e}")))?;
+        Ok(env)
     }
 
     fn capabilities(&self) -> CapabilityReport {
@@ -2905,7 +2919,7 @@ mod tests {
     }
 
     /// N2: `join_by_invite` must reject empty channel names and
-    /// names that don't start with `#`, `&`, `+`, or `!`.
+    /// names that don't start with `#`, `&&`, `+`, or `!`.
     #[tokio::test]
     async fn test_join_by_invite_rejects_malformed_channel_names() {
         let adapter = IrcAdapter::new(IrcConfig {

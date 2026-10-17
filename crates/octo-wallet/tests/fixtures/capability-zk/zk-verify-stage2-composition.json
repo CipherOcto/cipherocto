@@ -1,0 +1,93 @@
+{
+  "vector_id": "zk-verify-stage2-composition",
+  "rfc": "RFC-0958 §Test Vectors TV9 (AC-4 Stage-2 verifier split)",
+  "description": "All 2^3 = 8 combinations of sub-circuit validity (verify_chain, verify_holder_sig, verify_inference_fold). For each combination, mint then verify must behave per the table.",
+  "composition_invariants": [
+    "verify_chain commitment != 0",
+    "verify_holder_sig commitment != 0 (production placeholder; real RFC 8032 verify is test-only)",
+    "verify_inference_fold commitment == pub_inputs.output_hash"
+  ],
+  "combinations": [
+    {
+      "id": "all_valid",
+      "verify_chain_valid": true,
+      "verify_holder_sig_valid": true,
+      "verify_inference_fold_valid": true,
+      "expected_outcome": "MintAccept",
+      "expected_verifier_result": "Ok",
+      "notes": "Stage-2 main returns 1; all 3 sub-circuit commitments non-zero."
+    },
+    {
+      "id": "chain_invalid",
+      "verify_chain_valid": false,
+      "verify_holder_sig_valid": true,
+      "verify_inference_fold_valid": true,
+      "expected_outcome": "MintReject ChainCommitmentZero",
+      "expected_verifier_result": "n/a (mint fails)",
+      "notes": "verify_chain returns zero; stage2_main panics with ChainCommitmentZero."
+    },
+    {
+      "id": "sig_invalid",
+      "verify_chain_valid": true,
+      "verify_holder_sig_valid": false,
+      "verify_inference_fold_valid": true,
+      "expected_outcome": "MintReject HolderSigCommitmentZero",
+      "expected_verifier_result": "n/a (mint fails)",
+      "notes": "verify_holder_sig asserts commitment != 0; zero sig commitment fails."
+    },
+    {
+      "id": "fold_invalid",
+      "verify_chain_valid": true,
+      "verify_holder_sig_valid": true,
+      "verify_inference_fold_valid": false,
+      "expected_outcome": "MintReject InferenceTraceBindingMismatch",
+      "expected_verifier_result": "n/a (mint fails)",
+      "notes": "verify_inference_fold returns trace_root != pub_inputs.output_hash."
+    },
+    {
+      "id": "chain_sig_invalid",
+      "verify_chain_valid": false,
+      "verify_holder_sig_valid": false,
+      "verify_inference_fold_valid": true,
+      "expected_outcome": "MintReject ChainCommitmentZero (first failure)",
+      "expected_verifier_result": "n/a (mint fails)",
+      "notes": "verify_chain fails first (earlier call site)."
+    },
+    {
+      "id": "chain_fold_invalid",
+      "verify_chain_valid": false,
+      "verify_holder_sig_valid": true,
+      "verify_inference_fold_valid": false,
+      "expected_outcome": "MintReject ChainCommitmentZero (first failure)",
+      "expected_verifier_result": "n/a (mint fails)",
+      "notes": "verify_chain fails first (earlier call site)."
+    },
+    {
+      "id": "sig_fold_invalid",
+      "verify_chain_valid": true,
+      "verify_holder_sig_valid": false,
+      "verify_inference_fold_valid": false,
+      "expected_outcome": "MintReject HolderSigCommitmentZero (first failure)",
+      "expected_verifier_result": "n/a (mint fails)",
+      "notes": "verify_holder_sig fails before verify_inference_fold (call order)."
+    },
+    {
+      "id": "all_invalid",
+      "verify_chain_valid": false,
+      "verify_holder_sig_valid": false,
+      "verify_inference_fold_valid": false,
+      "expected_outcome": "MintReject ChainCommitmentZero (first failure)",
+      "expected_verifier_result": "n/a (mint fails)",
+      "notes": "verify_chain fails first."
+    }
+  ],
+  "stage2_main_call_order": [
+    "1. verify_chain(secret, caveats) -> chain_commitment",
+    "2. assert!(chain_commitment != 0, 'ChainCommitmentZero')",
+    "3. verify_holder_sig(sig_lo, sig_hi, pk_lo, pk_hi) -> holder_sig_commitment",
+    "4. verify_inference_fold(steps) -> trace_root",
+    "5. assert!(trace_root == pub_inputs.output_hash, 'InferenceTraceBindingMismatch')",
+    "6. assert!(trace_root != 0, 'TraceRootZero')"
+  ],
+  "notes": "AC-4 fixture pins the 8 sub-proof validity combinations and the call order. The actual production verifier is structural; the cryptographic correctness is enforced by STWO at proof-generation time (RFC-0958 §Algorithms)."
+}

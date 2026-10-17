@@ -1,0 +1,350 @@
+//! `ReputationStore` trait + in-memory + stoolap-fork impls (RFC-0968 §3).
+//!
+//! Storage abstraction — every method is async because the eventual stoolap
+//! backend is async (tokio). The in-memory backend runs synchronously inside
+//! `async fn` so tests stay deterministic. Session 4 adds the parity binary
+//! which composes both backends.
+//!
+//! The trait is 23 methods as of Session 8 plus Phase 10 G13
+//! (mission 0968 Phase 4 plus RFC-0011-r): the original 12 plus
+//! four federation methods
+//! (`register_attestor`, `attestor_lookup_did`, `record_attestation`,
+//! `query_attestations`) plus two quorum / catch-up methods
+//! (`attestor_quorum_reached`, `gossip_catch_up`) plus three anchor
+//! methods (`anchor_pending`, `set_event_anchor_tx_hash`,
+//! `query_anchors_by_controller_id`) plus two Phase 10 G13 methods
+//! (`list`, `peer_reputation`) that own the gossip
+//! substrate's read-side (RFC-0968 §12 + amendments 22, 28, 29).
+
+mod memory;
+mod stoolap;
+
+pub use memory::InMemoryReputationStore;
+pub use stoolap::StoolapReputationStore;
+
+use crate::auth::{
+    Attestation, AttestorId, AttestorRegistration, GovernanceProof, GovernanceSnapshot,
+    SuspensionAuth,
+};
+use crate::error::ReputationError;
+use crate::gossip::GossipCatchUp;
+use crate::types::{
+    ControllerId, EventId, ParityEvidence, RecorderDid, RecorderId, ReputationAggregate,
+    ReputationLayer, RetirementEligibility, RotationProvenance, SignalEvent, SignalKind,
+};
+use serde::{Deserialize, Serialize};
+
+/// Result alias used by every `ReputationStore` method. The store never panics
+/// on user input — every domain error maps to a `ReputationError` variant.
+pub type StoreResult<T> = Result<T, ReputationError>;
+
+/// The 23-method canonical reputation store contract
+/// (RFC-0968 §3 + §12 plus RFC-0011-r Phase 10 G13).
+///
+/// `verify_governance_suspension` accepts `(auth, snapshot, now_unix)` — the
+/// post-Round-11 canonical signature. `slash_recorder` carries a
+/// `GovernanceProof` whose `slash_destination / slash_amount / slash_asset`
+/// fields are validated against the chain-side state before any chain tx.
+///
+/// The four federation methods (`register_attestor`, `attestor_lookup_did`,
+/// `record_attestation`, `query_attestations`) wire the gossip substrate's
+/// read-side into the persisted store. Quorum is enforced via
+/// `attestor_quorum_reached(event_id)` from the same trait; that method
+/// will land in Session 8 alongside the stoolap backend's full federation
+/// impl.
+#[allow(async_fn_in_trait)]
+pub trait ReputationStore: Send + Sync {
+    /// Persist one signal event. Storage layer assigns `event_id`.
+    async fn record_signal(&self, event: SignalEvent) -> StoreResult<EventId>;
+
+    /// Read the aggregate for `(did, kind, layer)`.
+    async fn read_aggregate(
+        &self,
+        did: &RecorderDid,
+        kind: SignalKind,
+        layer: ReputationLayer,
+    ) -> StoreResult<ReputationAggregate>;
+
+    /// Read the aggregate across multiple layers in one call.
+    async fn cross_layer_query(
+        &self,
+        did: &RecorderDid,
+        kind: SignalKind,
+        layers: &[ReputationLayer],
+    ) -> StoreResult<Vec<ReputationAggregate>>;
+
+    /// Sliding-window aggregate over the last `window_secs`.
+    async fn sliding_window(
+        &self,
+        did: &RecorderDid,
+        kind: SignalKind,
+        layer: ReputationLayer,
+        window_secs: u64,
+        now_unix: u64,
+    ) -> StoreResult<ReputationAggregate>;
+
+    /// Replay all events for a DID in `[since_unix, until_unix]`.
+    async fn replay_for_audit(
+        &self,
+        did: &RecorderDid,
+        since_unix: u64,
+        until_unix: u64,
+    ) -> StoreResult<Vec<SignalEvent>>;
+
+    /// Delete events with `recorded_at_unix <= cutoff_unix`. Returns count.
+    async fn retention_prune(&self, cutoff_unix: u64, now_unix: u64) -> StoreResult<u64>;
+
+    /// Delete one event by id.
+    async fn prune_event(&self, event_id: EventId) -> StoreResult<()>;
+
+    /// Register a recorder via ChainRef. Performs 8-field chain verification
+    /// + 3-guard stake check (octo / role / aggregate).
+    async fn register_recorder(&self, chain_ref: crate::auth::ChainRef) -> StoreResult<RecorderId>;
+
+    /// Verify a suspension authorisation against the on-chain governance
+    /// snapshot. Signature verification is performed by
+    /// `auth::verify_governance_signature`, the single choke point the
+    /// implementations that verify delegate to; this method validates shape,
+    /// freshness, quorum, and the signature.
+    ///
+    /// "Quorum" here means `snapshot.members.len() >= GOVERNANCE_QUORUM` —
+    /// a count of entries, with no distinctness check and nothing verified
+    /// about any member. It is not a quorum of signed attestations, and the
+    /// set-hash check beside it compares two caller-supplied fields rather
+    /// than looking the set up. The signature is the load-bearing check on
+    /// this path; the quorum signal is not one. See
+    /// `missions/deferred/0968-c-governance-proof-verification.md`.
+    async fn verify_governance_suspension(
+        &self,
+        auth: &SuspensionAuth,
+        snapshot: &GovernanceSnapshot,
+        now_unix: u64,
+    ) -> StoreResult<()>;
+
+    /// Suspend a recorder (read-side). Requires `verify_governance_suspension`
+    /// to have returned `Ok` for the same auth.
+    async fn suspend_recorder(
+        &self,
+        recorder_id: RecorderId,
+        auth: SuspensionAuth,
+        now_unix: u64,
+    ) -> StoreResult<()>;
+
+    /// Slash a recorder. Validates `slash_destination / slash_amount /
+    /// slash_asset` field consistency, then **verifies the proof signature**
+    /// against `slash_signature_preimage(now_unix)`.
+    ///
+    /// `now_unix` is a parameter for the same reason
+    /// [`ReputationStore::verify_governance_suspension`] takes one: the slash
+    /// preimage signs
+    /// the timestamp, so the verifier must use the timestamp the signer used.
+    /// A store that read its own clock here could not verify any proof —
+    /// the caller cannot predict it. The caller owns the reference clock,
+    /// consistent with every other method on this trait.
+    async fn slash_recorder(&self, proof: GovernanceProof, now_unix: u64) -> StoreResult<()>;
+
+    /// Declare a recorder eligible for retirement.
+    ///
+    /// The governance proof's signature **is** verified, via
+    /// `GovernanceProof::verify_signature`, before eligibility is reported.
+    ///
+    /// That was not true when this path was written: it shape-checked only —
+    /// freshness, a self-consistency comparison of the set hash against the
+    /// proof's own claim, and a count of `snapshot.members` — every input
+    /// chosen by whoever built the proof. `eligible: true` was reachable
+    /// holding no key.
+    ///
+    /// What remains open is the *quorum* half, which is still a count of
+    /// entries with no distinctness check and nothing verified about any of
+    /// them, and the set-hash half, which RFC-0968 requires be checked
+    /// against `GovernanceRegistry::lookup_at_snapshot` — no such registry
+    /// exists in the tree. See
+    /// `missions/deferred/0968-c-governance-proof-verification.md`.
+    async fn declare_retirement_eligible(
+        &self,
+        adapter: u8,
+        evidence: ParityEvidence,
+        proof: GovernanceProof,
+        now_unix: u64,
+    ) -> StoreResult<RetirementEligibility>;
+
+    // -- Federation: 4 methods added in Session 7 (mission 0968 Phase 4) --
+
+    /// Register an attestor. Idempotent — re-registering the same DID
+    /// updates the pubkey + peer_set_id without inserting a new row.
+    /// Required before the attestor can sign `Attestation` records.
+    async fn register_attestor(
+        &self,
+        registration: AttestorRegistration,
+    ) -> StoreResult<AttestorId>;
+
+    /// Look up an attestor by DID. Returns the registration record or
+    /// `RecorderNotRegistered` (reused error variant for the federation
+    /// namespace; the type system prevents mixing attestor DIDs into
+    /// recorder-side state).
+    async fn attestor_lookup_did(
+        &self,
+        attestor_did: &AttestorId,
+    ) -> StoreResult<AttestorRegistration>;
+
+    /// Record one attestation. The store is idempotent on
+    /// `(attestor_did, event_id)` composite key: re-recording the same
+    /// attestation is a no-op (returns the original `attestation_id`).
+    async fn record_attestation(&self, attestation: Attestation) -> StoreResult<u64>;
+
+    /// Query attestations observed for a recorder's events since
+    /// `since_event_id` (exclusive). Used by the gossip substrate to
+    /// answer `SlashReputationStoreCompat::global_slash_count` reads
+    /// without re-deriving them from the events table.
+    async fn query_attestations(
+        &self,
+        recorder_did: &RecorderDid,
+        since_event_id: EventId,
+    ) -> StoreResult<Vec<Attestation>>;
+
+    /// True iff at least `MIN_ATTESTOR_QUORUM` distinct attestors have
+    /// observed this `event_id`. Counts attestations persisted in
+    /// `reputation_attestations` (session 3 / mission 0968 Phase 4).
+    /// Absence of quorum fails-closed; the gossip substrate rejects
+    /// the event from the confirmed-federation set.
+    async fn attestor_quorum_reached(&self, event_id: EventId) -> StoreResult<bool>;
+
+    /// Catch-up path for a late-joining attestor. Returns every
+    /// `SignalEvent` with `event_id > since_event_id` so the caller
+    /// can republish the missing envelopes to its local swarm. The
+    /// `attestor_did` in the request identifies the asker (for
+    /// rate-limiting on the responder side); the in-memory impl
+    /// ignores it because there is no responder queue, but the
+    /// stoolap impl records the catch-up in the `reputation_gossip_seen`
+    /// ledger.
+    async fn gossip_catch_up(&self, catch_up: &GossipCatchUp) -> StoreResult<Vec<SignalEvent>>;
+
+    /// Anchor-pending sweep (mission 0968a AC). Returns the up-to-`batch_size`
+    /// `(event_id, anchor_tx_hash)` pairs for events with
+    /// `anchor_tx_hash IS NULL`. The anchor job aggregates these into a
+    /// controller-level Merkle root, submits the on-chain transaction,
+    /// then calls `set_event_anchor_tx_hash(event_id, anchor_tx_hash)`
+    /// to mark each event. Returns the `(event_id, tx_hash)` pairs the
+    /// caller should treat as in-flight; the store still retains
+    /// `anchor_tx_hash IS NULL` until the chain-side ack arrives
+    /// (chain-level idempotency on `(event_id)` per RFC-0955-R1).
+    async fn anchor_pending(&self, batch_size: u32) -> StoreResult<Vec<(EventId, [u8; 32])>>;
+
+    /// Persist the chain-side `anchor_tx_hash` for a single event.
+    /// Used by the anchor job after on-chain inclusion. Idempotent on
+    /// `(event_id, anchor_tx_hash)` pairs: re-applying the same hash is
+    /// a no-op.
+    async fn set_event_anchor_tx_hash(
+        &self,
+        event_id: EventId,
+        anchor_tx_hash: [u8; 32],
+    ) -> StoreResult<()>;
+
+    /// Read-side anchor provenance: return `(event_id, anchor_tx_hash,
+    /// recorded_at_unix)` tuples for all events under the given
+    /// `controller_id`. Joins `reputation_anchors` to
+    /// `reputation_events` via the `(event_id)` key.
+    ///
+    /// Used by mission 0968a AC "reputation_anchors queryable by did
+    /// (joined via reputation_events)". The store-side filter on
+    /// `controller_id` matches the
+    /// `idx_reputation_anchors_controller` index defined in
+    /// `migrations/v010__reputation_anchors.sql`.
+    ///
+    /// Returns an empty `Vec` when the controller has no anchored
+    /// events. Ordering is `(recorded_at_unix ASC, event_id ASC)` —
+    /// `recorded_at_unix` is the canonical anchor proxy field
+    /// (event record time, used as the anchor observation time
+    /// until a future amendment threads a separate timestamp
+    /// through `set_event_anchor_tx_hash`); `event_id` is the
+    /// deterministic tie-breaker for rows with the same
+    /// `recorded_at_unix`.
+    async fn query_anchors_by_controller_id(
+        &self,
+        controller_id: ControllerId,
+    ) -> StoreResult<Vec<AnchorRecord>>;
+
+    /// List peer reputations matching the given filter
+    /// (Phase 10 G13 per RFC-0011-r §Substrate Mapping
+    /// Table). Returns empty Vec if no peers match.
+    /// Additive trait extension per Phase 4 G22
+    /// precedent; per-extension impl crates (Layer D)
+    /// provide real implementations. The stub
+    /// implementations in `memory.rs` + `stoolap.rs`
+    /// return empty Vec (no real aggregation logic
+    /// in this trait-only phase).
+    async fn list(&self, filter: ReputationFilter) -> StoreResult<Vec<PeerReputation>>;
+
+    /// Load reputation for a specific peer DID
+    /// (Phase 10 G13 per RFC-0011-r §Substrate Mapping
+    /// Table). Returns None if the peer has no
+    /// recorded reputation. The stub implementations
+    /// in `memory.rs` + `stoolap.rs` return None
+    /// (no real lookup logic in this trait-only
+    /// phase).
+    async fn peer_reputation(&self, did: &RecorderDid) -> StoreResult<Option<PeerReputation>>;
+}
+
+/// `ReputationFilter` — filter enum for
+/// `ReputationStore::list` (Phase 10 G13 per
+/// RFC-0011-r §Substrate Mapping Table). Closed
+/// enum (not `#[non_exhaustive]`) per RFC-0011-h
+/// §Substrate-Additions Companion Missions row G13;
+/// `#[serde(rename_all = "lowercase")]` for
+/// canonical JSON encoding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReputationFilter {
+    /// All peers (no filter).
+    All,
+    /// Peers with score >= threshold.
+    AboveScore(u32),
+    /// Peers with score <= threshold.
+    BelowScore(u32),
+}
+
+/// `PeerReputation` — peer reputation summary
+/// projection (Phase 10 G13 per RFC-0011-r
+/// §Substrate Mapping Table).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PeerReputation {
+    /// Peer DID (RecorderDid canonical).
+    pub peer_did: RecorderDid,
+    /// Aggregate reputation score.
+    pub score: u32,
+    /// Number of attestations on record.
+    pub attestations_count: u32,
+    /// Last update epoch (RFC-0855 §epoch).
+    pub last_updated_epoch: u64,
+}
+
+/// One row of `reputation_anchors` joined to its underlying event
+/// metadata (mission 0968a AC). Stores `EventId` only — attestation
+/// ids are NEVER stored here (per AC "reputation_anchors stores only
+/// EventId values (not AttestationId)").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnchorRecord {
+    /// EventId (canonical typed BLAKE3 anchor).
+    pub event_id: EventId,
+    /// On-chain anchor transaction hash.
+    pub anchor_tx_hash: [u8; 32],
+    /// Unix seconds. PROXY field: until `set_event_anchor_tx_hash`
+    /// is updated to take a separate `now_unix` for the anchor
+    /// observation time (Round 4 review F2), this is populated
+    /// from the underlying event's `recorded_at_unix`. Round 4
+    /// review confirmed the proxy is consistent across both
+    /// backends; a future RFC-0968-A2 amendment can swap the
+    /// proxy for a true anchor-observation timestamp.
+    pub recorded_at_unix: u64,
+}
+
+/// Helper used by every backend — convert a `RotationProvenance` into a
+/// stable byte string for index keys. Tombstoned-DID replay tests rely on
+/// this being deterministic.
+pub fn rotation_key(rp: &RotationProvenance) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(52 + 8 + 8);
+    buf.extend_from_slice(rp.new_did.as_bytes());
+    buf.extend_from_slice(&rp.consumed_at_unix.to_be_bytes());
+    buf.extend_from_slice(&rp.rotation_id.to_be_bytes());
+    buf
+}

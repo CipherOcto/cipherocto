@@ -1,0 +1,325 @@
+# 0965-v21-payment-caveat-asset-binding-substrate — PaymentCaveat asset binding + scale-binding invariant + NonceRegistry + legacy-form rejection
+
+**Status:** Open
+**Substrate:** RFC-0965 v2.1 §2 (PaymentCaveat Specification) + §5 (PermissionKind Co-Bound Caveat)
+**Parent:** RFC-0965 v2.1 + RFC-0105 v3.5 §3.13 (tri-invariant consumer)
+**Depends on:**
+
+- Mission D (`0105-v35-asset-registry-nonce-registry-substrate.md`) — provides `AssetRegistry`, `AssetError`, `AssetKind`, `MAX_SCALE`, `AssetMetadata`, `NonceRegistry`, `NonceError`, `newtypes::{Nonce, Epoch, GovernanceSignature}`, `sovereign_nonce_namespace`, `verify_governance_signature`, `blake3_hash` canonical substrate imports (per RFC-0965 v2.1 §2.1)
+- RFC-0965 v2.0 baseline (already landed: `PaymentCaveat`, `PAID_QUERY_CAVEAT_NAME` at `crates/octo-cap-macaroon/src/caveat/payment.rs`, `AttenuationError` at)
+
+## Scope
+
+Apply the RFC-0965 v2.1 amendments to `PaymentCaveat` (additive, semver-
+minor): add `asset_id: AssetId` field, `registry_snapshot_epoch: Epoch`
+field, `nonce: Nonce` field; widen `attenuate` to 4-arg accepting
+`new_asset_id: AssetId` + `&dyn AssetRegistry`; add `attenuate_legacy_2arg`
+`#[deprecated]` shim; add `AttenuationError::AssetMismatch` /
+`ScaleMismatch` / `AssetUnknown` variants; add `PaymentRejectionReason::
+ScaleMismatch` / `AssetUnknown` / `StaleSnapshot` / `Replay` /
+`LegacyFormOnNonOctoWContext` variants (and re-home
+`PaidQueryRejectionReason` as deprecated alias per RFC-0105 v3.5 §5 +
+RFC-0965 v2.1 §2.3); implement `verify()` and `validate()`
+gates with scale-binding + NonceRegistry observation; implement custom
+`Deserialize` rejecting legacy `amount_micro_octo_w` form on non-OCTO-W
+context (§2.4); add `Caveat::AssetBinding(asset_id)` co-bound rule (§5).
+
+### Mission E sub-steps
+
+1. **`PaymentCaveat` field additions** — `crates/octo-cap-macaroon/src/caveat/payment.rs`
+   (amend). Per RFC-0965 v2.1 §2.1. Add 3 fields:
+
+   ```rust
+   pub struct PaymentCaveat {
+       pub caveat_name: String,                  // existing; unchanged
+       pub asset_id: AssetId,                    // NEW
+       #[serde(with = "dqa_serde::field")]
+       pub budget: Dqa,                          // existing
+       pub model: String,                        // existing
+       pub expires_at_unix_ms: u64,              // existing
+       pub registry_snapshot_epoch: Epoch,       // NEW
+       pub nonce: Nonce,                         // NEW
+   }
+   ```
+
+   Discriminator unchanged (`PAID_QUERY_CAVEAT_NAME = "paid-query/v1"` per
+   §2.1 — substrate-canonical name; the discriminator rename in prior
+   draft broke 47 call-sites + JSON-RPC + CLI per §2.1).
+
+2. **4-arg `attenuate`** — same file. Per §2.2. Signature:
+
+   ```rust
+   pub fn attenuate(
+       &self,
+       new_budget: Dqa,
+       new_expires_at_unix_ms: u64,
+       new_asset_id: AssetId,        // NEW
+       registry: &dyn AssetRegistry, // NEW (RFC-0105 v3.5 §3.1)
+   ) -> Result<Self, AttenuationError>
+   ```
+
+   Gates: registry resolves `self.asset_id` (else `AssetUnknown`),
+   `new_asset_id == self.asset_id` (else `AssetMismatch`), scale-resolution
+   check (budget.wire_scale == self.budget.wire_scale ==
+   meta.wire_scale, else `ScaleMismatch`), existing budget + expiry gates
+   preserved. 47 existing 2-arg call-sites MUST either migrate to 4-arg OR
+   use `attenuate_legacy_2arg` shim with `#[allow(deprecated)]`.
+
+3. **`attenuate_legacy_2arg` `#[deprecated]` shim** — same file. Per §1
+   §2.2 + §4.1 "one cycle" = 6 weeks. 2-arg signature carries forward with
+   `#[deprecated(note = "use 4-arg attenuate with &dyn AssetRegistry per
+RFC-0965 v2.1 §2.2")]`. Migration window per §4.1: 6 weeks
+   OR 1 major version bump, whichever longer. HARD cutoff, no extensions.
+
+3a. **`attenuate_legacy_3arg` helper** — same file. Per §2.2.
+3-arg signature `(new_budget, new_expires_at_unix_ms, registry: &dyn
+AssetRegistry)` for migration callers that already have a registry handle
+but don't yet pass `new_asset_id`. Performs registry-resolved scale
+check + budget/expiry gates; asset-equality still falls back to
+`self.asset_id`. Marked `#[deprecated(note = "use 4-arg attenuate
+   with new_asset_id per RFC-0965 v2.1 §2.2")]`; same 6-week window.
+Bridges 2-arg callers → 4-arg callers during migration.
+
+4. **`AttenuationError` variants** — same file. Per §2.2. Add 3
+   variants to the existing enum:
+
+   ```rust
+   #[non_exhaustive]   // MANDATORY: Layer B substrate enum (additive evolution)
+   pub enum AttenuationError {
+       BudgetWidened { current: Dqa, proposed: Dqa },  // existing
+       ExpiryWidened { current: u64, proposed: u64 },   // existing
+       AssetMismatch { current: AssetId, proposed: AssetId },  // NEW
+       ScaleMismatch { current: u8, proposed: u8 },    // NEW
+       AssetUnknown,                                   // NEW
+   }
+   ```
+
+   `#[non_exhaustive]` is mandatory (not "if substrate applies") per
+   CLAUDE.md §Architectural Principles "Extension over enumeration":
+   Layer B frozen-substrate enums MUST be non-exhaustive so adding new
+   variants (RFC-driven additive evolution) does NOT force every
+   downstream consumer to a central edit.
+
+5. **`PaymentRejectionReason` enum additions** — `crates/octo-paid-query/src/lib.rs`
+   (definition) AND `crates/octo-cap-macaroon/src/caveat/mod.rs`
+   (re-export). Per §2.3. **Note on the substrate anchor:**
+   on-disk state currently holds `pub enum PaidQueryRejectionReason`;
+   Mission E renames to `PaymentRejectionReason` (canonical per RFC
+   §2.3) and adds 5 new variants. The substrate anchor itself
+   shifts by N lines. Add 5 variants:
+
+   ```rust
+   #[non_exhaustive]   // MANDATORY: Layer B substrate enum
+   pub enum PaymentRejectionReason {
+       BudgetExhausted,                                       // existing
+       Expired,                                               // existing
+       ModelMismatch,                                         // existing
+       CostExceedsBudget,                                     // existing
+       ScaleMismatch { caveat_scale: u8, query_cost_scale: u8 },  // NEW
+       AssetUnknown,                                          // NEW
+       StaleSnapshot { snapshot: u64, live: u64 },            // NEW
+       Replay,                                                // NEW
+       LegacyFormOnNonOctoWContext { claimed_asset_id: AssetId },  // NEW
+   }
+   ```
+
+   `PaidQueryRejectionReason` alias retained per §2.3:
+   `#[deprecated(note = "use PaymentRejectionReason")] pub type
+PaidQueryRejectionReason = PaymentRejectionReason;` **Removal
+   timeline tied to RFC-0965 v2.x + N cycles** (not indefinitely
+   maintained). Document removal in substrate crate deprecation log.
+
+6. **`verify()` gates** — `crates/octo-cap-macaroon/src/caveat/payment.rs`
+   (amend). Per §2.3. **8 gates**:
+   - Gate 0: `AssetRegistry::metadata(&self.asset_id)` resolves +
+     not tombstoned (else `AssetUnknown`)
+   - Gate 1: scale-binding — `query_cost.wire_scale == self.budget.wire_scale
+== meta.wire_scale` (else `ScaleMismatch`)
+   - Gate 2: stale-snapshot detection — `current_epoch.0 <
+self.registry_snapshot_epoch.0` (else `StaleSnapshot`)
+   - Gate 3: anti-replay — `nonce_registry.observe(NonceEventKind::Payment,
+&pk, &self.nonce.0)` with `pk = meta.governance_pubkey.unwrap_or_else(||
+sovereign_nonce_namespace(&self.asset_id))` (else `Replay`); Round 4
+     CRITICAL #1 keying by `governance_pubkey` per §2.4.
+     `event_kind = NonceEventKind::Payment` discriminator (per
+     Mission D v3.5-r8 PROPOSAL surface change) namespaces PaymentCaveat
+     nonces distinctly from BurnEventRef (NonceEventKind::Burn)
+     and SettlementEvent (NonceEventKind::Settlement) — same
+     `pk + nonce` pair across event types uses distinct LRU buckets
+   - Gate 4: expiry (existing, unchanged)
+   - Gate 5: model match (existing, unchanged)
+   - Gate 6: budget exhaust (existing, unchanged)
+   - Gate 7: cost > budget rejects outright via `CostExceedsBudget`
+     (previously unreachable per Round 4 IMPORTANT #2; PartialQuery variant
+     is separate `verify_partial(...)` entry point per substrate anchor
+     `crates/octo-paid-query/src/lib.rs:~280`)
+
+7. **`validate()` post-deserialization invariant check** — same file.
+   Per §2.3. Same gates 0-3 as `verify()` EXCEPT gate 3 uses
+   `observe_readonly` (no nonce marking; `observe-and-mark` reserved for
+   `verify()` which commits the spend per §2.3).
+
+8. **Custom `Deserialize` for legacy-form rejection** — same file. Per
+   §2.4. Inspects raw envelope via `serde_json::Value` BEFORE
+   derived `Deserialize`. Detects legacy `{ amount_micro_octo_w: i64 }`
+   key; if present AND `claimed_asset_id != OCTO_W_ASSET_ID`, returns
+   `LegacyFormOnNonOctoWContext { claimed_asset_id }` error. Happy path:
+   re-serialize through JSON + delegate to derived impl.
+
+9. **`Caveat::AssetBinding(asset_id)` co-bound rule** — `crates/octo-cap-macaroon/src/caveat/mod.rs`
+   (amend). Per RFC-0965 v2.1 §5 (canonical variant name
+   per §5 + §8; prior `Caveat::Vault` name deprecated —
+   the variant binds to a specific asset, not a vault, hence the
+   rename). When a `PaymentCaveat` co-occurs with a
+   `Caveat::AssetBinding(asset_id)` in the same caveat chain,
+   the verifier MUST enforce `vault_asset_id == payment.asset_id`
+   (Round 1 CRITICAL #5 mitigation — prevents PermissionKind bypass).
+   The verifier lives at `Caveat::verify_chain` (substrate anchor at
+   `crates/octo-cap-macaroon/src/caveat/mod.rs`); Mission E adds the
+   co-bound check before the per-caveat verify loop.
+
+10. **Wire form migration** — `crates/octo-cap-macaroon/src/caveat/payment.rs`
+    (amend `BorshSerialize`/`BorshDeserialize` derives). Per §3.
+    Borsh field order: `caveat_name | asset_id | budget | model |
+expires_at_unix_ms | registry_snapshot_epoch | nonce`. JSON
+    equivalent. `asset_id` is a 32-byte hex field. Round 4 IMPORTANT #4
+    serde visitor support preserved for legacy-form deserialization
+    rejection (Round 1 mitigation close at serde layer).
+
+## Acceptance Criteria
+
+This mission is verified by the §Test Vectors list below. Each vector is a
+named, independently runnable check, so a vector passing is the acceptance
+condition met. Do not add a separate checkbox list here: it would duplicate
+the vectors and let the two drift apart.
+
+## Test Vectors
+
+Per RFC-0965 v2.1 §10 (Pending, concrete test vectors).
+
+- TV-PC1: `PaymentCaveat::new(budget, model, expires)` (existing) →
+  `attenuate(new_budget, new_expires, new_asset_id, &registry)` with
+  `new_asset_id == self.asset_id` returns `Ok(narrowed)`
+- TV-PC2: `attenuate` with `new_asset_id != self.asset_id` returns
+  `Err(AttenuationError::AssetMismatch { current, proposed })` — USDC
+  budget cannot attenuate into OCTO-W
+- TV-PC3: `attenuate` with `new_budget.wire_scale != self.budget.wire_scale`
+  returns `Err(AttenuationError::ScaleMismatch)`
+- TV-PC4: `attenuate` with `registry.metadata(self.asset_id) == Err(...)`
+  returns `Err(AttenuationError::AssetUnknown)`
+- TV-PC5: `attenuate_legacy_2arg` produces `#[deprecated]` warning
+  (clippy `deprecated_semver` lint); builds with `#[allow(deprecated)]`
+- TV-PC6: `verify()` with tombstoned asset_id returns
+  `Reject { reason: AssetUnknown }`
+- TV-PC7: `verify()` with `current_epoch.0 < self.registry_snapshot_epoch.0`
+  returns `Reject { reason: StaleSnapshot { snapshot, live } }`
+- TV-PC8: `verify()` with `nonce_registry.observe(NonceEventKind::Payment,
+&pk, &self.nonce.0) == Err(AlreadyObserved)` returns `Reject { reason:
+Replay }`
+- TV-PC9: `verify()` sovereign-asset nonce keying —
+  `meta.governance_pubkey == None` falls back to
+  `sovereign_nonce_namespace(&self.asset_id)`
+- TV-PC10: `validate()` with `nonce_registry.observe_readonly(pk, nonce)
+== true` returns `Err(Replay)` WITHOUT marking the nonce (subsequent
+  `observe` succeeds)
+- TV-PC11: custom `Deserialize` accepts modern envelope
+  `{asset_id, budget: DqaEncoding, ...}`
+- TV-PC12: custom `Deserialize` rejects legacy envelope
+  `{amount_micro_octo_w: i64, cost_asset_id: BRIDGED-hex}` with
+  `LegacyFormOnNonOctoWContext { claimed_asset_id }`
+- TV-PC13: custom `Deserialize` accepts legacy envelope in OCTO-W
+  context (`{amount_micro_octo_w: i64}` with no asset_id field defaults
+  to OCTO_W_ASSET_ID)
+- TV-PC14: `Caveat::verify_chain` with `PaymentCaveat(asset_id=X)` +
+  `Caveat::AssetBinding(asset_id=Y)` where `X != Y` rejects with co-bound
+  violation (Round 1 CRITICAL #5 mitigation)
+- TV-PC15: `Caveat::verify_chain` with matching asset_ids proceeds
+  normally
+- TV-PC16: wire form round-trip — `BorshSerialize → BorshDeserialize`
+  preserves all fields including `asset_id` / `registry_snapshot_epoch`
+  / `nonce`
+- TV-PC17: audit-batch replay path (RFC-0105 v3.5 §3.13) bypasses
+  per-event validate() cache and runs fresh `verify()` pairwise check
+  on every `(caveat, burn, settlement)` tuple; cache HIT must NOT
+  short-circuit the batch-replay path
+- TV-PC18: `attenuate_legacy_3arg` (3-arg with registry handle, no
+  new_asset_id) carries `#[deprecated]` warning; bridge for 2-arg
+  callers during 6-week migration window
+
+## Layer direction (per `docs/architecture/design-principles.md`)
+
+- `octo-cap-macaroon` (Layer B frozen substrate) — `PaymentCaveat` field
+  additions = **additive, semver-minor** (existing struct extended; no
+  field removal); new `PaymentRejectionReason` variants = additive
+- `octo-paid-query` (Layer B substrate, paid-query RFC-driven additive) —
+  `PaymentRejectionReason` enum additions + `PaidQueryRejectionReason`
+  deprecated alias
+- All changes are Layer B-additive; no breaking renames; discriminator
+  string `"paid-query/v1"` UNCHANGED
+- All consumers of the 47 existing 2-arg call-sites MUST migrate OR
+  carry `#[allow(deprecated)]` during the 6-week window
+
+## Validation
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --features full -- -D warnings
+cargo test --workspace --lib
+cargo test -p octo-cap-macaroon --lib caveat::payment
+cargo test -p octo-paid-query --lib  # PaymentRejectionReason consumer tests
+```
+
+## Backward compat
+
+- **Field additions** = source-compatible for code constructing
+  `PaymentCaveat` via `PaymentCaveat::new(...)` constructor (Mission E
+  updates the constructor to accept new args OR adds a separate
+  `new_with_registry(...)` constructor). 47 existing call-sites
+  compile with deprecation warnings on `attenuate_legacy_2arg`.
+- **Discriminator** = wire-form compatible (string `"paid-query/v1"`
+  unchanged; existing serialized caveats still parse — they default
+  `asset_id` to OCTO_W_ASSET_ID via legacy-form path)
+- **Migration window** = 6 weeks per §4.1; HARD cutoff
+- **`PaymentRejectionReason` additions** = additive; downstream
+  exhaustive `match` blocks on `PaymentRejectionReason` MUST add the 5
+  new variants (compile-time enforced via `#[non_exhaustive]` if
+  substrate applies, otherwise clippy `match_wildcard_for_single_variants`
+  enforces exhaustive coverage)
+
+## Cross-references
+
+- RFC-0965 v2.1 §1 — motivation (asset-binding bypass close)
+- RFC-0965 v2.1 §2.1 — PaymentCaveat substrate definition
+- RFC-0965 v2.1 §2.2 — AttenuationError + attenuate signature
+- RFC-0965 v2.1 §2.3 — verify() + validate() + PaymentRejectionReason
+- RFC-0965 v2.1 §2.4 — NonceRegistry keying + legacy-form rejection
+- RFC-0965 v2.1 §3 — wire form
+- RFC-0965 v2.1 §4 — discriminator unchanged (`"paid-query/v1"`)
+- RFC-0965 v2.1 §4.1 — "one cycle" = 6 weeks (HARD cutoff)
+- RFC-0965 v2.1 §5 — PermissionKind Co-Bound Caveat (Caveat::AssetBinding)
+- RFC-0105 v3.5 §3.13 — tri-invariant declaration (consumer anchor)
+- RFC-0105 v3.5 §3.13 — **audit-batch replay enforcement** (NEW
+  v3.5-r6): per-tuple fresh pairwise check on every
+  `(PaymentCaveat, BurnEventRef, SettlementEvent)` in the audit-batch
+  replay path; per-event validate() cache MUST NOT be used. Mission E's
+  `verify()` (TV-PC17) MUST be invoked from the batch-replay path with
+  NO caching.
+- RFC-0105 v3.5 §5 — cross-RFC error-enum ownership
+  (`LegacyFormOnNonOctoWContext` declared per-RFC)
+- Mission D (`0105-v35-asset-registry-nonce-registry-substrate.md`) —
+  provides canonical substrate imports
+- Mission F (`0960-v36-burn-event-dqa-migration-substrate.md`) —
+  shares `LegacyFormOnNonOctoWContext` semantics + tri-invariant pair
+- Mission G (`0959-v28-settlement-cost-dqa-migration-substrate.md`) —
+  shares tri-invariant pair
+- Mission A (`0960-v37-a-vault-balance-projection-substrate.md`) —
+  `PaymentEventProducer` (Mission B) consumes Mission E substrate
+- `docs/architecture/design-principles.md` — Layer B additive-only rule
+
+## Claimant
+
+@mmacedoeu (claimed 2026-08-26 after R10 DRY closure; Caveat::AssetBinding co-bound rule verified; legacy-form rejection via custom Deserialize; 6-week HARD cutoff per §4.1)
+
+## Pull Request
+
+#

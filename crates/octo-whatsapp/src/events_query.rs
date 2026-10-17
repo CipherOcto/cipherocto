@@ -137,7 +137,9 @@ pub fn wait_for_id(
             InboundEvent::Message { id, .. } => id == &target,
             InboundEvent::Receipt { msg_id, .. } => msg_id == &target,
             InboundEvent::Reaction { id, .. } => id == &target,
-            InboundEvent::Call { id, .. } => id == &target,
+            InboundEvent::IncomingCall { .. } => false,
+            InboundEvent::MissedCall { .. } => false,
+            InboundEvent::CallEndedElsewhere { .. } => false,
             InboundEvent::Story { id, .. } => id == &target,
             _ => false,
         },
@@ -148,7 +150,7 @@ pub fn wait_for_id(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::{ConnectionKind, MessageKind};
+    use crate::events::MessageKind;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -173,9 +175,7 @@ mod tests {
     }
 
     fn synth_connection_open(ts_ms: i64) -> InboundEvent {
-        InboundEvent::Connection {
-            kind: ConnectionKind::Connected,
-            cause: None,
+        InboundEvent::Connected {
             ts_unix_ms: ts_ms,
             ts_mono_ns: 0,
         }

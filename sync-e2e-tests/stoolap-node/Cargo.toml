@@ -1,3 +1,21 @@
+# Standalone workspace, matching `sync-e2e-tests` and `live-tests`.
+#
+# `sync-e2e-tests/Cargo.toml` declares a `[workspace]` table and does not list
+# this package as a member, so cargo refused to resolve anything in this
+# directory at all. That broke the `Build stoolap-node` step in both the
+# `l3-in-process` and `l4-cross-process` jobs of `sync-e2e.yml`.
+#
+# It was introduced by commit `7ef1363c` ("fix(workspace): project-wide clippy
+# + fmt clean", 2026-07-16), which added the parent `[workspace]` table. Before
+# it, this directory resolved as its own package because the root manifest
+# excluded `sync-e2e-tests`. The workflow is `workflow_dispatch` only, so the
+# breakage went unseen for about three months.
+#
+# This package is built independently — the workflow builds it from this
+# directory and then runs the test suite from `sync-e2e-tests`, and neither
+# declares the other as a path dependency.
+[workspace]
+
 [package]
 name = "stoolap-node"
 version = "0.1.0"

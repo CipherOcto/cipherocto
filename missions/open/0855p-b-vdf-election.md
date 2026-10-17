@@ -36,26 +36,25 @@ A Verifiable Delay Function (VDF) per RFC-0855p-c §"Random Beacon" (currently b
 - [ ] Documentation: VDF security assumptions (setup ceremony, prime selection)
 - [ ] Documentation: operator guide for VDF computation (CPU cost: ~1 core × 60s per candidate per election)
 
-
 ### Implementation Guide
 
 Reference: Wesolowski VDF paper; `class_groups` crate documentation; RFC-0855p-c (Random Beacon section).
 
-
 ### Type Coverage
 
-| RFC-0855p-b Type | Implemented By |
-|-----------------|----------------|
-| `crates/octo-network/src/election/vdf.rs` | This mission |
-| `EPOCH_DURATION_SECONDS = 60` constant | This mission |
-| Tie-break: lex `candidate_pubkey` ordering | This mission |
+| RFC-0855p-b Type                           | Implemented By |
+| ------------------------------------------ | -------------- |
+| `crates/octo-network/src/election/vdf.rs`  | This mission   |
+| `EPOCH_DURATION_SECONDS = 60` constant     | This mission   |
+| Tie-break: lex `candidate_pubkey` ordering | This mission   |
 
 ## Dependencies
 
 Depends on:
+
 - A VDF library (the `class_groups` crate)
 - A beacon randomness source (the `SlashEvent` hash for the epoch)
-- RFC-0855p-c §'Random Beacon' being spec-ed (currently a forward reference; this mission triggers its creation)
+- Beacon randomness source: `SlashEvent` hash for the epoch. No RFC currently specifies a Random Beacon contract. RFC-0855p-c has never been authored, so this mission owns the contract definition and must publish it as an RFC amendment before the election logic lands. This is a forward dependency on work this mission triggers, not a dependency on an existing document.
 
 ## Claimant
 

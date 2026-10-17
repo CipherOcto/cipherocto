@@ -35,6 +35,25 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
 
+/// Write `contents` to `path` at `0o600`, creating the parent at `0o700`.
+///
+/// H-7. The permission rule is `cipherocto_fs_perms`, shared with the wallet
+/// and the CDP dump path; this is only the local spelling of it, so the
+/// session export cannot drift away from the rest of the substrate the way a
+/// private re-implementation would.
+fn write_private_bytes(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            cipherocto_fs_perms::create_dir_private(parent)?;
+        }
+    }
+    let mut f = cipherocto_fs_perms::create_private(path)?;
+    f.write_all(contents)?;
+    Ok(())
+}
+
 /// Maximum length of an `account_id`. Phone numbers are at most
 /// 15 digits (E.164); we cap at 64 to allow prefixed formats
 /// (e.g., `wa-` + 15 digits).
@@ -266,6 +285,15 @@ impl MultiAccountStore {
         self.index.accounts.get(account_id)
     }
 
+    /// Returns the directory the index file lives in. Used by callers
+    /// that want to re-scan the on-disk layout via `discover_from_disk`
+    /// without having to plumb the base dir through separately.
+    pub fn base_dir(&self) -> &Path {
+        self.path
+            .parent()
+            .expect("MultiAccountStore path always has a parent directory")
+    }
+
     /// Register a new account in the index. The session DB and
     /// config file must already exist on disk (typically written
     /// by `pair-link` or `qr-link`). The `linked_at` is set to
@@ -324,18 +352,38 @@ impl MultiAccountStore {
                 reason: "no parent dir".to_string(),
             })?;
         let active = base.join("active");
-        // Remove any existing symlink/file.
-        let _ = fs::remove_file(&active);
-        // Create the symlink to the session DB. On Windows, fall
-        // back to copying the file (symlinks need admin/dev mode).
+        // L-7: `remove_file` then `symlink` leaves a window in which another
+        // same-UID process can create `active` itself and have it pointed at a
+        // session path of its choosing. Create the link at a unique temporary
+        // name and `rename` it over `active` instead — rename is atomic, so
+        // `active` is never absent, and never attacker-controlled.
+        //
+        // On Windows the copy path below is unchanged; it has no symlink to
+        // race on.
         #[cfg(unix)]
         {
-            std::os::unix::fs::symlink(&entry.session_path, &active).map_err(|e| {
+            let staging = base.join(format!(".active.tmp.{}", std::process::id()));
+            let _ = fs::remove_file(&staging);
+            std::os::unix::fs::symlink(&entry.session_path, &staging).map_err(|e| {
                 CoreError::InvalidSessionPath {
-                    path: active.clone(),
+                    path: staging.clone(),
                     reason: format!("symlink: {e}"),
                 }
             })?;
+            std::fs::rename(&staging, &active).map_err(|e| {
+                let _ = fs::remove_file(&staging);
+                CoreError::InvalidSessionPath {
+                    path: active.clone(),
+                    reason: format!("atomic swap of active symlink: {e}"),
+                }
+            })?;
+        }
+        #[cfg(not(unix))]
+        {
+            // Remove any existing file, then copy. No symlink, so the
+            // remove-then-create window is not the TOCTOU this finding is
+            // about — there is no link to redirect.
+            let _ = fs::remove_file(&active);
         }
         #[cfg(not(unix))]
         {
@@ -458,16 +506,22 @@ impl MultiAccountStore {
             reason: format!("gzip encode: {e}"),
         })?;
 
-        // Write the bundle.
+        // H-7: the bundle carries the device Noise private key. Write it
+        // 0600 from birth under a 0700 parent — `fs::write` takes its mode
+        // from the umask, which is 0644 here and readable by every local
+        // user. The permission rule is `cipherocto_fs_perms`, shared with the
+        // wallet and the CDP dump path rather than restated.
         if let Some(parent) = out.parent() {
             if !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent).map_err(|e| CoreError::InvalidSessionPath {
-                    path: parent.to_path_buf(),
-                    reason: format!("create parent: {e}"),
+                cipherocto_fs_perms::create_dir_private(parent).map_err(|e| {
+                    CoreError::InvalidSessionPath {
+                        path: parent.to_path_buf(),
+                        reason: format!("create parent: {e}"),
+                    }
                 })?;
             }
         }
-        fs::write(out, &compressed).map_err(|e| CoreError::Read {
+        write_private_bytes(out, &compressed).map_err(|e| CoreError::Read {
             path: out.to_path_buf(),
             source: e,
         })?;
@@ -576,21 +630,23 @@ impl MultiAccountStore {
         let session_path = base.join(format!("{account_id}.session.db"));
         let config_path = base.join(format!("{account_id}.config.json"));
 
+        // H-7: these are the same session material the bundle carried, so
+        // they get the same 0600 treatment on the way back in.
         if let Some(b) = files.get("session.db") {
-            fs::write(&session_path, b).map_err(|e| CoreError::Read {
+            write_private_bytes(&session_path, b).map_err(|e| CoreError::Read {
                 path: session_path.clone(),
                 source: e,
             })?;
         }
         if let Some(b) = files.get("config.json") {
-            fs::write(&config_path, b).map_err(|e| CoreError::Read {
+            write_private_bytes(&config_path, b).map_err(|e| CoreError::Read {
                 path: config_path.clone(),
                 source: e,
             })?;
         }
         if let Some(b) = files.get("session_meta.json") {
             let sidecar = session_path.with_extension("db.meta.json");
-            fs::write(&sidecar, b).map_err(|e| CoreError::Read {
+            write_private_bytes(&sidecar, b).map_err(|e| CoreError::Read {
                 path: sidecar,
                 source: e,
             })?;
@@ -614,7 +670,7 @@ impl MultiAccountStore {
             path: self.path.clone(),
             source: e,
         })?;
-        fs::write(&self.path, &bytes).map_err(|e| CoreError::Read {
+        write_private_bytes(&self.path, &bytes).map_err(|e| CoreError::Read {
             path: self.path.clone(),
             source: e,
         })?;
@@ -622,7 +678,12 @@ impl MultiAccountStore {
     }
 }
 
-fn default_index_base_dir() -> PathBuf {
+/// Resolves the default base directory the index file lives in
+/// (`<data_dir>/octo/whatsapp/`, honours `OCTO_WHATSAPP_DATA_DIR`).
+/// `pub` so downstream crates (e.g. the runtime daemon's
+/// `accounts.list` handler) can fall back to the env-derived path
+/// when the store fails to initialise at boot.
+pub fn default_index_base_dir() -> PathBuf {
     let mut base = dirs_data_dir();
     base.push("octo");
     base.push("whatsapp");

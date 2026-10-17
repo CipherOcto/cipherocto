@@ -25,6 +25,7 @@ pub fn decimal_to_dqa(d: &Decimal) -> Result<Dqa, DecimalError>
 ```
 
 **RFC-0111 says:**
+
 > DECIMAL → DQA Conversion
 > Converts Decimal to Dqa with scale alignment and RoundHalfEven rounding.
 > TRAP if DECIMAL scale > 18 or result outside DQA range (i64).
@@ -37,6 +38,7 @@ pub fn dqa_to_decimal(dqa: &Dqa) -> Result<Decimal, DecimalError>
 ```
 
 **RFC-0105 says:**
+
 > DQA → DECIMAL Conversion
 > Converts Dqa to Decimal by zero-extending to Decimal scale.
 > TRAP if result outside DECIMAL range.
@@ -92,11 +94,11 @@ pub fn decimal_to_dqa(d: &Decimal) -> Result<Dqa, DecimalError> {
 
 ### Verification Checklist
 
-| RFC-0111 Requirement | Implementation | Status |
-|---------------------|----------------|--------|
-| TRAP if scale > 18 | `if d.scale > DQA_MAX_SCALE` | ✅ CORRECT |
-| TRAP if value > i64::MAX | `if d.mantissa > i64::MAX as i128` | ✅ CORRECT |
-| TRAP if value < i64::MIN | `d.mantissa < i64::MIN as i128` | ✅ CORRECT |
+| RFC-0111 Requirement       | Implementation                         | Status     |
+| -------------------------- | -------------------------------------- | ---------- |
+| TRAP if scale > 18         | `if d.scale > DQA_MAX_SCALE`           | ✅ CORRECT |
+| TRAP if value > i64::MAX   | `if d.mantissa > i64::MAX as i128`     | ✅ CORRECT |
+| TRAP if value < i64::MIN   | `d.mantissa < i64::MIN as i128`        | ✅ CORRECT |
 | Return Dqa with same scale | `Dqa::new(d.mantissa as i64, d.scale)` | ✅ CORRECT |
 
 **Verdict:** Implementation matches RFC-0111 specification exactly. ✅
@@ -147,11 +149,11 @@ pub fn dqa_to_decimal(dqa: &Dqa) -> Result<Decimal, DecimalError> {
 
 ### Verification Checklist
 
-| Requirement | Implementation | Status |
-|-------------|----------------|--------|
+| Requirement                   | Implementation                               | Status     |
+| ----------------------------- | -------------------------------------------- | ---------- |
 | Always succeeds for valid DQA | `Decimal::new(dqa.value as i128, dqa.scale)` | ✅ CORRECT |
-| Value fits (i64 < 10^36) | Implicit in `Decimal::new` | ✅ CORRECT |
-| Scale preserved | `dqa.scale` passed directly | ✅ CORRECT |
+| Value fits (i64 < 10^36)      | Implicit in `Decimal::new`                   | ✅ CORRECT |
+| Scale preserved               | `dqa.scale` passed directly                  | ✅ CORRECT |
 
 **Note:** The implementation relies on `Decimal::new` which canonicalizes and validates. For DQA→DECIMAL, the only possible error is scale > 36, but DQA's max scale is 18, so this cannot happen.
 
@@ -159,10 +161,10 @@ pub fn dqa_to_decimal(dqa: &Dqa) -> Result<Decimal, DecimalError> {
 
 ## Summary
 
-| Function | RFC Source | Implementation | Verdict |
-|----------|-----------|----------------|---------|
-| `decimal_to_dqa` | RFC-0111 | determin/src/decimal.rs:758-771 | ✅ CORRECT |
-| `dqa_to_decimal` | RFC-0105, RFC-0111 | determin/src/decimal.rs:777-782 | ✅ CORRECT |
+| Function         | RFC Source         | Implementation          | Verdict    |
+| ---------------- | ------------------ | ----------------------- | ---------- |
+| `decimal_to_dqa` | RFC-0111           | determin/src/decimal.rs | ✅ CORRECT |
+| `dqa_to_decimal` | RFC-0105, RFC-0111 | determin/src/decimal.rs | ✅ CORRECT |
 
 ## Recommendations
 
@@ -179,9 +181,9 @@ pub fn dqa_to_decimal(dqa: &Dqa) -> Result<Decimal, DecimalError> {
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0 | 2026-03-23 | Initial draft — review of existing functions |
+| Version | Date       | Changes                                      |
+| ------- | ---------- | -------------------------------------------- |
+| 1.0     | 2026-03-23 | Initial draft — review of existing functions |
 
 ---
 

@@ -183,7 +183,7 @@ Properties:
 
 ### Consensus Vectors
 
-Defined in **RFC-0106 Numeric Tower**.
+Defined in **RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) Numeric Tower**.
 
 ```
 DVEC<N>
@@ -2527,13 +2527,13 @@ Major performance drivers:
 
 ## Integration with Numeric Tower
 
-This RFC integrates with RFC-0106 (Deterministic Numeric Tower):
+This RFC integrates with RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Deterministic Numeric Tower):
 
-| RFC-0103 (Storage) | RFC-0106 (Compute) | Use Case       |
-| ------------------ | ------------------ | -------------- |
-| VECTOR(f32)        | DVEC\<N\>(DQA)     | Fast retrieval |
-| VECTOR(f32)        | DVEC\<N\>(DFP)     | Scientific     |
-| Three-layer        | Scalar loop        | Consensus      |
+| RFC-0103 (Storage) | RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Compute) | Use Case       |
+| ------------------ | ---------------------------------------------------------------------------------- | -------------- |
+| VECTOR(f32)        | DVEC\<N\>(DQA)                                                                     | Fast retrieval |
+| VECTOR(f32)        | DVEC\<N\>(DFP)                                                                     | Scientific     |
+| Three-layer        | Scalar loop                                                                        | Consensus      |
 
 **Workflow**:
 
@@ -2777,7 +2777,7 @@ Use ML to optimize vector partitioning.
 ## Related RFCs
 
 - RFC-0103 (Numeric/Math): Unified Vector-SQL Storage (superseded by this RFC)
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower (numeric types)
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower (numeric types)
 - RFC-0300 (Retrieval): Verifiable AI Retrieval (ZK commitments)
 - RFC-0301 (Retrieval): Retrieval Architecture (storage integration)
 

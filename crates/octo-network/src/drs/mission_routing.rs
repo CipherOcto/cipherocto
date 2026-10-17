@@ -220,7 +220,7 @@ pub fn relay_satisfies_constraints(
 
     // Geographic isolation
     if !constraints.allowed_regions.contains(&GeoRegion::Global)
-        && !constraints.allowed_regions.contains(&relay_region)
+        & !constraints.allowed_regions.contains(&relay_region)
     {
         return false;
     }

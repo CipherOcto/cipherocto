@@ -8,7 +8,7 @@ Draft
 
 ## Summary
 
-This RFC defines the **Deterministic AI Virtual Machine (AI-VM)** — a specialized execution environment that runs AI workloads identically across heterogeneous hardware (CPUs, GPUs, accelerators). The AI-VM builds on RFC-0106's Deterministic Numeric Tower to provide deterministic execution semantics, canonical operators, hardware abstraction, and verification interfaces for verifiable AI inference and training.
+This RFC defines the **Deterministic AI Virtual Machine (AI-VM)** — a specialized execution environment that runs AI workloads identically across heterogeneous hardware (CPUs, GPUs, accelerators). The AI-VM builds on RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal)'s Deterministic Numeric Tower to provide deterministic execution semantics, canonical operators, hardware abstraction, and verification interfaces for verifiable AI inference and training.
 
 ## Design Goals
 
@@ -28,7 +28,7 @@ The fundamental question: **Can we create a deterministic execution environment 
 
 Research confirms feasibility through:
 
-- **Deterministic Numeric Tower (RFC-0106)** — Provides DQA, DFP, DVEC, DMAT types with guaranteed determinism
+- **Deterministic Numeric Tower (RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal))** — Provides DQA, DFP, DVEC, DMAT types with guaranteed determinism
 - **Canonical operator semantics** — Fixed loop orders, deterministic reductions
 - **Hardware adapter pattern** — Map canonical semantics to hardware-specific implementations while preserving correctness
 - **Execution trace commitment** — Merkle-based verification of execution history
@@ -66,7 +66,7 @@ The AI-VM defines:
 The AI-VM integrates with the existing stack:
 
 ```
-RFC-0106 (Numeric Tower)
+RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric Tower)
        ↓
 RFC-0120 (AI-VM) ← NEW
        ↓
@@ -93,7 +93,7 @@ This makes verifiable AI impossible — two nodes executing the same model may p
 
 Replace the traditional ML runtime with a deterministic computational substrate that:
 
-- Enforces fixed numeric formats (via RFC-0106)
+- Enforces fixed numeric formats (via RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal))
 - Defines canonical operator semantics
 - Mandates deterministic reduction trees
 - Provides hardware adapters that preserve semantics
@@ -176,7 +176,7 @@ struct VMState {
     // Deterministic RNG state
     prng_state: [u8; 32],
 
-    // Numeric context (from RFC-0106)
+    // Numeric context (from RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal))
     numeric_mode: NumericMode,
 }
 ```
@@ -668,7 +668,7 @@ impl HardwareAdapter for CpuAdapter {
     fn supports(&self, op: &Operator) -> bool { true }
 
     fn execute(&self, op: &Operator, inputs: &[Tensor]) -> Result<Tensor, Error> {
-        // Pure Rust implementation with RFC-0106 types
+        // Pure Rust implementation with RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) types
         execute_canonical(op, inputs)
     }
 
@@ -863,7 +863,7 @@ The AI-VM balances determinism and performance:
 
 The AI-VM separates concerns cleanly:
 
-- **RFC-0106** defines numeric representation (how numbers work)
+- **RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal)** defines numeric representation (how numbers work)
 - **RFC-0120** defines execution semantics (how operations work)
 
 This separation enables:
@@ -883,38 +883,38 @@ This separation enables:
 
 A purpose-built VM enables deterministic guarantees impossible in general-purpose ML frameworks.
 
-## Dependency on RFC-0106
+## Dependency on RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal)
 
-The AI-VM builds directly on the Deterministic Numeric Tower (RFC-0106) for all numeric operations:
+The AI-VM builds directly on the Deterministic Numeric Tower (RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal)) for all numeric operations:
 
 ### Numeric Types Used
 
-| RFC-0106 Type | AI-VM Usage                         | Purpose                         |
-| ------------- | ----------------------------------- | ------------------------------- |
-| `DqaScalar`   | Weight matrices, activations        | Quantized inference             |
-| `DfpScalar`   | Intermediate computations           | Floating-point precision        |
-| `DVEC<N>`     | Embedding vectors                   | Vector search, attention scores |
-| `DMAT<M,N>`   | Weight matrices, activation tensors | Linear algebra operations       |
+| RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) Type | AI-VM Usage                         | Purpose                         |
+| ----------------------------------------------------------------------------- | ----------------------------------- | ------------------------------- |
+| `DqaScalar`                                                                   | Weight matrices, activations        | Quantized inference             |
+| `DfpScalar`                                                                   | Intermediate computations           | Floating-point precision        |
+| `DVEC<N>`                                                                     | Embedding vectors                   | Vector search, attention scores |
+| `DMAT<M,N>`                                                                   | Weight matrices, activation tensors | Linear algebra operations       |
 
 ### Key Integration Points
 
 1. **Scalar Arithmetic**: All operator implementations use `DqaScalar` traits for deterministic arithmetic
 2. **Matrix Operations**: `matmul()` uses `DMat<A, M, K>` with fixed loop order
 3. **Vector Operations**: Attention and embedding lookup use `DVEC` with deterministic traversal
-4. **Numeric Context**: VM state includes `numeric_mode: NumericMode` from RFC-0106
+4. **Numeric Context**: VM state includes `numeric_mode: NumericMode` from RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal)
 
 ### Why Not Other Approaches?
 
-| Approach                | Why Rejected                        |
-| ----------------------- | ----------------------------------- |
-| IEEE 754 floats         | Non-deterministic across hardware   |
-| Vendor tensor cores     | Algorithm selection varies          |
-| General-purpose vectors | No determinism guarantees           |
-| This approach           | Full stack determinism via RFC-0106 |
+| Approach                | Why Rejected                                                                                        |
+| ----------------------- | --------------------------------------------------------------------------------------------------- |
+| IEEE 754 floats         | Non-deterministic across hardware                                                                   |
+| Vendor tensor cores     | Algorithm selection varies                                                                          |
+| General-purpose vectors | No determinism guarantees                                                                           |
+| This approach           | Full stack determinism via RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) |
 
 ## Related RFCs
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower
 - RFC-0108 (Retrieval): Verifiable AI Retrieval
 - RFC-0114 (Agents): Verifiable Reasoning Traces
 - RFC-0115 (Economics): Probabilistic Verification Markets
@@ -947,12 +947,12 @@ a, b, c = 1e10, 1.0, -1e10
 
 ### B. Supported Activation Functions
 
-| Function | Deterministic Definition                                                |
+| Function | Deterministic Definition |
 | -------- | ----------------------------------------------------------------------- | --- | ---------------------- |
-| ReLU     | `max(0, x)` - exact                                                     |
-| Sigmoid  | `x / (1 +                                                               | x   | )` - polynomial approx |
-| Tanh     | `x * (27 + x²) / (27 + 9x²)` - polynomial approx                        |
-| GELU     | `0.5x(1 + tanh(√2/π * (x + 0.044715x³)))` - requires deterministic tanh |
+| ReLU | `max(0, x)` - exact |
+| Sigmoid | `x / (1 +                                                               | x   | )` - polynomial approx |
+| Tanh | `x * (27 + x²) / (27 + 9x²)` - polynomial approx |
+| GELU | `0.5x(1 + tanh(√2/π * (x + 0.044715x³)))` - requires deterministic tanh |
 
 ### C. Trace Verification Protocol
 

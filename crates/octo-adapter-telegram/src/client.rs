@@ -150,14 +150,14 @@ pub trait TelegramClient: Send + Sync {
     /// TDLib's emit-once behavior. Both mock and real client yield updates
     /// in insertion order.
     ///
-    /// Takes `&self` so the trait composes with `PlatformAdapter::receive_messages`
-    /// (which also takes `&self`); interior mutability (Mutex/RwLock) is the
+    /// Takes `&&self` so the trait composes with `PlatformAdapter::receive_messages`
+    /// (which also takes `&&self`); interior mutability (Mutex/RwLock) is the
     /// impl's responsibility.
     async fn receive_updates(&self) -> Result<Vec<TelegramUpdate>>;
 
     /// Authenticate (for user mode). For bot mode, this is a no-op.
-    /// Takes `&self`; the real TDLib client tracks auth state inside the
-    /// tdjson client (not in our struct), so no&mut self is needed.
+    /// Takes `&&self`; the real TDLib client tracks auth state inside the
+    /// tdjson client (not in our struct), so no&&mut self is needed.
     async fn authenticate(&self) -> Result<()>;
 
     /// Resolve a message by chat_id and message_id to its attached file_id.

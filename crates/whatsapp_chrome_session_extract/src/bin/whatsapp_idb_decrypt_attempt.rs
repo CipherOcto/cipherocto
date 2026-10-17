@@ -25,7 +25,15 @@
 //!     cargo run -p whatsapp_chrome_session_extract --bin whatsapp_idb_decrypt_attempt --release -- \
 //!           --profile-dir /tmp/wa-observer/run-1784043740549/chrome-profile/Default
 
+// Clippy `[disallowed-methods]` allowlist: these binaries talk to
+// Chrome DevTools Protocol (CDP) at `http://localhost:9222` to extract
+// WhatsApp Web session keys for Phase 7.J work. CDP is an operator
+// diagnostic endpoint (not an LLM model provider). Cipherocto capability
+// tokens never reach CDP.
+#![allow(clippy::disallowed_methods)]
+
 use anyhow::{bail, Context, Result};
+// H-6: session dumps are written 0600 under a 0700 dir, never at umask 0644.
 use chrono::Utc;
 use clap::Parser;
 use futures::{SinkExt, StreamExt};
@@ -34,6 +42,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::time::{sleep, Duration};
 use tracing::{info, warn};
+use whatsapp_chrome_session_extract::write_private_json;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -119,9 +128,12 @@ async fn main() -> Result<()> {
         args.port
     );
 
+    // Chrome's renderer sandbox is deliberately left ON. These binaries drive a
+    // profile holding a live WhatsApp Web session, so a renderer compromise is
+    // full account compromise. If Chrome cannot start in a sandbox-less
+    // container, give the container user namespaces rather than this flag.
     let mut child = tokio::process::Command::new(&chrome)
         .arg(format!("--remote-debugging-port={}", args.port))
-        .arg("--no-sandbox")
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
         .arg("--disable-extensions")
@@ -258,7 +270,7 @@ async fn main() -> Result<()> {
   // For each signal-* and wawc* db, dump all stores + their keys
   out.allStores = {};
   out.allValues = {};
-  const interestingDbs = (out.allDatabases || []).map(d => d.name).filter(n => n && /signal|wawc|model/i.test(n));
+  const interestingDbs = (out.allDatabases || []).map(d => d.name).filter(n => n & /signal|wawc|model/i.test(n));
   async function tryExport(label, key) {
     const out = {label};
     if (!key || typeof key !== 'object' || !key.algorithm) {
@@ -328,7 +340,7 @@ async fn main() -> Result<()> {
         out.signature = hex(sig);
       }
       if (exports.length) out.cryptoKeyExports = exports;
-      out.sampleJson = JSON.stringify(v, (_, val) => (val && val.algorithm) ? '[CryptoKey ' + val.algorithm.name + ']' : val).slice(0, 400);
+      out.sampleJson = JSON.stringify(v, (_, val) => (val&val.algorithm) ? '[CryptoKey ' + val.algorithm.name + ']' : val).slice(0, 400);
       return out;
     }
     out.preview = String(v).slice(0, 100);
@@ -585,11 +597,7 @@ async fn main() -> Result<()> {
         .join("idb-decrypt-attempts.json");
     match result {
         Some(v) => {
-            std::fs::write(
-                &out_path,
-                serde_json::to_string_pretty(&v).unwrap_or_default(),
-            )
-            .context("write dump")?;
+            write_private_json(&out_path, &v).context("write dump")?;
             println!("== whatsapp_idb_decrypt_attempt ==");
             println!("profile        : {}", profile.display());
             println!("captured_at    : {}", Utc::now().to_rfc3339());

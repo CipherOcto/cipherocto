@@ -365,6 +365,32 @@ cipherocto provider start
 cipherocto provider logs --follow
 ```
 
+### Initialize Wallet Identity
+
+The `octo-wallet` CLI bootstraps identity + derives capability keys (per RFC-0009, RFC-0102, RFC-0957).
+
+```bash
+# Initialize identity (writes 32-byte seed to ./identity.seed; mode 0o600 on Unix)
+cargo run -p octo-wallet --bin octo-wallet -- init --node-type wholesale
+
+# Derive a capability key for (audience, channel)
+cargo run -p octo-wallet --bin octo-wallet -- \
+  derive-cap --audience did:octo:abc --channel chat-v1 \
+  --seed ./identity.seed
+
+# Vault: encrypt a provider key (e.g., OpenAI API key)
+cargo run -p octo-wallet --bin octo-wallet -- vault put --slot openai-prod
+# (passphrase + provider key prompted via stdin; NEVER argv)
+
+# Vault: retrieve
+cargo run -p octo-wallet --bin octo-wallet -- vault get --slot openai-prod
+
+# Vault: list slots
+cargo run -p octo-wallet --bin octo-wallet -- vault list
+```
+
+Vault slots live at `~/.config/cipherocto/vault/<slot>.vault` (Argon2id + AES-256-GCM).
+
 ---
 
 ## Docker Development

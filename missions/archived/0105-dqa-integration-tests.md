@@ -55,6 +55,7 @@ Claude Code Agent
 ### VM Tests (vm.rs)
 
 Added 8 DQA arithmetic tests:
+
 - `test_dqa_arithmetic_add` - DQA + DQA at scale 0
 - `test_dqa_arithmetic_sub` - DQA - DQA at scale 0
 - `test_dqa_arithmetic_mul` - DQA * DQA at scale 0
@@ -64,12 +65,13 @@ Added 8 DQA arithmetic tests:
 - `test_dqa_negative_roundtrip` - negative value serialization
 
 Note: `test_dqa_integer_promotion` was removed due to pre-existing bug in
-`arithmetic_op_quant` line 3870 (uses wrong variable `*i` instead of `i`).
+`arithmetic_op_quant` (uses wrong variable `*i` instead of `i`).
 This is separate from integration testing scope.
 
 ### Integration Tests (tests/dqa_integration_test.rs)
 
 12 tests covering:
+
 - Format at scale 0, 1, 2, 9, 18 (5 tests)
 - `as_float64` conversion
 - `as_string` coercion to text

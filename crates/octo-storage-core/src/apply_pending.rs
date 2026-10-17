@@ -1,0 +1,503 @@
+//! [`apply_pending`] — unified migration runner.
+//!
+//! Owns the three behaviors its predecessor APIs shared individually:
+//!
+//! - **Idempotency** — re-running on an already-migrated DB is a no-op
+//!   (guard via tracker table + sequential version guard).
+//! - **Partial-application recovery** — a crashed mid-migration run that
+//!   leaves ADD COLUMN statements partially applied is recoverable: see
+//!   mission `0871b-storage-idempotent-alter-hardening` for the ADD
+//!   COLUMN swallow rule.
+//! - **Downgrade refusal** — DB at higher version than catalog →
+//!   [`SubstrateError::UnknownMigration`] (no silent `apply_pending` on
+//!   downgraded code).
+
+use crate::error::SubstrateError;
+use crate::migration::Migration;
+use crate::sql_split::split_sql_statements;
+use crate::tracker::{current_version, ensure_tracker_table, record_migration};
+
+/// Configuration knobs for [`apply_pending`].
+///
+/// Defaults match the majority pre-substrate convention (`schema_migrations`
+/// tracker table; idempotent ADD COLUMN swallow). Owner crates that need
+/// a different tracker table name (`quota-router-storage`'s historical
+/// `cipherocto_schema_version`) pass it via [`with_tracker_table`].
+#[derive(Debug, Clone, Copy)]
+pub struct ApplyConfig {
+    /// Tracker table name. Default: [`crate::DEFAULT_TRACKER_TABLE`].
+    pub tracker_table: &'static str,
+}
+
+impl Default for ApplyConfig {
+    fn default() -> Self {
+        Self {
+            tracker_table: crate::DEFAULT_TRACKER_TABLE,
+        }
+    }
+}
+
+impl ApplyConfig {
+    /// New config with default tracker-table name.
+    pub const fn new() -> Self {
+        Self {
+            tracker_table: crate::DEFAULT_TRACKER_TABLE,
+        }
+    }
+
+    /// Set a non-default tracker-table name.
+    pub const fn with_tracker_table(mut self, name: &'static str) -> Self {
+        self.tracker_table = name;
+        self
+    }
+}
+
+/// Apply all pending migrations from `migrations` that are newer than the
+/// current database version. Idempotent: re-running is a no-op.
+///
+/// Migrations are executed in the order `migrations` appears in the
+/// slice; each MUST carry a strictly-monotonic-increasing `version()`
+/// (the runner does NOT sort — that's the caller's responsibility).
+///
+/// # Errors
+/// - [`SubstrateError::Storage`]: tracker-table DDL / current-version read fails.
+/// - [`SubstrateError::UnknownMigration`]: DB version exceeds catalog.
+/// - [`SubstrateError::MigrationFailed`]: a migration's SQL failed (after
+///   the ADD COLUMN swallow rule is applied — see
+///   [`is_idempotent_already_applied`]). The migration is NOT recorded
+///   in the tracker table; the caller may retry once the underlying
+///   issue is fixed.
+///
+/// # Example
+/// ```ignore
+/// use octo_storage_core::{apply_pending, Migration, StaticMigration};
+///
+/// const MIGRATIONS: &[&dyn Migration] = &[
+///     &StaticMigration::new(1, "create_asks", include_str!("../migrations/v001__create_asks.sql")),
+///     &StaticMigration::new(2, "create_receipts", include_str!("../migrations/v002__create_receipts.sql")),
+/// ];
+///
+/// let db = octo_storage_core::open_in_memory().unwrap();
+/// apply_pending(&db, MIGRATIONS, ApplyConfig::default()).unwrap();
+/// ```
+pub fn apply_pending(
+    db: &stoolap::Database,
+    migrations: &[&'static dyn Migration],
+    cfg: ApplyConfig,
+) -> Result<(), SubstrateError> {
+    ensure_tracker_table(db, cfg.tracker_table)?;
+    let current = current_version(db, cfg.tracker_table)?;
+
+    // Refuse to run if the DB has a higher version than our catalog
+    // (downgrade or unknown-migration scenario).
+    if let Some(highest) = migrations.iter().map(|m| m.version()).max() {
+        if current > highest {
+            return Err(SubstrateError::UnknownMigration {
+                version: current,
+                catalog_max: highest,
+            });
+        }
+    }
+
+    let mut last_applied: u32 = current;
+    for slot in migrations {
+        // Each `slot` is `&&'static dyn Migration` (slice of trait-object
+        // refs). Deref once to get `&'static dyn Migration` — the
+        // `Migration` trait's method dispatch only knows the trait object
+        // type, not a reference to it.
+        let migration: &'static dyn Migration = *slot;
+        if migration.version() <= last_applied {
+            continue;
+        }
+        run_one(db, cfg.tracker_table, migration)?;
+        last_applied = migration.version();
+    }
+    Ok(())
+}
+
+/// Run a single migration. Splits SQL on `;` boundaries; each statement
+/// is executed individually.
+///
+/// `ALTER TABLE ADD COLUMN` errors with `Error::DuplicateColumn`
+/// (display: `"duplicate column"`) when the column already exists.
+/// For ADD COLUMN statements only, this error is treated as a no-op
+/// so a mid-`apply_pending` crash between two ADD COLUMNs of the same
+/// migration does not brick the DB on retry. See mission
+/// `0871b-storage-idempotent-alter-hardening`.
+fn run_one(
+    db: &stoolap::Database,
+    tracker_table: &str,
+    migration: &'static dyn Migration,
+) -> Result<(), SubstrateError> {
+    let statements = split_sql_statements(migration.sql());
+    for stmt in &statements {
+        match db.execute(stmt, ()) {
+            Ok(_) => {}
+            Err(e) => {
+                let msg = format!("{e}");
+                if is_idempotent_already_applied(&msg, stmt) {
+                    // ADD COLUMN on a column that already exists = no-op.
+                    // Migration was partially applied via a prior crash;
+                    // remaining statements proceed.
+                    continue;
+                }
+                // Redact BOTH the SQL statement AND the underlying
+                // Stoolap error's Display from the operator-facing
+                // message. Both can leak through `#[from]` chains:
+                //   * SQL contains column names (e.g. `holder_did`)
+                //     that flow up to HTTP RPC responses.
+                //   * Stoolap's `Display` includes fragments like
+                //     `"table 'nonexistent' not found"` which encode
+                //     schema intent (the failing table is part of the
+                //     migration's domain — it can be inferred from
+                //     `version` by anyone with read access to the
+                //     catalog).
+                // Substrate-internal `Debug` retains both via the
+                // variant's own `Debug` impl + `e` captured in the
+                // closure scope (intentionally not used in the
+                // message). Migration `name` is also redacted —
+                // see `SubstrateError::MigrationFailed`.
+                return Err(SubstrateError::MigrationFailed {
+                    version: migration.version(),
+                    message: "migration SQL failed; see substrate logs for details".to_owned(),
+                });
+            }
+        }
+    }
+    record_migration(db, tracker_table, migration.version(), migration.name())?;
+    Ok(())
+}
+
+/// Returns true when `err` represents an `ADD COLUMN` collision with a
+/// pre-existing column. Restricts the swallow to ADD COLUMN statements
+/// (not CREATE INDEX / CREATE TABLE — those use `IF NOT EXISTS` already)
+/// AND to the fork's exact `DuplicateColumn` display string.
+fn is_idempotent_already_applied(err: &str, stmt: &str) -> bool {
+    let upper = stmt.to_ascii_uppercase();
+    let is_add_column = upper.contains("ADD COLUMN") || upper.contains("ADD\tCOLUMN");
+    is_add_column && err.contains("duplicate column")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::migration::StaticMigration;
+    use crate::tracker::applied_version;
+
+    const MIGRATIONS: &[&'static dyn Migration] = &[
+        &StaticMigration::new(
+            1,
+            "create_x",
+            "CREATE TABLE x (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+        ),
+        &StaticMigration::new(2, "create_y", "CREATE TABLE y (id INTEGER PRIMARY KEY)"),
+        &StaticMigration::new(
+            3,
+            "add_nickname_to_x",
+            "ALTER TABLE x ADD COLUMN nickname TEXT; ALTER TABLE x ADD COLUMN score INTEGER",
+        ),
+    ];
+
+    fn fresh_db() -> stoolap::Database {
+        stoolap::Database::open_in_memory().unwrap()
+    }
+
+    #[test]
+    fn applies_all_migrations_on_fresh_db() {
+        let db = fresh_db();
+        apply_pending(&db, MIGRATIONS, ApplyConfig::default()).unwrap();
+
+        let applied = applied_version(&db, "schema_migrations").unwrap();
+        assert_eq!(applied, [1_u32, 2, 3].into_iter().collect());
+
+        // Sanity round-trip through table x.
+        db.execute("INSERT INTO x (id, name) VALUES (1, 'alice')", ())
+            .unwrap();
+        let rows = db.query("SELECT name FROM x WHERE id = 1", ()).unwrap();
+        for row in rows.into_iter() {
+            let row = row.unwrap();
+            let name: String = row.get(0).unwrap();
+            assert_eq!(name, "alice");
+        }
+    }
+
+    #[test]
+    fn partially_applied_db_picks_up_remaining_migrations() {
+        let db = fresh_db();
+        // Simulate a partially-applied DB: v1 (create_x) was actually
+        // applied (table exists, recorded), v2 + v3 not yet.
+        ensure_tracker_table(&db, "schema_migrations").unwrap();
+        db.execute(
+            "CREATE TABLE x (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+            (),
+        )
+        .unwrap();
+        crate::tracker::record_migration(&db, "schema_migrations", 1, "create_x").unwrap();
+
+        // apply_pending now applies v2 (create_y) + v3 (ADD COLUMNs),
+        // skipping v1 because the table already exists AND it's recorded.
+        apply_pending(&db, MIGRATIONS, ApplyConfig::default()).unwrap();
+
+        let applied = applied_version(&db, "schema_migrations").unwrap();
+        assert_eq!(applied, [1_u32, 2, 3].into_iter().collect());
+
+        // v3's ALTER TABLE ADD COLUMN (nickname) plus the second ADD COLUMN
+        // (score) are now applied + recorded.
+        db.execute(
+            "INSERT INTO x (id, name, nickname, score) VALUES (5, 'bob', 'B', 99)",
+            (),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn idempotent_second_call_is_noop() {
+        let db = fresh_db();
+        apply_pending(&db, MIGRATIONS, ApplyConfig::default()).unwrap();
+        apply_pending(&db, MIGRATIONS, ApplyConfig::default()).unwrap();
+
+        let applied = applied_version(&db, "schema_migrations").unwrap();
+        assert_eq!(applied, [1_u32, 2, 3].into_iter().collect());
+    }
+
+    #[test]
+    fn rejects_downgrade_db() {
+        let db = fresh_db();
+        apply_pending(&db, MIGRATIONS, ApplyConfig::default()).unwrap();
+
+        // Manually record a higher version (simulating a newer DB than our catalog).
+        db.execute(
+            "INSERT INTO schema_migrations (version, name, applied_at_unix) VALUES (999, 'future', 0)",
+            (),
+        )
+        .unwrap();
+
+        let err = apply_pending(&db, MIGRATIONS, ApplyConfig::default()).unwrap_err();
+        match err {
+            SubstrateError::UnknownMigration {
+                version,
+                catalog_max,
+            } => {
+                assert_eq!(version, 999);
+                assert_eq!(catalog_max, 3);
+            }
+            other => panic!("expected UnknownMigration, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn custom_tracker_table_name_used() {
+        let db = fresh_db();
+        let cfg = ApplyConfig::default().with_tracker_table("quasi_x_schema");
+        apply_pending(&db, MIGRATIONS, cfg).unwrap();
+
+        // Default tracker table is empty.
+        ensure_tracker_table(&db, crate::DEFAULT_TRACKER_TABLE).unwrap();
+        assert_eq!(
+            current_version(&db, crate::DEFAULT_TRACKER_TABLE).unwrap(),
+            0
+        );
+        // Custom tracker table has the records.
+        assert_eq!(current_version(&db, "quasi_x_schema").unwrap(), 3);
+    }
+
+    #[test]
+    fn migration_with_invalid_sql_returns_migration_failed() {
+        // M5 (review): the `SubstrateError::MigrationFailed` error path is
+        // reachable from `apply_pending` when a migration's SQL fails to
+        // execute. v1 is good; v2 references a nonexistent table, so its
+        // ALTER TABLE statement fails. After this test, v1 is recorded
+        // (success) and v2 is NOT recorded (failure leaves migration
+        // un-tracked so the next `apply_pending` call retries it).
+        let db = fresh_db();
+        const BAD_CATALOG: &[&'static dyn Migration] = &[
+            &StaticMigration::new(
+                1,
+                "create_x",
+                "CREATE TABLE x (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+            ),
+            &StaticMigration::new(
+                2,
+                "v002__DROP",
+                "ALTER TABLE nonexistent ADD COLUMN foo TEXT",
+            ),
+        ];
+        let err = apply_pending(&db, BAD_CATALOG, ApplyConfig::default()).unwrap_err();
+        match err {
+            SubstrateError::MigrationFailed { version, message } => {
+                assert_eq!(version, 2, "v2 (alter_missing) is the failing migration");
+                // H-T10 regression: the operator-facing `message` MUST
+                // NOT leak the raw SQL (which can contain column
+                // names flowing up to HTTP RPC responses) and MUST
+                // NOT leak the migration `name` (which encodes schema
+                // intent via `v<NNN>__<label>`).
+                assert!(
+                    !message.contains("ALTER TABLE "),
+                    "raw SQL must not appear in operator-facing message: {message:?}"
+                );
+                assert!(
+                    !message.contains("nonexistent"),
+                    "table name from failing SQL must not leak: {message:?}"
+                );
+                assert!(
+                    !message.contains("v002__DROP"),
+                    "migration name must not leak (H-Sec3); \
+                     even when name overlaps with SQL keywords: {message:?}"
+                );
+                // Tests LOW (Round 3): also assert the SQL keyword
+                // `DROP` is NOT present as a substring — defends
+                // against a regression that strips the `v002__`
+                // prefix but leaves the SQL keyword `DROP` leaking
+                // via partial-substring. The full migration name
+                // assertion above catches `v002__DROP`; this catches
+                // any `DROP` substring that may leak independently.
+                assert!(
+                    !message.contains("DROP"),
+                    "SQL keyword DROP must not leak via partial substring: {message:?}"
+                );
+                assert!(
+                    !message.contains("drop"),
+                    "lowercase drop must not leak via partial substring: {message:?}"
+                );
+            }
+            other => panic!("expected MigrationFailed for v2, got {other:?}"),
+        }
+
+        // v1 must be recorded; v2 must NOT be (next apply_pending retries).
+        let applied = applied_version(&db, "schema_migrations").unwrap();
+        assert!(applied.contains(&1), "v1 should be recorded (success)");
+        assert!(
+            !applied.contains(&2),
+            "v2 must NOT be recorded after failure"
+        );
+
+        // A second call (v2 still fails — table does not exist) should hit
+        // the same error path; v1 is skipped (already recorded).
+        let err2 = apply_pending(&db, BAD_CATALOG, ApplyConfig::default()).unwrap_err();
+        assert!(
+            matches!(err2, SubstrateError::MigrationFailed { version: 2, .. }),
+            "second call still fails on v2"
+        );
+    }
+
+    #[test]
+    fn migration_with_keyword_substring_name_returns_redacted() {
+        // Tests LOW (Round 4): the existing M5 test uses migration
+        // name `v002__DROP` (full identifier overlap with the SQL
+        // keyword DROP). Strengthen with a name whose SQL-keyword
+        // substring is NOT a full identifier suffix — e.g.,
+        // `v002__dr_op` where `DROP` is broken across a non-keyword
+        // boundary. A regression that strips the migration name but
+        // preserves a partial-substring (e.g., a tokenizer that
+        // splits on `__` and leaks the second half) would surface
+        // here even though the existing M5 test would still pass.
+        let db = fresh_db();
+        const BAD_CATALOG: &[&'static dyn Migration] = &[
+            &StaticMigration::new(
+                1,
+                "create_x",
+                "CREATE TABLE x (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+            ),
+            &StaticMigration::new(
+                2,
+                "v002__dr_op",
+                "ALTER TABLE nonexistent ADD COLUMN foo TEXT",
+            ),
+        ];
+        let err = apply_pending(&db, BAD_CATALOG, ApplyConfig::default()).unwrap_err();
+        match err {
+            SubstrateError::MigrationFailed { message, .. } => {
+                // Full migration name MUST NOT leak.
+                assert!(
+                    !message.contains("v002__dr_op"),
+                    "migration name must not leak: {message:?}"
+                );
+                // Partial substrings of `DROP` MUST NOT leak either.
+                // `dr_op` is a deliberate deconstruction of `DROP`
+                // (with `_` as the middle separator) — a regression
+                // that leaks the name via a partial substring would
+                // surface `dr_op` here. Similarly for `DROP` /
+                // `drop` (case-insensitive).
+                assert!(
+                    !message.contains("dr_op"),
+                    "partial keyword substring dr_op must not leak: {message:?}"
+                );
+                assert!(
+                    !message.contains("DROP"),
+                    "uppercase DROP must not leak: {message:?}"
+                );
+                assert!(
+                    !message.contains("drop"),
+                    "lowercase drop must not leak: {message:?}"
+                );
+            }
+            other => panic!("expected MigrationFailed for v2, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_migrations_slice_is_noop() {
+        // Q5 (review): explicit behavior test. Empty slice returns Ok(())
+        // (nothing to apply, nothing to fail). Future contract reinforcement.
+        let db = fresh_db();
+        let empty: &[&'static dyn Migration] = &[];
+        apply_pending(&db, empty, ApplyConfig::default()).unwrap();
+        // Tracker table still created.
+        let v = current_version(&db, "schema_migrations").unwrap();
+        assert_eq!(v, 0, "empty slice → tracker table created, version 0");
+    }
+
+    #[test]
+    fn non_contiguous_versions_silently_skip_gap() {
+        // Q1 (review): migration catalog [1, 3] with v2 missing. The runner
+        // walks versions in order; v3's version (3) is greater than last_applied
+        // (1), so it executes. No error, no warning — gaps are silently filled.
+        // Intentional behavior: the catalog defines WHAT to apply, and the
+        // last_applied guard prevents re-running. Document here for the
+        // reviewer audit trail.
+        let db = fresh_db();
+        const GAPPY: &[&'static dyn Migration] = &[
+            &StaticMigration::new(1, "create_x", "CREATE TABLE x (id INTEGER PRIMARY KEY)"),
+            &StaticMigration::new(3, "create_y", "CREATE TABLE y (id INTEGER PRIMARY KEY)"),
+        ];
+        apply_pending(&db, GAPPY, ApplyConfig::default()).unwrap();
+        let applied = applied_version(&db, "schema_migrations").unwrap();
+        assert_eq!(
+            applied,
+            [1_u32, 3].into_iter().collect(),
+            "both v1 and v3 are recorded even with v2 missing from catalog"
+        );
+    }
+
+    #[test]
+    fn partial_apply_recovers_when_add_column_already_exists() {
+        // v3 is two ADD COLUMN statements. Pre-create the first column so the
+        // "duplicate column" path is exercised.
+        let db = fresh_db();
+        ensure_tracker_table(&db, "schema_migrations").unwrap();
+        // Apply v1 manually + create the table x with both pre-existing columns,
+        // simulating v3 partially-applied-before-crash state.
+        db.execute(
+            "CREATE TABLE x (id INTEGER PRIMARY KEY, name TEXT NOT NULL, nickname TEXT)",
+            (),
+        )
+        .unwrap();
+        crate::tracker::record_migration(&db, "schema_migrations", 1, "create_x").unwrap();
+
+        // apply_pending must: skip v1 (recorded, table exists), apply v2
+        // (CREATE TABLE y), then run v3's ADD COLUMNs — first statement
+        // (nickname) collides with existing column, gets swallowed; second
+        // ADD COLUMN (score) proceeds; v3 finally recorded.
+        apply_pending(&db, MIGRATIONS, ApplyConfig::default()).unwrap();
+
+        let applied = applied_version(&db, "schema_migrations").unwrap();
+        assert_eq!(applied, [1_u32, 2, 3].into_iter().collect());
+
+        // Both columns must be usable.
+        db.execute(
+            "INSERT INTO x (id, name, nickname, score) VALUES (7, 'eve', 'N', 1)",
+            (),
+        )
+        .unwrap();
+    }
+}

@@ -111,7 +111,7 @@ impl PlatformAdapter for UdpAdapter {
         payload: &[u8],
     ) -> Result<DeliveryReceipt, PlatformAdapterError> {
         let envelope_bytes = envelope.to_wire_bytes();
-        // RFC-0850 v1.3.0 §8.9: transmit envelope + payload in one datagram.
+        // RFC-0850 §8.9: transmit envelope + payload in one datagram.
         let total = envelope_bytes.len() + payload.len();
 
         if total > MAX_DATAGRAM_SIZE {
@@ -176,12 +176,29 @@ impl PlatformAdapter for UdpAdapter {
         &self,
         raw: &RawPlatformMessage,
     ) -> Result<DeterministicEnvelope, PlatformAdapterError> {
-        DeterministicEnvelope::from_wire_bytes(&raw.payload).map_err(|e| {
-            PlatformAdapterError::ApiError {
-                code: 400,
-                message: format!("envelope parse error: {}", e),
-            }
-        })
+        // M-15: `from_wire_bytes` validates STRUCTURE only — a well-formed
+        // frame with a forged signature or a mismatched `envelope_id` parses
+        // fine. Decoding is factored into a closure bound to a name first,
+        // because calling an inline `(|| { .. })()` trips
+        // `clippy::redundant_closure_call`.
+        let decode = || -> Result<DeterministicEnvelope, PlatformAdapterError> {
+            DeterministicEnvelope::from_wire_bytes(&raw.payload).map_err(|e| {
+                PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("envelope parse error: {}", e),
+                }
+            })
+        };
+        let env = decode()?;
+        // Ed25519 named explicitly so this reads as an assumption rather than an
+        // accident. CD-6's peer registry binds the key AND names the algorithm
+        // it speaks, so this constant goes away when that registry lands.
+        env.verify(&octo_algo_ed25519::ed25519_algorithm_id(), &env.source_peer)
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "udp".into(),
+                reason: format!("envelope verify failed: {e}"),
+            })?;
+        Ok(env)
     }
 
     fn capabilities(&self) -> CapabilityReport {

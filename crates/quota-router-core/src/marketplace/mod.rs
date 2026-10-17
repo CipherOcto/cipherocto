@@ -1,0 +1,1834 @@
+//! Marketplace — cheapest matching Ask lookup (S04 Step 3 + Phase C).
+//!
+//! Backed by `octo_core::ask_repo::AskRepository` (cipherocto-side persistence
+//! per Phase C). In-memory `Marketplace` kept as a legacy stub for tests that
+//! don't want the stoolap dependency.
+//!
+//! Submodules (RFC-0900):
+//! - `orderbook` — price-time priority order book (Gap 5.1). **Wired.**
+//! - `escrow`    — escrow state machine (Gap 5.2). **Not wired.**
+//! - `slashing`  — provider slashing model (Gap 5.3). **Not wired.**
+//! - `reputation_compat` — async compat adapter over canonical
+//!   `octo_reputation::ReputationStore` (RFC-0968 retirement gate; see
+//!   `Marketplace::record_outcome_async` / `read_reputation_async`).
+//!   **Wired.**
+//!
+//! ## What `Marketplace` actually holds
+//!
+//! `repo`, `axes`, `book`, `reputation`, `reputation_compat` — that is the
+//! whole struct. The marketplace is **discovery + reputation ranking**:
+//! publish an Ask (`put`), find the cheapest (`cheapest`), rank by
+//! latency/reputation (`cheapest_with_ranking`).
+//!
+//! `escrow` and `slashing` are standalone components that no facade method
+//! constructs, drives or settles. There is no transaction, no settlement and
+//! no slashing call site reachable from `Marketplace`. RFC-0900 §Escrow Flow
+//! has no implementation behind this facade. Recorded in mission
+//! `marketplace-escrow-is-not-wired-into-the-marketplace-facade`.
+
+pub mod escrow;
+pub mod orderbook;
+pub mod reputation_compat;
+pub mod scoring;
+pub mod slashing;
+
+use serde::{Deserialize, Serialize};
+
+/// Marketplace entry (serialization shape for clients).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketplaceEntry {
+    pub ask_id: [u8; 32],
+    pub asker_did: String,
+    pub model: String,
+    pub cost_per_1k: u128,
+    /// Observed latency (EWMA in ms) when reputation observations
+    /// exist. `None` for unknown providers (no recorded outcomes) or
+    /// when the latency-aware ranking was not requested.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub latency_ms: Option<u64>,
+    /// Reputation Score 0-100 derived from the persisted RFC-0968
+    /// `score_ewma` at read time (RFC-0968-A1 §22, amendment 30,
+    /// 0968-b Phase C). `None` when the consumer has not asked the
+    /// market to populate reputation (legacy listings omit the field).
+    /// Measured through `entry_from_order`: `None` for a provider with no
+    /// recorded outcome, `Some(100)` after one success, `Some(50)` after
+    /// one failure. An earlier version of this doc claimed `Some(100)` for
+    /// unknown providers; that is false — the field is `None`, and skipped
+    /// in serialisation. See mission
+    /// `reputation-score-cannot-express-a-provider-worse-than-neutral`.
+    /// Mission 0010-b Phase G (S8): wired through `cheapest` /
+    /// `list_by_asker` so listing UIs can render the value.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub reputation_score_0_100: Option<u8>,
+}
+
+// ============================================================================
+// In-memory legacy stub
+// ============================================================================
+
+/// In-memory marketplace index (legacy; production uses AskRepository-backed).
+#[derive(Debug, Default)]
+pub struct InMemoryMarketplace {
+    entries: Vec<MarketplaceEntry>,
+}
+
+impl InMemoryMarketplace {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert(&mut self, entry: MarketplaceEntry) {
+        self.entries.push(entry);
+    }
+
+    /// Find the cheapest entry matching `model`.
+    #[must_use]
+    pub fn cheapest(&self, model: &str) -> Option<&MarketplaceEntry> {
+        self.entries
+            .iter()
+            .filter(|e| e.model == model)
+            .min_by_key(|e| e.cost_per_1k)
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+// ============================================================================
+// AskRepository-backed marketplace (production)
+// ============================================================================
+
+use quota_router_storage::ask::{settlement_cost, Ask, PricingAxis};
+use quota_router_storage::ask_repo::{DynAskRepository, RepoError};
+
+pub use scoring::{LatencyRanking, ProviderScore};
+
+/// Marketplace backed by cipherocto-side `AskRepository` (Phase C).
+///
+/// `cheapest()` reads through an in-memory `OrderBook<AskSpec>` that is
+/// populated write-through by `put()`. The orderbook uses price-time
+/// priority (RFC-0900, Gap 5.1) so cheapest lookup is O(log N) and
+/// avoids the previous linear BTreeMap scan. The `AskRepository` remains
+/// the canonical persistence layer (Gap 7 still queries it via
+/// `list_by_asker`).
+///
+/// Conversion: `Ask` (full content) → `AskSpec` (compact order payload)
+/// → `MarketplaceEntry` (wire shape). Cost computation uses the order's
+/// `price` (= cost_per_1k) directly; the full `Ask` cost path is still
+/// available via the storage layer.
+///
+/// Gap 7 extensions:
+///
+/// - `reputation` — provider-scoring registry with circuit-breaker
+///   (RFC-0968). When the registry's
+///   `min_reputation` is positive, providers whose `success_rate` falls
+///   below the threshold are skipped by `cheapest()`. When
+///   `min_reputation <= 0.0` (the default), the registry is a passive
+///   observer and `cheapest()` preserves pre-Gap-7 behavior.
+/// - `cheapest_with_ranking(model, ranking)` — latency-aware ranking
+///   (RFC-0900 §Market Operations). Scans all matching asks and returns
+///   the best by a min-max-normalized weighted blend of price and
+///   observed latency.
+pub struct Marketplace<S = octo_reputation::store::InMemoryReputationStore>
+where
+    S: octo_reputation::store::ReputationStore,
+{
+    repo: std::sync::Arc<DynAskRepository>,
+    axes: Vec<PricingAxis>,
+    book: parking_lot::Mutex<orderbook::OrderBook<AskSpec>>,
+    /// Legacy in-memory reputation registry. Retained as the read-side
+    /// hot path for `cheapest_with_ranking` / `provider_score` and as a
+    /// dual-read shadow during the RFC-0968 retirement gate window.
+    /// Reads continue to consult this until the dual-read parity gate
+    /// (24h ≥ 0.999) flips the read path onto `reputation_compat`.
+    reputation: scoring::ProviderReputationRegistry,
+    /// Async compat adapter over the canonical
+    /// `octo_reputation::ReputationStore` (RFC-0968). Backs the new
+    /// `record_outcome_async` / `read_reputation_async` write+read
+    /// surface. The dual-read parity test
+    /// (`tests/marketplace_reputation_async.rs`) verifies the two paths
+    /// stay within the parity tolerance over a 24h synthetic fixture.
+    ///
+    /// Generic over `S` (mission `marketplace-generic-store`) so
+    /// production wiring can swap `InMemoryReputationStore` for
+    /// `StoolapReputationStore` (or any other `ReputationStore` impl)
+    /// via `open_in_memory_with_store` / `open_path_with_store`.
+    /// Default is `InMemoryReputationStore` so existing call sites
+    /// keep working without explicit type parameters.
+    reputation_compat: reputation_compat::ProviderReputationRegistryCompat<S>,
+}
+
+/// Order payload carried by `Marketplace`'s internal order book.
+///
+/// One `AskSpec` per published Ask; the order's `price` field carries
+/// the cost-per-1k-token settled against the marketplace's pricing axes
+/// at publish time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AskSpec {
+    pub ask_id: [u8; 32],
+    pub asker_did: String,
+    pub model: String,
+    /// Expiry carried in the book so `cheapest` can filter on read.
+    ///
+    /// `put` only ever indexes an Ask whose `expires_at_unix` is in the
+    /// future *at insert time*. Without the expiry stored here the book
+    /// cannot tell a still-live Ask from one that has since expired, and
+    /// an expired listing stayed matchable indefinitely. Measured before
+    /// this field existed: an Ask expiring 1s after `put` was still
+    /// returned by `cheapest()` after it expired.
+    pub expires_at_unix: u64,
+}
+
+impl<S> Marketplace<S>
+where
+    S: octo_reputation::store::ReputationStore,
+{
+    /// Open a marketplace backed by an in-memory AskRepository, wired
+    /// to a caller-supplied canonical reputation store (mission
+    /// `marketplace-generic-store`). This is the production-wiring
+    /// entry point: replace the default `InMemoryReputationStore` with
+    /// a persistent impl (e.g. `StoolapReputationStore`) for restart
+    /// durability.
+    /// # Errors
+    /// Returns `RepoError` on stoolap open / migration failure.
+    pub fn open_in_memory_with_store(store: S) -> Result<Self, RepoError> {
+        Ok(Self {
+            repo: std::sync::Arc::new(
+                quota_router_storage::ask_repo::StoolapAskRepository::open_in_memory()?,
+            ),
+            axes: PricingAxis::standard_axes(),
+            book: parking_lot::Mutex::new(orderbook::OrderBook::new()),
+            reputation: scoring::ProviderReputationRegistry::new(),
+            reputation_compat: reputation_compat::ProviderReputationRegistryCompat::new(store),
+        })
+    }
+
+    /// Open a marketplace backed by a file-backed AskRepository,
+    /// wired to a caller-supplied canonical reputation store (mission
+    /// `marketplace-generic-store`). Production entry point — pair the
+    /// `StoolapAskRepository` (Ask persistence) with a
+    /// `StoolapReputationStore` (reputation persistence) for full
+    /// restart durability.
+    ///
+    /// **Load-on-open contract (Round 1 review fix, mission
+    /// `marketplace-book-load-on-open`):** on `open_path`, the
+    /// in-memory order book is hydrated from the repository's
+    /// non-expired Asks. Without this, a process restart would
+    /// leave the book empty even though `repo` still holds every
+    /// published Ask, silently dropping every `cheapest()` result
+    /// until each Ask was re-`put()`.
+    ///
+    /// Hydration iterates `repo.list_all_active_asks()` and places
+    /// each into the book with the same cost calculation as the
+    /// write-through path. Per-book `next_seq` is reset to 0
+    /// (Round 1 C1 fix) — insertion order during hydration is not
+    /// semantically meaningful; callers should sort by `cost` and
+    /// not rely on FIFO.
+    /// # Errors
+    /// Returns `RepoError` on open / migration failure.
+    pub fn open_path_with_store(path: &str, store: S) -> Result<Self, RepoError> {
+        let repo = std::sync::Arc::new(
+            quota_router_storage::ask_repo::StoolapAskRepository::open_path(path)?,
+        );
+        let axes = PricingAxis::standard_axes();
+        let mut book = orderbook::OrderBook::new();
+        let now = current_unix();
+        // Hydrate: pull every non-expired Ask from the repo and place
+        // it in the in-memory book. Mirrors the cost computation in
+        // `put()` so `cheapest()` returns the same result as if all
+        // Asks had been re-inserted in this process.
+        let active = repo.list_all_active_asks(now)?;
+        for ask in &active {
+            let consumed = build_unit_consumed(ask, &axes);
+            let cost = settlement_cost(ask, &consumed, &axes);
+            // Same representability guard as `put`. Hydration reads
+            // already-persisted Asks, including rows written before the
+            // storage-boundary guard existed or by another writer, so this
+            // path is strictly more exposed than the write path.
+            if cost.scale != 0 || cost.value < 0 {
+                return Err(RepoError::InvalidSettlementCost {
+                    scale: cost.scale,
+                    value: cost.value,
+                });
+            }
+            let ask_id = compute_ask_id_static(ask);
+            book.place_ask(
+                AskSpec {
+                    ask_id,
+                    asker_did: ask.asker_did.clone(),
+                    model: ask.model.to_wire(),
+                    expires_at_unix: ask.expires_at_unix,
+                },
+                cost.value as u128,
+                1, // qty 1 per Ask; matches write-through
+                ask.asker_did.clone(),
+                now,
+            );
+        }
+        Ok(Self {
+            repo,
+            axes,
+            book: parking_lot::Mutex::new(book),
+            reputation: scoring::ProviderReputationRegistry::new(),
+            reputation_compat: reputation_compat::ProviderReputationRegistryCompat::new(store),
+        })
+    }
+
+    /// Wrap an existing AskRepository (Arc-ed so production and test
+    /// mocks share the trait-object consumer). Wires a
+    /// caller-supplied canonical reputation store.
+    #[must_use]
+    pub fn from_repo_with_store(repo: std::sync::Arc<DynAskRepository>, store: S) -> Self {
+        Self {
+            repo,
+            axes: PricingAxis::standard_axes(),
+            book: parking_lot::Mutex::new(orderbook::OrderBook::new()),
+            reputation: scoring::ProviderReputationRegistry::new(),
+            reputation_compat: reputation_compat::ProviderReputationRegistryCompat::new(store),
+        }
+    }
+
+    /// Override the pricing-axis set (defaults to `PricingAxis::standard_axes()`).
+    ///
+    /// **An empty `axes` makes every listing free.** Cost is computed by
+    /// summing the configured axes, so with none configured
+    /// `build_unit_consumed` yields nothing and every Ask is priced `0`.
+    /// `cheapest` then returns whichever Ask was placed first rather than
+    /// the cheapest, because all prices tie at zero.
+    ///
+    /// Measured: default axes priced an Ask at 30_000; the same Ask under
+    /// `with_axes(vec![])` priced at `0`, and a 10_000-versus-90_000 pair
+    /// both priced `0` with the winner decided by insertion order.
+    ///
+    /// There is no guard here, because this builder returns `Self` and
+    /// every alternative — returning `Result`, substituting the standard
+    /// axes, or asserting — either changes the signature or fabricates a
+    /// default. Recorded as deferred mission
+    /// `marketplace-empty-axes-prices-every-listing-free`.
+    #[must_use]
+    pub fn with_axes(mut self, axes: Vec<PricingAxis>) -> Self {
+        self.axes = axes;
+        self
+    }
+
+    // ========================================================================
+    // Gap 7.1 — Reputation registry (RFC-0968)
+    // ========================================================================
+
+    /// Set the circuit-breaker threshold (`success_rate` below which a
+    /// provider is excluded from `cheapest()`).
+    ///
+    /// `0.0` (or any negative value) disables the breaker — every
+    /// provider remains eligible. Positive values activate the breaker.
+    ///
+    /// **Non-finite values are not handled and make the two surfaces
+    /// disagree.** `NaN` satisfies neither `min <= 0.0` nor `min > 0.0`,
+    /// so the two paths fall through differently:
+    ///
+    /// - sync `cheapest` calls `is_excluded`, where
+    ///   `success_rate >= NaN` is false, so the provider is **excluded**
+    ///   (fail-closed);
+    /// - `cheapest_with_ranking_async` gates on `min > 0.0`, which is
+    ///   false for `NaN`, so it skips the exclusion call entirely and
+    ///   **selects** the provider (fail-open).
+    ///
+    /// Measured with a 20x-failing provider and `min_reputation = NaN`:
+    /// sync returned the healthy provider at 90_000, async returned the
+    /// failing one at 1_000.
+    ///
+    /// This is the fourth public marketplace setter that cannot reject a
+    /// value it should refuse, because it returns `()` rather than
+    /// `Result`. See deferred mission
+    /// `marketplace-nan-reputation-threshold-disables-only-the-async-breaker`.
+    ///
+    /// Sets **both** the legacy shadow and the RFC-0968 compat registry.
+    /// The two read paths consult different registries — the sync
+    /// `cheapest` reads the legacy one, `cheapest_with_ranking_async`
+    /// reads the compat one — so setting only the legacy shadow left the
+    /// circuit-breaker silently inert on the canonical async surface.
+    /// Measured before the fix, with `set_min_reputation(0.5)` and a
+    /// provider that had failed every record: the sync path correctly
+    /// returned the healthy provider, the async path returned the
+    /// failing one.
+    pub fn set_min_reputation(&self, min: f64) {
+        self.reputation.set_min_reputation(min);
+        self.reputation_compat.set_min_reputation(min);
+    }
+
+    /// Current circuit-breaker threshold.
+    #[must_use]
+    pub fn min_reputation(&self) -> f64 {
+        self.reputation.min_reputation()
+    }
+
+    /// Override a provider's reputation (operator / test fixture).
+    ///
+    /// **Writes the legacy shadow only, and cannot be fanned out.**
+    /// Unlike [`Self::set_min_reputation`], there is no counterpart on
+    /// the canonical surface: `ProviderReputationRegistryCompat` exposes
+    /// no score setter, its only write being `record_with_now`, which
+    /// appends events. An override has no representation there, so
+    /// [`Self::read_reputation_async`] and
+    /// [`Self::cheapest_with_ranking_async`] do not observe it.
+    ///
+    /// Measured with the provider recorded healthy asynchronously, then
+    /// overridden to `success_rate = 0.0`, breaker at 0.5, the provider
+    /// quoting 1_000 against a healthy one at 90_000: `cheapest` correctly
+    /// excludes it and returns 90_000, while
+    /// `cheapest_with_ranking_async` returns 1_000.
+    ///
+    /// Taken with the dual-write requirement on
+    /// [`Self::record_outcome`], the invariant is: **whichever
+    /// reputation surface a caller writes to exclusively, the other
+    /// surface's circuit breaker is inert.** Pinned by
+    /// `score_override_is_invisible_to_the_async_breaker` (with
+    /// `async_breaker_excludes_on_its_own_recorded_failures` as its
+    /// positive control) in
+    /// `tests/marketplace_reputation_async.rs`, and filed as deferred
+    /// mission `marketplace-set-provider-score-has-no-async-counterpart`.
+    pub fn set_provider_score(&self, score: ProviderScore) {
+        self.reputation.set_score(score);
+    }
+
+    /// Read a provider's recorded reputation. `None` for unknown
+    /// providers (no observations recorded yet).
+    #[must_use]
+    pub fn provider_score(&self, asker_did: &str) -> Option<ProviderScore> {
+        self.reputation.score(asker_did)
+    }
+
+    /// Record a transaction outcome. Updates the EWMA-tracked success
+    /// rate + latency for the provider.
+    ///
+    /// Typical call sites: the inference task market settlement path
+    /// (after a successful or failed prompt completion), and the mesh
+    /// `node::scorer` when it observes an HTTP completion.
+    ///
+    /// **Writes the legacy shadow only.** It does not touch the
+    /// RFC-0968 compat store, and nothing fans the two together — a
+    /// caller that invokes *only* [`Self::record_outcome_async`] leaves
+    /// this registry empty for that provider.
+    ///
+    /// The consequence is not a cosmetic `None`. During the dual-read
+    /// window a caller must invoke **both** to keep the surfaces in
+    /// step, because a provider with no entry here is treated as
+    /// un-excluded: the RFC-0900 Gap 7.1 circuit breaker goes inert on
+    /// the sync path. Measured with 20 async-only failures and
+    /// `min_reputation = 0.5`: `provider_score` returns `None`,
+    /// `read_reputation_async` returns `samples=20,
+    /// success_rate=0.0`, and `cheapest` still selects the failing
+    /// provider at 1_000 while `cheapest_with_ranking_async` correctly
+    /// selects the healthy one at 90_000.
+    ///
+    /// Pinned by `async_only_recording_leaves_the_sync_breaker_inert`
+    /// (with `dual_write_activates_the_sync_breaker` as its positive
+    /// control) in `tests/marketplace_reputation_async.rs`, and filed as
+    /// deferred mission
+    /// `marketplace-record-outcome-surfaces-require-a-dual-write`.
+    pub fn record_outcome(&self, asker_did: &str, success: bool, latency_ms: u64) {
+        self.reputation.record(asker_did, success, latency_ms);
+    }
+
+    /// Async record (RFC-0968 retirement gate — mission
+    /// `marketplace-facade-reputation-async-migration`). Writes a
+    /// `SignalEvent { Outcome, score_delta: 1.0|0.0 }` and a
+    /// `SignalEvent { Latency, score_delta: latency_ms }` through the
+    /// canonical `octo_reputation::ReputationStore`. Both events carry
+    /// `ReputationLayer::Market`.
+    ///
+    /// `controller_id` MUST be non-zero — derive it from the operator's
+    /// governance pubkey via
+    /// `reputation_compat::controller_id_from_governance_pubkey(pubkey)`
+    /// (RFC-0968-A1 amendments 40 + 44). An all-zero `controller_id` is
+    /// rejected with `RecorderDidMalformed` (the closest existing
+    /// variant) until the canonical `ControllerIdMissing` lands in
+    /// `ReputationError`.
+    ///
+    /// This is the migration target for callers that move off the
+    /// legacy `record_outcome`. Note that moving a call site here is
+    /// **not** a drop-in substitution during the dual-read window:
+    /// `record_outcome_async` writes the compat store only, so a caller
+    /// that migrates without also keeping its [`Self::record_outcome`]
+    /// calls leaves the legacy shadow empty and the sync circuit breaker
+    /// inert. See the dual-write requirement documented on
+    /// [`Self::record_outcome`].
+    ///
+    /// The dual-read parity test
+    /// (`tests/marketplace_reputation_async.rs::dual_read_parity_*`)
+    /// verifies that the two paths stay within the retirement-gate
+    /// tolerance over a 24h synthetic fixture. Every fixture in that
+    /// family writes to **both** surfaces, which is why the missing
+    /// fan-out went unnoticed; the gap is pinned separately by
+    /// `async_only_recording_leaves_the_sync_breaker_inert`.
+    /// # Errors
+    /// Returns `ReputationError` on store failure or
+    /// all-zero `controller_id`.
+    pub async fn record_outcome_async(
+        &self,
+        asker_did: &str,
+        success: bool,
+        latency_ms: u64,
+        controller_id: [u8; 32],
+        now_unix: u64,
+    ) -> Result<(u64, u64), octo_reputation::error::ReputationError> {
+        self.reputation_compat
+            .record_with_now(asker_did, success, latency_ms, controller_id, now_unix)
+            .await
+    }
+
+    /// Async read (RFC-0968 retirement gate). Returns the persisted
+    /// `ProviderScore` derived from the canonical
+    /// `ReputationStore` aggregate. Mirrors the legacy
+    /// `provider_score` shape (success_rate ∈ [-1, 1], latency_ms
+    /// non-negative).
+    /// # Errors
+    /// Returns `ReputationError` on store failure or malformed DID.
+    pub async fn read_reputation_async(
+        &self,
+        asker_did: &str,
+    ) -> Result<ProviderScore, octo_reputation::error::ReputationError> {
+        self.reputation_compat.score(asker_did).await
+    }
+
+    /// Insert (or replace) an Ask in the underlying repository AND
+    /// the in-memory order book. Expired Asks are still persisted but
+    /// not indexed in the order book so `cheapest()` never returns them.
+    /// # Errors
+    /// Returns `RepoError` on stoolap failure.
+    pub fn put(&self, ask: &Ask) -> Result<(), RepoError> {
+        let now = current_unix();
+        // Price the Ask BEFORE mutating anything. The book stores a `u128`,
+        // so the cost must be a non-negative integer micro-OCTO-W amount.
+        // A fractional-scale or negative rate cannot be represented, and
+        // used to reach an `assert_eq!` (panic) or a silent `as u128`
+        // wrap respectively — after the repo write had already landed.
+        // Validate first so a malformed Ask never half-lands.
+        let priced = if ask.expires_at_unix > now {
+            let consumed = build_unit_consumed(ask, &self.axes);
+            let cost = settlement_cost(ask, &consumed, &self.axes);
+            if cost.scale != 0 || cost.value < 0 {
+                return Err(RepoError::InvalidSettlementCost {
+                    scale: cost.scale,
+                    value: cost.value,
+                });
+            }
+            Some(cost.value as u128)
+        } else {
+            None
+        };
+
+        self.repo.put(ask)?;
+        // Write-through to order book; skip expired.
+        if let Some(price) = priced {
+            let ask_id = compute_ask_id_static(ask);
+            let mut book = self.book.lock();
+            book.place_ask(
+                AskSpec {
+                    ask_id,
+                    asker_did: ask.asker_did.clone(),
+                    model: ask.model.to_wire(),
+                    expires_at_unix: ask.expires_at_unix,
+                },
+                price,
+                1, // qty 1 per Ask; RFC-0900 markets trade 1 prompt per Ask
+                ask.asker_did.clone(),
+                now,
+            );
+        }
+        Ok(())
+    }
+
+    /// Find the cheapest Ask matching `model` via the in-memory order
+    /// book. Returns `None` if no matching ask is active.
+    ///
+    /// The orderbook is queried in price-time priority. The previous
+    /// `Result<Option<...>, RepoError>` signature was dropped: the
+    /// order book is in-memory, so there is no I/O failure mode.
+    /// Callers needing repository-side errors should still use
+    /// `list_by_asker`.
+    ///
+    /// Circuit-breaker (Gap 7.1): if `min_reputation > 0.0`, asks from
+    /// providers whose `success_rate` is below the threshold are
+    /// skipped. With `min_reputation <= 0.0` (the default), this is a
+    /// pure price-time priority lookup as before. The skip walks the
+    /// candidate set so a single excluded provider cannot return `None`
+    /// when a non-excluded provider is still in the book.
+    ///
+    /// This is the price-only specialization of
+    /// `cheapest_with_ranking(model, LatencyRanking::cheapest())`.
+    #[must_use]
+    pub fn cheapest(&self, model: &str) -> Option<MarketplaceEntry> {
+        self.cheapest_with_ranking(model, LatencyRanking::cheapest())
+    }
+
+    /// Async cheapest — retirement-gate read path (mission
+    /// `marketplace-cheapest-with-ranking-async`).
+    ///
+    /// Reads reputation scores + the circuit-breaker exclusion gate
+    /// from the canonical `reputation_compat`
+    /// (`octo_reputation::ReputationStore`-backed) instead of the
+    /// legacy `ProviderReputationRegistry` shadow.
+    ///
+    /// Behavioural contract for the gate window: returns the same
+    /// `MarketplaceEntry` **ordering** as the sync
+    /// `cheapest_with_ranking` for a given candidate set. It does
+    /// **not** return the same scores.
+    ///
+    /// This doc previously claimed the paths agree "when the dual-read
+    /// parity ≥ 0.999 holds in prod" and that they "agree by
+    /// construction on synthetic fixtures". Neither was ever
+    /// established, and both are false. Measured:
+    ///
+    /// - `success_rate`: legacy is a decayed EWMA, compat is a plain
+    ///   ratio, so identical mixed input diverges by up to **0.357**.
+    /// - `latency_ms`: legacy is a decayed EWMA, compat is an
+    ///   `alpha = 1/(n+1)` running mean. Measured deltas on identical
+    ///   input: 75ms x10 → 1 ms; a 0..9 ramp → 4 ms; alternating
+    ///   100/300 → **14 ms**.
+    ///
+    /// Ordering agreement is therefore a property of the fixture, not a
+    /// consequence of the two implementations agreeing. See deferred
+    /// mission `the-reputation-store-implements-a-running-mean-not-the-rfc-ewma`
+    /// and the divergence bound pinned by
+    /// `dual_read_mixed_outcome_divergence_within_measured_bound`.
+    ///
+    /// Latency observations are read from
+    /// `reputation_compat.observed_latency_ms()`, which distinguishes an
+    /// absent observation from a genuine 0 ms measurement. `score()` folds
+    /// absence into `latency_ms: 0` and is not suitable for ranking; see
+    /// `scoring::resolve_ranking_latencies`.
+    /// # Errors
+    /// Returns `ReputationError` on store failure (caller decides
+    /// whether to fall back to the sync shadow — fallback is not
+    /// built in; the caller is the gate's executor).
+    pub async fn cheapest_with_ranking_async(
+        &self,
+        model: &str,
+        ranking: LatencyRanking,
+    ) -> Result<Option<MarketplaceEntry>, octo_reputation::error::ReputationError> {
+        // Snapshot the in-memory book once. The lock is released by
+        // the time the loop below awaits `is_excluded_async` /
+        // `score` (clippy `await_holding_lock`).
+        //
+        // Expiry is filtered here exactly as in the sync
+        // `cheapest_with_ranking`. Both read the same book; letting them
+        // diverge is how an expired listing came to stay matchable.
+        let now = current_unix();
+        let candidates: Vec<orderbook::Order<AskSpec>> = {
+            let book = self.book.lock();
+            book.asks_matching(|spec| spec.model == model && spec.expires_at_unix > now)
+                .into_iter()
+                .cloned()
+                .collect()
+        };
+
+        // Async circuit-breaker exclusion gate.
+        let min = self.reputation_compat.min_reputation();
+        let mut accepted: Vec<orderbook::Order<AskSpec>> = Vec::with_capacity(candidates.len());
+        let mut latencies: std::collections::HashMap<String, Option<u64>> =
+            std::collections::HashMap::with_capacity(candidates.len());
+        for order in candidates {
+            let excluded = if min > 0.0 {
+                self.reputation_compat
+                    .is_excluded_async(&order.spec.asker_did)
+                    .await?
+            } else {
+                false
+            };
+            if !excluded {
+                let observed = self
+                    .reputation_compat
+                    .observed_latency_ms(&order.spec.asker_did)
+                    .await?;
+                latencies.insert(order.spec.asker_did.clone(), observed);
+                accepted.push(order);
+            }
+        }
+
+        if accepted.is_empty() {
+            return Ok(None);
+        }
+
+        // Price-only specialization (matches sync path).
+        if ranking.latency_weight == 0.0 {
+            return Ok(Some(
+                self.entry_from_order_async(
+                    &accepted[0],
+                    latencies
+                        .get(&accepted[0].spec.asker_did)
+                        .copied()
+                        .flatten(),
+                ),
+            ));
+        }
+
+        // Latency-aware ranking: identical math to sync path, latencies
+        // sourced from compat. An absent observation stays `None` until
+        // `resolve_ranking_latencies`, so it is not folded into 0 ms.
+        let (min_price, max_price) = accepted.iter().fold((u128::MAX, u128::MIN), |(lo, hi), o| {
+            (lo.min(o.price), hi.max(o.price))
+        });
+        let observed: Vec<Option<u64>> = accepted
+            .iter()
+            .map(|o| latencies.get(&o.spec.asker_did).copied().flatten())
+            .collect();
+        let (lats, min_lat, max_lat) = scoring::resolve_ranking_latencies(&observed);
+
+        let mut best: Option<(f64, &orderbook::Order<AskSpec>)> = None;
+        for (order, latency_ms) in accepted.iter().zip(lats.iter()) {
+            let score = ranking.composite(
+                order.price,
+                *latency_ms,
+                min_price,
+                max_price,
+                min_lat,
+                max_lat,
+            );
+            let dominated = match &best {
+                None => true,
+                Some((best_score, best_order)) => {
+                    score < *best_score || (score == *best_score && order.price < best_order.price)
+                }
+            };
+            if dominated {
+                best = Some((score, order));
+            }
+        }
+        let (_, winner) = best.expect("accepted non-empty");
+        Ok(Some(self.entry_from_order_async(
+            winner,
+            latencies.get(&winner.spec.asker_did).copied().flatten(),
+        )))
+    }
+
+    /// Async entry builder — same shape as `entry_from_order` but
+    /// reads `latency_ms` from the caller-supplied compat-derived
+    /// map (avoids a second `reputation_compat.score()` round-trip
+    /// in `cheapest_with_ranking_async`).
+    fn entry_from_order_async(
+        &self,
+        order: &orderbook::Order<AskSpec>,
+        latency_ms: Option<u64>,
+    ) -> MarketplaceEntry {
+        let reputation_score_0_100 = None; // compat path does not
+                                           // yet surface the 0-100
+                                           // presentation score; the
+                                           // legacy shadow keeps
+                                           // producing it. Wire-up
+                                           // lands in mission
+                                           // `marketplace-caller-await-migration`.
+        MarketplaceEntry {
+            ask_id: order.spec.ask_id,
+            asker_did: order.spec.asker_did.clone(),
+            model: order.spec.model.clone(),
+            cost_per_1k: order.price,
+            latency_ms,
+            reputation_score_0_100,
+        }
+    }
+
+    /// Latency-aware ranking (Gap 7.2). Scans every ask matching
+    /// `model` and returns the one with the lowest composite score
+    /// under `ranking`.
+    ///
+    /// With `LatencyRanking::cheapest()` the result is identical to
+    /// `cheapest(model)`. With `LatencyRanking::prefer_latency()` the
+    /// scan blends normalized price + observed latency so a
+    /// faster-but-pricier provider can outrank a slower-but-cheaper
+    /// one.
+    ///
+    /// Cost: O(N) over the model's ask set, which is well under any
+    /// per-request budget at marketplace scale. If the ask set grows
+    /// large enough for that to stop holding, swap the implementation for
+    /// a heap-indexed ranking.
+    ///
+    /// This note previously justified the cost by citing "the documented
+    /// ≤1k-provider target (Gap 5 perf note)". That citation does not
+    /// exist: RFC-0900 has no provider-count target, no performance
+    /// section, and no "Gap 5 perf note". The O(N) claim above is about
+    /// the algorithm, not an RFC-sanctioned ceiling.
+    ///
+    /// When a provider has **no** latency observation, its latency
+    /// contribution is the **worst observed** in the candidate set, not
+    /// `0`. This previously defaulted to `0`, which is the fastest value
+    /// the scale admits, so an unmeasured provider scored a perfect
+    /// latency component and won `prefer_latency` outright — measured, a
+    /// provider quoting 90_000 with no history beat a proven 50 ms
+    /// provider quoting 1_000. Absent data must not outrank measured
+    /// data. See [`scoring::resolve_ranking_latencies`] and deferred
+    /// mission `marketplace-unknown-latency-is-encoded-as-zero-ms`, which
+    /// also records why midpoint and exclusion were not chosen.
+    ///
+    /// Circuit-breaker behavior matches `cheapest()`: providers below
+    /// `min_reputation` are excluded before ranking runs.
+    #[must_use]
+    pub fn cheapest_with_ranking(
+        &self,
+        model: &str,
+        ranking: LatencyRanking,
+    ) -> Option<MarketplaceEntry> {
+        let book = self.book.lock();
+
+        // Filter expiry at read time. `put` only gates on expiry at
+        // insert, so an Ask indexed while live must stop being a candidate
+        // once `expires_at_unix` passes. Both terms are required: the
+        // model match and the liveness check.
+        let now = current_unix();
+        // Collect candidates matching `model`, not expired, and not
+        // circuit-broken.
+        let candidates: Vec<&orderbook::Order<AskSpec>> = book
+            .asks_matching(|spec| spec.model == model && spec.expires_at_unix > now)
+            .into_iter()
+            .filter(|o| !self.reputation.is_excluded(&o.spec.asker_did))
+            .collect();
+
+        if candidates.is_empty() {
+            return None;
+        }
+
+        // Fast path: price-only ranking is already encoded by the
+        // orderbook's price-time priority.
+        if ranking.latency_weight == 0.0 {
+            let order = candidates.into_iter().next()?;
+            return Some(self.entry_from_order(order));
+        }
+
+        // Latency-aware path: normalize price + latency across the
+        // candidate set, then pick the lowest composite. Ties break
+        // by price (cheaper wins).
+        let (min_price, max_price) = candidates
+            .iter()
+            .fold((u128::MAX, u128::MIN), |(lo, hi), o| {
+                (lo.min(o.price), hi.max(o.price))
+            });
+        let observed_latencies: Vec<Option<u64>> = candidates
+            .iter()
+            .map(|o| {
+                self.reputation
+                    .score(&o.spec.asker_did)
+                    .map(|s| s.latency_ms)
+            })
+            .collect();
+        let (latencies, min_lat, max_lat) = scoring::resolve_ranking_latencies(&observed_latencies);
+
+        let mut best: Option<(f64, &orderbook::Order<AskSpec>)> = None;
+        for (order, latency_ms) in candidates.iter().zip(latencies.iter()) {
+            let score = ranking.composite(
+                order.price,
+                *latency_ms,
+                min_price,
+                max_price,
+                min_lat,
+                max_lat,
+            );
+            let dominated = match &best {
+                None => true,
+                Some((best_score, best_order)) => {
+                    score < *best_score || (score == *best_score && order.price < best_order.price)
+                }
+            };
+            if dominated {
+                best = Some((score, order));
+            }
+        }
+        best.map(|(_, o)| self.entry_from_order(o))
+    }
+
+    fn entry_from_order(&self, order: &orderbook::Order<AskSpec>) -> MarketplaceEntry {
+        let provider_score = self.reputation.score(&order.spec.asker_did);
+        let latency_ms = provider_score.as_ref().map(|s| s.latency_ms);
+        // Mission 0010-b Phase G (S8): populate the 0-100 presentation score
+        // from the persisted RFC-0968 score_ewma. The legacy
+        // `ProviderScore` legacy shape carries `success_rate: f64` directly
+        // (in-memory registry); the RFC-0968 compat will eventually replace
+        // this with `compat.reputation_score_0_100(asker_did)`. For now we
+        // map `success_rate: f64` (already clamped to [-1, 1]) through the
+        // `(score + 1) * 50` presentation formula.
+        let reputation_score_0_100 = provider_score.map(|s| {
+            let clamped = s.success_rate.clamp(-1.0, 1.0);
+            let raw = (clamped + 1.0) * 50.0;
+            raw.round().clamp(0.0, 100.0) as u8
+        });
+        MarketplaceEntry {
+            ask_id: order.spec.ask_id,
+            asker_did: order.spec.asker_did.clone(),
+            model: order.spec.model.clone(),
+            cost_per_1k: order.price,
+            latency_ms,
+            reputation_score_0_100,
+        }
+    }
+
+    /// List Asks published by a single asker (delegates to AskRepository).
+    /// # Errors
+    /// Returns `RepoError` on stoolap failure.
+    pub fn list_by_asker(&self, asker_did: &str) -> Result<Vec<Ask>, RepoError> {
+        self.repo.list_by_asker(asker_did, current_unix())
+    }
+}
+
+/// Convenience methods for the default `Marketplace<InMemoryReputationStore>`
+/// instantiation. All existing call sites that don't care about the
+/// reputation store type continue to use these entry points without
+/// explicit type parameters.
+/// # Errors
+/// Returns `RepoError` on stoolap open / migration failure.
+impl Marketplace<octo_reputation::store::InMemoryReputationStore> {
+    /// Open a marketplace backed by an in-memory AskRepository (test/dev).
+    /// Convenience for
+    /// `Marketplace::open_in_memory_with_store(InMemoryReputationStore::new())`.
+    pub fn open_in_memory() -> Result<Self, RepoError> {
+        Self::open_in_memory_with_store(octo_reputation::store::InMemoryReputationStore::new())
+    }
+
+    /// Open a marketplace backed by a file-backed AskRepository
+    /// (production). Wires the in-memory reputation store.
+    pub fn open_path(path: &str) -> Result<Self, RepoError> {
+        Self::open_path_with_store(path, octo_reputation::store::InMemoryReputationStore::new())
+    }
+
+    /// Wrap an existing AskRepository (Arc-ed). Wires the in-memory
+    /// reputation store. Convenience for callers that don't need a
+    /// production reputation store.
+    #[must_use]
+    pub fn from_repo(repo: std::sync::Arc<DynAskRepository>) -> Self {
+        Self::from_repo_with_store(repo, octo_reputation::store::InMemoryReputationStore::new())
+    }
+}
+
+/// Compute AskId for serialization. We re-derive from the Ask fields
+/// (asker_did + model + axes_hash + nonce) since `Ask::id()` requires a
+/// borrow and we already own the Ask by value here.
+fn compute_ask_id_static(ask: &Ask) -> [u8; 32] {
+    let axes_hash = ask.axes_hash();
+    let model_wire = ask.model.to_wire();
+    let mut msg = Vec::with_capacity(ask.asker_did.len() + model_wire.len() + 32 + ask.nonce.len());
+    msg.extend_from_slice(ask.asker_did.as_bytes());
+    msg.extend_from_slice(model_wire.as_bytes());
+    msg.extend_from_slice(&axes_hash);
+    msg.extend_from_slice(&ask.nonce);
+    *blake3::hash(&msg).as_bytes()
+}
+
+/// Build a unit-per-axis consumption list for cost computation.
+fn build_unit_consumed(ask: &Ask, axes: &[PricingAxis]) -> Vec<(String, u64)> {
+    axes.iter()
+        .filter(|a| ask.rates.rates.iter().any(|r| r.axis == a.id))
+        .map(|a| (a.id.clone(), 1000))
+        .collect()
+}
+
+fn current_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Org policy attachment (PR-Q4, W5).
+///
+/// When minting a capability with an org policy, the policy's constraints
+/// are intersected with the cap's own constraints. The resulting capability
+/// carries a `PolicyReference` caveat (RFC-0967 §8) pointing at the
+/// policy's id. At verify time, the verifier fetches the policy and
+/// checks `capability ⊆ policy` (RFC-0967 §5 subgraph relation).
+///
+/// This previously cited the caveat as "RFC-0965 §3.9". Neither RFC-0965
+/// nor RFC-0967 has a §3.9 — RFC-0965 numbers its sections 0–8 with
+/// sub-sections 2.1–2.4 and 4.1, and RFC-0967 numbers 1–8. The caveat is
+/// defined by RFC-0967 §8; RFC-0965 defines the capability envelope it
+/// attaches to.
+///
+/// This module exposes the registration helper. The actual mint step
+/// happens in `octo-wallet::capability::CapabilityToken::mint` (W1).
+pub struct PolicyAttachment {
+    pub policy_id: [u8; 32],
+    pub policy_version: u64,
+}
+
+impl Marketplace {
+    /// Register an org policy attachment for a marketplace. Returns the
+    /// attachment descriptor that downstream capability mint can use.
+    ///
+    /// In the full implementation, this stores the policy reference in
+    /// the `policy_catalog` table (RFC-0967 §8). For now it's a stub
+    /// that returns the attachment descriptor.
+    #[must_use]
+    pub fn attach_org_policy(&self, policy_id: [u8; 32], policy_version: u64) -> PolicyAttachment {
+        PolicyAttachment {
+            policy_id,
+            policy_version,
+        }
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quota_router_storage::ask::{AxisRate, ModelRateTable, ModelRef};
+
+    fn sample_ask(asker: &str, model: &str, rate: u128, expires: u64) -> Ask {
+        Ask {
+            asker_did: asker.to_owned(),
+            model: ModelRef::from(model),
+            rates: ModelRateTable {
+                model: ModelRef::from(model),
+                rates: vec![AxisRate {
+                    axis: "input_tokens_per_1k".to_owned(),
+                    rate_per_1k: octo_determin::Dqa::new(
+                        i64::try_from(rate).expect("sample rate fits in i64"),
+                        0,
+                    )
+                    .expect("non-overflow"),
+                }],
+            },
+            nonce: [0x42; 16],
+            expires_at_unix: expires,
+        }
+    }
+
+    #[test]
+    fn in_memory_cheapest_returns_min_cost() {
+        let mut m = InMemoryMarketplace::new();
+        m.insert(MarketplaceEntry {
+            ask_id: [1; 32],
+            asker_did: "a".into(),
+            model: "gpt-4".into(),
+            cost_per_1k: 30_000,
+            latency_ms: None,
+            reputation_score_0_100: None,
+        });
+        m.insert(MarketplaceEntry {
+            ask_id: [2; 32],
+            asker_did: "b".into(),
+            model: "gpt-4".into(),
+            cost_per_1k: 25_000,
+            latency_ms: None,
+            reputation_score_0_100: None,
+        });
+        m.insert(MarketplaceEntry {
+            ask_id: [3; 32],
+            asker_did: "c".into(),
+            model: "other".into(),
+            cost_per_1k: 1,
+            latency_ms: None,
+            reputation_score_0_100: None,
+        });
+        let cheapest = m.cheapest("gpt-4").unwrap();
+        assert_eq!(cheapest.ask_id, [2; 32]);
+    }
+
+    #[test]
+    fn in_memory_empty_marketplace_returns_none() {
+        let m = InMemoryMarketplace::new();
+        assert!(m.cheapest("gpt-4").is_none());
+    }
+
+    #[test]
+    fn ask_repo_backed_cheapest_returns_lowest() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        m.put(&sample_ask(
+            &octo_ident::test_helpers::sample_did(164),
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+        ))
+        .unwrap();
+        m.put(&sample_ask(
+            "did:octo:b",
+            "openai/gpt-4",
+            20_000,
+            now + 1000,
+        ))
+        .unwrap();
+        m.put(&sample_ask(
+            &octo_ident::test_helpers::sample_did(62),
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+        ))
+        .unwrap();
+        let cheapest = m.cheapest("openai/gpt-4").expect("cheapest");
+        assert_eq!(cheapest.asker_did, octo_ident::test_helpers::sample_did(62));
+        assert_eq!(cheapest.cost_per_1k, 10_000);
+    }
+
+    #[test]
+    fn ask_repo_backed_cheapest_unknown_model_returns_none() {
+        let m = Marketplace::open_in_memory().unwrap();
+        assert!(m.cheapest("nonexistent").is_none());
+    }
+
+    #[test]
+    fn ask_repo_backed_excludes_expired() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        // Expired (cheap) Ask must NOT be returned even if cheaper.
+        m.put(&sample_ask(
+            &octo_ident::test_helpers::sample_did(166),
+            "openai/gpt-4",
+            1_000,
+            now - 100,
+        ))
+        .unwrap();
+        m.put(&sample_ask(
+            &octo_ident::test_helpers::sample_did(106),
+            "openai/gpt-4",
+            50_000,
+            now + 1000,
+        ))
+        .unwrap();
+        let cheapest = m.cheapest("openai/gpt-4").expect("cheapest");
+        assert_eq!(
+            cheapest.asker_did,
+            octo_ident::test_helpers::sample_did(106)
+        );
+        assert_eq!(cheapest.cost_per_1k, 50_000);
+    }
+
+    #[test]
+    fn ask_repo_backed_list_by_asker() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        m.put(&sample_ask(
+            &octo_ident::test_helpers::sample_did(164),
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+        ))
+        .unwrap();
+        m.put(&sample_ask(
+            &octo_ident::test_helpers::sample_did(164),
+            "anthropic/claude",
+            20_000,
+            now + 1000,
+        ))
+        .unwrap();
+        m.put(&sample_ask(
+            "did:octo:b",
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+        ))
+        .unwrap();
+        let alice_asks = m
+            .list_by_asker(&octo_ident::test_helpers::sample_did(164))
+            .unwrap();
+        assert_eq!(alice_asks.len(), 2);
+        let bob_asks = m.list_by_asker("did:octo:b").unwrap();
+        assert_eq!(bob_asks.len(), 1);
+        let none = m
+            .list_by_asker(&octo_ident::test_helpers::sample_did(9))
+            .unwrap();
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn attach_org_policy_returns_attachment() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let attachment = m.attach_org_policy([0xab; 32], 1);
+        assert_eq!(attachment.policy_id, [0xab; 32]);
+        assert_eq!(attachment.policy_version, 1);
+    }
+
+    #[test]
+    fn put_indexes_active_ask_in_orderbook() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        m.put(&sample_ask(
+            &octo_ident::test_helpers::sample_did(164),
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+        ))
+        .unwrap();
+        // The orderbook should now hold 1 active ask matching the model.
+        let (ask_count, best_asker) = {
+            let book = m.book.lock();
+            let best = book
+                .best_ask_matching(|spec| spec.model == "openai/gpt-4")
+                .expect("matching ask");
+            (book.ask_count(), (best.spec.asker_did.clone(), best.price))
+        };
+        assert_eq!(ask_count, 1);
+        assert_eq!(best_asker.0, octo_ident::test_helpers::sample_did(164));
+        assert_eq!(best_asker.1, 30_000);
+    }
+
+    #[test]
+    fn cheapest_via_orderbook_skips_expired() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        // Cheap but expired → should NOT be in the orderbook.
+        m.put(&sample_ask(
+            &octo_ident::test_helpers::sample_did(204),
+            "openai/gpt-4",
+            1_000,
+            now - 1,
+        ))
+        .unwrap();
+        // Active but expensive → in the orderbook.
+        m.put(&sample_ask(
+            &octo_ident::test_helpers::sample_did(106),
+            "openai/gpt-4",
+            50_000,
+            now + 1000,
+        ))
+        .unwrap();
+        // Only the active one is indexed.
+        {
+            let book = m.book.lock();
+            assert_eq!(book.ask_count(), 1);
+        }
+        let cheapest = m.cheapest("openai/gpt-4").expect("cheapest");
+        assert_eq!(
+            cheapest.asker_did,
+            octo_ident::test_helpers::sample_did(106)
+        );
+    }
+
+    #[test]
+    fn cheapest_returns_none_when_orderbook_empty_for_model() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        m.put(&sample_ask(
+            &octo_ident::test_helpers::sample_did(164),
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+        ))
+        .unwrap();
+        // Different model has no matching ask.
+        assert!(m.cheapest("anthropic/claude").is_none());
+    }
+
+    // ========================================================================
+    // Gap 7.1 — Provider scoring circuit-breaker (RFC-0900)
+    // ========================================================================
+
+    use crate::marketplace::scoring::ProviderScore;
+
+    fn score(asker: &str, success_rate: f64, latency_ms: u64, samples: u64) -> ProviderScore {
+        ProviderScore {
+            asker_did: asker.to_owned(),
+            success_rate,
+            latency_ms,
+            samples,
+        }
+    }
+
+    #[test]
+    fn cheapest_excludes_provider_below_reputation_threshold() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        m.put(&sample_ask(
+            &octo_ident::test_helpers::sample_did(35),
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+        ))
+        .unwrap();
+        m.put(&sample_ask(
+            &octo_ident::test_helpers::sample_did(79),
+            "openai/gpt-4",
+            10_000, // cheaper but excluded
+            now + 1000,
+        ))
+        .unwrap();
+
+        // Configure circuit-breaker at 0.5 success_rate.
+        m.set_min_reputation(0.5);
+        m.set_provider_score(score(&octo_ident::test_helpers::sample_did(79), 0.3, 0, 10));
+
+        let cheapest = m.cheapest("openai/gpt-4").expect("cheapest");
+        assert_eq!(
+            cheapest.asker_did,
+            octo_ident::test_helpers::sample_did(35),
+            "provider below reputation threshold must be excluded"
+        );
+        assert_eq!(cheapest.cost_per_1k, 30_000);
+    }
+
+    #[test]
+    fn cheapest_includes_provider_at_or_above_threshold() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        m.put(&sample_ask(
+            &octo_ident::test_helpers::sample_did(191),
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+        ))
+        .unwrap();
+        m.put(&sample_ask(
+            &octo_ident::test_helpers::sample_did(35),
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+        ))
+        .unwrap();
+
+        m.set_min_reputation(0.5);
+        m.set_provider_score(score(
+            &octo_ident::test_helpers::sample_did(191),
+            0.5,
+            0,
+            10,
+        )); // exactly threshold
+
+        let cheapest = m.cheapest("openai/gpt-4").expect("cheapest");
+        assert_eq!(
+            cheapest.asker_did,
+            octo_ident::test_helpers::sample_did(191)
+        );
+    }
+
+    #[test]
+    fn cheapest_no_filter_when_threshold_zero() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        m.put(&sample_ask(
+            &octo_ident::test_helpers::sample_did(79),
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+        ))
+        .unwrap();
+        m.put(&sample_ask(
+            &octo_ident::test_helpers::sample_did(35),
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+        ))
+        .unwrap();
+        // No min_reputation set; default is 0.0 → no filtering.
+        m.set_provider_score(score(&octo_ident::test_helpers::sample_did(79), 0.0, 0, 10));
+
+        let cheapest = m.cheapest("openai/gpt-4").expect("cheapest");
+        assert_eq!(
+            cheapest.asker_did,
+            octo_ident::test_helpers::sample_did(79),
+            "with threshold=0.0, no providers are excluded"
+        );
+    }
+
+    #[test]
+    fn cheapest_unknown_provider_not_excluded() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        m.put(&sample_ask(
+            &octo_ident::test_helpers::sample_did(69),
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+        ))
+        .unwrap();
+
+        m.set_min_reputation(0.5);
+        // No score registered for `did:octo:unknown` → treat as max reputation.
+
+        let cheapest = m.cheapest("openai/gpt-4").expect("cheapest");
+        assert_eq!(cheapest.asker_did, octo_ident::test_helpers::sample_did(69));
+    }
+
+    #[test]
+    fn record_outcome_updates_ewma_success_rate() {
+        let m = Marketplace::open_in_memory().unwrap();
+        m.record_outcome(&octo_ident::test_helpers::sample_did(181), true, 100);
+        m.record_outcome(&octo_ident::test_helpers::sample_did(181), true, 100);
+        let s = m
+            .provider_score(&octo_ident::test_helpers::sample_did(181))
+            .expect("score registered after two observations");
+        assert!(s.success_rate > 0.9, "success_rate={}", s.success_rate);
+        assert_eq!(s.latency_ms, 100);
+        assert_eq!(s.samples, 2);
+
+        m.record_outcome(&octo_ident::test_helpers::sample_did(181), false, 100);
+        let s = m
+            .provider_score(&octo_ident::test_helpers::sample_did(181))
+            .unwrap();
+        assert!(
+            s.success_rate < 0.9 && s.success_rate > 0.0,
+            "EWMA should decay: success_rate={}",
+            s.success_rate
+        );
+        assert_eq!(s.samples, 3);
+    }
+
+    // ========================================================================
+    // Gap 7.2 — Latency-aware ranking (RFC-0900 §Market Operations)
+    // ========================================================================
+
+    use crate::marketplace::scoring::LatencyRanking;
+
+    fn put_ask_with_latency(
+        m: &Marketplace,
+        asker: &str,
+        model: &str,
+        rate: u128,
+        expires: u64,
+        latency_ms: u64,
+    ) {
+        m.put(&sample_ask(asker, model, rate, expires)).unwrap();
+        // Seed latency directly on the registry. EWMA on a single
+        // observation converges to the observed value.
+        m.set_provider_score(score(asker, 1.0, latency_ms, 1));
+    }
+
+    #[test]
+    fn cheapest_with_ranking_prefer_latency_picks_fastest() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        // Cheaper-but-slow (10k, 5s).
+        put_ask_with_latency(
+            &m,
+            &octo_ident::test_helpers::sample_did(166),
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+            5_000,
+        );
+        // Mid-price + fast (30k, 100ms) — should win under prefer_latency.
+        put_ask_with_latency(
+            &m,
+            &octo_ident::test_helpers::sample_did(232),
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+            100,
+        );
+        // Slower + more expensive (50k, 4s).
+        put_ask_with_latency(
+            &m,
+            &octo_ident::test_helpers::sample_did(110),
+            "openai/gpt-4",
+            50_000,
+            now + 1000,
+            4_000,
+        );
+
+        let best = m
+            .cheapest_with_ranking("openai/gpt-4", LatencyRanking::prefer_latency())
+            .expect("a non-excluded provider must exist");
+        assert_eq!(
+            best.asker_did,
+            octo_ident::test_helpers::sample_did(232),
+            "lower latency must beat cheaper price when prefer_latency=true"
+        );
+        // Latency must surface on the entry.
+        assert_eq!(best.latency_ms, Some(100));
+    }
+
+    #[test]
+    fn cheapest_default_still_picks_cheapest_price() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        put_ask_with_latency(
+            &m,
+            &octo_ident::test_helpers::sample_did(166),
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+            5_000,
+        );
+        put_ask_with_latency(
+            &m,
+            &octo_ident::test_helpers::sample_did(232),
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+            100,
+        );
+
+        let best = m.cheapest("openai/gpt-4").expect("cheapest");
+        assert_eq!(
+            best.asker_did,
+            octo_ident::test_helpers::sample_did(166),
+            "default cheapest() must preserve price-only ranking"
+        );
+    }
+
+    #[test]
+    fn cheapest_with_ranking_returns_none_when_all_excluded() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        put_ask_with_latency(
+            &m,
+            &octo_ident::test_helpers::sample_did(164),
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+            100,
+        );
+        put_ask_with_latency(&m, "did:octo:b", "openai/gpt-4", 20_000, now + 1000, 200);
+
+        // Override both providers with bad scores so they fall below
+        // the threshold.
+        m.set_provider_score(score(
+            &octo_ident::test_helpers::sample_did(164),
+            0.1,
+            100,
+            10,
+        ));
+        m.set_provider_score(score("did:octo:b", 0.2, 200, 10));
+        m.set_min_reputation(0.5);
+
+        let best = m.cheapest_with_ranking("openai/gpt-4", LatencyRanking::prefer_latency());
+        assert!(best.is_none(), "all providers excluded → None");
+    }
+
+    #[test]
+    fn cheapest_with_ranking_skips_circuit_broken_in_prefer_latency() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        // Cheapest ask from a bad-rep provider should be skipped even
+        // under latency-aware ranking.
+        put_ask_with_latency(
+            &m,
+            &octo_ident::test_helpers::sample_did(79),
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+            50,
+        );
+        put_ask_with_latency(
+            &m,
+            &octo_ident::test_helpers::sample_did(35),
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+            100,
+        );
+
+        m.set_min_reputation(0.5);
+        m.set_provider_score(score(
+            &octo_ident::test_helpers::sample_did(79),
+            0.1,
+            50,
+            10,
+        ));
+
+        let best = m
+            .cheapest_with_ranking("openai/gpt-4", LatencyRanking::prefer_latency())
+            .expect("good provider remains eligible");
+        assert_eq!(best.asker_did, octo_ident::test_helpers::sample_did(35));
+    }
+
+    #[test]
+    fn ranking_cheapest_pure_price_path_ignores_latency() {
+        let m = Marketplace::open_in_memory().unwrap();
+        let now = current_unix();
+        put_ask_with_latency(
+            &m,
+            &octo_ident::test_helpers::sample_did(166),
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+            5_000,
+        );
+        put_ask_with_latency(
+            &m,
+            &octo_ident::test_helpers::sample_did(232),
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+            100,
+        );
+
+        let best = m
+            .cheapest_with_ranking("openai/gpt-4", LatencyRanking::cheapest())
+            .expect("cheapest");
+        assert_eq!(
+            best.asker_did,
+            octo_ident::test_helpers::sample_did(166),
+            "with price-only ranking, the cheapest ask wins regardless of latency"
+        );
+    }
+
+    #[test]
+    fn ranking_handles_degenerate_single_candidate() {
+        let r = LatencyRanking::prefer_latency();
+        // Single candidate → range collapses to 0 on both axes →
+        // composite pinned at 0.
+        let score = r.composite(50, 100, 50, 50, 100, 100);
+        assert_eq!(score, 0.0);
+    }
+
+    #[test]
+    fn ranking_composite_normalizes_axes() {
+        let r = LatencyRanking::prefer_latency();
+        // Cheaper-but-slow vs expensive-but-fast.
+        // price range [10, 100]; latency range [50, 200].
+        // slow: price_norm = (10-10)/(100-10) = 0, latency_norm = (200-50)/(200-50) = 1
+        //       → 0*0.3 + 1*0.7 = 0.7
+        // fast: price_norm = (100-10)/(100-10) = 1, latency_norm = (50-50)/(200-50) = 0
+        //       → 1*0.3 + 0*0.7 = 0.3
+        let slow = r.composite(10, 200, 10, 100, 50, 200);
+        let fast = r.composite(100, 50, 10, 100, 50, 200);
+        assert!(slow > fast, "slow={slow} fast={fast}");
+        assert!((slow - 0.7).abs() < 1e-9);
+        assert!((fast - 0.3).abs() < 1e-9);
+    }
+
+    #[test]
+    fn ranking_composite_cheapest_cancels_latency_axis() {
+        let r = LatencyRanking::cheapest();
+        // Same price (100 = min), different latency → identical composite.
+        let a = r.composite(100, 50, 100, 200, 50, 200);
+        let b = r.composite(100, 200, 100, 200, 50, 200);
+        assert_eq!(a, b, "price-only ranking must ignore latency");
+    }
+
+    // ========================================================================
+    // Load-on-open tests (mission: marketplace-book-load-on-open)
+    //
+    // Pins the contract: `open_path` hydrates the in-memory order book
+    // from the on-disk repository. Without this, a process restart
+    // would leave the book empty even though `repo` still holds every
+    // published Ask, silently dropping every `cheapest()` result.
+    // ========================================================================
+
+    /// Helper: build a unique temp file path for `open_path` tests.
+    /// Each test must use a unique path to avoid stoolap file-lock
+    /// contention when run in parallel.
+    fn unique_temp_path(tag: &str) -> String {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let pid = std::process::id();
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "cipherocto_marketplace_load_on_open_{tag}_{pid}_{n}.stoolap"
+        ));
+        // Defensive: ensure the file does not exist from a prior run.
+        let _ = std::fs::remove_file(&path);
+        // Bare path — substrate's `Database::open` prepends `file://`
+        // before dispatching to stoolap.
+        path.to_string_lossy().to_string()
+    }
+
+    #[test]
+    fn open_path_hydrates_book_from_repo() {
+        // Populate the marketplace with N Asks via `put`, drop the
+        // process (close the in-memory book), reopen via `open_path`,
+        // and verify `cheapest()` returns the saved entry.
+        let path = unique_temp_path("hydrate");
+        let now = current_unix();
+
+        // First process: open, put 3 Asks across 2 models, drop.
+        {
+            let m = Marketplace::open_path(&path).expect("open_path 1");
+            m.put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(101),
+                "openai/gpt-4",
+                10_000,
+                now + 1_000,
+            ))
+            .unwrap();
+            m.put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(102),
+                "openai/gpt-4",
+                20_000,
+                now + 1_000,
+            ))
+            .unwrap();
+            m.put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(103),
+                "anthropic/claude",
+                15_000,
+                now + 1_000,
+            ))
+            .unwrap();
+            // m drops here; in-memory book is gone, but repo on disk
+            // still holds all 3 Asks.
+        }
+
+        // Second process: reopen via `open_path`. Book must be hydrated.
+        let m2 = Marketplace::open_path(&path).expect("open_path 2");
+        let gpt = m2
+            .cheapest("openai/gpt-4")
+            .expect("gpt-4 cheapest after restart");
+        assert_eq!(
+            gpt.asker_did,
+            octo_ident::test_helpers::sample_did(101),
+            "cheapest gpt-4 must be the lowest-priced (10_000) after restart"
+        );
+        let claude = m2
+            .cheapest("anthropic/claude")
+            .expect("claude cheapest after restart");
+        assert_eq!(
+            claude.asker_did,
+            octo_ident::test_helpers::sample_did(103),
+            "cheapest claude must be the saved entry after restart"
+        );
+
+        // Cleanup.
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn open_path_cheapest_matches_in_memory() {
+        // Restart equivalence: the same set of puts via `put` produces
+        // the same `cheapest()` result as a fresh `open_path` that
+        // hydrates from the same repo.
+        let path = unique_temp_path("equiv");
+        let now = current_unix();
+
+        // Process A: build in-memory marketplace with 4 Asks.
+        let in_memory = Marketplace::open_in_memory().unwrap();
+        in_memory
+            .put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(201),
+                "openai/gpt-4",
+                5_000,
+                now + 1_000,
+            ))
+            .unwrap();
+        in_memory
+            .put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(202),
+                "openai/gpt-4",
+                8_000,
+                now + 1_000,
+            ))
+            .unwrap();
+        in_memory
+            .put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(203),
+                "anthropic/claude",
+                12_000,
+                now + 1_000,
+            ))
+            .unwrap();
+        in_memory
+            .put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(204),
+                "anthropic/claude",
+                7_000,
+                now + 1_000,
+            ))
+            .unwrap();
+        let a_gpt = in_memory.cheapest("openai/gpt-4").unwrap();
+        let a_claude = in_memory.cheapest("anthropic/claude").unwrap();
+
+        // Process B: same Asks but written to disk, then reopen.
+        // We rebuild the on-disk marketplace by copying the same Asks
+        // through a fresh `open_path` (since `Marketplace` has no
+        // copy constructor; this is equivalent to "process restart
+        // with the same on-disk state").
+        let on_disk = Marketplace::open_path(&path).expect("open_path");
+        on_disk
+            .put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(201),
+                "openai/gpt-4",
+                5_000,
+                now + 1_000,
+            ))
+            .unwrap();
+        on_disk
+            .put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(202),
+                "openai/gpt-4",
+                8_000,
+                now + 1_000,
+            ))
+            .unwrap();
+        on_disk
+            .put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(203),
+                "anthropic/claude",
+                12_000,
+                now + 1_000,
+            ))
+            .unwrap();
+        on_disk
+            .put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(204),
+                "anthropic/claude",
+                7_000,
+                now + 1_000,
+            ))
+            .unwrap();
+        drop(on_disk);
+
+        // Reopen: hydrates book from disk.
+        let reopened = Marketplace::open_path(&path).expect("reopen");
+        let b_gpt = reopened.cheapest("openai/gpt-4").unwrap();
+        let b_claude = reopened.cheapest("anthropic/claude").unwrap();
+        assert_eq!(
+            a_gpt.asker_did, b_gpt.asker_did,
+            "gpt-4 cheapest must match in-memory vs after-restart"
+        );
+        assert_eq!(
+            a_gpt.cost_per_1k, b_gpt.cost_per_1k,
+            "gpt-4 cost must match"
+        );
+        assert_eq!(
+            a_claude.asker_did, b_claude.asker_did,
+            "claude cheapest must match"
+        );
+        assert_eq!(
+            a_claude.cost_per_1k, b_claude.cost_per_1k,
+            "claude cost must match"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn open_path_hydration_skips_expired_asks() {
+        // The hydration query filters on `expires_at_unix > now`, so
+        // expired Asks must not appear in the hydrated book.
+        let path = unique_temp_path("expired");
+        let now = current_unix();
+
+        {
+            let m = Marketplace::open_path(&path).expect("open_path");
+            // Active Ask.
+            m.put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(211),
+                "openai/gpt-4",
+                5_000,
+                now + 1_000,
+            ))
+            .unwrap();
+            // Expired Ask (expires_at < now).
+            m.put(&sample_ask(
+                &octo_ident::test_helpers::sample_did(212),
+                "openai/gpt-4",
+                1_000, // very low cost — would be the cheapest if not expired
+                now.saturating_sub(1),
+            ))
+            .unwrap();
+        }
+
+        let m2 = Marketplace::open_path(&path).expect("reopen");
+        let cheapest = m2.cheapest("openai/gpt-4").expect("cheapest after restart");
+        // The expired 1_000-cost ask must NOT be returned; the active
+        // 5_000-cost ask from did 301 must be.
+        assert_eq!(
+            cheapest.asker_did,
+            octo_ident::test_helpers::sample_did(211),
+            "expired ask must not appear in hydrated book"
+        );
+        assert!(
+            cheapest.cost_per_1k > 1_000,
+            "cheapest must be the active 5_000-cost ask, not the expired 1_000-cost ask"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+}

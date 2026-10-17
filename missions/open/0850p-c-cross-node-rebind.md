@@ -34,19 +34,17 @@ Fallback: 30s timeout on `REBIND_PREPARE` → manual operator reconciliation via
 - [ ] Integration test: 2 simulated platforms, simultaneous REBIND → one wins, one rejects
 - [ ] Documentation: operator guide for manual reconciliation
 
-
 ### Implementation Guide
 
 Reference: `crates/octo-network/src/mon/rebind.rs` (existing single-platform REBIND); `crates/octo-network/src/mon/bind_envelope.rs` (existing envelope types).
 
-
 ### Type Coverage
 
-| RFC-0850p-c Type | Implemented By |
-|-----------------|----------------|
-| `REBIND_PREPARE` / `REBIND_COMMIT` / `REBIND_ABORT` envelopes | This mission |
-| 2-phase commit coordinator | This mission |
-| Tie-break: lex `domain_id` ordering | This mission |
+| RFC-0850p-c Type                                              | Implemented By |
+| ------------------------------------------------------------- | -------------- |
+| `REBIND_PREPARE` / `REBIND_COMMIT` / `REBIND_ABORT` envelopes | This mission   |
+| 2-phase commit coordinator                                    | This mission   |
+| Tie-break: lex `domain_id` ordering                           | This mission   |
 
 ## Dependencies
 

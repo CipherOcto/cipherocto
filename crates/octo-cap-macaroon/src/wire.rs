@@ -1,0 +1,653 @@
+//! Wire format for capability tokens (RFC-0957 §Wire Format + RFC-0958 §4 wire).
+//!
+//! v1 wire format (3 segments, base64url no padding):
+//! ```text
+//! capability_token_v1 := base64url(macaroon_canonical_json)
+//!                     || "."
+//!                     || base64url(holder_sig)
+//!                     || "."
+//!                     || base64url(discharges_canonical_json)
+//! ```
+//!
+//! v2 wire format (RFC-0958 — 4 segments, optional 4th for
+//! `proof_bundle_canonical_json`):
+//! ```text
+//! capability_token_v2 := base64url(macaroon_canonical_json)
+//!                     || "."
+//!                     || base64url(holder_sig)
+//!                     || "."
+//!                     || base64url(discharges_canonical_json)
+//!                     || "."
+//!                     || base64url(proof_bundle_canonical_json)   // v2 ONLY
+//! ```
+//!
+//! **Forward compat:** v1 parsers (`deserialize_wire`) split on `.` and
+//! take the first 3 segments (silently ignoring the v2 4th). v2 parsers
+//! (`deserialize_wire_v2`) detect 4-segment wire and extract
+//! `proof_bundle_canonical_json` for downstream STARK verify.
+//!
+//! **Backward compat:** v2 emitter (`serialize_wire_v2`) emits 4 segments
+//! iff the caller supplies `Some(proof_bundle_bytes)`, else 3 segments
+//! (the v1 shape). v2 parsers accept both 3 and 4 segment wires.
+//!
+//! **Serialization substrate (mission 0957-a R6 fix):** the wire segments
+//! use **canonical JSON** (via `serde_json` with the `preserve_order`
+//! feature disabled, giving BTreeMap-keyed canonical output) rather than
+//! borsh. Earlier versions of this doc and code referenced `_borsh`
+//! suffixes, but the actual encoding has always been JSON. The naming
+//! is now aligned with the substrate to avoid cross-impl interop
+//! confusion. A future RFC may move to borsh for tighter canonicalization;
+//! until then, treat the segments as canonical-JSON bytes.
+
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
+
+use crate::token::CapabilityToken;
+
+/// Result of parsing a v2 wire format: token + optional `proof_bundle_borsh`.
+///
+/// `CapabilityToken` does NOT derive `Eq` (ed25519 signature field), so we
+/// derive `Clone` + `Debug` only. Field-by-field comparisons are explicit
+/// at call sites.
+#[derive(Debug, Clone)]
+pub struct WireV2 {
+    /// Capability token (segments 1..3).
+    pub token: CapabilityToken,
+    /// Optional v2 4th segment: `proof_bundle_borsh` (RFC-0958).
+    pub proof_bundle: Option<Vec<u8>>,
+}
+
+/// Fixed width of the algorithm prefix in wire segment 2, in bytes.
+///
+/// Segment 2 is `AlgorithmId ‖ signature`. The algorithm used to be absent
+/// from the wire and re-stamped as Ed25519 on parse, which silently
+/// downgraded any token minted under another algorithm — `HolderRecord` has
+/// no algorithm field, so there was no out-of-band source for the parser to
+/// use instead. Carrying it here is what makes the round-trip lossless
+/// (mission `0009-e5`).
+///
+/// Only the prefix is fixed width. The signature that follows is whatever
+/// `SignatureAlgorithm::signature_len()` says, so the segment has no total
+/// length constant. It does not need one: a fixed-width prefix already
+/// delimits the remainder, so "first 16 bytes, then the rest" is
+/// unambiguous rather than a guess.
+///
+/// `HolderSignature::new` then checks the signature against the algorithm it
+/// names, wherever that algorithm is registered — a stronger check than a
+/// fixed total ever was, because a correctly-sized signature under the wrong
+/// algorithm no longer passes. An algorithm this deployment has not registered
+/// cannot state a width and cannot verify either, so no length is enforced for
+/// it and it fails closed at verification (mission `0009-e8`).
+const ALGORITHM_PREFIX_LEN: usize = 16;
+
+/// Serialize a `CapabilityToken` to v1 wire format (3 segments).
+///
+/// **Forward-compat:** if the caller has a v2 wire with an embedded
+/// `proof_bundle`, use [`serialize_wire_v2`] instead. This function
+/// emits the v1 shape (3 segments) unconditionally.
+///
+/// # Errors
+/// Returns `WireError::Serialize` on internal borsh failure (should not
+/// happen for valid tokens).
+pub fn serialize_wire(token: &CapabilityToken) -> Result<String, WireError> {
+    let macaroon_bytes =
+        json_canon::to_vec(&token.macaroon).map_err(|e| WireError::Serialize(e.clone()))?;
+    let mut sig_segment =
+        Vec::with_capacity(ALGORITHM_PREFIX_LEN + token.holder_sig.to_bytes().len());
+    sig_segment.extend_from_slice(token.holder_sig.algorithm_id().as_bytes());
+    sig_segment.extend_from_slice(token.holder_sig.to_bytes());
+    let discharges_bytes =
+        json_canon::to_vec(&token.discharges).map_err(|e| WireError::Serialize(e.clone()))?;
+
+    let s1 = URL_SAFE_NO_PAD.encode(&macaroon_bytes);
+    let s2 = URL_SAFE_NO_PAD.encode(&sig_segment);
+    let s3 = URL_SAFE_NO_PAD.encode(&discharges_bytes);
+
+    Ok(format!("{s1}.{s2}.{s3}"))
+}
+
+/// Deserialize a `CapabilityToken` from v1 wire format (3 segments).
+///
+/// Holder DID + public key are NOT in the wire format — caller passes them
+/// as parameters (resolved out-of-band from a DID registry).
+///
+/// **Forward-compat:** if the wire carries 4 segments (v2 format), the
+/// 4th is silently ignored. v1 callers don't need to know about v2.
+///
+/// # Errors
+/// Returns `WireError::Parse` on malformed wire format.
+pub fn deserialize_wire(
+    s: &str,
+    holder_did: impl Into<String>,
+    holder_pub: &[u8],
+) -> Result<CapabilityToken, WireError> {
+    let parsed = parse_wire_to_token(s, holder_did, holder_pub)?;
+    // v1 path discards the v2 4th segment silently.
+    Ok(parsed.token)
+}
+
+/// Serialize a `CapabilityToken` + optional `proof_bundle` to v2 wire
+/// format. Emits 4 segments iff `opt_proof_bundle` is `Some(_)`, else 3
+/// segments (the v1 shape).
+///
+/// # Errors
+/// Returns `WireError::Serialize` on internal borsh failure.
+pub fn serialize_wire_v2(
+    token: &CapabilityToken,
+    opt_proof_bundle: Option<&[u8]>,
+) -> Result<String, WireError> {
+    let base = serialize_wire(token)?;
+    match opt_proof_bundle {
+        Some(pb) => {
+            let s4 = URL_SAFE_NO_PAD.encode(pb);
+            Ok(format!("{base}.{s4}"))
+        }
+        None => Ok(base),
+    }
+}
+
+/// Deserialize a v2 wire into token + optional proof bundle bytes.
+///
+/// Accepts both 3-segment (v1) and 4-segment (v2) wire formats. Returns
+/// `proof_bundle = None` for v1 wire; `proof_bundle = Some(bytes)` for
+/// v2. Used by `verify_capability_zk` downstream callers that need
+/// access to the embedded STARK proof.
+///
+/// # Errors
+/// Returns `WireError::Parse` on malformed wire format.
+pub fn deserialize_wire_v2(
+    s: &str,
+    holder_did: impl Into<String>,
+    holder_pub: &[u8],
+) -> Result<WireV2, WireError> {
+    let parsed = parse_wire_to_token(s, holder_did, holder_pub)?;
+    Ok(WireV2 {
+        token: parsed.token,
+        proof_bundle: parsed.proof_bundle,
+    })
+}
+
+/// Internal parser shared between v1 + v2 deserializers.
+///
+/// Accepts 3 or 4 segments. Returns the parsed `CapabilityToken` plus the
+/// optional 4th segment bytes (base64url-decoded).
+struct ParsedWire {
+    token: CapabilityToken,
+    proof_bundle: Option<Vec<u8>>,
+}
+
+fn parse_wire_to_token(
+    s: &str,
+    holder_did: impl Into<String>,
+    holder_pub: &[u8],
+) -> Result<ParsedWire, WireError> {
+    // DoS guard #1: total wire length cap BEFORE split. Prevents
+    // an attacker-supplied 100MB string from allocating on split
+    // + b64 decode + JSON parse.
+    if s.len() > MAX_WIRE_TOTAL {
+        return Err(WireError::WireTooLong(s.len(), MAX_WIRE_TOTAL));
+    }
+
+    let parts: Vec<&str> = s.split('.').collect();
+    if parts.len() != 3 && parts.len() != 4 {
+        return Err(WireError::SegmentCount(parts.len()));
+    }
+
+    // DoS guard #2: per-segment length cap. Each base64url-encoded
+    // segment may not exceed MAX_SEGMENT_BYTES (1 MiB).
+    for (i, seg) in parts.iter().enumerate() {
+        if seg.len() > MAX_SEGMENT_BYTES {
+            return Err(WireError::SegmentTooLong(i, seg.len(), MAX_SEGMENT_BYTES));
+        }
+    }
+
+    let macaroon_bytes = URL_SAFE_NO_PAD
+        .decode(parts[0])
+        .map_err(|e| WireError::Parse(format!("macaroon b64: {e}")))?;
+    let sig_bytes = URL_SAFE_NO_PAD
+        .decode(parts[1])
+        .map_err(|e| WireError::Parse(format!("sig b64: {e}")))?;
+    let discharges_bytes = URL_SAFE_NO_PAD
+        .decode(parts[2])
+        .map_err(|e| WireError::Parse(format!("discharges b64: {e}")))?;
+
+    if sig_bytes.len() <= ALGORITHM_PREFIX_LEN {
+        return Err(WireError::Parse(format!(
+            "sig segment must exceed {ALGORITHM_PREFIX_LEN} bytes (algorithm + signature), got {}",
+            sig_bytes.len()
+        )));
+    }
+    let mut algorithm_bytes = [0u8; 16];
+    algorithm_bytes.copy_from_slice(&sig_bytes[..ALGORITHM_PREFIX_LEN]);
+    let algorithm_id = octo_ident::AlgorithmId::from_bytes(algorithm_bytes);
+    let sig_bytes = &sig_bytes[ALGORITHM_PREFIX_LEN..];
+    // The algorithm is read off the wire, not invented. The previous code
+    // stamped Ed25519 here, which is a silent downgrade for any other
+    // signer: the token would claim Ed25519 and fail verification as though
+    // forged. `HolderRecord` carries `holder_pub` but no algorithm, so there
+    // was no out-of-band source this could have read instead (mission
+    // `0009-e5`).
+    let holder_sig = crate::token::HolderSignature::new(algorithm_id, sig_bytes)
+        .map_err(|e| WireError::Parse(format!("sig: {e}")))?;
+
+    let macaroon: crate::macaroon::Macaroon = json_canon::from_slice(&macaroon_bytes)
+        .map_err(|e| WireError::Parse(format!("macaroon json: {e}")))?;
+    let discharges: Vec<crate::token::DischargeMacaroon> =
+        json_canon::from_slice(&discharges_bytes)
+            .map_err(|e| WireError::Parse(format!("discharges json: {e}")))?;
+
+    let proof_bundle = if parts.len() == 4 {
+        let pb = URL_SAFE_NO_PAD
+            .decode(parts[3])
+            .map_err(|e| WireError::Parse(format!("proof_bundle b64: {e}")))?;
+        Some(pb)
+    } else {
+        None
+    };
+
+    Ok(ParsedWire {
+        token: CapabilityToken {
+            macaroon,
+            holder_pub: holder_pub.to_vec(),
+            holder_did: holder_did.into(),
+            holder_sig,
+            discharges,
+            holder_sig_stale: false,
+        },
+        proof_bundle,
+    })
+}
+
+/// Compute the `cap_root_hash` PK from a v1 wire string (RFC-0957-A1 §Phase 2).
+///
+/// `cap_root_hash = compute_capability_id(macaroon)`, i.e.
+/// `BLAKE3(CAPABILITY_ID_DOMAIN ‖ canonical_ser_unsigned(macaroon))` over the
+/// **whole canonical macaroon** — `root_id`, `root_secret_hash`, the chain, and
+/// the caveats. This is the lookup key for `HolderRegistry::lookup(cap_root_hash)`.
+///
+/// Because `Macaroon::mint` sets `macaroon.id = compute_capability_id(&macaroon)`
+/// (`macaroon.rs`, mint path), the registry key **is** the token's `id` field,
+/// and the wire-only derivation is byte-identical to the mint-time derivation
+/// (Round 3 R2 C1 fix). Pinned by
+/// `compute_cap_root_hash_matches_macaroons_compute_capability_id`.
+///
+/// **Correction (2026-10-06).** This comment previously stated
+/// `cap_root_hash = BLAKE3(macaroon.root_id)` and claimed "both hash the
+/// macaroon's `root_id` directly." The code has always called
+/// `compute_capability_id`; only the comment was wrong. The error mattered:
+/// `root_id` alone does **not** determine the key — changing a caveat changes
+/// `cap_root_hash` — so a reader relying on this comment would draw wrong
+/// conclusions about which fields are covered by the registry primary key.
+/// See `docs/audits/2026-10-04-red-team-security-audit.md` §C-2.
+///
+/// Forward compat: v2 wire (4 segments) is accepted but the 4th segment
+/// (proof_bundle) is NOT included in the hash (the proof_bundle is
+/// post-mint artifact that doesn't change the registry PK). Note this means a
+/// captured v2 envelope's proof bundle can be swapped without changing the PK —
+/// safe only while nothing at redemption reads that 4th segment (finding H-3).
+///
+/// # Errors
+/// Returns `WireError::Parse` on malformed wire format. Returns
+/// `WireError::SegmentCount` on wrong segment count. Returns
+/// `WireError::WireTooLong` / `WireError::SegmentTooLong` on DoS guard trips.
+pub fn compute_cap_root_hash_from_wire(s: &str) -> Result<[u8; 32], WireError> {
+    // DoS guard (mirrors parse_wire_to_token).
+    if s.len() > MAX_WIRE_TOTAL {
+        return Err(WireError::WireTooLong(s.len(), MAX_WIRE_TOTAL));
+    }
+    let parts: Vec<&str> = s.split('.').collect();
+    if parts.len() != 3 && parts.len() != 4 {
+        return Err(WireError::SegmentCount(parts.len()));
+    }
+    for (i, seg) in parts.iter().enumerate() {
+        if seg.len() > MAX_SEGMENT_BYTES {
+            return Err(WireError::SegmentTooLong(i, seg.len(), MAX_SEGMENT_BYTES));
+        }
+    }
+    let macaroon_bytes = URL_SAFE_NO_PAD
+        .decode(parts[0])
+        .map_err(|e| WireError::Parse(format!("macaroon b64: {e}")))?;
+    let macaroon: crate::macaroon::Macaroon = json_canon::from_slice(&macaroon_bytes)
+        .map_err(|e| WireError::Parse(format!("macaroon json: {e}")))?;
+    Ok(crate::macaroon::compute_capability_id(&macaroon))
+}
+
+/// Maximum total wire length (RFC-0958 §Performance; protects against
+/// OOM via attacker-supplied huge s4 segments + b64 decode amplification).
+/// 64 KiB is well over the maximum real wire (a SelfHost 500KB proof
+/// would still fit since the 4th segment carries base64-encoded bytes,
+/// 4/3×500KB ≈ 670KB; we set the cap to allow full proofs once the
+/// FFI ships).
+pub const MAX_WIRE_TOTAL: usize = 2 * 1024 * 1024; // 2 MiB defensive cap
+/// Maximum per-segment raw length (before base64 decode).
+pub const MAX_SEGMENT_BYTES: usize = 1024 * 1024; // 1 MiB per segment
+
+/// Wire format errors.
+#[derive(Debug, thiserror::Error)]
+pub enum WireError {
+    #[error("serialize error: {0}")]
+    Serialize(String),
+
+    #[error("parse error: {0}")]
+    Parse(String),
+
+    #[error("expected 3 or 4 wire segments, got {0}")]
+    SegmentCount(usize),
+
+    #[error("wire total length {0} exceeds cap of {1} bytes (DoS guard)")]
+    WireTooLong(usize, usize),
+
+    #[error("segment[{0}] length {1} exceeds cap of {2} bytes (DoS guard)")]
+    SegmentTooLong(usize, usize, usize),
+}
+
+/// Minimal canonical-JSON serialization shim (mission 0957-a R6 fix:
+/// the wire substrate is serde_json-canonical, not borsh; the segment
+/// naming was renamed to match the actual substrate to avoid cross-impl
+/// interop confusion).
+///
+/// Caveat canonicalization is delegated to the per-caveat
+/// `Caveat::canonical_ser()` impl (deterministic); serde_json handles
+/// the outer macaroon/discharge envelope via `serde::Serialize` /
+/// `serde::Deserialize`. The full wire-format canonical form is the
+/// concatenation of the per-caveat canonical JSON wrapped in the
+/// serde_json envelope.
+mod json_canon {
+    pub fn to_vec<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, String> {
+        serde_json::to_vec(value).map_err(|e| e.to_string())
+    }
+
+    pub fn from_slice<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
+        serde_json::from_slice(bytes).map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::caveat::Caveat;
+    use crate::signer::CapabilitySigner;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    struct TestSigner {
+        key: [u8; 32],
+        pub_bytes: [u8; 32],
+    }
+
+    impl CapabilitySigner for TestSigner {
+        fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, crate::signer::CapabilitySignerError> {
+            let sk = SigningKey::from_bytes(&self.key);
+            let sig = sk.sign(msg);
+            Ok(sig.to_bytes().to_vec())
+        }
+        fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+            octo_algo_ed25519::ed25519_algorithm_id()
+        }
+
+        fn public_key_bytes(&self) -> Vec<u8> {
+            self.pub_bytes.to_vec()
+        }
+    }
+
+    fn sample_signer() -> TestSigner {
+        let key = [0x42u8; 32];
+        let sk = SigningKey::from_bytes(&key);
+        let vk = sk.verifying_key();
+        TestSigner {
+            key,
+            pub_bytes: vk.to_bytes(),
+        }
+    }
+
+    #[test]
+    fn compute_cap_root_hash_from_wire_returns_32_bytes() {
+        // TV7 (cross-mission): the helper is the wire-only PK derivation.
+        // Build a minimal valid wire + confirm the helper returns 32 bytes.
+        let macaroon = crate::macaroon::Macaroon::mint(&[0x33; 32]).unwrap();
+        let token = crate::token::CapabilityToken {
+            macaroon,
+            holder_pub: vec![0xCC; 32],
+            holder_did: octo_ident::test_helpers::sample_did(2),
+            holder_sig: crate::token::HolderSignature::new(
+                crate::governance_signature::governance_algorithm_id(),
+                &[0u8; 64],
+            )
+            .expect("64-byte signature"),
+            discharges: vec![],
+            holder_sig_stale: false,
+        };
+        let wire = serialize_wire(&token).unwrap();
+        let hash = compute_cap_root_hash_from_wire(&wire).unwrap();
+        assert_eq!(hash.len(), 32);
+    }
+
+    #[test]
+    fn compute_cap_root_hash_matches_macaroons_compute_capability_id() {
+        // TV7: wire-only derivation matches mint-time derivation byte-for-byte.
+        let macaroon = crate::macaroon::Macaroon::mint(&[0x33; 32]).unwrap();
+        let token = crate::token::CapabilityToken {
+            macaroon: macaroon.clone(),
+            holder_pub: vec![0xCC; 32],
+            holder_did: octo_ident::test_helpers::sample_did(2),
+            holder_sig: crate::token::HolderSignature::new(
+                crate::governance_signature::governance_algorithm_id(),
+                &[0u8; 64],
+            )
+            .expect("64-byte signature"),
+            discharges: vec![],
+            holder_sig_stale: false,
+        };
+        let wire = serialize_wire(&token).unwrap();
+        let hash_from_wire = compute_cap_root_hash_from_wire(&wire).unwrap();
+        let hash_from_mac = crate::macaroon::compute_capability_id(&macaroon);
+        assert_eq!(hash_from_wire, hash_from_mac);
+    }
+
+    #[test]
+    fn compute_cap_root_hash_malformed_wire_returns_segment_count() {
+        let r = compute_cap_root_hash_from_wire("not.a.valid.wire.format");
+        assert!(matches!(r, Err(WireError::SegmentCount(5))));
+    }
+
+    #[test]
+    fn compute_cap_root_hash_bad_base64_returns_parse_error() {
+        let r = compute_cap_root_hash_from_wire("!!!.@@@.###");
+        assert!(matches!(r, Err(WireError::Parse(_))));
+    }
+
+    #[test]
+    fn wire_format_three_segments() {
+        let holder = sample_signer();
+        let root_secret = [0x42; 32];
+        let caveats = [Caveat::Before(1_700_000_000)];
+        let token = CapabilityToken::mint(
+            &root_secret,
+            &holder,
+            &octo_ident::test_helpers::sample_did(2),
+            &caveats,
+        )
+        .unwrap();
+        let wire = serialize_wire(&token).unwrap();
+        let segments: Vec<&str> = wire.split('.').collect();
+        assert_eq!(segments.len(), 3);
+        for seg in &segments {
+            assert!(!seg.is_empty());
+        }
+    }
+
+    #[test]
+    fn wire_roundtrip() {
+        let holder = sample_signer();
+        let root_secret = [0x42; 32];
+        let caveats = [Caveat::Before(1_700_000_000)];
+        let token = CapabilityToken::mint(
+            &root_secret,
+            &holder,
+            &octo_ident::test_helpers::sample_did(2),
+            &caveats,
+        )
+        .unwrap();
+        let wire = serialize_wire(&token).unwrap();
+        let back = deserialize_wire(
+            &wire,
+            octo_ident::test_helpers::sample_did(2),
+            &token.holder_pub,
+        )
+        .unwrap();
+        assert_eq!(back.macaroon.root_id, token.macaroon.root_id);
+        assert_eq!(back.macaroon.caveats, token.macaroon.caveats);
+        assert_eq!(back.holder_did, token.holder_did);
+        assert_eq!(back.holder_pub, token.holder_pub);
+    }
+
+    #[test]
+    fn v1_parser_ignores_v2_fourth_segment() {
+        let holder = sample_signer();
+        let root_secret = [0x42; 32];
+        let caveats = [Caveat::Before(1_700_000_000)];
+        let token = CapabilityToken::mint(
+            &root_secret,
+            &holder,
+            &octo_ident::test_helpers::sample_did(2),
+            &caveats,
+        )
+        .unwrap();
+        // Synthesize v2 wire: append a 4th segment.
+        let pb_bytes = b"fake_proof_bundle_for_v2_test";
+        let wire_v2 = serialize_wire_v2(&token, Some(pb_bytes)).unwrap();
+        let segments: Vec<&str> = wire_v2.split('.').collect();
+        assert_eq!(segments.len(), 4);
+
+        // v1 deserializer ignores segment 4 and recovers the token.
+        let back = deserialize_wire(
+            &wire_v2,
+            octo_ident::test_helpers::sample_did(2),
+            &token.holder_pub,
+        )
+        .unwrap();
+        assert_eq!(back.macaroon.root_id, token.macaroon.root_id);
+    }
+
+    // ── The algorithm travels with the signature ───────────────────────
+
+    /// A signer that reports an algorithm it did not use is exactly what
+    /// mission `0009-e5` removed. Mint must record what the signer named,
+    /// not a constant it chose itself.
+    ///
+    /// Local fixture rather than `IdentityKey`: this crate cannot depend on
+    /// `octo-wallet` — that separation is the entire reason the
+    /// `CapabilitySigner` trait exists.
+    struct ReportingSigner {
+        key: ed25519_dalek::SigningKey,
+        reported: octo_ident::AlgorithmId,
+    }
+
+    impl ReportingSigner {
+        fn new(byte: u8, reported: octo_ident::AlgorithmId) -> Self {
+            Self {
+                key: ed25519_dalek::SigningKey::from_bytes(&[byte; 32]),
+                reported,
+            }
+        }
+    }
+
+    impl crate::signer::CapabilitySigner for ReportingSigner {
+        fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, crate::signer::CapabilitySignerError> {
+            use ed25519_dalek::Signer as _;
+            Ok(self.key.sign(msg).to_bytes().to_vec())
+        }
+        fn public_key_bytes(&self) -> Vec<u8> {
+            self.key.verifying_key().to_bytes().to_vec()
+        }
+        fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+            self.reported
+        }
+    }
+
+    fn signed_token(signer: &ReportingSigner) -> crate::token::CapabilityToken {
+        crate::token::CapabilityToken::mint(&[0x42; 32], signer, "did:octo:zCapHolder", &[])
+            .expect("mint")
+    }
+
+    #[test]
+    fn mint_records_the_signers_own_algorithm() {
+        let signer = ReportingSigner::new(0x11, octo_algo_ed25519::ed25519_algorithm_id());
+        let token = signed_token(&signer);
+
+        assert_eq!(
+            token.holder_sig.algorithm_id(),
+            signer.algorithm_id(),
+            "the token must record the signer's algorithm, not a mint-site constant"
+        );
+        token
+            .verify_holder_sig()
+            .expect("a truthful claim verifies");
+    }
+
+    /// The control that keeps the vector above honest: a signer naming a
+    /// *different* algorithm has that name recorded, because `mint` reads
+    /// the signer rather than the only algorithm that happens to verify.
+    #[test]
+    fn a_signer_naming_another_algorithm_is_recorded_faithfully() {
+        let exotic = octo_ident::AlgorithmId::derive("not-a-registered-algorithm");
+        let signer = ReportingSigner::new(0x22, exotic);
+        let token = signed_token(&signer);
+
+        assert_eq!(
+            token.holder_sig.algorithm_id(),
+            exotic,
+            "mint must not second-guess the signer"
+        );
+        assert!(
+            token.verify_holder_sig().is_err(),
+            "a claim naming an unregistered algorithm must not verify"
+        );
+    }
+
+    #[test]
+    fn the_algorithm_survives_the_wire_round_trip() {
+        let signer = ReportingSigner::new(0x33, octo_algo_ed25519::ed25519_algorithm_id());
+        let token = signed_token(&signer);
+
+        let wire = serialize_wire(&token).expect("serialize");
+        let back =
+            deserialize_wire(&wire, "did:octo:zCapHolder", &token.holder_pub).expect("deserialize");
+
+        assert_eq!(
+            back.holder_sig.algorithm_id(),
+            token.holder_sig.algorithm_id(),
+            "the wire must not re-stamp the algorithm it was handed"
+        );
+        assert_eq!(
+            back.holder_sig.to_bytes(),
+            token.holder_sig.to_bytes(),
+            "and must not disturb the signature bytes"
+        );
+    }
+
+    /// The downgrade this mission exists to remove, stated as a vector. A
+    /// non-Ed25519 claim must not come back claiming to be Ed25519 — that
+    /// is the silent wrong answer, where a genuine signature fails as though
+    /// forged.
+    #[test]
+    fn a_non_ed25519_survivor_is_not_downgraded_by_the_wire() {
+        let exotic = octo_ident::AlgorithmId::derive("stark-schnorr");
+        let signer = ReportingSigner::new(0x44, exotic);
+        let token = signed_token(&signer);
+
+        let wire = serialize_wire(&token).expect("serialize");
+        let back =
+            deserialize_wire(&wire, "did:octo:zCapHolder", &token.holder_pub).expect("deserialize");
+
+        assert_eq!(
+            back.holder_sig.algorithm_id(),
+            exotic,
+            "the wire must preserve a non-Ed25519 algorithm"
+        );
+        assert_ne!(
+            back.holder_sig.algorithm_id(),
+            crate::governance_signature::governance_algorithm_id(),
+            "explicitly: this must not have been silently rewritten as Ed25519"
+        );
+    }
+}

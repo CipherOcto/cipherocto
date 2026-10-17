@@ -25,12 +25,12 @@ Fix the stoolap expression compiler to check the aggregate function registry whe
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| G1 | Aggregate functions work inside transactions | `SELECT SUM(col) FROM t WHERE key = $1 FOR UPDATE` succeeds |
-| G2 | Zero regression for non-aggregate functions | Existing scalar functions unchanged |
-| G3 | Preserve aggregation pushdown optimization | Pushdown path still used when eligible |
-| G4 | Minimal compiler complexity | Single lookup additional branch |
+| Goal | Target                                       | Metric                                                      |
+| ---- | -------------------------------------------- | ----------------------------------------------------------- |
+| G1   | Aggregate functions work inside transactions | `SELECT SUM(col) FROM t WHERE key = $1 FOR UPDATE` succeeds |
+| G2   | Zero regression for non-aggregate functions  | Existing scalar functions unchanged                         |
+| G3   | Preserve aggregation pushdown optimization   | Pushdown path still used when eligible                      |
+| G4   | Minimal compiler complexity                  | Single lookup additional branch                             |
 
 ## Motivation
 
@@ -44,7 +44,7 @@ The same query outside transaction context succeeds because it routes through th
 
 ### Root Cause
 
-In `src/executor/expression/compiler.rs:1576` (BEFORE fix):
+In `src/executor/expression/compiler.rs` (BEFORE fix):
 
 ```rust
 // Get function from registry
@@ -77,7 +77,8 @@ The compiler now checks aggregates when scalar lookup fails, providing a clearer
 
 ### Why Outside-Transaction Works
 
-`try_aggregation_pushdown()` in `aggregation.rs:5011` handles simple aggregation queries by:
+`try_aggregation_pushdown()` in `aggregation.rs` handles simple aggregation queries by:
+
 1. Checking eligibility (no WHERE, no GROUP BY, no HAVING, no window functions)
 2. For eligible queries, computing aggregates directly via `table.sum_column(idx)`
 3. **Bypassing expression compilation entirely**
@@ -85,6 +86,7 @@ The compiler now checks aggregates when scalar lookup fails, providing a clearer
 ### Why Inside-Transaction Fails
 
 MVCC transaction execution uses a different path:
+
 1. `Transaction::execute()` → parses SQL → executes via `project_columns()` → `compile_expression()`
 2. The `compile_expression()` path uses `CompileContext::with_global_registry()` which only compiles scalar expressions
 3. Aggregate functions require the full `execute_select_with_aggregation()` path, not scalar expression compilation
@@ -115,6 +117,7 @@ The expression compiler now checks the aggregate registry when scalar lookup fai
 ### Solution 2: Enhance Aggregation Pushdown for Transactions
 
 Extend `try_aggregation_pushdown()` to handle queries with `FOR UPDATE` by:
+
 1. Computing aggregate before acquiring row locks
 2. Validating within transaction using the pre-computed value
 
@@ -123,6 +126,7 @@ Extend `try_aggregation_pushdown()` to handle queries with `FOR UPDATE` by:
 ### Solution 3: Workaround in quota-router
 
 Avoid SUM inside transactions by computing budget client-side:
+
 - Use separate key lookup + separate spend lookup instead of `SELECT SUM(...) WHERE key_id = $1 FOR UPDATE`
 - Adds one additional query but avoids the compiler bug
 
@@ -174,7 +178,8 @@ Status: Committed as `dcb4f1c`
 
 **Bug:** When `execute_in_transaction` routes aggregate queries through `convert_where_to_storage_expr`, the WHERE clause's query parameters (e.g., `$1`) were not being resolved because `convert_where_to_storage_expr` created an empty `ExecutionContext` instead of using the one with actual parameters.
 
-**Root cause:** At `src/executor/mod.rs:912-914`:
+**Root cause:** At `src/executor/mod.rs`:
+
 ```rust
 let value =
     crate::executor::expression::ExpressionEval::compile(&infix.right, &[])?  // empty columns
@@ -183,6 +188,7 @@ let value =
 ```
 
 **Fix:** Pass `columns` and `ctx` through to `convert_where_to_storage_expr` so parameters resolve correctly:
+
 ```rust
 let value =
     crate::executor::expression::ExpressionEval::compile(&infix.right, columns)?
@@ -191,6 +197,7 @@ let value =
 ```
 
 **Changes:**
+
 - Added `columns: &[String]` and `ctx: &ExecutionContext` parameters to `convert_where_to_storage_expr`
 - Updated recursive calls to pass these through
 - Updated call site in `execute_in_transaction`
@@ -201,11 +208,11 @@ Status: Committed as `1ca5d1a`
 
 ## Key Files to Modify
 
-| File | Change |
-|------|--------|
-| `src/executor/expression/compiler.rs` | Add `get_aggregate()` fallback in `compile_function_call()` |
-| `src/executor/expression/vm.rs` | Add `Op::CallAggregate` and aggregate execution logic |
-| `tests/aggregate_in_transaction_test.rs` | New regression test |
+| File                                     | Change                                                      |
+| ---------------------------------------- | ----------------------------------------------------------- |
+| `src/executor/expression/compiler.rs`    | Add `get_aggregate()` fallback in `compile_function_call()` |
+| `src/executor/expression/vm.rs`          | Add `Op::CallAggregate` and aggregate execution logic       |
+| `tests/aggregate_in_transaction_test.rs` | New regression test                                         |
 
 ## Test Vectors (RFC-0204)
 
@@ -249,12 +256,12 @@ COMMIT;
 
 ## Alternatives Considered
 
-| Approach | Pros | Cons |
-|----------|------|------|
-| Solution 1 (Partial) | Quick fix, minimal code | Aggregate still falls through to error |
-| Solution 2 (Pushdown) | Preserves performance | Complex transaction restructuring |
-| Solution 3 (Workaround) | No stoolap changes needed | Additional query overhead |
-| Solution 1 Full | Complete fix | Requires VM changes + aggregate state machine |
+| Approach                | Pros                      | Cons                                          |
+| ----------------------- | ------------------------- | --------------------------------------------- |
+| Solution 1 (Partial)    | Quick fix, minimal code   | Aggregate still falls through to error        |
+| Solution 2 (Pushdown)   | Preserves performance     | Complex transaction restructuring             |
+| Solution 3 (Workaround) | No stoolap changes needed | Additional query overhead                     |
+| Solution 1 Full         | Complete fix              | Requires VM changes + aggregate state machine |
 
 ## Future Work
 
@@ -270,19 +277,19 @@ The expression compiler was written before aggregate function support was comple
 
 ## Security Considerations
 
-| Threat | Impact | Mitigation |
-|--------|--------|------------|
+| Threat                                           | Impact                                                       | Mitigation                                                      |
+| ------------------------------------------------ | ------------------------------------------------------------ | --------------------------------------------------------------- |
 | Aggregate injection via malformed column aliases | Low - Aggregate functions are registered in a fixed registry | Input validation on column expressions prevents alias injection |
-| Transaction rollback after aggregate computation | Low - Aggregate read-only, no economic impact | MVCC ensures consistent reads |
-| Denial of service via expensive aggregates | Medium - Large scans could consume resources | Query timeout configurable via ExecutionContext |
+| Transaction rollback after aggregate computation | Low - Aggregate read-only, no economic impact                | MVCC ensures consistent reads                                   |
+| Denial of service via expensive aggregates       | Medium - Large scans could consume resources                 | Query timeout configurable via ExecutionContext                 |
 
 ## Adversarial Review
 
-| Attack Vector | Likelihood | Impact | Mitigation |
-|---------------|------------|--------|------------|
-| Large GROUP BY causing memory exhaustion | Low | High | Phase 3 will add memory limits |
-| Malformed aggregate function names bypassing filters | Low | Medium | Function registry is pre-populated, not user-configurable |
-| Transaction ID enumeration via timing attacks | Very Low | Low | MVCC transaction IDs are opaque |
+| Attack Vector                                        | Likelihood | Impact | Mitigation                                                |
+| ---------------------------------------------------- | ---------- | ------ | --------------------------------------------------------- |
+| Large GROUP BY causing memory exhaustion             | Low        | High   | Phase 3 will add memory limits                            |
+| Malformed aggregate function names bypassing filters | Low        | Medium | Function registry is pre-populated, not user-configurable |
+| Transaction ID enumeration via timing attacks        | Very Low   | Low    | MVCC transaction IDs are opaque                           |
 
 ## Compatibility
 
@@ -294,12 +301,12 @@ The expression compiler was written before aggregate function support was comple
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.3 | 2026-04-21 | Add Phase 4: parameter resolution fix for WHERE clause |
-| 1.2 | 2026-04-21 | Add Phase 2: route aggregates through Executor |
-| 1.1 | 2026-04-20 | Add Phase 1: better aggregate detection |
-| 1.0 | 2026-04-19 | Initial accepted version |
+| Version | Date       | Changes                                                |
+| ------- | ---------- | ------------------------------------------------------ |
+| 1.3     | 2026-04-21 | Add Phase 4: parameter resolution fix for WHERE clause |
+| 1.2     | 2026-04-21 | Add Phase 2: route aggregates through Executor         |
+| 1.1     | 2026-04-20 | Add Phase 1: better aggregate detection                |
+| 1.0     | 2026-04-19 | Initial accepted version                               |
 
 ## Related RFCs
 

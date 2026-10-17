@@ -1,3 +1,9 @@
+// Clippy `[disallowed-methods]` allowlist: provider health probes in
+// this module are unauthenticated GETs to deployment endpoints. No
+// capability material is carried on the wire — these are inventory /
+// availability checks, not provider egress.
+#![allow(clippy::disallowed_methods)]
+
 use async_trait::async_trait;
 
 #[derive(

@@ -18,13 +18,42 @@
 members = ["crates/*"]
 exclude = [
     "determin",
-    "octo-sync",
+    # octo-sync was previously excluded (leaf workspace) to break a cycle with
+    # the Stoolap fork. Per RFC-0862 v1.4 AC#17 the crate is now a workspace
+    # member: the substrate port (commit `9f41cf72`) + sealed traits (commit
+    # `c39f2006`) + concrete impls (forthcoming) live alongside the cipherocto
+    # main workspace. The Stoolap fork continues to consume octo-sync via its
+    # git dep on `branch = "next"` (path-independent).
     "octo-transport",
     "quota-router",
     "sync-e2e-tests",
     "crates/quota-router-pyo3",
     "crates/octo-telegram-onboard",
     "crates/octo-telegram-onboard-core",
+    # octo-adapter-telegram is the LEGACY TDLib-backed Telegram adapter
+    # (RFC-0850 §8.1; superseded by octo-adapter-telegram-mtproto per
+    # Phase B). Pulls in `tdlib-rs` 1.4.0 + a ~150 MB TDLib C++ build that
+    # must run inside a docker container. Excluded 2026-08-07 so
+    # `cargo build --workspace --all-features` no longer pulls tdlib-rs
+    # (which has an upstream `compile_error!` for conflicting
+    # (download-tdlib, pkg-config) feature co-enablement at
+    # build.rs:274 — making `--all-features` permanently red). The
+    # pure-Rust `octo-adapter-telegram-mtproto` adapter is the workspace
+    # surface for new Telegram work. To build the legacy adapter:
+    #   cargo build --manifest-path crates/octo-adapter-telegram/Cargo.toml
+    "crates/octo-adapter-telegram",
+    # stwo-sys builds on nightly (STWO upstream requires nightly-only
+    # curve25519-dalek SIMD intrinsics). Cipherocto workspace stays
+    # stable-rust; stwo-sys is a separate cargo project loaded at runtime
+    # via libloading. See crates/zk-vendor/stwo-sys/README.md.
+    "crates/zk-vendor/stwo-sys",
+    # octo-wallet-fuzz is a standalone cargo-fuzz project. cargo-fuzz
+    # requires libfuzzer-sys (nightly-only); the fuzz crate is built +
+    # run from its own dir (`cd crates/octo-wallet/fuzz && cargo fuzz
+    # run capability_zk_verify`). Excluded from `cargo clippy
+    # --workspace` / `cargo test --workspace` to keep fuzz infra separate
+    # from the main stable-rust workspace.
+    "crates/octo-wallet/fuzz",
     # MTProto onboard crates are intentionally NOT excluded:
     # unlike the TDLib ones, they do not pull in TDLib. They
     # compile against the pure-Rust `octo-adapter-telegram-mtproto`
@@ -71,6 +100,7 @@ uuid = { version = "1.6", features = ["v4", "serde"] }
 # Cryptography
 sha2 = "0.10"
 blake3 = "1"
+hex = "0.4"
 # Async traits
 async-trait = "0.1"
 # Logging
@@ -79,6 +109,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Error handling
 anyhow = "1.0"
 thiserror = "2.0"
+# Pattern redaction scrubber (RFC-0012-v3 + RFC-0014-v3 substrate amendment)
+regex = "1.10"
+once_cell = "1.19"
 
 # HTTP/HTTPS server
 hyper = { version = "1.3", features = ["full"] }
@@ -98,6 +131,8 @@ parking_lot = "0.12"
 rand = "0.9"
 # Gzip compression (mission 0850p-a-session-export)
 flate2 = "1"
+# Tempfile for tests (quota-router-sm-engine dev-dep)
+tempfile = "3"
 # Bitflags (mission 0855p-c-sub-admins SubAdminAuthority)
 bitflags = "2"
 
@@ -117,3 +152,23 @@ bitflags = "2"
 # note.
 [patch.crates-io]
 glass_pumpkin = { path = "vendor/glass_pumpkin" }
+# CipherOcto fork of stoolap — workspace-wide git pin per
+# [[stoolap-general-purpose-db]] Path B (cipherocto embeds stoolap as SQL
+# substrate; schema is cipherocto's responsibility). Pinned commit must
+# match the ask-settlement migration expectations.
+stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
+
+# The cipherocto fork of stoolap (`cipherocto/stoolap@feat/blockchain-sql`)
+# declares `octo-sync` as a git dep against `cipherocto/cipherocto@next`.
+# That git checkout is a duplicate of our workspace member `octo-sync/`.
+# Patch the duplicate out so cargo picks the workspace path and emits
+# NO `skipping duplicate package octo-sync` warning on every build.
+[patch."https://github.com/CipherOcto/cipherocto"]
+octo-sync = { path = "octo-sync" }
+# `octo-determin` — local path override for mission `0105-v` so the
+# new `asset_id_for` fn (RFC-0105 v2.0) lands + is consumable by TV in
+# `crates/octo-vault/tests/test_vectors.rs` without forcing a remote
+# push (per `feedback_initiation_user_only`). Layer A frozen
+# substrate; the path patch is in-place for this commit only —
+# revert once `octo-determin` is pushed to `next`.
+octo-determin = { path = "determin" }

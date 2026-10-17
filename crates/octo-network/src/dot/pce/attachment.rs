@@ -73,68 +73,28 @@ impl ProofTypeRegistry {
     }
 }
 
+/// A default registry registers **nothing**, deliberately.
+///
+/// It used to pre-register the eight standard proof types against a
+/// `stub_verify` that ignored its arguments and returned `Ok`. That made
+/// `ProofTypeRegistry::default().verify(att)` succeed for any proof at all,
+/// and it was reachable from any caller: the type is public and re-exported
+/// from `octo_network::dot::pce`.
+///
+/// Nothing in production built this registry, so it was a landmine rather
+/// than a live bypass — and the tests that used it made it look exercised.
+/// One of them asserted that a proof verifies under the stub, which is the
+/// defect restated as a requirement.
+///
+/// An empty registry fails closed: `IntentProofAttachment::validate` refuses
+/// an unregistered proof type, so a caller that has registered no backend
+/// verifies nothing. Registering a real backend is an explicit act, which is
+/// what makes the difference between "verified" and "nobody checked"
+/// visible at the call site instead of hidden in a `Default`.
 impl Default for ProofTypeRegistry {
     fn default() -> Self {
-        let mut reg = Self::new();
-
-        // Register standard proof types with stub verification functions
-        reg.register(ProofTypeEntry {
-            proof_type: ProofTypeValue::Standard(ProofType::InferenceProof),
-            name: "AI Inference Proof",
-            verify_fn: stub_verify,
-            requires_aggregation: false,
-        });
-        reg.register(ProofTypeEntry {
-            proof_type: ProofTypeValue::Standard(ProofType::DatasetIntegrityProof),
-            name: "Dataset Integrity Proof",
-            verify_fn: stub_verify,
-            requires_aggregation: false,
-        });
-        reg.register(ProofTypeEntry {
-            proof_type: ProofTypeValue::Standard(ProofType::MissionExecutionProof),
-            name: "Mission Execution Proof",
-            verify_fn: stub_verify,
-            requires_aggregation: false,
-        });
-        reg.register(ProofTypeEntry {
-            proof_type: ProofTypeValue::Standard(ProofType::RelayProof),
-            name: "Relay Proof",
-            verify_fn: stub_verify,
-            requires_aggregation: false,
-        });
-        reg.register(ProofTypeEntry {
-            proof_type: ProofTypeValue::Standard(ProofType::ValidatorAttestation),
-            name: "Validator Attestation",
-            verify_fn: stub_verify,
-            requires_aggregation: false,
-        });
-        reg.register(ProofTypeEntry {
-            proof_type: ProofTypeValue::Standard(ProofType::AggregatedProof),
-            name: "Aggregated Proof",
-            verify_fn: stub_verify,
-            requires_aggregation: true,
-        });
-        reg.register(ProofTypeEntry {
-            proof_type: ProofTypeValue::Standard(ProofType::MembershipProof),
-            name: "Membership Proof",
-            verify_fn: stub_verify,
-            requires_aggregation: false,
-        });
-        reg.register(ProofTypeEntry {
-            proof_type: ProofTypeValue::Standard(ProofType::StateTransitionProof),
-            name: "State Transition Proof",
-            verify_fn: stub_verify,
-            requires_aggregation: false,
-        });
-
-        reg
+        Self::new()
     }
-}
-
-/// Stub verification function — always returns Ok.
-/// Replaced by actual backends when registered.
-fn stub_verify(_proof_blob: &[u8], _public_inputs: &[[u8; 32]]) -> Result<(), PceError> {
-    Ok(())
 }
 
 /// Proof attachment to a DOM intent (RFC-0859 §6).
@@ -249,19 +209,66 @@ mod tests {
 
     // -- ProofTypeRegistry tests --
 
+    /// A verifier that accepts, for tests that need a registered type.
+    ///
+    /// This lives in the test module on purpose. The production stub it
+    /// replaces was reachable through `Default`, so the fact that nothing was
+    /// actually verified was invisible at every call site; a test-local
+    /// verifier makes it visible in the test that wants it.
+    fn accepting_verify(_blob: &[u8], _inputs: &[[u8; 32]]) -> Result<(), PceError> {
+        Ok(())
+    }
+
+    /// A verifier that refuses, for tests that need a registered type which
+    /// does not accept.
+    fn refusing_verify(_blob: &[u8], _inputs: &[[u8; 32]]) -> Result<(), PceError> {
+        Err(PceError::MalformedProof("test verifier refused".into()))
+    }
+
+    /// Register one standard proof type against a verifier the test names.
+    fn registry_with(proof_type: ProofType, verify_fn: VerifyFn) -> ProofTypeRegistry {
+        let mut reg = ProofTypeRegistry::new();
+        reg.register(ProofTypeEntry {
+            proof_type: ProofTypeValue::Standard(proof_type),
+            name: "Test Proof",
+            verify_fn,
+            requires_aggregation: false,
+        });
+        reg
+    }
+
+    /// A default registry must verify nothing.
+    ///
+    /// It used to pre-register all eight standard proof types against a stub
+    /// that returned `Ok` for anything, so `default().verify(att)` succeeded
+    /// for every proof. This is the property that had to become false.
     #[test]
-    fn test_registry_default_has_all_standard_types() {
+    fn default_registry_verifies_nothing() {
         let reg = ProofTypeRegistry::default();
-        assert_eq!(reg.len(), 8);
-        assert!(reg.is_registered(ProofType::InferenceProof as u16));
-        assert!(reg.is_registered(ProofType::StateTransitionProof as u16));
+        assert_eq!(reg.len(), 0);
+        assert!(!reg.is_registered(ProofType::InferenceProof as u16));
+
+        let att = IntentProofAttachment::new(
+            [0xAA; 32],
+            ProofType::InferenceProof as u16,
+            vec![1, 2, 3],
+            vec![[0xBB; 32]],
+        );
+        assert!(
+            att.validate(&reg).is_err(),
+            "an empty registry must not validate a proof"
+        );
+        assert!(
+            att.verify(&reg).is_err(),
+            "an empty registry must not verify a proof"
+        );
     }
 
     #[test]
     fn test_registry_lookup() {
-        let reg = ProofTypeRegistry::default();
+        let reg = registry_with(ProofType::InferenceProof, accepting_verify);
         let entry = reg.lookup(ProofType::InferenceProof as u16).unwrap();
-        assert_eq!(entry.name, "AI Inference Proof");
+        assert_eq!(entry.name, "Test Proof");
     }
 
     #[test]
@@ -270,20 +277,45 @@ mod tests {
         reg.register(ProofTypeEntry {
             proof_type: ProofTypeValue::Custom(0x8001),
             name: "Custom Proof",
-            verify_fn: stub_verify,
+            verify_fn: accepting_verify,
             requires_aggregation: false,
         });
         assert!(reg.is_registered(0x8001));
-        assert_eq!(reg.len(), 9);
+        assert_eq!(reg.len(), 1);
     }
 
     #[test]
     fn test_registry_get_verify_fn() {
-        let reg = ProofTypeRegistry::default();
+        let reg = registry_with(ProofType::InferenceProof, accepting_verify);
         assert!(reg
             .get_verify_fn(ProofType::InferenceProof as u16)
             .is_some());
         assert!(reg.get_verify_fn(0x0099).is_none());
+    }
+
+    /// The registered verifier is actually consulted, in both directions.
+    ///
+    /// The old suite could not tell a registry that ran a verifier from one
+    /// that returned `Ok` unconditionally, because the only verifier it ever
+    /// had accepted everything. These two are what make the difference
+    /// observable: same registry shape, opposite outcomes.
+    #[test]
+    fn registered_verifier_decides_the_outcome() {
+        let att = IntentProofAttachment::new(
+            [0xAA; 32],
+            ProofType::InferenceProof as u16,
+            vec![1, 2, 3],
+            vec![[0xBB; 32]],
+        );
+
+        let accepting = registry_with(ProofType::InferenceProof, accepting_verify);
+        assert!(att.verify(&accepting).is_ok());
+
+        let refusing = registry_with(ProofType::InferenceProof, refusing_verify);
+        assert!(
+            att.verify(&refusing).is_err(),
+            "a registered verifier that refuses must decide the outcome"
+        );
     }
 
     // -- ProofTypeValue tests --
@@ -343,7 +375,7 @@ mod tests {
 
     #[test]
     fn test_attachment_validate_ok() {
-        let reg = ProofTypeRegistry::default();
+        let reg = registry_with(ProofType::InferenceProof, accepting_verify);
         let att = IntentProofAttachment::new(
             [0xAA; 32],
             ProofType::InferenceProof as u16,
@@ -355,7 +387,7 @@ mod tests {
 
     #[test]
     fn test_attachment_validate_unsupported_type() {
-        let reg = ProofTypeRegistry::default();
+        let reg = registry_with(ProofType::InferenceProof, accepting_verify);
         let att = IntentProofAttachment::new(
             [0xAA; 32],
             0x0099, // unsupported
@@ -367,7 +399,7 @@ mod tests {
 
     #[test]
     fn test_attachment_validate_empty_blob() {
-        let reg = ProofTypeRegistry::default();
+        let reg = registry_with(ProofType::InferenceProof, accepting_verify);
         let att = IntentProofAttachment::new(
             [0xAA; 32],
             ProofType::InferenceProof as u16,
@@ -375,19 +407,6 @@ mod tests {
             vec![[0xBB; 32]],
         );
         assert!(att.validate(&reg).is_err());
-    }
-
-    #[test]
-    fn test_attachment_verify_ok() {
-        let reg = ProofTypeRegistry::default();
-        let att = IntentProofAttachment::new(
-            [0xAA; 32],
-            ProofType::InferenceProof as u16,
-            vec![1, 2, 3],
-            vec![[0xBB; 32]],
-        );
-        // stub_verify always returns Ok
-        assert!(att.verify(&reg).is_ok());
     }
 
     // -- Proof type for intent validation tests --

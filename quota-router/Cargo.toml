@@ -7,20 +7,16 @@ edition = "2021"
 description = "Distributed quota router network for CipherOcto (RFC-0870)"
 license = "Apache-2.0"
 
-[dependencies]
-octo-transport = { path = "../octo-transport" }
-octo-network = { path = "../crates/octo-network" }
-async-trait = "0.1"
-thiserror = "2.0"
-blake3 = "1.5"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-bincode = "1"
-hex = "0.4"
-tokio = { version = "1", features = ["time", "sync"] }
-rand = "0.8"
-reqwest = { version = "0.12", features = ["json"] }
-prometheus = "0.13"
+# This package has no src/. Commit 616fe433 migrated the mesh layer to
+# crates/quota-router-core/ (canonical home), so its only cargo targets are
+# the two integration tests under tests/, and they reach the code through
+# the quota-router-core dev-dependency below.
+#
+# The whole [dependencies] block that migration left behind has been removed.
+# Every entry in it was unreferenced across tests/, and building octo-network,
+# reqwest, prometheus and bincode for two test files that use none of them is
+# pure CI cost. Anything this package needs to build goes in
+# [dev-dependencies], where its tests can actually reach it.
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "time", "rt-multi-thread"] }

@@ -80,7 +80,7 @@ RFC-0630 (Proof-of-Inference)
        ↓
 RFC-0141 (Parallel Block DAG) ← NEW
        ↓
-RFC-0143 (OCTO-Network)
+RFC-0843 (OCTO-Network)
 ```
 
 ## Specification
@@ -673,8 +673,8 @@ Global checkpoints provide:
 
 - RFC-0630 (Proof Systems): Proof-of-Inference Consensus
 - RFC-0140 (Consensus): Sharded Consensus Protocol
-- RFC-0142 (Consensus): Data Availability & Sampling Protocol
-- RFC-0143 (Networking): OCTO-Network Protocol
+- RFC-0742 (Consensus): Data Availability & Sampling Protocol
+- RFC-0843 (Networking): OCTO-Network Protocol
 
 ## Related Use Cases
 

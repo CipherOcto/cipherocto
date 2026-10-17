@@ -67,7 +67,7 @@ This RFC provides the governance framework for mission-based execution.
 ### Mission File Format
 
 ```yaml
-# missions/0001-add-mission-lifecycle.md
+# rfcs/draft/process/0001-mission-lifecycle.md
 
 id: "0001"
 title: "Add Mission Lifecycle"
@@ -202,6 +202,20 @@ Existing issues can be tagged as missions. No data loss.
 ### Dependencies
 
 - RFC-0002 (Process/Meta): Agent Manifest (missions may be claimed by agents)
+
+## Version History
+
+No version number was ever declared for this RFC and no Draft to Accepted
+promotion was recorded, so these entries are dated rather than versioned.
+Reconstructed from the commit history of this file.
+
+- 2026-02-24 — Document added in `aec2101c`, with Status Accepted from its first
+  commit.
+- 2026-03-10 — RFC category prefixes added in `6e452687`.
+- 2026-03-11 — Category prefixes corrected across RFCs in `b5f8d183`.
+- 2026-03-15 — RFCs reorganised by status and category per BLUEPRINT in
+  `7e16394f`.
+- 2026-10-07 — Mission paths repointed in `4ee21d54`.
 
 ## Related RFCs
 

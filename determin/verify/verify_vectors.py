@@ -18,16 +18,38 @@ import json
 from typing import Tuple, Optional
 
 
+def _cargo_target_dir(cli_dir: str) -> str:
+    """Return the directory cargo writes build output to for `cli_dir`.
+
+    Cargo writes to the WORKSPACE root's target/, never to a member's own
+    directory. `determin/` is its own workspace (`members = ["cli"]`), so the
+    binary lands in `determin/target/`, not `determin/cli/target/`. Asking
+    cargo keeps this correct if the workspace layout moves again.
+    """
+    result = subprocess.run(
+        ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+        cwd=cli_dir,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"cargo metadata failed in {cli_dir}: {result.stderr}"
+        )
+    return json.loads(result.stdout)["target_directory"]
+
+
 def get_cli_path() -> str:
     """Find or build the CLI binary"""
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     cli_dir = os.path.join(base_dir, "cli")
+    target_dir = _cargo_target_dir(cli_dir)
 
-    binary_path = os.path.join(cli_dir, "target", "release", "dfp_cli")
+    binary_path = os.path.join(target_dir, "release", "dfp_cli")
     if os.path.exists(binary_path):
         return binary_path
 
-    binary_path = os.path.join(cli_dir, "target", "debug", "dfp_cli")
+    binary_path = os.path.join(target_dir, "debug", "dfp_cli")
     if os.path.exists(binary_path):
         return binary_path
 
@@ -41,7 +63,7 @@ def get_cli_path() -> str:
     if result.returncode != 0:
         raise RuntimeError(f"Build failed: {result.stderr}")
 
-    return os.path.join(cli_dir, "target", "release", "dfp_cli")
+    return os.path.join(target_dir, "release", "dfp_cli")
 
 
 def run_operation(op: str, m1: int, e1: int, m2: Optional[int] = None, e2: Optional[int] = None) -> Tuple[int, int, int]:

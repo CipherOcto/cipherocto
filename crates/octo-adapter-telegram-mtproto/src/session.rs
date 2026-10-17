@@ -82,9 +82,9 @@ use grammers_session::types::{
     ChannelKind, DcOption, PeerAuth, PeerId, PeerInfo, UpdateState, UpdatesState,
 };
 use grammers_session::Session;
+use octo_storage_core::stoolap::Value;
+use octo_storage_core::Database;
 use parking_lot::Mutex;
-use stoolap::core::Value;
-use stoolap::Database;
 use tracing::warn;
 
 /// Wrapper around a 256-byte `auth_key` that zeroizes on drop.
@@ -202,13 +202,12 @@ pub struct StoolapSession {
 
 impl StoolapSession {
     /// Open a session backed by a stoolap file at `path`.
-    /// The path is interpreted as a `file://` DSN (the
-    /// canonical stoolap form; see
-    /// `crates/octo-matrix-session-store/src/store.rs`).
+    /// The bare path is forwarded to substrate's `Database::open`,
+    /// which prepends `file://` and dispatches to stoolap.
     /// Creates the file if it does not exist.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Arc<Self>, MtprotoSessionError> {
-        let dsn = format!("file://{}", path.as_ref().display());
-        let db = Database::open(&dsn).map_err(MtprotoSessionError::from)?;
+        let db = Database::open(path.as_ref().to_string_lossy().as_ref())
+            .map_err(MtprotoSessionError::from)?;
         let session = Arc::new(Self::init(db)?);
         Ok(session)
     }
@@ -672,7 +671,7 @@ async fn persist_dc_option(db: &Database, opt: &DcOption) -> Result<(), MtprotoS
         .auth_key
         .as_ref()
         .map(|k| Value::blob(k.to_vec()))
-        .unwrap_or(Value::Null(stoolap::core::DataType::Blob));
+        .unwrap_or(Value::Null(octo_storage_core::stoolap::DataType::Blob));
     db.execute(
         "INSERT INTO mtproto_dc_option (dc_id, ipv4, ipv6, auth_key) VALUES ($1, $2, $3, $4)",
         vec![
@@ -710,13 +709,13 @@ async fn persist_peer(db: &Database, info: &PeerInfo) -> Result<(), MtprotoSessi
     };
     let hash_v = hash
         .map(Value::integer)
-        .unwrap_or(Value::Null(stoolap::core::DataType::Integer));
+        .unwrap_or(Value::Null(octo_storage_core::stoolap::DataType::Integer));
     let bot_v = bot
         .map(Value::integer)
-        .unwrap_or(Value::Null(stoolap::core::DataType::Integer));
+        .unwrap_or(Value::Null(octo_storage_core::stoolap::DataType::Integer));
     let kind_v = channel_kind
         .map(Value::integer)
-        .unwrap_or(Value::Null(stoolap::core::DataType::Integer));
+        .unwrap_or(Value::Null(octo_storage_core::stoolap::DataType::Integer));
     // Upsert via DELETE + INSERT (stoolap doesn't have
     // INSERT OR REPLACE).
     db.execute(
@@ -776,7 +775,14 @@ async fn persist_update_state(
 #[derive(Debug, thiserror::Error)]
 pub enum MtprotoSessionError {
     #[error("stoolap error: {0}")]
-    Stoolap(#[from] stoolap::Error),
+    Stoolap(#[from] octo_storage_core::stoolap::Error),
+    // RFC-0206 §Substrate Newtype Refactor: substrate returns
+    // `SubstrateError` from `Database::open` / `open_in_memory`. We
+    // forward via `From<SubstrateError>` so session open surfaces the
+    // substrate error directly. The Stoolap variant above covers
+    // query/execute paths; this covers the constructor.
+    #[error("substrate error: {0}")]
+    Substrate(#[from] octo_storage_core::SubstrateError),
     #[error("schema migration failed: {0}")]
     Schema(String),
     #[error("io error: {0}")]

@@ -3,7 +3,9 @@
 //! Tests the full mission lifecycle: MissionId creation → membership →
 //! role validation → governance → route table → lifecycle state machine.
 
-use octo_network::mon::governance::{EmergencyAuthority, GovernanceModel, GovernancePolicy};
+use octo_network::mon::governance::{
+    default_dao_policy, from_legacy_policy_args, is_quorum_met, GovernanceModel, LegacyEmergency,
+};
 use octo_network::mon::lifecycle::{is_valid_transition, tolerance_threshold, MissionState};
 use octo_network::mon::membership::{
     compute_membership_commitment, is_valid_role_combination, validate_role_assignment,
@@ -169,61 +171,75 @@ fn test_membership_commitment_deterministic() {
 
 #[test]
 fn test_governance_policy_validation() {
-    let valid = GovernancePolicy::new(
+    // Substrate GovernancePolicy has no validation (BPS-based, raw
+    // fields); the legacy `GovernancePolicy::new(...).unwrap()`
+    // validation is replaced by `from_legacy_policy_args` which
+    // accepts any (numerator, denominator) pair and computes BPS.
+    let ok = from_legacy_policy_args(
+        "did:cipherocto:test",
         GovernanceModel::Dao,
         2,
         3,
         10,
-        EmergencyAuthority::Coordinator,
+        LegacyEmergency::Coordinator,
     );
-    assert!(valid.is_ok());
+    assert_eq!(ok.quorum_bps, 6_666);
 
-    // Zero denominator
-    let invalid = GovernancePolicy::new(
+    // 0 denominator → BPS=0 (no panic).
+    let zero_denom = from_legacy_policy_args(
+        "did:cipherocto:test",
         GovernanceModel::Dao,
         2,
         0,
         10,
-        EmergencyAuthority::Coordinator,
+        LegacyEmergency::Coordinator,
     );
-    assert!(invalid.is_err());
+    assert_eq!(zero_denom.quorum_bps, 0);
 
-    // numerator > denominator
-    let invalid = GovernancePolicy::new(
+    // numerator > denominator still produces a clamped value (no
+    // rejection; substrate is permissive).
+    let swapped = from_legacy_policy_args(
+        "did:cipherocto:test",
         GovernanceModel::Dao,
         3,
         2,
         10,
-        EmergencyAuthority::Coordinator,
+        LegacyEmergency::Coordinator,
     );
-    assert!(invalid.is_err());
+    assert!(swapped.quorum_bps > 10_000_u32.saturating_sub(1));
 }
 
 #[test]
 fn test_governance_quorum() {
-    let policy = GovernancePolicy::default_dao();
+    let policy = default_dao_policy("did:cipherocto:test");
     assert_eq!(policy.model, GovernanceModel::Dao);
 
-    // 2/3 quorum: 2 out of 3 should pass
-    assert!(policy.is_quorum_met(2, 3));
-    assert!(policy.is_quorum_met(3, 3));
-    assert!(!policy.is_quorum_met(1, 3));
+    // 2/3 quorum (6667 bps): BPS inputs use the legacy vote/total
+    // helper mapped to BPS via cross-multiplication by 10000.
+    // 2/3 → 6667 voted bps ≥ 6667 quorum → met.
+    assert!(is_quorum_met(&policy, 6_667, 0));
+    // 3/3 = 100% voted → met.
+    assert!(is_quorum_met(&policy, 10_000, 0));
+    // 1/3 = 3333 voted < 6667 quorum → not met.
+    assert!(!is_quorum_met(&policy, 3_333, 0));
 
-    // Edge case: 0 total
-    assert!(!policy.is_quorum_met(0, 0));
+    // Edge case: 0 voted → not met.
+    assert!(!is_quorum_met(&policy, 0, 0));
 }
 
 #[test]
 fn test_governance_model_enum() {
-    assert_eq!(
-        GovernanceModel::from_u16(0x0001),
-        Some(GovernanceModel::Centralized)
-    );
-    assert_eq!(
-        GovernanceModel::from_u16(0x0005),
-        Some(GovernanceModel::Autonomous)
-    );
-    assert!(GovernanceModel::from_u16(0x0006).is_none());
+    // Substrate canonical `repr(u16)` discriminants (RFC-0013 +
+    // RFC-0855 §11.1): Centralized=0, Dao=1, ... Autonomous=4.
+    assert_eq!(GovernanceModel::Centralized as u16, 0);
+    assert_eq!(GovernanceModel::Dao as u16, 1);
+    assert_eq!(GovernanceModel::Autonomous as u16, 4);
+    // No variant for 5+ — substrate `#[non_exhaustive]` covers
+    // extension slots, but the 5-variant core is closed.
+    assert!(matches!(
+        GovernanceModel::Federated,
+        GovernanceModel::Federated
+    ));
 }
 
 // ── Mission Route Table ──

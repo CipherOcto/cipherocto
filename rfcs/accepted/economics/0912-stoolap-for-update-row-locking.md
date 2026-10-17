@@ -32,6 +32,7 @@ SELECT budget_limit FROM api_keys WHERE key_id = $1 FOR UPDATE;
 ```
 
 Stoolap's MVCC provides snapshot isolation, but lacks explicit `FOR UPDATE` SQL syntax for:
+
 - Multi-router deployments (two routers processing same key concurrently)
 - Budget consistency (prevent race condition on budget check)
 - Deterministic accounting (same request produces same result regardless of timing)
@@ -42,22 +43,22 @@ Analysis of Stoolap source at `/home/mmacedoeu/_w/databases/stoolap/src/`:
 
 ### Existing Infrastructure
 
-| Component | Location | Status |
-|-----------|----------|--------|
-| `SelectStatement` AST | `parser/ast.rs:1435` | Missing `for_update` field |
-| Parser | `parser/statements.rs:80` | No FOR UPDATE handling |
-| Executor | `executor/query.rs:193` | `execute_select` entry point |
-| Version Store | `storage/mvcc/version_store.rs:1597` | `get_visible_versions_for_update()` exists |
-| Version Store | `storage/mvcc/version_store.rs:2215` | `get_all_visible_rows_for_update()` exists |
-| MVCC Table | `storage/mvcc/table.rs:1808,1939,1949` | Internal calls to for_update methods |
+| Component             | Location                        | Status                                     |
+| --------------------- | ------------------------------- | ------------------------------------------ |
+| `SelectStatement` AST | `parser/ast.rs`                 | Missing `for_update` field                 |
+| Parser                | `parser/statements.rs`          | No FOR UPDATE handling                     |
+| Executor              | `executor/query.rs`             | `execute_select` entry point               |
+| Version Store         | `storage/mvcc/version_store.rs` | `get_visible_versions_for_update()` exists |
+| Version Store         | `storage/mvcc/version_store.rs` | `get_all_visible_rows_for_update()` exists |
+| MVCC Table            | `storage/mvcc/table.rs`         | Internal calls to for_update methods       |
 
 ### Key Findings
 
 1. **MVCC Infrastructure Complete**: The version store already has `get_visible_versions_for_update()` and `get_all_visible_rows_for_update()` methods that return rows for modification.
 
-2. **Transaction Tracking**: `TransactionRegistry` (`storage/mvcc/registry.rs:188`) tracks active transactions with `TxnState` (`registry.rs:59`) containing `begin_seq` and `state_seq`.
+2. **Transaction Tracking**: `TransactionRegistry` (`storage/mvcc/registry.rs`) tracks active transactions with `TxnState` (`registry.rs`) containing `begin_seq` and `state_seq`.
 
-3. **Internal Usage**: The methods are already used internally in table.rs (lines 1808, 1864, 1939, etc.) for UPDATE operations - just not exposed via SQL syntax.
+3. **Internal Usage**: The methods are already used internally in table.rs (etc.) for UPDATE operations - just not exposed via SQL syntax.
 
 ## Design
 
@@ -105,6 +106,7 @@ if self.peek_token_is_keyword("FOR") {
 ```
 
 **Grammar rule:** `FOR UPDATE` is accepted after `ORDER BY`, `LIMIT`, and `OFFSET`:
+
 ```
 SelectStatement ::= SELECT ... [WHERE ...] [GROUP BY ...] [HAVING ...]
                     [ORDER BY expr [ASC|DESC], ...]
@@ -151,11 +153,11 @@ impl fmt::Display for SelectStatement {
 
 ### Step 1: AST Modification (~30 min)
 
-Add `for_update: bool` to `SelectStatement` in `parser/ast.rs:1435`.
+Add `for_update: bool` to `SelectStatement` in `parser/ast.rs`.
 
 ### Step 2: Parser Implementation (~2 hours)
 
-Add FOR UPDATE parsing in `parser/statements.rs` after OFFSET clause (around line 190).
+Add FOR UPDATE parsing in `parser/statements.rs` after OFFSET clause.
 
 ### Step 3: Display Implementation (~30 min)
 
@@ -164,6 +166,7 @@ Update `Display` impl for `SelectStatement` to output `FOR UPDATE`.
 ### Step 4: Executor Integration (~3 hours)
 
 Modify `executor/query.rs:execute_select` to:
+
 1. Check `stmt.for_update` flag
 2. Pass to table scan method
 3. Use `get_visible_versions_for_update()` for reads
@@ -171,6 +174,7 @@ Modify `executor/query.rs:execute_select` to:
 ### Step 5: Table Scan Changes (~2 hours)
 
 In `storage/mvcc/table.rs`:
+
 - Modify scan methods to accept `for_update: bool` parameter
 - Route to appropriate version store method based on flag
 
@@ -214,13 +218,13 @@ fn test_concurrent_budget_update() {
 
 ## Feasibility Assessment
 
-| Aspect | Finding | Effort |
-|--------|---------|--------|
-| AST field addition | Simple bool field | ~30 min |
-| Parser | Add keyword handling after OFFSET | ~2 hours |
-| Executor routing | Pass flag to table scan | ~3 hours |
-| Internal methods | Already exist, just wire up | ~2 hours |
-| **Total** | | **~1-2 days** |
+| Aspect             | Finding                           | Effort        |
+| ------------------ | --------------------------------- | ------------- |
+| AST field addition | Simple bool field                 | ~30 min       |
+| Parser             | Add keyword handling after OFFSET | ~2 hours      |
+| Executor routing   | Pass flag to table scan           | ~3 hours      |
+| Internal methods   | Already exist, just wire up       | ~2 hours      |
+| **Total**          |                                   | **~1-2 days** |
 
 ## Why Needed
 
@@ -231,7 +235,7 @@ fn test_concurrent_budget_update() {
 
 ### Locking Contract
 
-Invocation of `get_visible_versions_for_update` / `get_all_visible_rows_for_update` acquires an exclusive row lock held until the enclosing transaction ends (see `TransactionRegistry` in `storage/mvcc/registry.rs:188` and `TxnState` at `registry.rs:59`). This locking guarantee is required for cross-router determinism in multi-instance deployments.
+Invocation of `get_visible_versions_for_update` / `get_all_visible_rows_for_update` acquires an exclusive row lock held until the enclosing transaction ends (see `TransactionRegistry` in `storage/mvcc/registry.rs` and `TxnState` at `registry.rs`). This locking guarantee is required for cross-router determinism in multi-instance deployments.
 
 ## Out of Scope
 
@@ -277,7 +281,7 @@ This prevents deadlocks in multi-router deployments.
 - RFC-0909: Deterministic Quota Accounting (Optional)
 - RFC-0913: Stoolap Pub/Sub for Cache Invalidation (depends on this)
 
-## Changelog
+## Version History
 
 - **v3 (2026-03-13):** Review clarifications (Grok review)
   - Added "Locking Contract" section documenting row lock held until transaction end (references TransactionRegistry/TxnState)

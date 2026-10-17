@@ -1,0 +1,61 @@
+{
+  "_comment": "RFC-0862 v1.3.0 Phase 1 test vectors (TV-1..TV-4). Regenerate via `UPDATE_PHASE1_TV=1 cargo test -p octo-sync --test phase1_tv_0862 phase1_tv_0862_dump -- --nocapture`. Per RFC-0008 Class A determinism: every output is byte-exact reproducible from the declared inputs.",
+  "_rfc": "RFC-0862 v1.3.0",
+  "_phase": "Phase 1",
+  "_scope": "TV-1..TV-4 ONLY. Phase 3 TV-5..TV-8 land in a separate fixture + mission per RFC-0862 v1.3.0 §Test Vectors.",
+  "entries": [
+    {
+      "name": "TV-1",
+      "description": "HLC monotonicity: 3 now() calls across advancing wall-clock (1ms per call) — physical_ms strictly increases, logical stays 0.",
+      "inputs": {
+        "writer_node_id": "0000000000000000000000000000000000000000000000000000000000000000",
+        "clock_values": "00b6c81eba18000001b6c81eba18000002b6c81eba180000"
+      },
+      "outputs_hex": "0068e5cf8b0100000000000000000000000000000000000000000000000000000000000000000000000000000168e5cf8b0100000000000000000000000000000000000000000000000000000000000000000000000000000268e5cf8b010000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "byte_len": 132,
+      "verification_command": "cargo test -p octo-sync --test phase1_tv_0862 phase1_tv_0862_match -- --nocapture"
+    },
+    {
+      "name": "TV-2",
+      "description": "HLC logical increment: 3 now() calls on a fixed wall-clock — physical_ms constant, logical advances 0, 1, 2.",
+      "inputs": {
+        "writer_node_id": "0000000000000000000000000000000000000000000000000000000000000000",
+        "clock_value": "00b6c81eba180000"
+      },
+      "outputs_hex": "0068e5cf8b0100000000000000000000000000000000000000000000000000000000000000000000000000000068e5cf8b0100000100000000000000000000000000000000000000000000000000000000000000000000000068e5cf8b010000020000000000000000000000000000000000000000000000000000000000000000000000",
+      "byte_len": 132,
+      "verification_command": "cargo test -p octo-sync --test phase1_tv_0862 phase1_tv_0862_match -- --nocapture"
+    },
+    {
+      "name": "TV-3",
+      "description": "WriterIdentity caching: 148-byte borsh payload (32 + 32 + 8 + 44 + 32) round-trips byte-exactly — cache equivalence invariant.",
+      "inputs": {
+        "writer_node_id": "0101010101010101010101010101010101010101010101010101010101010101",
+        "mission_id": "0202020202020202020202020202020202020202020202020202020202020202",
+        "term": "0100000000000000",
+        "elected_at_hlc_physical_ms": "00b6c81eba180000",
+        "elected_at_hlc_logical": "07000000",
+        "elected_at_hlc_writer_node_id": "0101010101010101010101010101010101010101010101010101010101010101",
+        "shard_key": "0303030303030303030303030303030303030303030303030303030303030303"
+      },
+      "outputs_hex": "0101010101010101010101010101010101010101010101010101010101010101020202020202020202020202020202020202020202020202020202020202020201000000000000000068e5cf8b0100000700000001010101010101010101010101010101010101010101010101010101010101010303030303030303030303030303030303030303030303030303030303030303",
+      "byte_len": 148,
+      "verification_command": "cargo test -p octo-sync --test phase1_tv_0862 phase1_tv_0862_match -- --nocapture"
+    },
+    {
+      "name": "TV-4",
+      "description": "Bootstrap peer acquisition: 2 PeerIdentity records canonicalize to a 32-byte BLAKE3 fingerprint over (node_id || overlay_id || mission_id) for each peer.",
+      "inputs": {
+        "peer_0_node_id": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+        "peer_0_overlay_id": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "peer_0_mission_id": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "peer_1_node_id": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "peer_1_overlay_id": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+        "peer_1_mission_id": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1"
+      },
+      "outputs_hex": "57ca154988b99c1ef43798a76d79ca3f7cb8505fc0958e75920fd9b33f3706b1",
+      "byte_len": 32,
+      "verification_command": "cargo test -p octo-sync --test phase1_tv_0862 phase1_tv_0862_match -- --nocapture"
+    }
+  ]
+}

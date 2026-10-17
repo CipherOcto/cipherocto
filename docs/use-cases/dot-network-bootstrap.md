@@ -15,6 +15,7 @@ A new CipherOcto node has no peers. To join the DOT (Deterministic Overlay Trans
 4. **Health monitoring** — how does the node know when a seed has gone stale (e.g., the seed list service is down)?
 
 Without a clear spec, each implementation would invent its own bootstrap, leading to:
+
 - Inconsistent trust models (some trust IP-based seeds, some don't)
 - Eclipse attack vulnerability (no Sybil resistance)
 - Operational fragility (no health monitoring)
@@ -36,6 +37,7 @@ Bootstrap is the **first network operation** every new node performs. A failed o
 - The node is vulnerable to eclipse attacks (if connected only to attacker-controlled peers)
 
 A well-designed bootstrap must:
+
 1. Be **resilient** — multiple bootstrap channels, no single point of failure
 2. Be **trust-anchored** — the operator decides which seeds to trust
 3. Be **Sybil-resistant** — the node connects to many independent peers, not a single attacker's cluster
@@ -44,6 +46,7 @@ A well-designed bootstrap must:
 ### Why Decentralization Matters
 
 At launch, a foundation multi-sig authority signs the seed list. This is appropriate because:
+
 - No slashing exists yet to punish a malicious seed list
 - The foundation is known and trusted
 
@@ -51,14 +54,14 @@ Once slashing ships, the authority can transition to a DAO multi-sig (per missio
 
 ## Success Metrics
 
-| Metric | Target | Measurement |
-| ------ | ------ | ----------- |
-| Bootstrap time (warm) | < 30 seconds | From `start_node` to first libp2p peer connected |
-| Bootstrap time (cold) | < 5 minutes | From `start_node` to first mission overlay joined |
-| Sybil resistance | > 50% honest peers | Monte Carlo simulation of attacker models |
-| Eclipse resistance | > 0% under 33% attack | Trivial guarantee; verified by simulation |
-| Health check latency | < 1 second | Stale seed detection per `start_node` |
-| Decentralization deadline | Post-MissionSlashing | 1.0 | When DAO multi-sig takes over |
+| Metric                    | Target                | Measurement                                       |
+| ------------------------- | --------------------- | ------------------------------------------------- |
+| Bootstrap time (warm)     | < 30 seconds          | From `start_node` to first libp2p peer connected  |
+| Bootstrap time (cold)     | < 5 minutes           | From `start_node` to first mission overlay joined |
+| Sybil resistance          | > 50% honest peers    | Monte Carlo simulation of attacker models         |
+| Eclipse resistance        | > 0% under 33% attack | Trivial guarantee; verified by simulation         |
+| Health check latency      | < 1 second            | Stale seed detection per `start_node`             |
+| Decentralization deadline | Post-MissionSlashing  | 1.0                                               | When DAO multi-sig takes over |
 
 ## Constraints
 
@@ -85,10 +88,10 @@ If this use case is implemented:
 
 ## Related RFCs
 
-- RFC-0851 (Networking): Gateway Discovery Protocol — base; defines discovery modes
+- RFC-0851: Gateway Discovery Protocol — base; defines discovery modes
 - RFC-0851p-a (Networking): Network Bootstrap Protocol — concrete bootstrap spec; this UC motivates it
-- RFC-0850 (Networking): Deterministic Overlay Transport — base protocol
-- RFC-0852 (Networking): Deterministic Gossip Protocol — gossip layer that bootstrap feeds into
+- RFC-0850: Deterministic Overlay Transport — base protocol
+- RFC-0852: Deterministic Gossip Protocol — gossip layer that bootstrap feeds into
 - RFC-0855p-b (Networking): Mission Coordinator Lifecycle — slash reason codes (0x000D)
 
 ## Related Use Cases
@@ -102,10 +105,10 @@ If this use case is implemented:
 Use Case (DOT Network Bootstrap — this document)
    │
    ▼
-RFC-0850 (Networking): Deterministic Overlay Transport
+RFC-0850: Deterministic Overlay Transport
    │
    ▼
-RFC-0851 (Networking): Gateway Discovery Protocol
+RFC-0851: Gateway Discovery Protocol
    │
    ▼
 RFC-0851p-a (Networking): Network Bootstrap Protocol
@@ -117,12 +120,13 @@ Missions: 0851p-a-{seed-authority-decentralization, tor-seed-list, seed-health-c
 ## Related Missions
 
 Under RFC-0851p-a:
+
 - `missions/open/0851p-a-seed-authority-decentralization.md` — Foundation → DAO multi-sig transition
 - `missions/open/0851p-a-tor-seed-list.md` — Tor-only bootstrap mode
-- `missions/open/0851p-a-seed-health-check.md` — Stale seed detection
+- `missions/claimed/0851p-a-seed-health-check.md` — Stale seed detection
 - `missions/open/0851p-a-trust-ux.md` — Web-of-trust visualization (CLI)
 - `missions/open/0851p-a-nostr-mode-d.md` — Mode D: NIP-05 / Nostr trust-anchored bootstrap (future work, post-launch)
-- `missions/open/0851p-a-bootstrap-slashing.md` — Slash reason code 0x000D for misbehaving bootstrap nodes
+- `missions/archived/0851p-a-bootstrap-slashing.md` — Slash reason code 0x000D for misbehaving bootstrap nodes
 
 ---
 

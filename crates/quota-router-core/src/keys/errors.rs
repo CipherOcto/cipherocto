@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use super::models::SpendEventError;
+
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum KeyError {
     #[error("Key not found")]
@@ -29,6 +31,14 @@ pub enum KeyError {
     #[error("Invalid key format")]
     InvalidFormat,
 
+    /// A caller-supplied identifier was not a well-formed UUID.
+    ///
+    /// Reached from request paths, so the value is attacker-controlled and
+    /// must never reach an `expect`. `kind` names the field for diagnostics
+    /// (`key_id`, `team_id`).
+    #[error("Invalid {kind} UUID: {value}")]
+    InvalidUuid { kind: &'static str, value: String },
+
     #[error("Key already exists")]
     AlreadyExists,
 
@@ -37,6 +47,17 @@ pub enum KeyError {
 
     #[error("Route not allowed: {0}")]
     RouteNotAllowed(String),
+
+    /// SpendEvent boundary validation failure (mission 0862-c7).
+    /// Carries the `SpendEventError` for diagnostic context.
+    #[error("Spend event validation failed: {0}")]
+    SpendEvent(SpendEventError),
+}
+
+impl From<SpendEventError> for KeyError {
+    fn from(e: SpendEventError) -> Self {
+        KeyError::SpendEvent(e)
+    }
 }
 
 /// Budget enforcement errors for cost computation and balance operations.

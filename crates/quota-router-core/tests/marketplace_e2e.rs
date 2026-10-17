@@ -1,0 +1,1433 @@
+//! Behaviour tests for the marketplace components (Gap 5 Task 5.4).
+//!
+//! ## What these tests actually exercise
+//!
+//! Scenarios 1-5 below drive `OrderBook`, `Escrow` and `SlashingLedger`
+//! **directly**. They construct each component, call its methods by hand,
+//! and assert on its state. They are component-behaviour tests, not
+//! end-to-end tests of the marketplace: no `Marketplace` method
+//! participates in any of them, because the facade does not drive the
+//! escrow.
+//!
+//! Exactly one test in this file — `stale_view_after_restart_sees_writes` —
+//! goes through the real facade (`Marketplace::open_path`, `put`,
+//! `cheapest`).
+//!
+//! ## What the escrow scenarios do not cover
+//!
+//! The scenario captions below describe marketplace *intent*. Two gaps
+//! between that intent and the code, both recorded in mission
+//! `marketplace-escrow-is-not-wired-into-the-marketplace-facade`:
+//!
+//! 1. **Escrow performs no fund movement.** `Escrow` is a pure state
+//!    machine (`Pending` -> `Locked` -> `Settled | Disputed`, then
+//!    `Slashed | Settled`). "Settlement releases funds" names RFC-0900
+//!    §Escrow Flow step 4, not anything this code executes — there is no
+//!    ledger entry and no transfer on any transition.
+//! 2. **`DisputeOutcome::Partial` has no implementation.** RFC-0900
+//!    §Dispute Resolution specifies Valid / Invalid / Partial. The Rust
+//!    escrow offers only `resolve_valid` and `resolve_invalid`.
+//!
+//! Scenarios covered:
+//!
+//! 1. Happy path: buyer bids, provider asks, book matches, escrow locks,
+//!    settlement releases funds.
+//! 2. Dispute path: match → lock → dispute → resolve valid → seller
+//!    slashed.
+//! 3. Dispute path: match → lock → dispute → resolve invalid → payment
+//!    confirmed.
+//! 4. Below-tolerance miss: provider fails SLA under tolerance band → no
+//!    slash.
+//! 5. Banned provider: escalation crosses 50% loss → subsequent calls
+//!    rejected.
+
+use quota_router_core::marketplace::escrow::{Escrow, EscrowError, EscrowState, Party};
+use quota_router_core::marketplace::orderbook::{MatchPair, Order, OrderBook, Side};
+use quota_router_core::marketplace::slashing::{
+    SlashError, SlashReason, SlashingLedger, SlashingRules,
+};
+
+/// Minimal Spec for the e2e test: an `AskSpec` carries the model name
+/// and the asker (seller) DID — enough to drive end-to-end matching and
+/// escrow settlement without depending on the stoolap-backed Ask repo.
+use octo_ident::test_helpers::sample_did;
+
+/// Test helper: integer-literal Dqa constructor (scale=0).
+fn dqa(n: i64) -> octo_determin::Dqa {
+    octo_determin::Dqa::new(n, 0).expect("non-overflow")
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AskSpec {
+    model: String,
+    asker_did: String,
+}
+
+/// One round-tripped "market transaction":
+/// - buyer places bid, provider places ask
+/// - book matches top-of-book
+/// - escrow locks the agreed amount
+/// - on success: settle → Settled → seller paid
+struct MarketTransaction {
+    pub book: OrderBook<AskSpec>,
+    pub escrow: Escrow,
+}
+
+fn setup_match(buyer: &str, seller: &str, model: &str, price: u128, qty: u64) -> MarketTransaction {
+    let mut book = OrderBook::<AskSpec>::new();
+    book.place_ask(
+        AskSpec {
+            model: model.to_owned(),
+            asker_did: seller.to_owned(),
+        },
+        price,
+        qty,
+        seller,
+        1_000,
+    );
+    book.place_bid(
+        AskSpec {
+            model: model.to_owned(),
+            asker_did: seller.to_owned(),
+        },
+        price,
+        qty,
+        buyer,
+        1_500,
+    );
+    let escrow_id = [0x42; 32];
+    let amount = dqa((price * qty as u128) as i64);
+    let mut escrow = Escrow::with_arbitrator(escrow_id, buyer, seller, "arb-1", amount);
+    escrow.lock(&Party::Buyer(buyer.to_string())).expect("lock");
+    MarketTransaction { book, escrow }
+}
+
+fn match_and_populate(tx: &mut MarketTransaction) -> MatchPair<AskSpec> {
+    tx.book.match_top().expect("top-of-book match")
+}
+
+#[test]
+fn happy_path_bid_matches_ask_escrow_settles() {
+    let mut tx = setup_match(&sample_did(238), &sample_did(145), "openai/gpt-4", 100, 5);
+
+    let matched = match_and_populate(&mut tx);
+    assert_eq!(matched.bid.owner, sample_did(238));
+    assert_eq!(matched.ask.owner, sample_did(145));
+    assert_eq!(matched.price, 100);
+    assert_eq!(matched.qty, 5);
+    assert!(tx.book.is_empty());
+
+    // Settle the escrow.
+    tx.escrow
+        .settle(&Party::Seller(tx.escrow.seller.clone()))
+        .expect("settle");
+    assert_eq!(tx.escrow.state, EscrowState::Settled);
+    assert!(tx.escrow.is_terminal());
+    assert_eq!(tx.escrow.amount_micro_octo_w, dqa(500));
+}
+
+#[test]
+fn dispute_valid_slashes_seller() {
+    let mut tx = setup_match(&sample_did(238), &sample_did(145), "openai/gpt-4", 200, 3);
+    let matched = match_and_populate(&mut tx);
+    assert_eq!(matched.qty, 3);
+
+    tx.escrow
+        .dispute(&Party::Buyer(tx.escrow.buyer.clone()))
+        .expect("dispute");
+    tx.escrow
+        .resolve_valid(&Party::Arbitrator("arb-1".to_string()))
+        .expect("resolve valid");
+    assert_eq!(tx.escrow.state, EscrowState::Slashed);
+    assert!(tx.escrow.is_terminal());
+
+    // Provider gets slashed.
+    let mut ledger = SlashingLedger::new();
+    ledger.register(sample_did(145), dqa(1_000_000)).unwrap();
+    let out = ledger
+        .slash(&sample_did(145), SlashReason::PROVIDER_ERROR, 1.0)
+        .expect("slash");
+    assert_eq!(out.amount_micro_octo_w, dqa(100_000)); // 10% first offense
+    assert_eq!(out.new_stake_micro_octo_w, dqa(900_000));
+    assert!(!out.banned);
+}
+
+#[test]
+fn dispute_invalid_confirms_payment() {
+    let mut tx = setup_match(
+        &sample_did(238),
+        &sample_did(145),
+        "anthropic/claude",
+        50,
+        10,
+    );
+    match_and_populate(&mut tx);
+
+    tx.escrow
+        .dispute(&Party::Buyer(tx.escrow.buyer.clone()))
+        .expect("dispute");
+    tx.escrow
+        .resolve_invalid(&Party::Arbitrator("arb-1".to_string()))
+        .expect("resolve invalid");
+    assert_eq!(tx.escrow.state, EscrowState::Settled);
+    assert_eq!(tx.escrow.amount_micro_octo_w, dqa(500));
+}
+
+#[test]
+fn below_tolerance_miss_rate_does_not_slash() {
+    let mut ledger = SlashingLedger::with_rules(SlashingRules {
+        miss_rate_tolerance: 0.05,
+        ..SlashingRules::default()
+    });
+    ledger.register(sample_did(145), dqa(1_000_000)).unwrap();
+    let err = ledger
+        .slash(&sample_did(145), SlashReason::TIMEOUT, 0.01)
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        quota_router_core::marketplace::slashing::SlashError::BelowTolerance { .. }
+    ));
+    // Stake untouched.
+    assert_eq!(ledger.stake(&sample_did(145)).unwrap().offense_count, 0);
+    assert_eq!(
+        ledger.stake(&sample_did(145)).unwrap().stake_micro_octo_w,
+        dqa(1_000_000)
+    );
+}
+
+#[test]
+fn repeated_offenses_eventually_ban_provider() {
+    let mut ledger = SlashingLedger::new();
+    ledger.register(sample_did(20), dqa(1_000_000)).unwrap();
+
+    // First three offenses with default rules (10%, 15%, 22.5%) leave
+    // cumulative ≈ 40.7%. Fourth offense (33.75% of remaining ≈ 30%)
+    // crosses 50% → banned.
+    for _ in 0..4 {
+        let _ = ledger
+            .slash(&sample_did(20), SlashReason::PROVIDER_ERROR, 1.0)
+            .expect("slash");
+    }
+    assert!(ledger
+        .stake(&sample_did(20))
+        .unwrap()
+        .is_banned(ledger.rules()));
+
+    // Subsequent slashes rejected.
+    let err = ledger
+        .slash(&sample_did(20), SlashReason::TIMEOUT, 1.0)
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        quota_router_core::marketplace::slashing::SlashError::BannedProvider { .. }
+    ));
+}
+
+#[test]
+fn multiple_bids_match_multiple_asks_in_sequence() {
+    let mut book = OrderBook::<AskSpec>::new();
+    book.place_ask(
+        AskSpec {
+            model: "gpt-4".into(),
+            asker_did: "seller-a".into(),
+        },
+        90,
+        1,
+        "seller-a",
+        1,
+    );
+    book.place_ask(
+        AskSpec {
+            model: "gpt-4".into(),
+            asker_did: "seller-b".into(),
+        },
+        100,
+        1,
+        "seller-b",
+        2,
+    );
+    book.place_bid(
+        AskSpec {
+            model: "gpt-4".into(),
+            asker_did: "seller-a".into(),
+        },
+        120,
+        1,
+        "buyer-1",
+        10,
+    );
+    book.place_bid(
+        AskSpec {
+            model: "gpt-4".into(),
+            asker_did: "seller-a".into(),
+        },
+        110,
+        1,
+        "buyer-2",
+        11,
+    );
+
+    // First match: buyer-1 (120) crosses seller-a (90) → 90, qty=1.
+    let m1 = book.match_top().unwrap();
+    assert_eq!(m1.bid.owner, "buyer-1");
+    assert_eq!(m1.ask.owner, "seller-a");
+    assert_eq!(m1.price, 90);
+
+    // Second match: buyer-2 (110) crosses seller-b (100) → 100, qty=1.
+    let m2 = book.match_top().unwrap();
+    assert_eq!(m2.bid.owner, "buyer-2");
+    assert_eq!(m2.ask.owner, "seller-b");
+    assert_eq!(m2.price, 100);
+
+    // Book now empty.
+    assert!(book.is_empty());
+}
+
+#[test]
+fn best_ask_matching_filters_by_model() {
+    let mut book = OrderBook::<AskSpec>::new();
+    book.place_ask(
+        AskSpec {
+            model: "gpt-4".into(),
+            asker_did: "s1".into(),
+        },
+        100,
+        1,
+        "s1",
+        1,
+    );
+    book.place_ask(
+        AskSpec {
+            model: "claude".into(),
+            asker_did: "s2".into(),
+        },
+        50,
+        1,
+        "s2",
+        2,
+    );
+    let best_gpt = book
+        .best_ask_matching(|spec| spec.model == "gpt-4")
+        .unwrap();
+    assert_eq!(best_gpt.price, 100);
+    assert_eq!(best_gpt.spec.model, "gpt-4");
+    assert_eq!(best_gpt.spec.asker_did, "s1");
+    let best_claude = book
+        .best_ask_matching(|spec| spec.model == "claude")
+        .unwrap();
+    assert_eq!(best_claude.price, 50);
+}
+
+// =============================================================================
+// Strong-scenario E2E tests (Round 2 mission: marketplace-e2e-strong-scenarios).
+//
+// Each test pins a specific code path or recent Round 1 review fix.
+// =============================================================================
+
+#[test]
+fn concurrent_ask_insertion_at_same_price_preserves_all_entries() {
+    // Round 1 fix (C1): per-book `next_seq` counter prevents
+    // `(price, ts_unix)` collisions when multiple asks land in the same
+    // second. This test exercises the fix under thread contention:
+    // N threads each insert at the same price simultaneously; the
+    // BTreeMap must hold all N entries (no overwrites).
+    //
+    // Despite the previous name this does NOT assert FIFO ordering.
+    // The 32 threads have no externally observable insertion order —
+    // they are spawned together and joined without recording when each
+    // one ran — so there is nothing for a drain order to be compared
+    // against. What it asserts is survival: every concurrent insert is
+    // still matchable afterwards. The book's internal `next_seq`
+    // ordering is what makes such a drain deterministic, and no test
+    // asserts that order: the only tie-break test in the tree,
+    // `quota_router_storage::marketplace::tests::select_ask_deterministic_tie_break_by_ask_id`,
+    // covers `MarketplaceIndex` — a different, unwired type with a
+    // different rule (lowest `ask_id`, not insertion sequence). So
+    // `OrderBook`'s same-price drain order is currently unverified.
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+
+    const N: usize = 32;
+    let book = Arc::new(Mutex::new(OrderBook::<AskSpec>::new()));
+
+    let mut handles = Vec::with_capacity(N);
+    for i in 0..N {
+        let book = Arc::clone(&book);
+        handles.push(thread::spawn(move || {
+            let mut book = book.lock().expect("lock book");
+            book.place_ask(
+                AskSpec {
+                    model: "gpt-4".into(),
+                    asker_did: format!("seller-{i}"),
+                },
+                100,
+                1,
+                format!("seller-{i}"),
+                1_000,
+            );
+        }));
+    }
+    for h in handles {
+        h.join().expect("thread join");
+    }
+
+    // Drain via 32 matching bids (each crosses at 100). Every ask must
+    // produce a match — no overwrites, no lost entries.
+    let mut book = book.lock().expect("lock book");
+    let mut matched_sellers = std::collections::HashSet::new();
+    for _ in 0..N {
+        book.place_bid(
+            AskSpec {
+                model: "gpt-4".into(),
+                asker_did: "buyer".into(),
+            },
+            100,
+            1,
+            "buyer",
+            2_000,
+        );
+        let m = book
+            .match_top()
+            .expect("match should succeed — every ask must be present");
+        matched_sellers.insert(m.ask.owner.clone());
+    }
+    assert_eq!(
+        matched_sellers.len(),
+        N,
+        "all {N} concurrent asks must survive"
+    );
+    assert!(book.is_empty());
+}
+
+#[test]
+fn partial_fill_exact_match_no_residual() {
+    // Round 1 fix (C2): match_top re-inserts residual qty with fresh
+    // seq after partial fill. When bid and ask match exactly, no
+    // residual is created — book is empty after one match.
+    let mut book = OrderBook::<AskSpec>::new();
+    book.place_ask(
+        AskSpec {
+            model: "gpt-4".into(),
+            asker_did: "s".into(),
+        },
+        100,
+        10,
+        "s",
+        1,
+    );
+    book.place_bid(
+        AskSpec {
+            model: "gpt-4".into(),
+            asker_did: "s".into(),
+        },
+        200,
+        10,
+        "b",
+        2,
+    );
+    let m = book.match_top().expect("exact fill");
+    assert_eq!(m.qty, 10);
+    assert_eq!(m.price, 100);
+    assert!(book.is_empty(), "exact fill leaves no residual");
+}
+
+#[test]
+fn partial_fill_underfilled_bid_residual_matches_next_ask() {
+    // Round 1 fix (C2) end-to-end: bid=10 crosses ask=3, residual=7
+    // re-inserted; second match (against a new ask) consumes the
+    // residual. Asserts no qty loss across two sequential partial
+    // fills.
+    let mut book = OrderBook::<AskSpec>::new();
+    book.place_ask(
+        AskSpec {
+            model: "gpt-4".into(),
+            asker_did: "s1".into(),
+        },
+        100,
+        3,
+        "s1",
+        1,
+    );
+    book.place_bid(
+        AskSpec {
+            model: "gpt-4".into(),
+            asker_did: "b".into(),
+        },
+        200,
+        10,
+        "b",
+        2,
+    );
+    let m1 = book.match_top().expect("first match");
+    assert_eq!(m1.qty, 3);
+    assert_eq!(m1.price, 100);
+    assert_eq!(m1.ask.owner, "s1");
+    // After partial fill, ask1 is gone (3 qty fully consumed),
+    // bid residual of 7 is re-inserted in book. Asks is empty, bids
+    // has 1 entry with qty=7.
+    assert_eq!(book.best_bid().map(|o| o.qty), Some(7));
+    assert_eq!(book.best_ask().map(|o| o.qty), None);
+
+    // Add second ask of 7 qty at price 100 — crosses residual bid.
+    book.place_ask(
+        AskSpec {
+            model: "gpt-4".into(),
+            asker_did: "s2".into(),
+        },
+        100,
+        7,
+        "s2",
+        3,
+    );
+    let m2 = book.match_top().expect("second match consumes residual");
+    assert_eq!(m2.qty, 7);
+    assert_eq!(m2.ask.owner, "s2");
+    assert!(book.is_empty());
+}
+
+#[test]
+fn escrow_double_settle_rejected() {
+    // Escrow is single-use. After settle, second settle returns
+    // SettleFromInvalid. The Round 1 C3 fix (drop Clone) ensures no
+    // double-settle vector via accidental clone; this test pins the
+    // state-machine half of that contract.
+    let mut escrow = Escrow::new([0x99; 32], "buyer", "seller", dqa(500));
+    escrow
+        .lock(&Party::Buyer("buyer".to_string()))
+        .expect("lock");
+    escrow
+        .settle(&Party::Seller("seller".to_string()))
+        .expect("first settle");
+    assert_eq!(escrow.state, EscrowState::Settled);
+    let err = escrow
+        .settle(&Party::Seller("seller".to_string()))
+        .expect_err("second settle must fail");
+    assert!(matches!(
+        err,
+        quota_router_core::marketplace::escrow::EscrowError::SettleFromInvalid(_)
+    ));
+}
+
+#[test]
+fn escrow_double_dispute_rejected() {
+    // Same contract for dispute: only one dispute per Locked escrow.
+    let mut escrow = Escrow::new([0x99; 32], "buyer", "seller", dqa(500));
+    escrow
+        .lock(&Party::Buyer("buyer".to_string()))
+        .expect("lock");
+    escrow
+        .dispute(&Party::Buyer("buyer".to_string()))
+        .expect("first dispute");
+    let err = escrow
+        .dispute(&Party::Buyer("buyer".to_string()))
+        .expect_err("second dispute must fail");
+    assert!(matches!(
+        err,
+        quota_router_core::marketplace::escrow::EscrowError::DisputeFromInvalid(_)
+    ));
+}
+
+#[test]
+fn escrow_without_arbitrator_dispute_is_permanently_stuck() {
+    // Pins the fail-closed property documented on `check_caller`.
+    //
+    // `Escrow::new` leaves `arbitrator` empty. `Disputed` is not terminal
+    // (`is_terminal()` is Settled | Slashed), and `resolve_valid` /
+    // `resolve_invalid` are the only transitions out of it. With no stored
+    // arbitrator every resolve call is rejected — so an escrow built this
+    // way, once disputed, has no path forward at all.
+    //
+    // This is intentional (unset arbitrator must never grant dispute-
+    // resolution authority) and it is the correct default. It is pinned
+    // here so the behaviour cannot change silently: `TaskEscrow::new` is
+    // the default constructor and its callers inherit this.
+    //
+    // Mission `marketplace-escrow-is-not-wired-into-the-marketplace-facade`.
+    let mut escrow = Escrow::new([0x77; 32], "buyer", "seller", dqa(500));
+    assert_eq!(escrow.arbitrator, "", "new() leaves arbitrator unset");
+    escrow
+        .lock(&Party::Buyer("buyer".to_string()))
+        .expect("lock");
+    escrow
+        .dispute(&Party::Buyer("buyer".to_string()))
+        .expect("dispute");
+
+    // No caller can resolve — not the buyer, not the seller, and not an
+    // arbitrator claiming any identity at all.
+    for caller in [
+        Party::Buyer("buyer".to_string()),
+        Party::Seller("seller".to_string()),
+        Party::Arbitrator("arb".to_string()),
+    ] {
+        let err = escrow
+            .resolve_valid(&caller)
+            .expect_err("resolve_valid must fail without an arbitrator");
+        assert!(
+            matches!(err, EscrowError::UnauthorizedCaller { .. }),
+            "expected UnauthorizedCaller, got {err:?}"
+        );
+        let err = escrow
+            .resolve_invalid(&caller)
+            .expect_err("resolve_invalid must fail without an arbitrator");
+        assert!(
+            matches!(err, EscrowError::UnauthorizedCaller { .. }),
+            "expected UnauthorizedCaller, got {err:?}"
+        );
+    }
+
+    // And the escrow is stranded: still Disputed, still non-terminal.
+    assert_eq!(escrow.state, EscrowState::Disputed);
+    assert!(
+        !escrow.is_terminal(),
+        "a stuck Disputed escrow must not claim terminality"
+    );
+
+    // Positive control. Without this, the assertions above could pass for
+    // the wrong reason — e.g. if `resolve_*` were broken independently of
+    // the arbitrator. Here the same transitions succeed the moment an
+    // arbitrator is configured, so the failures above are attributable to
+    // the missing arbitrator and nothing else.
+    let mut arbitrated = Escrow::with_arbitrator([0x78; 32], "buyer", "seller", "arb", dqa(500));
+    arbitrated
+        .lock(&Party::Buyer("buyer".to_string()))
+        .expect("lock");
+    arbitrated
+        .dispute(&Party::Buyer("buyer".to_string()))
+        .expect("dispute");
+    let settled = arbitrated
+        .resolve_invalid(&Party::Arbitrator("arb".to_string()))
+        .expect("configured arbitrator must be able to resolve");
+    assert_eq!(settled, EscrowState::Settled);
+    assert!(arbitrated.is_terminal());
+
+    // Same escrow, wrong arbitrator identity — still rejected.
+    let err = arbitrated
+        .resolve_valid(&Party::Arbitrator("someone-else".to_string()))
+        .expect_err("wrong arbitrator identity must fail");
+    assert!(
+        matches!(err, EscrowError::UnauthorizedCaller { .. }),
+        "expected UnauthorizedCaller, got {err:?}"
+    );
+}
+
+#[test]
+fn byzantine_provider_offense_count_increments_per_offense() {
+    // Byzantine provider submits 99 valid + 1 invalid response.
+    // The slashing ledger must register the offense_count = 1
+    // (per-offense, not per-batch) so a 1-in-100 attacker cannot
+    // dilute their penalty rate. The valid responses don't touch the
+    // ledger; the invalid one slashes.
+    let mut ledger = SlashingLedger::new();
+    ledger.register(sample_did(7), dqa(1_000_000)).unwrap();
+
+    // 99 valid responses (no ledger action — only failures slash).
+    // 1 invalid response (slash with full loss):
+    let out = ledger
+        .slash(&sample_did(7), SlashReason::PROVIDER_ERROR, 1.0)
+        .expect("slash");
+    assert_eq!(out.amount_micro_octo_w, dqa(100_000)); // 10% first offense
+    assert_eq!(out.new_stake_micro_octo_w, dqa(900_000));
+    assert!(!out.banned);
+    let stake = ledger.stake(&sample_did(7)).unwrap();
+    assert_eq!(
+        stake.offense_count, 1,
+        "byzantine 1-in-100 must still register offense_count=1"
+    );
+    assert!(!stake.is_banned(ledger.rules()));
+}
+
+#[test]
+fn byzantine_provider_escalation_ban_unchanged() {
+    // Sanity: even with valid responses mixed in, the offense
+    // escalation path must still ban the provider after enough
+    // offenses. The 1st-offense threshold of 10% * 4 cuts > 50% in
+    // cumulative_loss_pct.
+    let mut ledger = SlashingLedger::new();
+    ledger.register(sample_did(7), dqa(1_000_000)).unwrap();
+    for _ in 0..4 {
+        let _ = ledger
+            .slash(&sample_did(7), SlashReason::PROVIDER_ERROR, 1.0)
+            .expect("slash");
+    }
+    assert!(ledger
+        .stake(&sample_did(7))
+        .unwrap()
+        .is_banned(ledger.rules()));
+}
+
+#[test]
+fn order_side_classification() {
+    // Sanity check on the Side enum: ensure both branches are usable
+    // through `Order<Spec>`.
+    let ask_order = Order {
+        id: [1u8; 32],
+        spec: AskSpec {
+            model: "gpt-4".into(),
+            asker_did: "s".into(),
+        },
+        price: 10,
+        qty: 1,
+        owner: "s".into(),
+        ts_unix: 1,
+    };
+    let bid_order = Order {
+        id: [2u8; 32],
+        spec: AskSpec {
+            model: "gpt-4".into(),
+            asker_did: "s".into(),
+        },
+        price: 10,
+        qty: 1,
+        owner: "b".into(),
+        ts_unix: 2,
+    };
+    let side_for = |o: &Order<AskSpec>| if o.owner == "b" { Side::Bid } else { Side::Ask };
+    assert_eq!(side_for(&bid_order), Side::Bid);
+    assert_eq!(side_for(&ask_order), Side::Ask);
+}
+
+// ========================================================================
+// Strong-scenario E2E tests (mission marketplace-e2e-strong-scenarios)
+// ========================================================================
+//
+// These tests pin the marketplace state machine under failure modes
+// the basic happy-path suite does not cover. Each test asserts a
+// specific invariant; if the production code regresses, the test
+// names tell the operator exactly which contract broke.
+
+#[test]
+fn duplicate_settle_rejected_from_settled_state() {
+    // Sequential duplicate settle, not a concurrency test: `Escrow`
+    // takes `&mut self`, so two producers cannot race inside the state
+    // machine — the caller must serialize access, and serializing here is
+    // what this test does.
+    //
+    // What it proves: once settled, a second `settle` is refused with
+    // `SettleFromInvalid(Settled)` rather than double-paying (RFC-0900
+    // §Settlement Model).
+    //
+    // What it does NOT prove, despite the previous name: that concurrent
+    // settles are safe. Nothing here runs in parallel, and the type
+    // gives no interior mutability for a race to occur through. Whether
+    // the settlement caller serializes is unverified — and the escrow is
+    // not yet wired into the marketplace facade, so there is no caller to
+    // verify. See deferred mission
+    // `marketplace-escrow-is-not-wired-into-the-marketplace-facade`.
+    let mut tx = setup_match(&sample_did(238), &sample_did(145), "openai/gpt-4", 100, 5);
+    match_and_populate(&mut tx);
+    // First settle succeeds.
+    tx.escrow
+        .settle(&Party::Seller(tx.escrow.seller.clone()))
+        .expect("first settle");
+    assert_eq!(tx.escrow.state, EscrowState::Settled);
+    // Second settle (concurrent producer) rejected — already Settled.
+    let err = tx
+        .escrow
+        .settle(&Party::Seller(tx.escrow.seller.clone()))
+        .unwrap_err();
+    assert!(
+        matches!(err, EscrowError::SettleFromInvalid(EscrowState::Settled)),
+        "duplicate settle must return SettleFromInvalid(Settled), got {err:?}"
+    );
+}
+
+#[test]
+fn escrow_recovery_from_locked_state_succeeds() {
+    // Provider crashes after lock but before settle. New process
+    // reconstructs the escrow from the persisted state (Locked) and
+    // may complete the settlement. This pins the recovery contract:
+    // a Locked escrow is recoverable, not stuck.
+    let mut tx = setup_match(&sample_did(238), &sample_did(145), "openai/gpt-4", 100, 5);
+    match_and_populate(&mut tx);
+    assert_eq!(tx.escrow.state, EscrowState::Locked);
+    // "Crash" — drop tx; reconstruct from a fresh in-memory escrow
+    // carrying the same Locked state (the production path hydrates
+    // from the persistence layer).
+    let recovered_state = tx.escrow.state;
+    let amount = tx.escrow.amount_micro_octo_w;
+    drop(tx);
+    // Reconstruct: an escrow that was Locked before the crash is
+    // still Locked after recovery, and can be settled by the seller.
+    let mut recovered = quota_router_core::marketplace::escrow::Escrow::new(
+        [0x42; 32],
+        sample_did(238),
+        sample_did(145),
+        amount,
+    );
+    // Manually drive to Locked (no public constructor for
+    // "recover from Locked"; the production persistence path does
+    // this via a dedicated `from_snapshot` constructor — for this
+    // test we exercise the state-machine path).
+    recovered
+        .lock(&Party::Buyer(sample_did(238).to_string()))
+        .expect("lock recovered");
+    assert_eq!(recovered.state, recovered_state);
+    recovered
+        .settle(&Party::Seller(sample_did(145).to_string()))
+        .expect("settle after recovery");
+    assert_eq!(recovered.state, EscrowState::Settled);
+}
+
+#[test]
+fn escrow_recovery_from_locked_state_dispute_works() {
+    // Alternative recovery path: Locked -> Disputed -> resolve.
+    // Pin that a recovered Locked escrow can also enter the dispute
+    // path (buyer invokes dispute after restart).
+    let mut tx = setup_match(&sample_did(238), &sample_did(145), "openai/gpt-4", 100, 5);
+    match_and_populate(&mut tx);
+    drop(tx);
+    let mut recovered = quota_router_core::marketplace::escrow::Escrow::with_arbitrator(
+        [0x42; 32],
+        sample_did(238),
+        sample_did(145),
+        "arb-1",
+        dqa(500),
+    );
+    recovered
+        .lock(&Party::Buyer(sample_did(238).to_string()))
+        .expect("lock recovered");
+    recovered
+        .dispute(&Party::Buyer(sample_did(238).to_string()))
+        .expect("dispute after recovery");
+    assert_eq!(recovered.state, EscrowState::Disputed);
+    recovered
+        .resolve_invalid(&Party::Arbitrator("arb-1".to_string()))
+        .expect("resolve invalid after recovery");
+    assert_eq!(recovered.state, EscrowState::Settled);
+}
+
+#[test]
+fn provider_key_rotation_preserves_ledger_state() {
+    // RFC-0968: reputation is per-controller-did, not per-key. A
+    // provider who rotates their key carries over the full slashing
+    // ledger. The ledger is keyed by `provider_id` (DID), so the
+    // rotation is invisible to it.
+    let mut ledger = SlashingLedger::new();
+    let did = sample_did(50);
+    ledger.register(&did, dqa(1_000_000)).unwrap();
+    // Provider gets 3 offenses (cumulative ~40.7%) under key_v1.
+    for _ in 0..3 {
+        ledger
+            .slash(&did, SlashReason::PROVIDER_ERROR, 1.0)
+            .expect("slash");
+    }
+    let pre_rotation = ledger.stake(&did).expect("stake").clone();
+    // "Key rotation" — DID is the same; in production the wallet
+    // rotates the key but the controller DID persists. The ledger
+    // is keyed on DID, so the rotation is opaque.
+    let post_rotation = ledger.stake(&did).expect("stake").clone();
+    assert_eq!(
+        pre_rotation, post_rotation,
+        "key rotation must not affect ledger state (DID-keyed)"
+    );
+    assert_eq!(post_rotation.offense_count, 3);
+    // Continue slashing under "key_v2" — escalation still works.
+    ledger
+        .slash(&did, SlashReason::PROVIDER_ERROR, 1.0)
+        .expect("slash after rotation");
+    let final_state = ledger.stake(&did).expect("stake");
+    assert!(final_state.is_banned(ledger.rules()));
+}
+
+#[test]
+fn partial_fill_exact_boundary_no_qty_loss() {
+    // Buyer bids 10 qty. Seller has two asks at the same price:
+    // ask1 = 3 qty, ask2 = 7 qty. First match consumes all of ask1
+    // (3 of 10), residual bid (7) fills ask2. Total: 10 qty matched
+    // across 2 trades; no qty is double-counted or lost.
+    let mut book = OrderBook::<AskSpec>::new();
+    book.place_ask(
+        AskSpec {
+            model: "gpt-4".into(),
+            asker_did: "s1".into(),
+        },
+        100,
+        3,
+        "s1",
+        1,
+    );
+    book.place_ask(
+        AskSpec {
+            model: "gpt-4".into(),
+            asker_did: "s2".into(),
+        },
+        100,
+        7,
+        "s2",
+        2,
+    );
+    book.place_bid(
+        AskSpec {
+            model: "gpt-4".into(),
+            asker_did: "s1".into(),
+        },
+        120,
+        10,
+        "b1",
+        10,
+    );
+    let m1 = book.match_top().expect("m1");
+    assert_eq!(m1.qty, 3, "first match consumes full ask1");
+    assert_eq!(m1.ask.owner, "s1");
+    let m2 = book.match_top().expect("m2");
+    assert_eq!(m2.qty, 7, "second match consumes full ask2");
+    assert_eq!(m2.ask.owner, "s2");
+    assert!(book.is_empty(), "exact-boundary fill leaves empty book");
+    let total: u64 = m1.qty + m2.qty;
+    assert_eq!(total, 10, "no qty loss across 2 matches");
+}
+
+#[test]
+fn stale_view_after_restart_sees_writes() {
+    // Two independent handles in the SAME process: handle A writes two
+    // asks and is dropped, then handle B opens the same file. This is a
+    // close/reopen hydration check, NOT a cross-process check — the
+    // comments below say "scope", not "process", deliberately. True
+    // cross-process restart recovery is explicitly deferred by mission
+    // `marketplace-subprocess-restart-recovery` (CI-flake cost vs
+    // marginal coverage over this test).
+    use quota_router_core::marketplace::Marketplace;
+    use std::env;
+    let dir = env::temp_dir().join(format!(
+        "marketplace-e2e-stale-view-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("m.db");
+    let dsn = path.to_string_lossy().to_string();
+    // Scope A: open, write 2 asks, drop the handle.
+    {
+        let m = Marketplace::open_path(&dsn).expect("open A");
+        m.put(&quota_router_storage::ask::Ask {
+            asker_did: sample_did(50),
+            model: quota_router_storage::ask::ModelRef::from("openai/gpt-4"),
+            rates: quota_router_storage::ask::ModelRateTable {
+                model: quota_router_storage::ask::ModelRef::from("openai/gpt-4"),
+                rates: vec![quota_router_storage::ask::AxisRate {
+                    axis: "input_tokens_per_1k".into(),
+                    rate_per_1k: octo_determin::Dqa::new(10_000, 0).expect("non-overflow"),
+                }],
+            },
+            nonce: [0x11; 16],
+            expires_at_unix: 1_900_000_000,
+        })
+        .expect("put A");
+        m.put(&quota_router_storage::ask::Ask {
+            asker_did: sample_did(60),
+            model: quota_router_storage::ask::ModelRef::from("openai/gpt-4"),
+            rates: quota_router_storage::ask::ModelRateTable {
+                model: quota_router_storage::ask::ModelRef::from("openai/gpt-4"),
+                rates: vec![quota_router_storage::ask::AxisRate {
+                    axis: "input_tokens_per_1k".into(),
+                    rate_per_1k: octo_determin::Dqa::new(20_000, 0).expect("non-overflow"),
+                }],
+            },
+            nonce: [0x22; 16],
+            expires_at_unix: 1_900_000_000,
+        })
+        .expect("put A2");
+    }
+    // Scope B: open against same file, verify both asks visible.
+    let m2 = Marketplace::open_path(&dsn).expect("open B");
+    let winner = m2.cheapest("openai/gpt-4").expect("some");
+    assert_eq!(winner.asker_did, sample_did(50));
+    let alice_asks = m2.list_by_asker(&sample_did(50)).expect("list_by_asker");
+    assert_eq!(
+        alice_asks.len(),
+        1,
+        "reopened handle must see the earlier write"
+    );
+    let bob_asks = m2.list_by_asker(&sample_did(60)).expect("list_by_asker");
+    assert_eq!(bob_asks.len(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn stake_withdrawal_full_amount_after_ban_rejected() {
+    // Production failure mode (mission `marketplace-stake-withdraw-api`):
+    // a banned provider must NOT be able to withdraw their stake.
+    // The `withdraw_stake` API exposes the ban gate; the prior
+    // re-register proxy covered the invariant indirectly. This test
+    // pins the production withdraw path.
+    let mut ledger = SlashingLedger::new();
+    let did = sample_did(99);
+    ledger.register(&did, dqa(1_000_000)).unwrap();
+    for _ in 0..4 {
+        ledger
+            .slash(&did, SlashReason::PROVIDER_ERROR, 1.0)
+            .expect("slash");
+    }
+    assert!(ledger.stake(&did).unwrap().is_banned(ledger.rules()));
+    let pre_offense_count = ledger.stake(&did).unwrap().offense_count;
+    let pre_cumulative = ledger.stake(&did).unwrap().cumulative_loss_pct;
+
+    // Attempt full withdrawal — must be rejected with BannedProvider.
+    let err = ledger
+        .withdraw_stake(&did, ledger.stake(&did).unwrap().stake_micro_octo_w)
+        .unwrap_err();
+    assert!(matches!(err, SlashError::BannedProvider { .. }));
+
+    // State untouched: stake still present, offense_count + cumulative
+    // loss unchanged.
+    assert!(ledger.stake(&did).unwrap().is_banned(ledger.rules()));
+    assert_eq!(ledger.stake(&did).unwrap().offense_count, pre_offense_count);
+    assert_eq!(
+        ledger.stake(&did).unwrap().cumulative_loss_pct,
+        pre_cumulative
+    );
+}
+
+#[test]
+fn stake_withdrawal_partial_preserves_ledger_state() {
+    // Pre-ban: a partial withdrawal must NOT clear offense history or
+    // affect the ban-stability invariant. Provider is still in
+    // good standing; partial withdraw gives them less skin in the
+    // game, but prior offenses stick.
+    let mut ledger = SlashingLedger::new();
+    let did = sample_did(101);
+    ledger.register(&did, dqa(1_000_000)).unwrap();
+    // One offense (10% loss) — not enough to ban.
+    ledger
+        .slash(&did, SlashReason::PROVIDER_ERROR, 1.0)
+        .expect("slash");
+    let pre_offense_count = ledger.stake(&did).unwrap().offense_count;
+    let pre_cumulative = ledger.stake(&did).unwrap().cumulative_loss_pct;
+    let pre_stake = ledger.stake(&did).unwrap().stake_micro_octo_w;
+
+    // Withdraw 100k (well under the 900k remaining).
+    let new_stake = ledger.withdraw_stake(&did, dqa(100_000)).expect("withdraw");
+    assert_eq!(
+        new_stake,
+        pre_stake.subtract(dqa(100_000)).expect("non-overflow")
+    );
+    assert_eq!(ledger.stake(&did).unwrap().stake_micro_octo_w, new_stake);
+
+    // Offense history untouched.
+    assert_eq!(ledger.stake(&did).unwrap().offense_count, pre_offense_count);
+    assert_eq!(
+        ledger.stake(&did).unwrap().cumulative_loss_pct,
+        pre_cumulative
+    );
+
+    // `can_withdraw` agrees with `withdraw_stake`.
+    assert!(ledger.can_withdraw(&did, dqa(1)).is_ok());
+    assert!(ledger.can_withdraw(&did, dqa(new_stake.value + 1)).is_err());
+}
+
+#[test]
+fn stake_withdrawal_rejects_invalid_inputs() {
+    // Five-way gating round-trip: unknown provider, zero, over-balance,
+    // exact-balance (success), post-zero (success-then-zero-reject).
+    let mut ledger = SlashingLedger::new();
+    let did = sample_did(202);
+    ledger.register(&did, dqa(500_000)).unwrap();
+
+    // Unknown provider.
+    assert!(matches!(
+        ledger.withdraw_stake(&sample_did(200), dqa(1)),
+        Err(SlashError::UnknownProvider(_))
+    ));
+    // Zero.
+    assert!(matches!(
+        ledger.withdraw_stake(&did, dqa(0)),
+        Err(SlashError::InvalidAmount(_))
+    ));
+    // Over-balance.
+    assert!(matches!(
+        ledger.withdraw_stake(&did, dqa(500_001)),
+        Err(SlashError::InsufficientStake {
+            available: _,
+            requested: _
+        })
+    ));
+    // Exact balance succeeds.
+    assert_eq!(ledger.withdraw_stake(&did, dqa(500_000)), Ok(dqa(0)));
+    // Subsequent zero-reject (stake exhausted).
+    assert!(matches!(
+        ledger.withdraw_stake(&did, dqa(0)),
+        Err(SlashError::InvalidAmount(_))
+    ));
+    // Subsequent any-amount-reject (zero balance).
+    assert!(matches!(
+        ledger.withdraw_stake(&did, dqa(1)),
+        Err(SlashError::InsufficientStake {
+            available: _,
+            requested: _
+        })
+    ));
+}
+
+/// Builds an Ask quoting `rate_value` at `rate_scale` on the input axis.
+fn ask_with_rate(seed: u8, rate_value: i64, rate_scale: u8) -> quota_router_storage::ask::Ask {
+    use quota_router_storage::ask::{Ask, AxisRate, ModelRateTable, ModelRef};
+    Ask {
+        asker_did: octo_ident::test_helpers::sample_did(seed),
+        model: ModelRef::from("openai/gpt-4"),
+        rates: ModelRateTable {
+            model: ModelRef::from("openai/gpt-4"),
+            rates: vec![AxisRate {
+                axis: "input_tokens_per_1k".into(),
+                rate_per_1k: octo_determin::Dqa::new(rate_value, rate_scale).expect("non-overflow"),
+            }],
+        },
+        nonce: [0x55; 16],
+        expires_at_unix: 1_900_000_000,
+    }
+}
+
+#[test]
+fn put_rejects_fractional_scale_rate_instead_of_panicking() {
+    // Regression: `put()` carried `assert_eq!(cost.scale, 0, ...)`, which
+    // panicked for any rate whose scale is high enough that the settlement
+    // cost is not an integer micro-OCTO-W amount (reachable at scale >= 5).
+    // The panic fired AFTER `repo.put` had already persisted the Ask.
+    use quota_router_core::marketplace::Marketplace;
+    use quota_router_storage::ask_repo::RepoError;
+
+    let m = Marketplace::open_in_memory().expect("open");
+
+    // Scale 0 still works — the fix must not reject valid Asks.
+    m.put(&ask_with_rate(1, 10_000, 0))
+        .expect("scale 0 must be accepted");
+
+    for scale in [5u8, 6, 7, 8] {
+        let ask = ask_with_rate(2, 10_000, scale);
+        let err = m
+            .put(&ask)
+            .expect_err("fractional-scale rate must be rejected, not panic");
+        assert!(
+            matches!(err, RepoError::InvalidSettlementCost { .. }),
+            "expected InvalidSettlementCost at scale {scale}, got {err:?}"
+        );
+    }
+}
+
+#[test]
+fn put_rejects_negative_rate_instead_of_wrapping_to_u128() {
+    // Regression: `cost.value as u128` on a negative cost wraps. Measured
+    // pre-fix, a rate of -5_000 became price 340282366920938463463374607431768206456
+    // (~2^128) and was indexed into the book as a legitimate ask.
+    use quota_router_core::marketplace::Marketplace;
+    use quota_router_storage::ask_repo::RepoError;
+
+    let m = Marketplace::open_in_memory().expect("open");
+    let err = m
+        .put(&ask_with_rate(3, -5_000, 0))
+        .expect_err("negative rate must be rejected");
+    assert!(
+        matches!(err, RepoError::InvalidSettlementCost { .. }),
+        "expected InvalidSettlementCost, got {err:?}"
+    );
+
+    // And nothing was indexed: the book must not hold the wrapped ask.
+    assert!(
+        m.cheapest("openai/gpt-4").is_none(),
+        "a rejected Ask must not appear in the order book"
+    );
+}
+
+#[test]
+fn put_rejects_before_the_repo_write_so_nothing_half_lands() {
+    // The validation must precede `repo.put`, not follow it. Pre-fix the
+    // Ask was persisted and then the process aborted, so a caller that
+    // caught the panic still had a stored Ask behind it.
+    use quota_router_core::marketplace::Marketplace;
+
+    let m = Marketplace::open_in_memory().expect("open");
+    let rejected = ask_with_rate(4, 10_000, 7);
+    let did = rejected.asker_did.clone();
+    assert!(m.put(&rejected).is_err());
+
+    // `list_by_asker` reads through to the repository, so this observes
+    // persistence rather than the in-memory book.
+    let stored = m.list_by_asker(&did).expect("list");
+    assert!(
+        stored.is_empty(),
+        "rejected Ask must not be persisted to the repo, found {} entries",
+        stored.len()
+    );
+}
+
+#[test]
+fn cheapest_skips_an_ask_that_expired_after_it_was_indexed() {
+    // `put` only gates expiry at insert time. Before this fix the book
+    // stored no expiry, so an Ask indexed while live stayed a candidate
+    // forever — measured: still returned after `expires_at_unix` passed.
+    use quota_router_core::marketplace::Marketplace;
+
+    let m = Marketplace::open_in_memory().expect("open");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let mut live = ask_with_rate(70, 10_000, 0);
+    live.expires_at_unix = now + 3;
+    m.put(&live).expect("put");
+    assert!(
+        m.cheapest("openai/gpt-4").is_some(),
+        "a live ask must be a candidate"
+    );
+
+    std::thread::sleep(std::time::Duration::from_millis(4_000));
+
+    assert!(
+        m.cheapest("openai/gpt-4").is_none(),
+        "an expired ask must stop being a candidate"
+    );
+    assert!(
+        m.cheapest_with_ranking(
+            "openai/gpt-4",
+            quota_router_core::marketplace::scoring::LatencyRanking::prefer_latency()
+        )
+        .is_none(),
+        "the latency-ranked path must honour expiry too"
+    );
+}
+
+#[tokio::test]
+async fn cheapest_async_skips_an_ask_that_expired_after_it_was_indexed() {
+    // The async path reads the same book and once omitted the expiry term
+    // entirely — a third reader, after the sync one and hydration. This
+    // pins the async surface so it cannot drift again.
+    use quota_router_core::marketplace::scoring::LatencyRanking;
+    use quota_router_core::marketplace::Marketplace;
+
+    let m = Marketplace::open_in_memory().expect("open");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let mut live = ask_with_rate(74, 10_000, 0);
+    live.expires_at_unix = now + 3;
+    m.put(&live).expect("put");
+    assert!(
+        m.cheapest_with_ranking_async("openai/gpt-4", LatencyRanking::cheapest())
+            .await
+            .expect("async cheapest")
+            .is_some(),
+        "a live ask must be a candidate on the async path too"
+    );
+
+    std::thread::sleep(std::time::Duration::from_millis(4_000));
+
+    assert!(
+        m.cheapest_with_ranking_async("openai/gpt-4", LatencyRanking::cheapest())
+            .await
+            .expect("async cheapest")
+            .is_none(),
+        "an expired ask must stop being a candidate on the async path"
+    );
+}
+
+#[test]
+fn cheapest_ignores_expired_entries_but_keeps_live_ones() {
+    // Expiry must filter per entry, not clear the book.
+    use quota_router_core::marketplace::Marketplace;
+
+    let m = Marketplace::open_in_memory().expect("open");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let mut expiring = ask_with_rate(71, 1_000, 0);
+    expiring.expires_at_unix = now + 3;
+    m.put(&expiring).expect("put expiring");
+
+    let mut durable = ask_with_rate(72, 90_000, 0);
+    durable.expires_at_unix = now + 3_600;
+    m.put(&durable).expect("put durable");
+
+    std::thread::sleep(std::time::Duration::from_millis(4_000));
+
+    let best = m.cheapest("openai/gpt-4").expect("durable ask survives");
+    assert_eq!(
+        best.cost_per_1k, 90_000,
+        "only the un-expired ask may be returned"
+    );
+}
+
+#[test]
+fn hydration_rejects_an_unrepresentable_stored_price_instead_of_panicking() {
+    // `open_path_with_store` had the same unchecked assert and `as u128`
+    // cast that were fixed in `put`. Hydration reads *persisted* Asks,
+    // including rows written before the storage guard existed, so it is
+    // strictly more exposed than the write path.
+    use quota_router_core::marketplace::Marketplace;
+    use quota_router_storage::ask_repo::RepoError;
+
+    let dir = std::env::temp_dir().join(format!(
+        "marketplace-hydrate-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("m.db");
+    let dsn = path.to_string_lossy().to_string();
+
+    // Seed a fractional-scale ask directly through the repo, bypassing the
+    // Marketplace write path entirely.
+    {
+        let repo = quota_router_storage::ask_repo::StoolapAskRepository::open_path(&dsn)
+            .expect("open repo");
+        repo.put(&ask_with_rate(73, 10_000, 7)).expect("repo put");
+    }
+
+    let opened = Marketplace::open_path(&dsn);
+    let err = match opened {
+        Ok(_) => panic!("hydration must refuse an unrepresentable stored price"),
+        Err(e) => e,
+    };
+    assert!(
+        matches!(err, RepoError::InvalidSettlementCost { .. }),
+        "expected InvalidSettlementCost, got {err:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn reputation_score_population_matches_the_documented_range() {
+    // Pins what `cheapest` actually emits. The struct doc previously
+    // claimed `Some(100)` for unknown providers; measurement showed `None`.
+    use quota_router_core::marketplace::Marketplace;
+
+    let m = Marketplace::open_in_memory().expect("open");
+    let ask = ask_with_rate(90, 10_000, 0);
+    let did = ask.asker_did.clone();
+    m.put(&ask).expect("put");
+
+    // No recorded outcome: the field is absent, not a default 100.
+    let unknown = m.cheapest("openai/gpt-4").expect("entry");
+    assert_eq!(
+        unknown.reputation_score_0_100, None,
+        "an unobserved provider must not carry a fabricated score"
+    );
+    assert_eq!(unknown.latency_ms, None, "and no latency either");
+
+    // Observed outcomes populate it. A single success seeds the EWMA at
+    // 1.0, which presents as the top of the scale.
+    m.record_outcome(&did, true, 40);
+    let good = m.cheapest("openai/gpt-4").expect("entry");
+    assert_eq!(good.reputation_score_0_100, Some(100));
+
+    // A subsequent failure moves it down, but the decayed EWMA has not
+    // fallen to the floor yet — asserting the direction rather than the
+    // exact value keeps this independent of EWMA_ALPHA.
+    m.record_outcome(&did, false, 40);
+    let degraded = m.cheapest("openai/gpt-4").expect("entry");
+    let after = degraded.reputation_score_0_100.expect("score present");
+    assert!(
+        after < 100,
+        "a recorded failure must lower the score, got {after}"
+    );
+
+    // A provider whose very first outcome is a failure seeds at 0.0 and
+    // presents at the formula's floor of 50.
+    let m2 = Marketplace::open_in_memory().expect("open");
+    let first_failure = ask_with_rate(93, 10_000, 0);
+    let did2 = first_failure.asker_did.clone();
+    m2.put(&first_failure).expect("put");
+    m2.record_outcome(&did2, false, 40);
+    let seeded = m2.cheapest("openai/gpt-4").expect("entry");
+    assert_eq!(seeded.reputation_score_0_100, Some(50));
+}
+
+#[test]
+fn reputation_score_cannot_represent_a_provider_below_neutral() {
+    // The presentation formula is `(clamp(score, -1, 1) + 1) * 50`, which
+    // assumes a *signed* score in [-1, 1]. It is fed the legacy unsigned
+    // `success_rate`, which only ever occupies [0, 1] — so the clamp never
+    // engages and the observable floor is 50, not 0.
+    //
+    // A provider that has failed every single recorded request presents as
+    // 50/100: mid-reputation, not bad. See mission
+    // `reputation-score-cannot-express-a-provider-worse-than-neutral`.
+    use quota_router_core::marketplace::Marketplace;
+
+    let m = Marketplace::open_in_memory().expect("open");
+    let ask = ask_with_rate(92, 10_000, 0);
+    let did = ask.asker_did.clone();
+    m.put(&ask).expect("put");
+
+    // Fail everything, many times, so the EWMA settles toward 0.
+    for _ in 0..200 {
+        m.record_outcome(&did, false, 40);
+    }
+
+    let worst = m.cheapest("openai/gpt-4").expect("entry");
+    let score = worst.reputation_score_0_100.expect("score present");
+    assert!(
+        score >= 50,
+        "the formula floors at 50 because success_rate is unsigned; \
+         observed {score}, which cannot express a failing provider"
+    );
+}
+
+/// An Ask whose expiry cannot be represented in the `asks` table must be
+/// refused, not written.
+///
+/// `Ask::expires_at_unix` is `u64`; the row column is `i64`, and every
+/// read filters on `expires_at_unix > now_unix`. The write used a bare
+/// `as i64` cast, so `u64::MAX` wrapped to `-1` — the row was written
+/// successfully and then excluded by *every* query, while the in-memory
+/// book, which keeps the `u64`, held it as live and selectable.
+///
+/// Measured before the fix: `put` returned `Ok`, `cheapest` returned the
+/// ask at 30_000, and `list_by_asker` returned zero rows. The listing would
+/// also have vanished on restart, since hydration reads through the same
+/// filter.
+///
+/// Refused at the storage boundary (`AskRow: TryFrom<&Ask>`) rather than in
+/// the facade, so every writer is covered.
+#[test]
+fn put_refuses_an_expiry_that_cannot_be_represented() {
+    use quota_router_core::marketplace::Marketplace;
+    let m = Marketplace::open_in_memory().expect("open");
+    let did = sample_did(50);
+
+    // Boundary control: the largest representable value is accepted, so
+    // the check cannot be passing by refusing everything.
+    let mut at_limit = ask_with_rate(7, 30_000, 0);
+    at_limit.asker_did = did.clone();
+    at_limit.expires_at_unix = i64::MAX as u64;
+    m.put(&at_limit)
+        .expect("i64::MAX is representable and must be accepted");
+    assert_eq!(
+        m.list_by_asker(&did).expect("repo query").len(),
+        1,
+        "the boundary listing round-trips through the repository"
+    );
+
+    // One past the boundary wraps negative under the old cast.
+    let mut overflow = ask_with_rate(7, 30_000, 0);
+    overflow.asker_did = did.clone();
+    overflow.expires_at_unix = i64::MAX as u64 + 1;
+    let err = m
+        .put(&overflow)
+        .expect_err("an unrepresentable expiry must be refused");
+    assert!(
+        matches!(
+            err,
+            quota_router_storage::RepoError::UnrepresentableExpiry { .. }
+        ),
+        "expected UnrepresentableExpiry, got {err:?}"
+    );
+
+    let mut far = ask_with_rate(8, 30_000, 0);
+    far.asker_did = did.clone();
+    far.expires_at_unix = u64::MAX;
+    assert!(
+        matches!(
+            m.put(&far),
+            Err(quota_router_storage::RepoError::UnrepresentableExpiry { .. })
+        ),
+        "u64::MAX must be refused too"
+    );
+}

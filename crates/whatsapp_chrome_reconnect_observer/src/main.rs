@@ -43,6 +43,13 @@
 //! Chrome driver — its only job is to observe what a logged-in Chrome
 //! session does during connect + reconnect, so our daemon can mirror it.
 
+// Clippy `[disallowed-methods]` allowlist: these binaries talk to
+// Chrome DevTools Protocol (CDP) at `http://localhost:9222` to extract
+// WhatsApp Web session keys for Phase 7.J work. CDP is an operator
+// diagnostic endpoint (not an LLM model provider). Cipherocto capability
+// tokens never reach CDP.
+#![allow(clippy::disallowed_methods)]
+
 mod cdp;
 
 use anyhow::{bail, Context, Result};
@@ -143,9 +150,12 @@ async fn main() -> Result<()> {
         user_data.display()
     );
 
+    // Chrome's renderer sandbox is deliberately left ON. These binaries drive a
+    // profile holding a live WhatsApp Web session, so a renderer compromise is
+    // full account compromise. If Chrome cannot start in a sandbox-less
+    // container, give the container user namespaces rather than this flag.
     let mut child = tokio::process::Command::new(&chrome)
         .arg(format!("--remote-debugging-port={}", args.port))
-        .arg("--no-sandbox")
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
         .arg("--disable-extensions")

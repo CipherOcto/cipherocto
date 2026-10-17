@@ -188,15 +188,15 @@ This includes:
 
 > ⚠️ **CRITICAL**: Consensus safety requires deterministic overflow behavior.
 
-| Type    | Overflow Behavior      | Underflow Behavior     |
-| ------- | ---------------------- | ---------------------- |
-| INT     | TRAP                   | TRAP                   |
-| BIGINT  | Impossible (arbitrary) | Impossible (arbitrary) |
-| DQA     | TRAP                   | TRAP                   |
+| Type    | Overflow Behavior       | Underflow Behavior      |
+| ------- | ----------------------- | ----------------------- |
+| INT     | TRAP                    | TRAP                    |
+| BIGINT  | Impossible (arbitrary)  | Impossible (arbitrary)  |
+| DQA     | TRAP                    | TRAP                    |
 | DFP     | SATURATION (to DFP_MAX) | SATURATION (to DFP_MIN) |
-| DECIMAL | TRAP                   | TRAP                   |
-| DVEC    | TRAP (any element)     | TRAP (any element)     |
-| DMAT    | TRAP (any element)     | TRAP (any element)     |
+| DECIMAL | TRAP                    | TRAP                    |
+| DVEC    | TRAP (any element)      | TRAP (any element)      |
+| DMAT    | TRAP (any element)      | TRAP (any element)      |
 
 **DFP SATURATION semantics** (per RFC-0104):
 
@@ -231,6 +231,7 @@ DFP_NaN = DFP {
 ```
 
 **NaN propagation rules:**
+
 - 0/0 → canonical NaN
 - sqrt(negative) → canonical NaN
 - Infinity - Infinity → canonical NaN
@@ -431,61 +432,66 @@ fn dqa_mul(a: i64, b: i64, result_scale: u8) -> Dqa {
 ```
 
 > **Note**: This algorithm differs from the original Q8.8 Floor approach. RFC-0105 RNE is the authoritative specification for DQA multiplication.
-    shifted as i32
-}
+> shifted as i32
+> }
+
 ```
 
 **Division:**
 
 ```
+
 fn dqa_div(a: i32, b: i32, scale: u8, rounding: RoundingMode) -> i32 {
-    // Widen, shift to preserve precision, divide
-    let wide_a: i64 = (a as i64) << scale;  // Shift to maintain precision
-    if b == 0 { TRAP }  // Division by zero
-    let remainder = wide_a % (b as i64);
-    let mut result = wide_a / (b as i64);
-    // Apply rounding
-    result = match rounding {
-        Nearest => {
-            // Round to nearest, ties to even
-            let two_rem = remainder.abs() * 2;
-            let abs_b = (b as i64).abs();
-            if two_rem > abs_b || (two_rem == abs_b && result % 2 != 0) {
-                // Round up if: remainder > b/2, OR remainder == b/2 AND result is odd
-                if remainder >= 0 { result + 1 } else { result - 1 }
-            } else {
-                result
-            }
-        },
-        Truncate => result,
-        Up => if remainder > 0 { result + 1 } else { result },
-        Down => if remainder < 0 { result - 1 } else { result },
-    };
-    // Check for overflow before truncating to i32
-    if result > i32::MAX as i64 || result < i32::MIN as i64 { TRAP }
-    result as i32
+// Widen, shift to preserve precision, divide
+let wide_a: i64 = (a as i64) << scale; // Shift to maintain precision
+if b == 0 { TRAP } // Division by zero
+let remainder = wide_a % (b as i64);
+let mut result = wide_a / (b as i64);
+// Apply rounding
+result = match rounding {
+Nearest => {
+// Round to nearest, ties to even
+let two_rem = remainder.abs() * 2;
+let abs_b = (b as i64).abs();
+if two_rem > abs_b || (two_rem == abs_b && result % 2 != 0) {
+// Round up if: remainder > b/2, OR remainder == b/2 AND result is odd
+if remainder >= 0 { result + 1 } else { result - 1 }
+} else {
+result
 }
+},
+Truncate => result,
+Up => if remainder > 0 { result + 1 } else { result },
+Down => if remainder < 0 { result - 1 } else { result },
+};
+// Check for overflow before truncating to i32
+if result > i32::MAX as i64 || result < i32::MIN as i64 { TRAP }
+result as i32
+}
+
 ```
 
 **FMA (Fused Multiply-Add):**
 
 ```
+
 fn dqa_fma(a: i32, b: i32, c: i32, scale: u8) -> i32 {
-    // Single rounding at end - CRITICAL for determinism
-    // FMA definition: round((a * b) + c) with single rounding
-    // Step 1: Multiply in full precision (no scaling)
-    let product: i128 = (a as i128) * (b as i128);
-    // Step 2: Widen c to match precision before addition
-    let c_wide: i128 = (c as i128) << scale;
-    // Step 3: Add in full precision (no rounding yet)
-    let sum = product + c_wide;
-    // Step 4: Single rounding at end - right shift applies floor truncation
-    let shifted = sum >> scale;
-    // Bounds check: i32 overflow/underflow triggers TRAP per spec
-    if shifted > i32::MAX as i128 || shifted < i32::MIN as i128 { TRAP }
-    shifted as i32
+// Single rounding at end - CRITICAL for determinism
+// FMA definition: round((a * b) + c) with single rounding
+// Step 1: Multiply in full precision (no scaling)
+let product: i128 = (a as i128) * (b as i128);
+// Step 2: Widen c to match precision before addition
+let c_wide: i128 = (c as i128) << scale;
+// Step 3: Add in full precision (no rounding yet)
+let sum = product + c_wide;
+// Step 4: Single rounding at end - right shift applies floor truncation
+let shifted = sum >> scale;
+// Bounds check: i32 overflow/underflow triggers TRAP per spec
+if shifted > i32::MAX as i128 || shifted < i32::MIN as i128 { TRAP }
+shifted as i32
 }
-```
+
+````
 
 > ⚠️ **FMA MANDATORY**: For any expression `(a * b) + c`, implementations MUST use FMA to ensure single rounding. Using separate mul then add produces different results due to double rounding.
 >
@@ -506,10 +512,12 @@ fn dqa_fma(a: i32, b: i32, c: i32, scale: u8) -> i32 {
 
 **BIGINT Limits:**
 
-```
-const MAX_BIGINT_BITS: usize = 4096;  // Maximum bit width
-const MAX_BIGINT_LIMBS: usize = 64;   // Maximum number of 64-bit limbs
+````
+
+const MAX_BIGINT_BITS: usize = 4096; // Maximum bit width
+const MAX_BIGINT_LIMBS: usize = 64; // Maximum number of 64-bit limbs
 const MAX_BIGINT_OP_COST: u64 = 10000; // Gas cost cap
+
 ```
 
 **BIGINT Gas Cost Model:**
@@ -517,6 +525,7 @@ const MAX_BIGINT_OP_COST: u64 = 10000; // Gas cost cap
 Gas costs MUST scale with operand size to prevent DoS:
 
 ```
+
 // Multiplication: gas = BASE_COST + (limbs_a × limbs_b × COST_PER_LIMB)
 const BIGINT_MUL_BASE_COST: u64 = 50;
 const BIGINT_MUL_COST_PER_LIMB: u64 = 2;
@@ -528,67 +537,72 @@ const BIGINT_DIV_COST_FACTOR: u64 = 3;
 // Example: 64÷64 limbs = 50 + (64×64×3) = 12338 gas
 // Max case: 4096 bits ÷ 64-bit limbs = 64 limbs
 // MAX_BIGINT_DIV = 50 + (64×64×3) = 12,338 gas (fits in 100k cap)
+
 ```
 
 **BIGINT Operations:**
 
 ```
+
 fn bigint_add(a: &BigInt, b: &BigInt) -> BigInt {
-    assert!(a.bits() <= MAX_BIGINT_BITS);
-    assert!(b.bits() <= MAX_BIGINT_BITS);
-    // ⚠️ FIXED: Added overflow check for addition
-    let result_bits = (a.bits().max(b.bits()) + 1);
-    if result_bits > MAX_BIGINT_BITS { TRAP }
-    // Limb-wise addition with carry propagation
-    // Same algorithm on all implementations
+assert!(a.bits() <= MAX_BIGINT_BITS);
+assert!(b.bits() <= MAX_BIGINT_BITS);
+// ⚠️ FIXED: Added overflow check for addition
+let result_bits = (a.bits().max(b.bits()) + 1);
+if result_bits > MAX_BIGINT_BITS { TRAP }
+// Limb-wise addition with carry propagation
+// Same algorithm on all implementations
 }
 
 fn bigint_mul(a: &BigInt, b: &BigInt) -> BigInt {
-    // ⚠️ FIXED: Product bits can exceed MAX_BIGINT_BITS even if individual operands don't
-    if a.bits() + b.bits() > MAX_BIGINT_BITS { TRAP }
-    // MANDATORY: Schoolbook multiplication algorithm
-    // Karatsuba is NOT allowed due to potential implementation variance
-    // Schoolbook: O(n²) limb-wise multiplication
+// ⚠️ FIXED: Product bits can exceed MAX_BIGINT_BITS even if individual operands don't
+if a.bits() + b.bits() > MAX_BIGINT_BITS { TRAP }
+// MANDATORY: Schoolbook multiplication algorithm
+// Karatsuba is NOT allowed due to potential implementation variance
+// Schoolbook: O(n²) limb-wise multiplication
 }
 
 fn bigint_div(a: &BigInt, b: &BigInt) -> BigInt {
-    if b.is_zero() { TRAP }
-    // Binary long division, deterministic
+if b.is_zero() { TRAP }
+// Binary long division, deterministic
 }
+
 ```
 
 #### Vector Dot Product Canonical Algorithm
 
 ```
+
 fn dot_product<const N: usize>(a: &[i32; N], b: &[i32; N], scale: u8) -> Result<i64, ExecutionError> {
-    // ACCUMULATOR: Must be 128-bit (i128) to prevent overflow
-    // For N=64, each term up to (2^31)^2 = 2^62, sum up to 2^67
-    // Maximum N before i128 overflow: N ≤ 2048 for Q8.8
-    // Phase 1 limit: N ≤ 64 (conservative, well within safe bounds)
-    // Phase 2+ may increase to N ≤ 128 after additional testing
-    //
-    // RETURN TYPE: i64
-    // Valid range after scaling: [-2^63, 2^63-1]
-    // For Q8.8 (scale=8) and N≤64 with |element| ≤ 2^31-1:
-    //   Max sum: 64 × (2^31-1)² = 64 × 2^62 ≈ 2^67
-    //   After shift by 8: max ≈ 2^59 < 2^63 (fits in i64)
-    // Input constraint: To guarantee result fits in i64, each element magnitude
-    // must be ≤ (i64::MAX >> (8 + log2(N))) in Q8.8
-    let mut acc: i128 = 0;
-    // STRICT ITERATION ORDER: i=0 then 1 then 2... (no reduction tree)
-    for i in 0..N {
-        let product: i64 = (a[i] as i64) * (b[i] as i64);
-        acc = acc.checked_add(product as i128)
-            .ok_or(ExecutionError::Overflow)?; // TRAP on overflow
-    }
-    // Single rounding at end
-    let shifted = acc >> scale;
-    // Check for overflow before casting to i64
-    if shifted > i64::MAX as i128 || shifted < i64::MIN as i128 {
-        return Err(ExecutionError::Overflow);
-    }
-    Ok(shifted as i64)
+// ACCUMULATOR: Must be 128-bit (i128) to prevent overflow
+// For N=64, each term up to (2^31)^2 = 2^62, sum up to 2^67
+// Maximum N before i128 overflow: N ≤ 2048 for Q8.8
+// Phase 1 limit: N ≤ 64 (conservative, well within safe bounds)
+// Phase 2+ may increase to N ≤ 128 after additional testing
+//
+// RETURN TYPE: i64
+// Valid range after scaling: [-2^63, 2^63-1]
+// For Q8.8 (scale=8) and N≤64 with |element| ≤ 2^31-1:
+// Max sum: 64 × (2^31-1)² = 64 × 2^62 ≈ 2^67
+// After shift by 8: max ≈ 2^59 < 2^63 (fits in i64)
+// Input constraint: To guarantee result fits in i64, each element magnitude
+// must be ≤ (i64::MAX >> (8 + log2(N))) in Q8.8
+let mut acc: i128 = 0;
+// STRICT ITERATION ORDER: i=0 then 1 then 2... (no reduction tree)
+for i in 0..N {
+let product: i64 = (a[i] as i64) * (b[i] as i64);
+acc = acc.checked_add(product as i128)
+.ok_or(ExecutionError::Overflow)?; // TRAP on overflow
 }
+// Single rounding at end
+let shifted = acc >> scale;
+// Check for overflow before casting to i64
+if shifted > i64::MAX as i128 || shifted < i64::MIN as i128 {
+return Err(ExecutionError::Overflow);
+}
+Ok(shifted as i64)
+}
+
 ```
 
 > ⚠️ **NO PARALLEL REDUCTION**: Accumulation must be sequential. Tree reduction `(a1+a2)+(a3+a4)` produces different results than sequential `(((a1+a2)+a3)+a4)` due to different rounding.
@@ -596,30 +610,32 @@ fn dot_product<const N: usize>(a: &[i32; N], b: &[i32; N], scale: u8) -> Result<
 #### Matrix Multiply Canonical Algorithm
 
 ```
+
 fn mat_mul<const M: usize, const K: usize, const N: usize>(
-    a: &[[i32; K]; M],
-    b: &[[i32; N]; K],
-    scale: u8
+a: &[[i32; K]; M],
+b: &[[i32; N]; K],
+scale: u8
 ) -> Result<[[i32; N]; M], ExecutionError> {
-    // Naive triple loop - deterministic order
-    let mut result: [[i32; N]; M] = [[0; N]; M];
-    for i in 0..M {
-        for j in 0..N {
-            let mut acc: i128 = 0;
-            for k in 0..K {
-                acc = acc.checked_add((a[i][k] as i128) * (b[k][j] as i128))
-                    .ok_or(ExecutionError::Overflow)?;
-            }
-            // Check for overflow before casting to i32
-            let shifted = acc >> scale;
-            if shifted > i32::MAX as i128 || shifted < i32::MIN as i128 {
-                return Err(ExecutionError::Overflow);
-            }
-            result[i][j] = shifted as i32;
-        }
-    }
-    Ok(result)
+// Naive triple loop - deterministic order
+let mut result: [[i32; N]; M] = [[0; N]; M];
+for i in 0..M {
+for j in 0..N {
+let mut acc: i128 = 0;
+for k in 0..K {
+acc = acc.checked_add((a[i][k] as i128) * (b[k][j] as i128))
+.ok_or(ExecutionError::Overflow)?;
 }
+// Check for overflow before casting to i32
+let shifted = acc >> scale;
+if shifted > i32::MAX as i128 || shifted < i32::MIN as i128 {
+return Err(ExecutionError::Overflow);
+}
+result[i][j] = shifted as i32;
+}
+}
+Ok(result)
+}
+
 ```
 
 #### Rounding Rules
@@ -636,6 +652,7 @@ fn mat_mul<const M: usize, const K: usize, const N: usize>(
 #### Deterministic Test Vectors
 
 ```
+
 // DQA Test Vector: Addition
 Input: a=0x0100 (1.0), b=0x0080 (0.5), scale=8
 Output: 0x0180 (1.5)
@@ -650,15 +667,15 @@ Output: 0x0080 (0.5)
 
 // DQA Test Vector: FMA
 Input: a=0x0200 (2.0), b=0x0200 (2.0), c=0x0100 (1.0), scale=8
-Output: 0x0500 (5.0)  // NOT 0x0501 (double rounding)
+Output: 0x0500 (5.0) // NOT 0x0501 (double rounding)
 
 // DOT Product Test Vector
 Input: a=[1,2,3], b=[4,5,6], scale=0
-Output: 32  // 1*4 + 2*5 + 3*6 = 32
+Output: 32 // 1*4 + 2*5 + 3*6 = 32
 
 // SQRT Test Vector
 Input: 0x0100 (1.0 in Q8.8) = 256
-Output: 0x0100 (1.0) = 256  // sqrt(1.0) = 1.0
+Output: 0x0100 (1.0) = 256 // sqrt(1.0) = 1.0
 
 // DQA Division Test Vectors (including negative and tie cases)
 //
@@ -667,35 +684,35 @@ Output: 0x0100 (1.0) = 256  // sqrt(1.0) = 1.0
 // Output: -0x0180 (-1.5)
 
 Input: a=-0x0180, b=0x0100, scale=8, rounding=Nearest
-Output: -0x0180  // -1.5 exactly
+Output: -0x0180 // -1.5 exactly
 
 // Test: 0.5 / 1 = 0.5 (truncate)
 // Input: a=0x0080 (0.5), b=0x0100 (1.0), scale=8
 // Output: 0x0080 (0.5)
 
 Input: a=0x0080, b=0x0100, scale=8, rounding=Truncate
-Output: 0x0080  // 0.5
+Output: 0x0080 // 0.5
 
 // Test: -3 / 2 = -1.5 (up - rounds toward +infinity)
 // Input: a=-0x0300 (-3.0), b=0x0200 (2.0), scale=8
 // Output: -0x0180 (-1.5)
 
 Input: a=-0x0300, b=0x0200, scale=8, rounding=Up
-Output: -0x0180  // -1.5
+Output: -0x0180 // -1.5
 
 // Test: -3 / 2 = -2.0 (down - rounds toward -infinity)
 // Input: a=-0x0300 (-3.0), b=0x0200 (2.0), scale=8
 // Output: -0x0200 (-2.0)
 
 Input: a=-0x0300, b=0x0200, scale=8, rounding=Down
-Output: -0x0200  // -2.0
+Output: -0x0200 // -2.0
 
 // Test: tie case 2.5 / 2 = 1.25 (exact half)
 // Input: a=0x0140 (1.25), b=0x0200 (2.0), scale=8
 // Output with Nearest: 0x0140 (1.25 - no tie, exact division)
 
 Input: a=0x0140, b=0x0200, scale=8, rounding=Nearest
-Output: 0x0140  // 1.25 exact
+Output: 0x0140 // 1.25 exact
 
 // Test: tie case with odd quotient - 3/2 with extra precision
 // Input: a=0x0180 (1.5), b=0x0100 (1.0), scale=8
@@ -703,7 +720,8 @@ Output: 0x0140  // 1.25 exact
 // With tie-to-even: quotient=1, remainder=0.5 = 1/2 * divisor, quotient is odd -> round UP
 
 Input: a=0x0180, b=0x0100, scale=8, rounding=Nearest
-Output: 0x0200  // 2.0 (rounded up due to tie-to-even rule)
+Output: 0x0200 // 2.0 (rounded up due to tie-to-even rule)
+
 ```
 
 ### Layer 1 — Integer Domain
@@ -726,16 +744,20 @@ Properties:
 #### DECIMAL — Fixed-Point
 
 ```
+
 value = mantissa × 10^-scale
+
 ```
 
 **Type Definition:**
 
 ```
+
 DECIMAL = {
-    mantissa: i128,    // Signed 128-bit integer
-    scale: u8          // Exponent: 0-38 (SQL standard max)
+mantissa: i128, // Signed 128-bit integer
+scale: u8 // Exponent: 0-38 (SQL standard max)
 }
+
 ```
 
 **Bounds:**
@@ -748,10 +770,11 @@ DECIMAL = {
 **Canonicalization Algorithm:**
 
 ```
+
 fn canonicalize(dec: DECIMAL) -> DECIMAL {
-    // 1. Remove trailing zeros from mantissa by dividing by 10
-    // 2. Reduce scale accordingly
-    // 3. Mantissa must NOT end in 0 (except for value 0)
+// 1. Remove trailing zeros from mantissa by dividing by 10
+// 2. Reduce scale accordingly
+// 3. Mantissa must NOT end in 0 (except for value 0)
 
     if dec.mantissa == 0 {
         return DECIMAL { mantissa: 0, scale: 0 };
@@ -767,8 +790,10 @@ fn canonicalize(dec: DECIMAL) -> DECIMAL {
     }
 
     DECIMAL { mantissa: m, scale: s }
+
 }
-```
+
+````
 
 **Arithmetic Algorithms:**
 
@@ -896,7 +921,7 @@ fn decimal_div(a: DECIMAL, b: DECIMAL, result_scale: u8) -> DECIMAL {
 
     canonicalize(DECIMAL { mantissa: final_mantissa, scale: result_scale })
 }
-```
+````
 
 **Wire Format:**
 
@@ -1145,12 +1170,13 @@ pub trait DeterministicScalar:
 ```
 
 **Concrete type aliases:**
-| Alias | Type | Use Case |
-|-------|------|----------|
-| `DVecN<Dqa, 64>` | Vector of DQA | Consensus, AI inference |
-| `DVecN<Dfp, 64>` | Vector of DFP | Scientific computing |
+
+| Alias             | Type          | Use Case                    |
+| ----------------- | ------------- | --------------------------- |
+| `DVecN<Dqa, 64>`  | Vector of DQA | Consensus, AI inference     |
+| `DVecN<Dfp, 64>`  | Vector of DFP | Scientific computing        |
 | `DMat<Dqa, 8, 8>` | Matrix of DQA | ML linear layers (Phase 2+) |
-| `DMat<Dfp, 4, 4>` | Matrix of DFP | 3D transforms |
+| `DMat<Dfp, 4, 4>` | Matrix of DFP | 3D transforms               |
 
 ### Layer 3 — Deterministic Vector Domain
 
@@ -2146,7 +2172,7 @@ impl<T: DeterministicScalar + Add<Output = T> + Div<Output = T>, const N: usize>
 
 impl<T: DeterministicScalar + Mul<Output = T>, const N: usize> DVecN<T, N> {
     /// Aggregate vector to scalar: product of all elements
-    /// ⚠️ WARNING: Overflow TRAPs per overflow semantics table (line 186-194)
+    /// ⚠️ WARNING: Overflow TRAPs per overflow semantics table
     /// Gas: N × GAS_DQA_MUL
     /// Phase 2: Implement using sequential multiplication with overflow check
     pub fn product(&self) -> Result<T, ExecutionError> {
@@ -2734,16 +2760,16 @@ graph LR
 
 All numeric operations MUST handle these failure cases deterministically:
 
-| Failure Case       | DQA/DECIMAL/INT | DFP | Consensus Impact |
-| ------------------ | --------------- | --- | ----------------- |
-| Overflow           | TRAP           | SATURATE | Transaction reverts (DQA/DECIMAL/INT), State converges (DFP) |
-| Underflow          | TRAP           | SATURATE | Transaction reverts (DQA/DECIMAL/INT), State converges (DFP) |
-| Division by Zero   | TRAP           | SATURATE | Transaction reverts (DQA/DECIMAL/INT), State converges (DFP) |
-| NaN Output         | TRAP           | ALLOW (canonical) | Transaction reverts (DQA/DECIMAL/INT), Allowed (DFP) |
-| Infinity Output    | TRAP           | ALLOW (saturated) | Transaction reverts (DQA/DECIMAL/INT), Allowed (DFP) |
-| Zero Vector Norm   | TRAP           | N/A | Transaction reverts |
-| Dimension Exceeded | REJECT         | N/A | Transaction rejected pre-execution |
-| Gas Exceeded       | TRAP           | TRAP | Transaction reverts, partial gas consumed |
+| Failure Case       | DQA/DECIMAL/INT | DFP               | Consensus Impact                                             |
+| ------------------ | --------------- | ----------------- | ------------------------------------------------------------ |
+| Overflow           | TRAP            | SATURATE          | Transaction reverts (DQA/DECIMAL/INT), State converges (DFP) |
+| Underflow          | TRAP            | SATURATE          | Transaction reverts (DQA/DECIMAL/INT), State converges (DFP) |
+| Division by Zero   | TRAP            | SATURATE          | Transaction reverts (DQA/DECIMAL/INT), State converges (DFP) |
+| NaN Output         | TRAP            | ALLOW (canonical) | Transaction reverts (DQA/DECIMAL/INT), Allowed (DFP)         |
+| Infinity Output    | TRAP            | ALLOW (saturated) | Transaction reverts (DQA/DECIMAL/INT), Allowed (DFP)         |
+| Zero Vector Norm   | TRAP            | N/A               | Transaction reverts                                          |
+| Dimension Exceeded | REJECT          | N/A               | Transaction rejected pre-execution                           |
+| Gas Exceeded       | TRAP            | TRAP              | Transaction reverts, partial gas consumed                    |
 
 ### DoS Prevention
 

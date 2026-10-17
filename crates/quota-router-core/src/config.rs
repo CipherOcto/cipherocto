@@ -610,16 +610,23 @@ fn default_prompt_cache_ttl() -> u64 {
 }
 
 /// Guardrail system configuration (RFC-0946).
+///
+/// Field names accept both the canonical (`input` / `output`) and
+/// LiteLLM-compatible aliases (`input_guardrails` / `output_guardrails`).
+/// Per RFC-0946 §Configuration: operators using LiteLLM-style YAML can
+/// drop their config in unchanged.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GuardrailConfig {
     /// Enable guardrail system (default: false)
     #[serde(default)]
     pub enabled: bool,
-    /// Global input guardrails
-    #[serde(default)]
+    /// Global input guardrails (canonical name).
+    /// Also accepts `input_guardrails` (LiteLLM-compatible alias).
+    #[serde(default, alias = "input_guardrails")]
     pub input: Vec<crate::guardrails::Guardrail>,
-    /// Global output guardrails
-    #[serde(default)]
+    /// Global output guardrails (canonical name).
+    /// Also accepts `output_guardrails` (LiteLLM-compatible alias).
+    #[serde(default, alias = "output_guardrails")]
     pub output: Vec<crate::guardrails::Guardrail>,
     /// Per-model overrides
     #[serde(default)]
@@ -907,6 +914,15 @@ pub struct CallbackConfig {
     /// Bounded channel capacity (default: 10000)
     #[serde(default = "default_channel_capacity")]
     pub channel_capacity: usize,
+    /// Streaming callback policy (default: `OncePerRequest`; mission 0947-c2).
+    ///
+    /// Controls how callbacks fire for SSE / chunked responses. The default
+    /// `OncePerRequest` matches LiteLLM behaviour (one Start at request begin,
+    /// one End + Success/Failure at stream completion). `PerChunk` re-fires
+    /// callbacks on every received chunk and can flood the channel; `Disabled`
+    /// suppresses all streaming callbacks.
+    #[serde(default)]
+    pub streaming_callback_policy: crate::callbacks::StreamingCallbackPolicy,
 }
 
 impl Default for CallbackConfig {
@@ -914,6 +930,7 @@ impl Default for CallbackConfig {
         Self {
             enabled: false,
             channel_capacity: 10000,
+            streaming_callback_policy: crate::callbacks::StreamingCallbackPolicy::default(),
         }
     }
 }
@@ -938,6 +955,35 @@ impl Config {
             let content = std::fs::read_to_string(&config_path)?;
             Ok(serde_json::from_str(&content)?)
         } else {
+            Ok(Config {
+                balance: 100,
+                providers: vec![],
+                proxy_port: 8080,
+                db_path: Self::default_db_path(),
+                wal_pubsub: WalPubSubConfig {
+                    enabled: true,
+                    poll_interval_ms: 50,
+                    wal_path: None,
+                },
+                callbacks: CallbackConfig::default(),
+            })
+        }
+    }
+
+    /// Load a Config from an explicit path (used by `StoolapDependencyChecker` /
+    /// `ConfigDependencyChecker` for health probes — RFC-0905 §Healthcheck).
+    ///
+    /// Unlike `Config::load()`, the path is caller-supplied so the probe does
+    /// not depend on the project's `config_path()` resolution.
+    pub fn load_from_path(path: &std::path::Path) -> Result<Self, ConfigError> {
+        if path.exists() {
+            let content = std::fs::read_to_string(path)?;
+            Ok(serde_json::from_str(&content)?)
+        } else {
+            // Treat missing path as "config not yet written" — return defaults
+            // rather than error. The health probe asserts the file IS loadable
+            // from the expected location; absence of file is not an error here
+            // because production deployments may inject config via env.
             Ok(Config {
                 balance: 100,
                 providers: vec![],
@@ -1741,7 +1787,7 @@ deployments:
     }
 
     // ========================================================================
-    // RFC-0930 Tests: Provider Registry & Inference
+    // RFC-0930 Tests: Provider Registry && Inference
     // ========================================================================
 
     #[test]

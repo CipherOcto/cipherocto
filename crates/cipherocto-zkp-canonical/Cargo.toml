@@ -1,0 +1,18 @@
+[package]
+name = "cipherocto-zkp-canonical"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "CipherOcto ZK canonicalization primitives: shared `canonicalize_axes`, `ZKP_DOMAIN_PREFIX`, and `ZKP_PER_CAP_DOMAIN_PREFIX`. Consolidated in mission 0958-a R2 (2026-08-05); orphan symbols removed in R3; remaining surface is what is actually consumed (sort helper + two domain-prefix constants)."
+
+[lib]
+name = "cipherocto_zkp_canonical"
+path = "src/lib.rs"
+
+[dependencies]
+# `blake3` removed in R3 — the only function that used it (`canonical_ser`)
+# was an orphan symbol with zero non-test callers. The remaining crate
+# surface uses only the constants + `canonicalize_axes` (sort helper).
+serde = { workspace = true }
+serde_json = { workspace = true }

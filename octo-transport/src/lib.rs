@@ -11,6 +11,7 @@ pub mod governed_transport;
 pub mod node_transport;
 pub mod orr_bridge;
 pub mod receiver;
+pub mod request_response;
 pub mod sender;
 
 pub use adapter_bridge::PlatformAdapterBridge;
@@ -24,4 +25,5 @@ pub use drs_bridge::DrsTransportBridge;
 pub use node_transport::NodeTransport;
 pub use orr_bridge::OrrTransportBridge;
 pub use receiver::{NetworkReceiver, ReceiveContext};
+pub use request_response::{PendingRequests, PendingRequestsError, RequestResponseConfig};
 pub use sender::{NetworkSender, SendContext, TransportError};

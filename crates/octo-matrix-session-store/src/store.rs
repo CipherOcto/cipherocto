@@ -40,7 +40,16 @@ pub enum SessionStoreError {
     NoDefaultPath,
 }
 
-pub(crate) fn stoolap_err(e: stoolap::Error) -> SessionStoreError {
+pub(crate) fn stoolap_err(e: octo_storage_core::stoolap::Error) -> SessionStoreError {
+    SessionStoreError::Stoolap(e.to_string())
+}
+
+// RFC-0206 §Substrate Newtype Refactor: `Database::open` /
+// `open_in_memory` return `Result<Database, SubstrateError>`. The
+// substrate error wraps the underlying stoolap error; we string-format
+// it so callers don't need to add `From<SubstrateError>` on
+// `SessionStoreError`.
+pub(crate) fn substrate_err(e: octo_storage_core::SubstrateError) -> SessionStoreError {
     SessionStoreError::Stoolap(e.to_string())
 }
 
@@ -118,14 +127,14 @@ pub trait SessionStore: Send + Sync {
 
 /// Stoolap-backed `SessionStore` (mission 0850h-d).
 ///
-/// The implementation uses `stoolap::Database` directly (no
+/// The implementation uses `octo_storage_core::Database` directly (no
 /// connection pool — stoolap's embedded engine is single-process by
 /// design; multi-process deployments route through the matrix-sdk's
 /// own distributed locks if needed, which is out of scope for this
 /// mission).
 #[derive(Clone)]
 pub struct StoolapSessionStore {
-    db: stoolap::Database,
+    db: octo_storage_core::Database,
 }
 
 impl std::fmt::Debug for StoolapSessionStore {
@@ -138,16 +147,11 @@ impl StoolapSessionStore {
     /// Open a file-backed store at `db_path` (created if missing).
     /// Calls `init_schema` on success.
     pub fn new<P: AsRef<Path>>(db_path: P) -> Result<Self, SessionStoreError> {
-        // stoolap's `Database::open` takes a DSN like `file:///path/to.db`,
-        // not a bare path. `file://` opens (or creates) an on-disk
-        // engine; `memory://` is the in-memory variant.
+        // stoolap's `Database::open` accepts either a bare filesystem
+        // path or a DSN; substrate's `Database::open` detects which and
+        // forwards to stoolap. We pass the bare path here.
         let path = db_path.as_ref().to_string_lossy().to_string();
-        let dsn = if path.starts_with("://") || path.contains("://") {
-            path
-        } else {
-            format!("file://{}", path)
-        };
-        let db = stoolap::Database::open(&dsn).map_err(stoolap_err)?;
+        let db = octo_storage_core::Database::open(&path).map_err(substrate_err)?;
         let store = Self { db };
         crate::schema::init_schema(&store.db)?;
         Ok(store)
@@ -157,7 +161,7 @@ impl StoolapSessionStore {
     /// that store sessions elsewhere (e.g., a network-mounted
     /// secret manager).
     pub fn new_in_memory() -> Result<Self, SessionStoreError> {
-        let db = stoolap::Database::open_in_memory().map_err(stoolap_err)?;
+        let db = octo_storage_core::Database::open_in_memory().map_err(substrate_err)?;
         let store = Self { db };
         crate::schema::init_schema(&store.db)?;
         Ok(store)
@@ -172,9 +176,11 @@ fn now_epoch() -> i64 {
     crate::now_epoch()
 }
 
-/// Convert a `stoolap::ResultRow` to a `SessionRow`. Returns
+/// Convert a `octo_storage_core::stoolap::ResultRow` to a `SessionRow`. Returns
 /// `SessionStoreError::Stoolap` on column-mismatch errors.
-fn row_to_session(row: &stoolap::ResultRow) -> Result<SessionRow, SessionStoreError> {
+fn row_to_session(
+    row: &octo_storage_core::stoolap::ResultRow,
+) -> Result<SessionRow, SessionStoreError> {
     let login_type_str: String = row
         .get_by_name("login_type")
         .map_err(|e| SessionStoreError::Stoolap(e.to_string()))?;
@@ -232,7 +238,7 @@ impl SessionStore for StoolapSessionStore {
             // With force=true, delete the existing row before re-inserting.
             // The new row gets a fresh login_timestamp and the next
             // monotonic position.
-            let del_params: Vec<stoolap::Value> =
+            let del_params: Vec<octo_storage_core::stoolap::Value> =
                 vec![row.user_id.clone().into(), row.device_id.clone().into()];
             self.db
                 .execute(
@@ -265,7 +271,7 @@ impl SessionStore for StoolapSessionStore {
         };
 
         let now = now_epoch();
-        let params: Vec<stoolap::Value> = vec![
+        let params: Vec<octo_storage_core::stoolap::Value> = vec![
             row.user_id.clone().into(),
             row.device_id.clone().into(),
             row.homeserver_url.clone().into(),
@@ -303,7 +309,7 @@ impl SessionStore for StoolapSessionStore {
                 device_id: row.device_id.clone(),
             });
         }
-        let params: Vec<stoolap::Value> = vec![
+        let params: Vec<octo_storage_core::stoolap::Value> = vec![
             row.access_token.clone().into(),
             row.refresh_token.clone().into(),
             row.display_name.clone().into(),
@@ -330,7 +336,7 @@ impl SessionStore for StoolapSessionStore {
         user_id: &str,
         device_id: &str,
     ) -> Result<Option<SessionRow>, SessionStoreError> {
-        let params: Vec<stoolap::Value> =
+        let params: Vec<octo_storage_core::stoolap::Value> =
             vec![user_id.to_string().into(), device_id.to_string().into()];
         let mut rows = self
             .db
@@ -419,7 +425,7 @@ impl SessionStore for StoolapSessionStore {
                 device_id: device_id.to_string(),
             });
         }
-        let params: Vec<stoolap::Value> = vec![
+        let params: Vec<octo_storage_core::stoolap::Value> = vec![
             now.into(),
             user_id.to_string().into(),
             device_id.to_string().into(),
@@ -445,7 +451,7 @@ impl SessionStore for StoolapSessionStore {
                 device_id: device_id.to_string(),
             });
         }
-        let params: Vec<stoolap::Value> =
+        let params: Vec<octo_storage_core::stoolap::Value> =
             vec![user_id.to_string().into(), device_id.to_string().into()];
         self.db
             .execute(

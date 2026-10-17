@@ -295,18 +295,71 @@ JSON
 '
 
 # Test 16: unknown flag exits non-zero
+#
+# This assertion used to pass for the wrong reason. The flag parser calls
+# log_error before log_init creates the state directory, so `tee` failed on a
+# missing file and `set -e` killed the installer with exit 1. On any machine
+# that had run the installer before — where the directory already existed — the
+# same command exited 0, so the test was observing a logging crash rather than
+# flag rejection.
+#
+# Pre-creating the state directory is what makes this test the real thing: the
+# crash path is no longer available, so only an explicit rejection can pass it.
 t_run "test_unknown_flag_exits_nonzero" '
+  mkdir -p "$XDG_STATE_HOME/octo-whatsapp-install"
   if "$INSTALL_SH" --bogus 2>/dev/null; then
     echo "installer accepted unknown flag" >&2
     exit 1
   fi
+  # A typo of a real flag must also be loud, not silently dropped.
+  if "$INSTALL_SH" --sikp-binary 2>/dev/null; then
+    echo "installer accepted a misspelled flag" >&2
+    exit 1
+  fi
+  # --help is not a usage error and must keep exiting 0.
+  "$INSTALL_SH" --help >/dev/null 2>&1 || {
+    echo "--help exited non-zero" >&2
+    exit 1
+  }
+
+  # The other half of the same defect. In a fresh HOME the state directory
+  # does not exist yet, and log_error used to run before anything created it,
+  # so the installer died on a tee failure instead of reporting the bad flag.
+  # Assert the error is RECORDED, not merely that the exit code was non-zero.
+  fresh="$tmp_work/fresh-home"
+  mkdir -p "$fresh"
+  logfile="$fresh/.local/state/octo-whatsapp-install/install.log"
+  # XDG_STATE_HOME must be overridden too: install.sh derives STATE_DIR from it
+  # in preference to HOME, and the framework exports it for the whole test.
+  HOME="$fresh" XDG_STATE_HOME="$fresh/.local/state" \
+    "$INSTALL_SH" --bogus >/dev/null 2>&1
+  [[ -f "$logfile" ]] || {
+    echo "unknown-flag error was not recorded in a fresh HOME" >&2
+    exit 1
+  }
+  grep -q "unknown flag" "$logfile" || {
+    echo "log file exists but does not name the offending flag" >&2
+    exit 1
+  }
 '
 
 # Test 17: no envs detected -> success exit, no files written
+#
+# The premise needs care. `detect_envs` treats claude_code as present when
+# EITHER "$HOME/.claude" exists OR "$REPO_ROOT/.claude" exists, and this
+# repository has a .claude directory. A fresh tmp HOME alone therefore does not
+# make the env list empty, which is why an earlier version of this test failed
+# with "spurious .claude created" while the installer was behaving as designed.
+#
+# The installer is copied into a throwaway tree with no .claude directory, so
+# REPO_ROOT resolves somewhere the repo probe cannot fire. That is the state
+# this test actually means to describe.
 t_run "test_no_envs_exits_zero_no_writes" '
-  # Fresh tmp HOME with no agent dirs.
+  isolated="$tmp_work/repo"
+  mkdir -p "$isolated/scripts"
+  cp "$INSTALL_SH" "$isolated/scripts/install.sh"
   ls "$HOME" >/dev/null
-  "$INSTALL_SH" --skip-binary
+  "$isolated/scripts/install.sh" --skip-binary
   # No .claude/.cursor/.continue/.config dirs were touched.
   [[ ! -d "$HOME/.claude" ]] || { echo "spurious .claude created" >&2; exit 1; }
   [[ ! -d "$HOME/.cursor" ]] || { echo "spurious .cursor created" >&2; exit 1; }

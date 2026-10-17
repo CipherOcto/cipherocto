@@ -3,6 +3,10 @@
 //! Implements the System for Cross-domain Identity Management protocol
 //! for user provisioning and deprovisioning.
 
+// Clippy `[disallowed-methods]` allowlist: SCIM endpoints are operator
+// IdP calls (RFC-0949), NOT LLM model providers.
+#![allow(clippy::disallowed_methods)]
+
 use serde::{Deserialize, Serialize};
 
 // ============================================================================

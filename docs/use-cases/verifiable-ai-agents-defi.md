@@ -300,26 +300,26 @@ graph TB
 
 ## Related RFCs
 
-- [RFC-0108 (Numeric/Math): Deterministic Training Circuits](../rfcs/0108-deterministic-training-circuits.md)
-- [RFC-0410 (Agents): Verifiable Agent Memory](../rfcs/0410-verifiable-agent-memory.md)
-- [RFC-0412 (Agents): Verifiable Reasoning Traces](../rfcs/0412-verifiable-reasoning-traces.md)
-- [RFC-0615 (Proof Systems): Probabilistic Verification Markets](../rfcs/0615-probabilistic-verification-markets.md)
-- [RFC-0116 (Numeric/Math): Unified Deterministic Execution Model](../rfcs/0116-unified-deterministic-execution-model.md)
-- [RFC-0413 (Agents): State Virtualization for Massive Agent Scaling](../rfcs/0413-state-virtualization-massive-scaling.md)
-- [RFC-0414 (Agents): Autonomous Agent Organizations](../rfcs/0414-autonomous-agent-organizations.md)
-- [RFC-0415 (Agents): Alignment & Control Mechanisms](../rfcs/0415-alignment-control-mechanisms.md)
-- [RFC-0520 (AI Execution): Deterministic AI Virtual Machine](../rfcs/0520-deterministic-ai-vm.md)
-- [RFC-0521 (AI Execution): Verifiable Large Model Execution](../rfcs/0521-verifiable-large-model-execution.md)
-- [RFC-0522 (AI Execution): Mixture-of-Experts](../rfcs/0522-mixture-of-experts.md)
-- [RFC-0523 (AI Execution): Scalable Verifiable AI Execution](../rfcs/0523-scalable-verifiable-ai-execution.md)
-- [RFC-0616 (Proof Systems): Proof Market and Hierarchical Inference Network](../rfcs/0616-proof-market-hierarchical-network.md)
-- [RFC-0955 (Economics): Model Liquidity Layer](../rfcs/0955-model-liquidity-layer.md)
-- [RFC-0630 (Proof Systems): Proof-of-Inference Consensus](../rfcs/0630-proof-of-inference-consensus.md)
-- [RFC-0107 (Numeric/Math): Deterministic Transformer Circuit](../rfcs/0107-deterministic-transformer-circuit.md)
-- [RFC-0108 (Numeric/Math): Deterministic Training Circuits](../rfcs/0108-deterministic-training-circuits.md)
-- [RFC-0631 (Proof Systems): Proof-of-Dataset Integrity](../rfcs/0631-proof-of-dataset-integrity.md)
-- [RFC-0416 (Agents): Self-Verifying AI Agents](../rfcs/0416-self-verifying-ai-agents.md)
-- [RFC-0740 (Consensus): Sharded Consensus Protocol](../rfcs/0740-sharded-consensus-protocol.md)
-- [RFC-0741 (Consensus): Parallel Block DAG Specification](../rfcs/0741-parallel-block-dag.md)
-- [RFC-0742 (Consensus): Data Availability & Sampling Protocol](../rfcs/0742-data-availability-sampling.md)
-- [RFC-0843 (Networking): OCTO-Network Protocol](../rfcs/0843-octo-network-protocol.md)
+- RFC-0108
+- RFC-0410
+- RFC-0412
+- RFC-0615
+- RFC-0116
+- RFC-0413
+- RFC-0414
+- RFC-0415
+- RFC-0520
+- RFC-0521
+- RFC-0522
+- RFC-0523
+- RFC-0616
+- RFC-0955
+- RFC-0630
+- RFC-0107
+- RFC-0108
+- RFC-0631
+- RFC-0416
+- RFC-0740
+- RFC-0741
+- RFC-0742
+- RFC-0843

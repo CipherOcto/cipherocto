@@ -5,7 +5,7 @@
 //! Usage:
 //!   cargo run -p octo-whatsapp --features query --example diag_count
 #[cfg(feature = "query")]
-use stoolap::Database;
+use octo_storage_core::Database;
 
 #[cfg(feature = "query")]
 fn main() {

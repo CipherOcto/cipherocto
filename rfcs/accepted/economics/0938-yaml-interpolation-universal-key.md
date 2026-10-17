@@ -224,3 +224,9 @@ This is a known limitation of the `$$`-based escaping approach.
 8. Empty env var treated as not set
 9. Config with mixed syntaxes works
 10. Security: no injection via variable values
+
+## Version History
+
+| Version | Date       | Change                                                                                |
+|---------|------------|---------------------------------------------------------------------------------------|
+| 1.0     | 2026-08-22 | Retroactive VH table addition (per long-horizon plan v1.3 Phase 1 + Option C per M37). |

@@ -118,7 +118,7 @@ mod tests {
     use crate::schema::init_database;
 
     fn create_test_storage() -> StoolapKeyStorage {
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         init_database(&db).unwrap();
         StoolapKeyStorage::new(db)
     }

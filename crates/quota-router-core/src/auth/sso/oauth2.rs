@@ -3,6 +3,11 @@
 //! Authorization Code + PKCE flow, Client Credentials flow,
 //! token lifecycle, and OIDC discovery endpoints.
 
+// Clippy `[disallowed-methods]` allowlist: OAuth2/OIDC token endpoints
+// are operator IdP calls (RFC-0949), NOT LLM model providers. The
+// cipherocto wallet's capability tokens never cross these endpoints.
+#![allow(clippy::disallowed_methods)]
+
 use super::pkce::PkceChallenge;
 use super::{
     IdentityProvider, JwtValidationConfig, SsoError, TokenBlacklistStorage, TokenClaims,

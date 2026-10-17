@@ -45,7 +45,7 @@ impl PricingTable {
     ///
     /// **Merkle leaf requirement:** RFC-0126 §JSON Allowed Contexts explicitly forbids JSON
     /// serialization for Merkle tree leaves. Since `pricing_hash` is used in `event_id` (a Merkle
-    /// leaf input per RFC-0909 §Event Identity), this function MUST use DCS (Entry 16, Part 3)
+    /// leaf input per RFC-0909 §Event ID Hashing), this function MUST use DCS (Entry 16, Part 3)
     /// binary encoding — NOT JSON serialization.
     ///
     /// **DCS Entry 16 struct serialization:**
@@ -302,7 +302,7 @@ pub enum CostError {
 // =============================================================================
 
 /// Compute cost deterministically using integer arithmetic.
-/// Receives `&PricingTable` (RFC-0910 struct).
+/// Receives `&&PricingTable` (RFC-0910 struct).
 pub fn compute_cost(
     pricing: &PricingTable,
     input_tokens: u32,

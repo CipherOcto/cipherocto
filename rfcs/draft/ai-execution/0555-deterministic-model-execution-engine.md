@@ -13,8 +13,8 @@
 - RFC-0105 (Numeric/Math): Deterministic Quant Arithmetic (DQA)
 - RFC-0109 (Numeric/Math): Deterministic Linear Algebra Engine (DLAE)
 - RFC-0124 (Numeric/Math): Deterministic Numeric Lowering (DFP → DQA)
-- RFC-0151 (AI Execution): Verifiable RAG Execution
-- RFC-0152 (Agents): Verifiable Agent Runtime
+- RFC-0550 (AI Execution): Verifiable RAG Execution
+- RFC-0450 (Agents): Verifiable Agent Runtime
 
 ## Summary
 
@@ -108,7 +108,7 @@ Example:
 DTensor<DQA, [batch, seq, dim]>
 ```
 
-Where DQA is defined in RFC-0106. Floating-point types are forbidden.
+Where DQA is defined in RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal). Floating-point types are forbidden.
 
 ### Model Artifact Format
 
@@ -179,7 +179,7 @@ sum_exp = Σ exp_i
 softmax_i = exp_i / sum_exp
 ```
 
-EXP must use the deterministic exponential function from RFC-0106.
+EXP must use the deterministic exponential function from RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal).
 
 ### Deterministic Activation Functions
 
@@ -209,7 +209,7 @@ Normalized output:
 y = (x - mean) / sqrt(variance + epsilon)
 ```
 
-All operations must use deterministic arithmetic from RFC-0106.
+All operations must use deterministic arithmetic from RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal).
 
 ### Deterministic Matrix Operations
 
@@ -395,12 +395,12 @@ DMEE provides the core model execution layer:
 
 ## Related RFCs
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower — DQA types
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower — DQA types
 - RFC-0148 (Numeric/Math): Deterministic Linear Algebra Engine — Matrix operations
-- RFC-0151 (AI Execution): Verifiable RAG Execution — Inference integration
-- RFC-0152 (Agents): Verifiable Agent Runtime — Agent reasoning
+- RFC-0550 (AI Execution): Verifiable RAG Execution — Inference integration
+- RFC-0450 (Agents): Verifiable Agent Runtime — Agent reasoning
 
-> **Note**: RFC-0155 completes the compute layer.
+> **Note**: RFC-0155 completes the compute layer. (← THIS RFC)
 
 ## Related Use Cases
 

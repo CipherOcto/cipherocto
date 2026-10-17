@@ -338,3 +338,9 @@ router:
 6. Router only routes to deployments passing all checks
 7. Configuration enables/disables checks
 8. Token estimation is accurate
+
+## Version History
+
+| Version | Date       | Change                                                                                |
+|---------|------------|---------------------------------------------------------------------------------------|
+| 1.0     | 2026-08-22 | Retroactive VH table addition (per long-horizon plan v1.3 Phase 1 + Option C per M37). |

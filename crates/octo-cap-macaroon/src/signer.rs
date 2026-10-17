@@ -1,0 +1,460 @@
+//! `CapabilitySigner` trait — abstracts over holder signing backends.
+//!
+//! Mission 0957 Phase 2b: enables `CapabilityToken` migration into
+//! `octo-cap-macaroon` without forcing the crate to depend on
+//! `octo-wallet` (which owns `IdentityKey` + `HsmAdapter` per RFC-0009
+//! HSM routing mandate).
+//!
+//! ## Layer discipline
+//!
+//! `CapabilitySigner` is defined in Layer 4 (octo-cap-macaroon). The
+//! `IdentityKey` blanket impl lives in Layer B (octo-wallet) — it is
+//! the only canonical signer. New signer backends (hardware wallets,
+//! threshold sigs, etc.) implement this trait in their own crate and
+//! are wired in via dependency injection (the `mint` / `attenuate_with_signer`
+//! APIs accept `&dyn CapabilitySigner`).
+//!
+//! ## Error model
+//!
+//! `sign()` returns `Result<[u8; 64], CapabilitySignerError>`. The
+//! canonical `IdentityKey` impl maps `WalletError::Hsm(...)` to
+//! `CapabilitySignerError::Hsm(...)`. Custom signer backends (e.g.,
+//! hardware wallets) map their own errors here.
+//!
+//! ## The signer names its own algorithm
+//!
+//! `algorithm_id` is a required method, not a defaulted one. A mint site that
+//! wants to record which algorithm a holder signature was made under has to
+//! ask the signer, because nothing else knows. Stamping a constant instead is
+//! how a non-Ed25519 signer ends up recorded as Ed25519 and then failing
+//! verification as though it were forged — a silent wrong answer, not a
+//! rejection. See mission `0009-e5`.
+
+use thiserror::Error;
+
+/// Errors returned by `CapabilitySigner::sign`.
+#[derive(Debug, Error)]
+pub enum CapabilitySignerError {
+    /// Underlying signer rejected the operation (e.g., HSM adapter
+    /// transport failure, user denied on-device, etc.). The original
+    /// error is preserved as a string for caller diagnostics.
+    #[error("signer rejected: {0}")]
+    Signer(String),
+
+    /// Signer produced a malformed signature (wrong length, invalid
+    /// curve point, etc.). Indicates an implementation bug in the
+    /// signer backend.
+    #[error("malformed signature: {0}")]
+    Malformed(String),
+}
+
+/// Trait for capability token holder signers.
+///
+/// Implementors produce signatures over arbitrary byte messages whose length is
+/// the algorithm's, and public keys whose width is likewise the algorithm's.
+/// The `sign` method may fail (HSM transport, user denial, etc.); the failure
+/// mode is surfaced via `CapabilitySignerError`.
+///
+/// Implementors MUST also return the holder public key via
+/// `public_key_bytes`, and MUST name the algorithm their key speaks via
+/// [`CapabilitySigner::algorithm_id`]. The verifier dispatches on an
+/// `AlgorithmId` through `AlgorithmRegistry` rather than reconstructing a key
+/// itself (RFC-0009 AC#11), so a signer that reports the wrong algorithm is
+/// dispatched to the wrong verifier.
+pub trait CapabilitySigner {
+    /// Sign `msg`; return the signature under whatever algorithm
+    /// [`CapabilitySigner::algorithm_id`] names.
+    ///
+    /// # Errors
+    /// Returns `CapabilitySignerError::Signer` on backend rejection
+    /// (transport / user denial / etc.) or `Malformed` on internal
+    /// serializer bugs.
+    fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, CapabilitySignerError>;
+
+    /// The algorithm this signer's key speaks, and therefore the algorithm
+    /// `sign` produces.
+    ///
+    /// Required, with no default. A default would let an implementor forget
+    /// it and inherit a constant, which is precisely the defect mission
+    /// `0009-e5` exists to remove.
+    fn algorithm_id(&self) -> octo_ident::AlgorithmId;
+
+    /// Return the canonical DID form for this signer.
+    ///
+    /// Substrate-truth invariant (RFC-0011-d §7.4): the DID returned by
+    /// this method is the canonical, substrate-derived DID — it is the
+    /// same DID the slash ledger binds to, NOT a CLI-side derivation.
+    /// Consumers MUST compare `signer.did()` (not a derived form) to
+    /// the operator DID for F-16 substrate-truth checks.
+    ///
+    /// Default impl derives the DID from the public key bytes via the
+    /// canonical `did:octo:0x<hex>` form (Phase 1; production swaps in
+    /// the RFC-0010 §Canonical OctoID Codec). Signer backends that
+    /// carry a substrate-authored DID (e.g., HSM-backed) should
+    /// override this method to return the authoritative DID rather
+    /// than the derived form.
+    fn did(&self) -> String {
+        did_from_pubkey(&self.public_key_bytes())
+    }
+
+    /// Return the holder public key. The width is the algorithm's.
+    #[must_use]
+    fn public_key_bytes(&self) -> Vec<u8>;
+}
+
+/// Canonical Phase 1 DID form: `did:octo:0x<hex(public_key)>`.
+///
+/// Production swaps in the RFC-0010 §Canonical OctoID Codec once
+/// `octo-ident` lands the typed form.
+pub fn did_from_pubkey(pk: &[u8]) -> String {
+    let mut s = String::with_capacity(11 + 2 * pk.len());
+    s.push_str("did:octo:0x");
+    for byte in pk {
+        s.push_str(&format!("{byte:02x}"));
+    }
+    s
+}
+
+/// Inverse of [`did_from_pubkey`]: parse a canonical
+/// `did:octo:0x<64-hex>` DID string back to its 32-byte Ed25519 public key.
+///
+/// **Phase 1 form only:** matches `did_from_pubkey`. Production swaps
+/// in the RFC-0010 §Canonical OctoID Codec once `octo-ident` lands
+/// the typed form.
+///
+/// **Returns `None`** if the input is not a canonical Phase 1 form
+/// (wrong prefix, wrong hex length, non-hex characters). This fail-closed
+/// behavior prevents ambiguous DIDs from being accepted as operator
+/// identities.
+#[must_use]
+pub fn pubkey_from_did(did: &str) -> Option<[u8; 32]> {
+    const PREFIX: &str = "did:octo:0x";
+    let rest = did.strip_prefix(PREFIX)?;
+    if rest.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, chunk) in rest.as_bytes().chunks(2).enumerate() {
+        let hi = hex_nibble(chunk[0])?;
+        let lo = hex_nibble(chunk[1])?;
+        out[i] = (hi << 4) | lo;
+    }
+    Some(out)
+}
+
+/// Parse one lowercase hex digit. Canonical alphabet matches
+/// `did_from_pubkey` output (lowercase per RFC-0010 §OctoID Codec).
+///
+/// Uppercase hex is intentionally rejected (fails closed) to prevent
+/// ambiguous canonical forms from leaking into substrate — the same
+/// rationale as `crates/octo-cli/src/commands/role.rs::parse_hash32_hex`.
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        _ => None,
+    }
+}
+
+/// Blanket impl for `Box<dyn CapabilitySigner>` — enables `Arc<dyn CapabilitySigner>`
+/// to be passed through generic helpers without re-wrapping.
+impl CapabilitySigner for Box<dyn CapabilitySigner + '_> {
+    fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, CapabilitySignerError> {
+        (**self).sign(msg)
+    }
+    fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+        (**self).algorithm_id()
+    }
+    fn did(&self) -> String {
+        (**self).did()
+    }
+
+    fn public_key_bytes(&self) -> Vec<u8> {
+        (**self).public_key_bytes()
+    }
+}
+
+/// Blanket impl for `Arc<dyn CapabilitySigner>` — same rationale.
+impl CapabilitySigner for std::sync::Arc<dyn CapabilitySigner> {
+    fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, CapabilitySignerError> {
+        (**self).sign(msg)
+    }
+    fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+        (**self).algorithm_id()
+    }
+    fn did(&self) -> String {
+        (**self).did()
+    }
+
+    fn public_key_bytes(&self) -> Vec<u8> {
+        (**self).public_key_bytes()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// The algorithm these fixtures sign under. Now a convenience for the
+    /// test bodies; `CapabilitySigner::algorithm_id` is the authority and
+    /// each impl reports through it (mission `0009-e5`).
+    fn ed25519_id() -> octo_ident::AlgorithmId {
+        octo_algo_ed25519::ed25519_algorithm_id()
+    }
+
+    use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    /// Test fixture: thin Ed25519 keypair wrapper implementing `CapabilitySigner`.
+    /// Mirrors the canonical `IdentityKey` impl in `octo-wallet` without taking
+    /// on the HSM-routing / RFC-0009 §Identity dependencies.
+    #[derive(Debug)]
+    struct TestSigner(SigningKey);
+
+    impl CapabilitySigner for TestSigner {
+        fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, CapabilitySignerError> {
+            let sig = self.0.sign(msg);
+            Ok(sig.to_bytes().to_vec())
+        }
+
+        fn did(&self) -> String {
+            did_from_pubkey(&self.public_key_bytes())
+        }
+
+        fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+            octo_algo_ed25519::ed25519_algorithm_id()
+        }
+
+        fn public_key_bytes(&self) -> Vec<u8> {
+            self.0.verifying_key().to_bytes().to_vec()
+        }
+    }
+
+    /// Test fixture: signer that always fails with a configurable error
+    /// variant. Exercises the error-propagation contract of the blanket
+    /// `Box<dyn>` / `Arc<dyn>` impls.
+    #[derive(Debug)]
+    struct FailingTestSigner(CapabilitySignerError);
+
+    impl CapabilitySigner for FailingTestSigner {
+        fn sign(&self, _msg: &[u8]) -> Result<Vec<u8>, CapabilitySignerError> {
+            Err(match &self.0 {
+                // Clone the inner String without moving out of `&self`.
+                CapabilitySignerError::Signer(s) => CapabilitySignerError::Signer(s.clone()),
+                CapabilitySignerError::Malformed(s) => CapabilitySignerError::Malformed(s.clone()),
+            })
+        }
+
+        fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+            octo_algo_ed25519::ed25519_algorithm_id()
+        }
+
+        fn public_key_bytes(&self) -> Vec<u8> {
+            vec![0u8; 32]
+        }
+    }
+
+    fn fixture() -> TestSigner {
+        // Deterministic 32-byte seed for reproducible tests.
+        TestSigner(SigningKey::from_bytes(&[7u8; 32]))
+    }
+
+    #[test]
+    fn sign_produces_64_byte_signature() {
+        let s = fixture();
+        let sig = s.sign(b"hello").expect("sign");
+        assert_eq!(sig.len(), 64);
+    }
+
+    #[test]
+    fn sign_is_deterministic_for_same_message() {
+        let s = fixture();
+        let sig_a = s.sign(b"deterministic").expect("sign a");
+        let sig_b = s.sign(b"deterministic").expect("sign b");
+        assert_eq!(sig_a, sig_b, "Ed25519 must be deterministic per RFC-8032");
+    }
+
+    #[test]
+    fn public_key_bytes_matches_verifying_key() {
+        let s = fixture();
+        let pk = s.public_key_bytes();
+        assert_eq!(pk.len(), 32);
+        assert_eq!(pk, s.0.verifying_key().to_bytes());
+    }
+
+    /// Cross-check: `sign()` output must verify with `public_key_bytes()`.
+    /// Without this, the tests only prove mechanical properties (length,
+    /// determinism) — not that the signature is a valid Ed25519 signature
+    /// over the message under the returned public key. Cryptographic
+    /// validity is the load-bearing property for the `CapabilitySigner`
+    /// contract; an implementation bug that returned garbage bytes would
+    /// pass the other tests but fail here.
+    #[test]
+    fn sign_output_verifies_with_public_key() {
+        let s = fixture();
+        let msg = b"verify-me";
+        let sig_bytes = s.sign(msg).expect("sign");
+        let pk_bytes = s.public_key_bytes();
+        octo_algo_ed25519::verify_dispatch(&ed25519_id(), &pk_bytes, msg, &sig_bytes)
+            .expect("signature must verify");
+    }
+
+    /// R10 finding: `CapabilitySigner::sign` was tested with short
+    /// non-empty messages (`b"hello"`, `b"deterministic"`, etc.) but not
+    /// edge cases. Empty messages and 1 MiB messages exercise the
+    /// BLAKE3 long-input path (Ed25519 hashes arbitrary-length input
+    /// internally via SHA-512 / BLAKE3 depending on impl). Pin both.
+    #[test]
+    fn sign_with_empty_message_verifies() {
+        let s = fixture();
+        let sig_bytes = s.sign(b"").expect("sign empty");
+        assert_eq!(sig_bytes.len(), 64);
+        let pk_bytes = s.public_key_bytes();
+        octo_algo_ed25519::verify_dispatch(&ed25519_id(), &pk_bytes, b"", &sig_bytes)
+            .expect("empty msg signature must verify");
+    }
+
+    #[test]
+    fn sign_with_large_message_verifies() {
+        let s = fixture();
+        // 1 MiB — exercises the internal hash input chunking.
+        let msg = vec![0xabu8; 1024 * 1024];
+        let sig_bytes = s.sign(&msg).expect("sign large");
+        assert_eq!(sig_bytes.len(), 64);
+        let pk_bytes = s.public_key_bytes();
+        octo_algo_ed25519::verify_dispatch(&ed25519_id(), &pk_bytes, &msg, &sig_bytes)
+            .expect("1 MiB msg signature must verify");
+    }
+
+    #[test]
+    fn box_dyn_forwards_sign_and_pubkey() {
+        let s = fixture();
+        let boxed: Box<dyn CapabilitySigner> = Box::new(s);
+        let sig_direct = fixture().sign(b"box-dyn").expect("direct");
+        let sig_boxed = boxed.sign(b"box-dyn").expect("boxed");
+        assert_eq!(sig_direct, sig_boxed, "Box<dyn> must forward verbatim");
+        assert_eq!(boxed.public_key_bytes(), fixture().public_key_bytes());
+    }
+
+    #[test]
+    fn arc_dyn_forwards_sign_and_pubkey() {
+        let s = fixture();
+        let arc: std::sync::Arc<dyn CapabilitySigner> = std::sync::Arc::new(s);
+        let sig_direct = fixture().sign(b"arc-dyn").expect("direct");
+        let sig_arc = arc.sign(b"arc-dyn").expect("arc");
+        assert_eq!(sig_direct, sig_arc, "Arc<dyn> must forward verbatim");
+        assert_eq!(arc.public_key_bytes(), fixture().public_key_bytes());
+    }
+
+    #[test]
+    fn arc_dyn_clone_shares_state() {
+        let s = fixture();
+        let a: std::sync::Arc<dyn CapabilitySigner> = std::sync::Arc::new(s);
+        let b = a.clone();
+        assert_eq!(a.public_key_bytes(), b.public_key_bytes());
+        // Same backing key — same signature for the same message.
+        assert_eq!(a.sign(b"shared").unwrap(), b.sign(b"shared").unwrap());
+    }
+
+    // --- Error path: blanket impls must propagate CapabilitySignerError ---
+
+    #[test]
+    fn box_dyn_propagates_signer_error() {
+        let failing = FailingTestSigner(CapabilitySignerError::Signer("hsm timeout".into()));
+        let boxed: Box<dyn CapabilitySigner> = Box::new(failing);
+        match boxed.sign(b"any") {
+            Err(CapabilitySignerError::Signer(msg)) => assert_eq!(msg, "hsm timeout"),
+            other => panic!("expected Signer error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn box_dyn_propagates_malformed_error() {
+        let failing = FailingTestSigner(CapabilitySignerError::Malformed("bad curve point".into()));
+        let boxed: Box<dyn CapabilitySigner> = Box::new(failing);
+        match boxed.sign(b"any") {
+            Err(CapabilitySignerError::Malformed(msg)) => assert_eq!(msg, "bad curve point"),
+            other => panic!("expected Malformed error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn arc_dyn_propagates_signer_error() {
+        let failing = FailingTestSigner(CapabilitySignerError::Signer("user denied".into()));
+        let arc: std::sync::Arc<dyn CapabilitySigner> = std::sync::Arc::new(failing);
+        match arc.sign(b"any") {
+            Err(CapabilitySignerError::Signer(msg)) => assert_eq!(msg, "user denied"),
+            other => panic!("expected Signer error, got {other:?}"),
+        }
+    }
+
+    /// Symmetry with `box_dyn_propagates_malformed_error`. The `Arc<dyn>`
+    /// blanket impl is mechanically identical forwarding code; the
+    /// Malformed variant must be exercised on both blanket impls.
+    #[test]
+    fn arc_dyn_propagates_malformed_error() {
+        let failing = FailingTestSigner(CapabilitySignerError::Malformed("bad curve".into()));
+        let arc: std::sync::Arc<dyn CapabilitySigner> = std::sync::Arc::new(failing);
+        match arc.sign(b"any") {
+            Err(CapabilitySignerError::Malformed(msg)) => assert_eq!(msg, "bad curve"),
+            other => panic!("expected Malformed error, got {other:?}"),
+        }
+    }
+
+    // --- Display-string tests (thiserror #[error(...)] format regression guard) ---
+    //
+    // The `CapabilitySignerError` variants are surfaced to operators via
+    // log lines and to upstream callers via `Display`. A regression in
+    // the format string (e.g., transposed argument names, dropped braces)
+    // would silently corrupt log aggregation. These tests pin the strings.
+
+    #[test]
+    fn signer_error_display_signer_variant() {
+        let err = CapabilitySignerError::Signer("hsm timeout".into());
+        assert_eq!(err.to_string(), "signer rejected: hsm timeout");
+    }
+
+    #[test]
+    fn signer_error_display_malformed_variant() {
+        let err = CapabilitySignerError::Malformed("invalid curve point".into());
+        assert_eq!(err.to_string(), "malformed signature: invalid curve point");
+    }
+
+    // --- pubkey_from_did tests (Phase 1 helper per RFC-0011-d M10) ---
+    //
+    // `pubkey_from_did` is the inverse of `did_from_pubkey` and the
+    // canonical Phase 1 derivation path for operator DIDs back to
+    // 32-byte Ed25519 public keys. Production swaps in the RFC-0010
+    // §Canonical OctoID Codec once `octo-ident` lands; until then,
+    // these tests pin the lowercase-only canonical form (uppercase
+    // hex is rejected to fail closed per RFC-0010 §OctoID Codec).
+
+    #[test]
+    fn pubkey_from_did_round_trip_matches_did_from_pubkey() {
+        let pk = [0x42u8; 32];
+        let did = did_from_pubkey(&pk);
+        let back = pubkey_from_did(&did).expect("canonical form parses");
+        assert_eq!(back, pk);
+    }
+
+    #[test]
+    fn pubkey_from_did_rejects_uppercase_hex() {
+        let pk = [0xABu8; 32];
+        let did = did_from_pubkey(&pk);
+        // did_from_pubkey emits lowercase, but a hand-crafted uppercase
+        // DID must fail closed.
+        let upper: String = did.replace('b', "B");
+        assert!(pubkey_from_did(&upper).is_none());
+    }
+
+    #[test]
+    fn pubkey_from_did_rejects_wrong_prefix() {
+        assert!(pubkey_from_did("did:other:0xab").is_none());
+        assert!(pubkey_from_did("not-a-did").is_none());
+    }
+
+    #[test]
+    fn pubkey_from_did_rejects_wrong_length() {
+        let short = format!("did:octo:0x{}", "ab".repeat(31));
+        assert_eq!(short.len(), "did:octo:0x".len() + 62);
+        assert!(pubkey_from_did(&short).is_none());
+    }
+}

@@ -1,0 +1,1852 @@
+# RFC-0009 v1.6 — Identity Evolution: Hierarchical Attenuation + MPC Threshold + Dual-Format Keys
+
+**Status:** Accepted (2026-08-11)
+
+> **v1.3 amendment (2026-10-08):** In-place amendment while Accepted, per
+> user direction that this RFC is neither final nor frozen. Adds
+> §Dual-format signature algorithms and the ZK-capable key: a second signature
+> algorithm on the same identity, a `SignatureAlgorithm` registry replacing the
+> `VerificationMethodKind` central enum, mandatory domain separation across
+> algorithms, revocation cascade, a verifier-side revocation contract for ZK
+> proofs, and an explicit custody-parity obligation. The v1.2 substrate
+> (hierarchical attenuation, MPC threshold identity) is unchanged.
+
+> **Promotion note (2026-08-11):** Promoted from `rfcs/draft/process/0009-identity-evolution-v12.md` → `rfcs/accepted/process/0009-identity-evolution-v12.md` after multi-round adversarial review. 40 review rounds completed (R1-R40); convergence reached at R40 (zero NEW substantive findings). Round-by-round fix history lives in this file's git log; per-round commit hashes form the audit trail.
+> **Author:** @cipherocto + @mmacedoeu
+> **Maintainers:** @cipherocto (primary), @mmacedoeu (review)
+> **Substrate:** RFC-0009 §Capability Keys + §HsmAdapter Integration
+> **Parent:** Mission `0957-f-v2-bundle` (V2 spec per R8 H1 rewrite)
+
+> **Promotion note:** In-place additive amendment to RFC-0009. This
+> RFC ratifies two capability-key extensions originally listed as
+> §Future Work items: "Capability attenuation protocols beyond
+> pairwise" (parent → child → grandchild chains) and "MPC threshold
+> identity" (RFC-0853 §F3).
+
+> **Breaking changes acknowledged (per R4-R11):** See §Breaking
+> Changes + §Acceptance Criteria for the migration contract.
+
+## Summary
+
+Extend RFC-0009 §Capability Keys with:
+
+1. **Hierarchical attenuation chains.**
+2. **MPC threshold identity.**
+3. **Dual-format signature algorithms** (v1.3) — one identity carrying an
+   Ed25519 key plus a ZK-capable STARK-curve Schnorr key, dispatched through a
+   `SignatureAlgorithm` registry instead of a hardcoded verifier. See
+   §Dual-format signature algorithms and the ZK-capable key.
+
+## Review State
+
+- **R1-R40 completed (2026-08-11); R41 in progress.**
+- **Termination condition:** convergence when a new round returns
+  zero NEW findings.
+
+## Breaking Changes (10 main items + BC#9 ADDITIVE mirrored per
+
+R28 M3 / R30 L3 / R31 L1 — corrected language per R11 M6 + R25 L4;
+BC#1 expanded into 9 sub-items (1a-1i); section totals 20 numbered
+items (9 sub-items BC#1a-1i + 11 main items BC#2-12 including BC#9
+mirrored to §Additive Changes) per R18 M6 + R24 L3 + R25 L4 +
+R27 L2 + R30 L3 + R31 L1)
+
+1a. **NEW: `ThresholdSigner::threshold_sign` method** (replaces
+`sign_combined`; no prior equivalent exists).
+1b. **NEW enum: `ThresholdShare`** (replaces `KeyShare`; no prior
+equivalent exists).
+1c. **NEW type: `BoundedShareVec`** (replaces `Vec<KeyShare>`; no
+prior equivalent exists).
+1d. **NEW error: `ThresholdError`** (replaces `MpcError`; no prior
+equivalent exists).
+1e. **NEW error variant: `HsmError::ThresholdSignerRequired`** (per
+R13 M1 — fail-closed sentinel for `IdentityKey::sign` when
+`threshold_signer` configured).
+1f. **RENAMED: `ThresholdSigner::threshold()` + `share_count()` →
+single `threshold_params() -> (M, N)`** (per R13 M3 — actual
+`crates/octo-wallet/src/mpc.rs` §ThresholdSigner has 4 methods
+including `threshold` + `share_count`; spec replaces with
+single tuple-returning method).
+1g. **NEW trait: `ThresholdCoordinator`** (per R13 L4 — `async
+    collect_shares` + `aggregate` methods; RFC-0853 §F3 substrate
+contract).
+1h. **NEW method: `IdentityKey::sign_threshold`** (per R13 M5 —
+companion to fail-closed `sign` from BC#11; dispatches to
+`threshold_signer.threshold_sign`).
+1i. **NEW method: `ThresholdSigner::group_public_key()`** (per
+R12 M7 — group PK exposed for `Authorization::ThresholdSignature`
+aggregated_pk_check). 2. **`Xor2Of3Signer` additive `threshold_signer` field.** 3. **`CapabilityBundleV2` NEW struct.** 4. **`IdentityKey` 9 existing fields UNCHANGED + 3 new fields
+ADDED** (per R9 H1 + R16 M4 + R23 H1 — `threshold_signer` +
+`coordinator` + `shareholders` fields added by R9 H1 / R15 M3 /
+R19 M2 respectively; `warned_threshold_misconfig` field removed
+per R22 M2 as write-only dead code). 5. **`Authorization::ThresholdSignature` struct variant EXTENDED
+in RFC-0871** (per R11 M3 + R12 H3 — ownership belongs to
+RFC-0871; this RFC documents the EXTENSION SCHEMA only;
+`aggregated_pk_check` + `dkg_proof` fields + verifier MUST
+semantics land in `crates/octo-cap-threshold-mpc/` per
+RFC-0871 §Future Work).
+
+- **Per R13 M2:** RFC-0871 §Future Work currently lists
+  "Threshold-MPC for high-value transitions (BLS via
+  `Authorization::ThresholdSignature`)" but does NOT carry the
+  `aggregated_pk_check` + `dkg_proof` concrete fields. The
+  forward-pointer is dangling. Resolution: RFC-0871 amendment
+  (out of scope for RFC-0009 v1.2) MUST add the concrete
+  fields to §Future Work OR §Specification before v1.2
+  acceptance of this RFC. Until then, this RFC's cross-ref is
+  ASPIRATIONAL.
+- **Per R25 H1:** softened — this is a SHOULD not a hard MUST;
+  RFC-0009 v1.2 documents the extension schema; verifier MUST
+  semantics gated by AC#9 (RFC-0871 amendment FILED before
+  RFC-0009 v1.2 promotion to Accepted).
+
+6. **`BoundedShareVec::new` enforces m == threshold.**
+7. **`HsmAdapter::get_public_key` return type change** (per R18 L8 —
+   from `[u8; 32]` to `Result<[u8; 32], HsmError>`; device transport
+   can fail).
+8. **`derive_capability_key` 4-param signature.**
+9. **NEW: `OperatorId` struct + `pubkey()` method** (per R15 L4 —
+   OperatorId is NEW in v1.2; not present in v1.0/v1.1 substrate;
+   per R28 M3 — ADDITIVE change; mirrored to §Additive Changes below
+   since no prior identifier or symbol is shadowed).
+10. **`HsmAdapter::sign` NON-BREAKING** — current code uses
+    `Result<[u8; 64], HsmError>` per `HsmAdapter::sign` symbol in
+    `crates/octo-wallet/src/hsm.rs` + v1.1 baseline (per R11 C1).
+    R10 H15 framing reversed; pseudocode was wrong.
+11. **`IdentityKey::sign` MUST fail-closed when `threshold_signer`
+    configured** (per R11 M4) — refactor: change from "doesn't
+    branch" to "fails with `ThresholdSignerRequired`".
+12. **NEW: `Authorization::FrostSignature` variant** (per R18 M5 +
+    R20 L6 + R25 L4) — FROST Ed25519 signatures with `signers`,
+    `sig`, `group_pk` + forward-pointers `nonce_proof` +
+    `dkg_proof` per RFC-0871 §Future Work (parallel pattern to
+    `Authorization::ThresholdSignature` BC#5). Closes coverage
+    gap for FROST-signed envelopes.
+13. **NEW in v1.3: `VerificationMethodKind` removed;**
+    `SignatureAlgorithm` trait + `AlgorithmRegistry` replace it, and
+    `VerificationMethod` gains `id: VerificationMethodId`,
+    `revoked_at: Option<u64>` and `custody: CustodyPosture`, with
+    `public_key` becoming length-generic (`Vec<u8>` bounded by
+    `SignatureAlgorithm::public_key_len`) instead of `[u8; 32]`.
+    Justified in §Dual-format signature algorithms and the ZK-capable
+    key: the enum is the shape this project's §Extension over
+    enumeration rule forbids, and its `from_byte` maps every
+    unrecognised byte to `Reserved` with `Reserved.as_byte() == 0x00`,
+    so unknown algorithms collapse onto one value instead of failing
+    closed. Registration sites and the DID documents that carry a `kind`
+    byte must migrate together; a `kind` byte carried on the wire
+    without a registry entry MUST be rejected rather than defaulted. No
+    shim: see §Backward compatibility.
+
+    **The storage migration is load-bearing, and it is the sharp edge of this
+    break.** `crates/octo-ident-storage`'s `did_registry.rs` decodes the
+    rich-document columns with `borsh::from_slice::<Vec<VerificationMethod>>(...).unwrap_or_default()`,
+    in both `resolve` and `resolve_in_chain`, under a comment describing it as
+    deliberate fail-soft behaviour for legacy NULL rows. So a document whose
+    `verification_methods` blob no longer decodes — which is exactly what
+    happens when the `kind` byte is replaced by a wider `AlgorithmId` — yields
+    **zero** verification methods rather than an error, while the independent
+    `public_key` column still resolves to 32 bytes. The result is a DID that
+    resolves successfully, carries a public key, and owns no algorithm-bearing
+    key at all: a silent downgrade to "valid identity, unusable key".
+
+    A migration MUST ship before, or atomically with, the field change:
+    explicitly decode the legacy byte into the pre-registered Ed25519
+    `AlgorithmId`, and MUST NOT route the result through `unwrap_or_default()`.
+    Post-migration, a decode failure MUST be an `Err`. This section does not
+    repeal the fail-soft behaviour for genuinely optional columns — it removes
+    it for the column that is load-bearing under v1.3. Enforced by AC#16.
+
+    **`list` is a third read path and it is worse than either of those two.**
+    The same file's `list` does not decode the rich columns at all: its query
+    selects `public_key` only, and every document is constructed with
+    `..Default::default()`. Every row therefore comes back with zero
+    verification methods — before the migration, after the migration, and with
+    no error to observe. Naming only `resolve` and `resolve_in_chain` here
+    would leave that reader on the old shape, so the migration MUST cover
+    `list` as well: the same column selection and the same decode path. Once
+    `revoked_at` exists per key, an enumeration that returns no keys also
+    returns nothing to revoke, which is the vacuous cascade A14 exists to
+    stop. Nothing in `crates/` calls `DidRegistry::list` outside tests today,
+    which is the only reason this stayed invisible, and that is not a reason
+    to leave the storage contract with two incompatible readers.
+
+## Additive Changes (per R28 M3 + R29 M1 + R33 M1)
+
+Per R28 M3 + R29 M1 + R33 M1: BC#9 (`OperatorId` struct +
+`pubkey()` method) is ADDITIVE, not BREAKING (no prior identifier
+or symbol shadowed; OperatorId is fresh in v1.2 substrate).
+**Mirrored to** this section (per R33 M1 — "Moved here" wording
+contradicted §Breaking Changes intro "mirrored" semantic; corrected).
+Other additive items in §Breaking Changes (BC#1a-1i NEW
+types/methods/errors, BC#2 additive field, BC#3 NEW struct,
+BC#4 3 new fields ADDED, BC#6 NEW fn on NEW struct, BC#12 NEW
+variant) may also be listed here — not required, but documents
+additive/non-breaking scope explicitly.
+
+- **9-ADDITIVE. `OperatorId` struct + `pubkey()` method** (per
+  R15 L4 + R28 M3) — fresh identifier in v1.2 substrate;
+  mirrored from §Breaking Changes BC#9.
+- **13-ADDITIVE. `SignatureAlgorithm` trait + `AlgorithmRegistry` +
+  `AlgorithmId(Uuid)` + `ZkSupport`** (added in v1.3) — all fresh
+  identifiers; they replace BC#13's enum rather than narrowing it.
+  A second verification method on an existing DID document, and the
+  `Ed25519` registration itself, are additive.
+- **13-ADDITIVE. Mandatory `algorithm_id ‖ key_id` signable prefix**
+  (added in v1.3) — additive on the message format, but every
+  existing signer and verifier MUST change together. A verifier that
+  reads an unprefixed message MUST reject it rather than fall back to
+  the legacy shape; see A12.
+- **13-ADDITIVE. ZK-capable key on the same DID document** (added in
+  v1.3) — additive. A holder with no such key is unaffected, and a
+  mint attempt for one MUST fail closed rather than silently use the
+  Ed25519 key.
+
+## Design Goals
+
+| Goal | Target                           | Metric                                                                                                                               |
+| ---- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| G1   | Chain depth bounded              | ≤ 8 levels (W3C VC-DID best practice)                                                                                                |
+| G2   | Unlinkability                    | v1 root ↔ v2 child cryptographically independent                                                                                     |
+| G3   | Threshold signing latency        | ≤ 2x single-key for 2-of-3                                                                                                           |
+| G4   | Key-share loss tolerance         | (N − M) lost shares recoverable (per R14 L1 — off-by-one; M-of-N tolerates N−M losses, not N−M+1)                                    |
+| G5   | Cascading revocation             | Cryptographic walk                                                                                                                   |
+| G6a  | Root mint migration              | 1 prod + 7 test sites migrate with Commit 3                                                                                          |
+| G6b  | Child mint is new                | 4-param signature                                                                                                                    |
+| G7   | Migration                        | 5 commits per R18 H1 (Commits 1-5 listed in §Implementation Phases) + atomic Phase 2 per RFC-0870 §NodeEnvelope Adoption             |
+| G8   | A ZK-verifiable algorithm exists | Every identity can hold a key whose holder-signature verification is expressible as a constrained circuit, without a second identity |
+| G9   | Custody parity                   | A ZK-capable key MUST declare its custody posture and MUST NOT be treated as equivalent to a hardware-held key beside it             |
+
+## Acceptance Criteria
+
+This RFC is ready for promotion to Accepted when:
+
+1. **Phase 0+1 complete** (per R18 H1, R24 M2 — Phase 0+1 covers
+   Commits 1-3; Commits 4-5 covered by AC#4 + AC#5 below):
+   - Commit 1: `ThresholdSigner::threshold_sign` NEW +
+     `BoundedShareVec::new` (enforces m == threshold) +
+     `ThresholdCoordinator` trait interface + Cargo deps pinned
+     in `crates/octo-wallet/Cargo.toml` + `HsmAdapter::get_public_key`
+     signature update (per R18 M4 — phase boundary matches
+     §Implementation Phases Commit 1) + `OperatorId` struct (per
+     R33 L4) + `OperatorId::pubkey()` method (per R19 L3)
+     - Clippy lint registration in
+       `clippy.toml` (per R21 L6 + R25 M2) + `test` entry in
+       Cargo.toml mapping `frost_nonce_determinism` to
+       `tests/integration/frost_nonce_determinism.rs` (per R22 M3
+     - R25 M2).
+   - Commit 2: `BLS12381ThresholdSigner` +
+     `SchnorrThresholdSigner` impls + `Xor2Of3Signer` additive
+     field + `IdentityKey::sign` fail-closed when `threshold_signer`
+     configured + `InMemorySigner` + `LedgerSigner` + `YubiHsmSigner`
+     updated (per R20 L5 — §Implementation Phases Commit 2).
+   - Commit 3: `derive_capability_key` 4-param + caller migration +
+     Phase 1 TV functions.
+2. **Mission `0957-f-v2-bundle` V2 work complete** (per R25 L7 —
+   scope: V2 spec authoring, `CapabilityBundleV2` + `CapabilityTokenV2`
+   structs per §Forward compatibility; AC#8 covers mission §Migration
+   field separately — NO overlap with AC#4-5 which cover V2 wire
+   form + atomicity).
+3. **`tests/fixtures/phase1_tv.json` exists** (RFC-0009 TV-1..3 per
+   R10 H3 disambiguation).
+4. **Phase 2 V2 wire form complete:** `CapabilityBundleV2` struct
+   defined.
+5. **Phase 3 atomic with Phase 2** per RFC-0870 §NodeEnvelope
+   Adoption.
+6. **`cargo test -p octo-wallet --lib -- --list phase1_tv_json | grep
+-qE "phase1_tv_json_(v11_round_trip_equivalence|child_unlinkability|hsm_boundary_no_seed_exfil)"`**
+   passes (per R11 H2 + R22 L6 — enumerates all 3 TV functions;
+   previous grep pattern was too loose).
+7. **RFC-0870 §NodeEnvelope:PayloadKindId ordering:** all 7
+   `PayloadKindId` UUIDs use V2 field ordering.
+8. **Mission `0957-f-v2-bundle` §Migration complete** (per R25 L7 —
+   scope: consumer migration to V2 wire form across wallet +
+   capability issuer + `octo-cap-macaroon` + `octo-cap-zk`;
+   distinct from AC#2 mission V2 authoring scope).
+   8b. **`tests/integration/frost_nonce_determinism.rs` exists** (per R20 M3)
+   and asserts 100K ops produce deterministic nonces; gated by
+   `cargo test -p octo-wallet --test frost_nonce_determinism`
+   (per R21 L4 — file path `tests/integration/...` requires
+   `test` entry in Cargo.toml mapping binary name
+   `frost_nonce_determinism` to the file path; cargo `--test`
+   flag matches binary name, NOT file basename).
+9. **RFC-0871 amendment FILED** (per R25 H1) with concrete
+   `aggregated_pk_check` + `dkg_proof` fields + verifier MUST
+   semantics added to §Future Work OR §Specification, BEFORE
+   RFC-0009 v1.2 promotion to Accepted. Until then, BC#5
+   forward-pointer is ASPIRATIONAL (downgraded from MUST per
+   R25 H1).
+10. **RFC-0871 amendment covers BC#12 `nonce_proof` field**
+    (per R28 M5) for FROST signatures; gates parallel to AC#9
+    for BC#5 `aggregated_pk_check` + `dkg_proof`. FROST
+    forward-pointer ASPIRATIONAL until AC#10 satisfied.
+11. **No verification site hardcodes an algorithm** (added in v1.3; gate and
+    scope corrected in v1.6).
+    `VerifyingKey::from_bytes` and `Signature::from_bytes` MUST NOT
+    appear at any holder- or capability-signature verification site
+    outside the Ed25519 registration itself; every such site MUST
+    dispatch through `AlgorithmRegistry`. A registry lookup for an
+    unregistered `AlgorithmId` MUST return an error, not a default.
+    Test: `no_verification_site_hardcodes_an_algorithm`.
+
+    **The gate is a workspace-wide grep, not a crate-scoped test run.**
+    v1.3 named `cargo test -p octo-ident --lib`, and that command cannot
+    observe this criterion: the sites are spread across 11 crates, and 7
+    of them do not depend on `octo-ident` at all, so a run scoped to
+    `octo-ident` passes with 25 of the 38 sites still hardcoded. The
+    named test is a workspace-root grep. Any crate-scoped command that
+    does not cover the sites it claims to gate is not evidence for this
+    criterion.
+
+    **Scope is the two constructors, not typed parameters.** This
+    criterion names two _constructors_ — they take bytes and make an
+    algorithm decision. A site that accepts an already-typed
+    `&VerifyingKey` parameter calls neither and never chooses an
+    algorithm, so it is outside this criterion's reach. Ed25519 in a
+    public signature is a real coupling and is worth fixing, but it is
+    a distinct defect and must not be counted as satisfying or
+    violating AC#11. Widening the criterion to cover it turns a
+    falsifiable requirement into an unfalsifiable one.
+
+    Delivered across `0009-c-verification-dispatch` (the crates that
+    already depend on `octo-ident`),
+    `0009-c2-verification-dispatch-new-dependency-sites` (sites needing a
+    new dependency edge), and
+    `0009-c3-network-verification-dispatch` (`octo-network`, which is
+    blocked on the RFC-0010 canonical OctoID codec because
+    `pubkey_from_did` yields a bare `[u8; 32]` that cannot name an
+    algorithm). AC#11 is met only when all three land.
+
+12. **Unknown algorithm identifiers fail closed** (added in v1.3,
+    rewritten per R41). A `kind` byte, `AlgorithmId` or `AlgorithmRegistry`
+    key that is not registered MUST be rejected, and the failure MUST be
+    distinguishable from "the registry has not been populated yet" — the
+    first is an unknown algorithm, the second is a deployment that has not
+    finished booting. Tests, all in `octo-ident`: `unregistered_algorithm_id_is_rejected`,
+    `unregistered_algorithm_id_is_not_silently_ed25519`,
+    `lookup_before_population_is_not_populated`.
+    Note the round-trip test that earlier drafts of this criterion asked
+    for is vacuous once the enum is gone: `VerificationMethodKind::from_byte`
+    no longer exists to collapse two unknowns onto each other, and a
+    `Uuid` cannot collide by construction. What must be tested instead is
+    that two distinct unknown identifiers are both refused and remain
+    distinguishable in the error — `unknown_algorithm_ids_are_distinguishable_in_errors`.
+13. **Cross-algorithm signature replay is rejected** (added in v1.3),
+    gated by `cargo test -p octo-ident`. A signature produced under
+    one registered algorithm MUST NOT verify under another, including
+    the Ed25519 / STARK-Schnorr pair whose signatures are both 64 bytes.
+    Test: `cross_algorithm_signature_replay_rejected`, covering the
+    prefix-stripped message and not only a wrong-key message.
+14. **ZK capability proofs are revocation-checked at verify time** (added
+    in v1.3, specified in RFC-0958 §Verification). A verifier MUST perform
+    both revocation gates — key-level (`VerificationMethod.revoked_at`) and
+    identity-scoped — fail closed on an unavailable or stale snapshot, and
+    MUST NOT treat the check as a discharge channel or skip it on the ZK
+    path. A holder holding only an Ed25519 key MUST be refused a ZK mint,
+    not served by the Ed25519 key. Tests: `revoked_identity_replay_rejected`,
+    `stale_revocation_snapshot_is_rejected`,
+    `compromised_key_revoked_without_identity_revocation` (RFC-0958 v1.7;
+    the last of these is **not yet enforced on the ZK path** — RFC-0958
+    §Algorithms still resolves the DID in-circuit — and is specified here so
+    the gap stays visible).
+15. **Custody posture is declared and distinguishable** (added per R41).
+    Every `VerificationMethod` carries a `custody` value. A verifier MUST
+    treat `CustodyPosture::Software` on a ZK-capable key as a distinct,
+    weaker posture rather than as a default, and MUST NOT present it as
+    equivalent to a hardware-held key on the same identity. Test:
+    `software_custody_is_distinguishable_from_hardware`.
+16. **Storage migration precedes the field change** (added per R41).
+    `octo-ident-storage`'s `did_registry.rs` decodes `verification_methods`
+    with `unwrap_or_default()`, so a field-width change silently produces a
+    document with zero verification methods while its `public_key` column
+    still resolves. A test MUST decode a pre-migration document through the
+    migration path and assert a non-empty method list with a correct
+    `algorithm_id`, and MUST assert that post-migration decode failure is an
+    `Err` rather than an empty list. Tests:
+    `legacy_document_migrates_to_algorithm_id`,
+    `post_migration_decode_failure_is_an_error`,
+    a resolver-level
+    `migrated_document_still_resolves_with_a_verification_method`, and
+    `listed_documents_carry_their_verification_methods`, which covers the
+    `list` path — a separate column selection that no resolver-level vector
+    can observe, and which returns zero verification methods for every row
+    until it is fixed.
+
+## Motivation
+
+Mission `0957-f-v2-bundle` (V2 spec per R8 H1 rewrite) requires
+the bundle struct encoding `CapabilityTokenV2 + HolderRecord +
+DischargeMacaroon` triplet to embed the full attenuation chain.
+
+## Dependencies
+
+**Requires:**
+
+- RFC-0009 (identity substrate)
+- RFC-0853 §F3
+- **RFC-0871 §Specification** (per R10 H5 — `pub enum Authorization`
+  variant; this RFC cross-references the extension; per R11 M3 —
+  ownership belongs to RFC-0871)
+
+**Optional:** RFC-0958
+
+## Roles and Authorities
+
+| Role                      | Identifier                                                                                               | Authority Scope                       | Lifecycle                                                                        | Source                                              |
+| ------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Identity Holder           | `IdentityHolderId`                                                                                       | Owns IdentityKey; revokes             | Persistent                                                                       | This RFC v1.2                                       |
+| HSM                       | `Arc<dyn HsmAdapter>`                                                                                    | Persists IdentityKey                  | Persistent per device                                                            | RFC-0009 §HsmAdapter Integration                    |
+| IdentityKey (logical)     | `IdentityKey` (base + additive fields)                                                                   | Sign; derive capability keys          | Persistent per device (per R18 M3 — wraps HSM via `signer: Arc<dyn HsmAdapter>`) | RFC-0009 §Capability Keys                           |
+| Capability Issuer         | `CapabilityTokenV2` (NOT CapabilityKey) carries `chain_depth` (per R11 H1)                               | Mint child keys                       | Stateless                                                                        | RFC-0009 §Capability Keys                           |
+| Capability Holder         | `CapabilityTokenV2` (NOT CapabilityKey)                                                                  | Redeem                                | Per-capability expiry                                                            | RFC-0009 §Capability Keys                           |
+| Threshold Signer (object) | role ID `threshold-signer` (impl types: `BLS12381ThresholdSigner` / `SchnorrThresholdSigner` per R31 L4) | Sign via M-of-N                       | Persistent per IdentityKey                                                       | `octo-wallet` §threshold (impls) + This RFC (trait) |
+| Key-Share Holder          | `ShareHolderId`                                                                                          | Custody of one share                  | Persistent per device                                                            | This RFC                                            |
+| Threshold Coordinator     | `ThresholdCoordinator` (RFC-0853 §F3)                                                                    | Collect M shares; aggregate           | Per signing request                                                              | RFC-0853 §F3                                        |
+| Operator                  | `OperatorId` (per R15 L8 — NEW in v1.2)                                                                  | Sign governance attestations (M-of-N) | Per ceremony                                                                     | This RFC §MPC threshold identity                    |
+
+### Threshold Coordinator interface
+
+```rust
+pub trait ThresholdCoordinator {
+    async fn collect_shares(
+        &self,
+        msg: &[u8],
+        shareholders: &[ShareHolderId],
+        threshold: usize,
+        timeout_ms: u64,
+    ) -> Result<BoundedShareVec, ThresholdError>;
+
+    fn aggregate(
+        &self,
+        msg: &[u8],
+        shares: &BoundedShareVec,
+    ) -> Result<ThresholdSigBytes, ThresholdError>;
+}
+```
+
+### `OperatorId::pubkey()`
+
+```rust
+pub struct OperatorId(pub [u8; 32]);
+
+impl OperatorId {
+    pub fn pubkey(&self) -> [u8; 32] { self.0 }
+}
+```
+
+### `threshold_params()` semantics (per R11 M5)
+
+`threshold_params(&self) -> (M, N)` — **M = required shares
+(threshold count)**, **N = total holders**. `BoundedShareVec::new`
+enforces `m == M`.
+
+**Authority matrix:**
+
+| Action             | Identity Holder | Key-Share Holders (collectively) | Threshold Coordinator |
+| ------------------ | --------------- | -------------------------------- | --------------------- |
+| Initiate signing   | YES             | NO                               | NO                    |
+| Provide share      | NO              | YES (M of N)                     | NO                    |
+| Aggregate shares   | NO              | NO                               | YES                   |
+| Revoke IdentityKey | YES (cascades)  | NO                               | NO                    |
+| Dispute resolution | YES             | NO                               | NO                    |
+| Re-key ceremony    | YES (initiates) | YES (M of N)                     | NO                    |
+
+**Out-of-scope roles:** key-share ceremony operator (governance);
+DID method registrar (separate RFC); vault offline recovery operator.
+
+## Specification
+
+### Hierarchical attenuation chains
+
+```rust
+pub fn derive_capability_key(
+    identity_key: &IdentityKey,
+    audience_did: &DID,
+    channel_id: &ChannelId,
+    parent_cap_key: Option<&CapabilityKey>,  // NEW (BC#8)
+) -> Result<CapabilityKey, WalletError>;
+```
+
+- **Root** (`None`): HKDF-BLAKE3 with `salt =
+identity_key.seed_bytes_for_hkdf()` (per R21 L5 — matches actual
+  substrate API; hardware adapters refuse plain `seed_bytes()` by
+  design per mission `0009-a`), `ikm = audience_did`,
+  `info = "cipherocto/cap/v1/" + channel_id`.
+- **Child** (`Some(key)`): HKDF-BLAKE3 with `salt =
+parent_cap_key.as_bytes()` (per R11 M1 — extraction), `ikm =
+audience_did`, `info = "cipherocto/cap/v2/child/" +
+parent_depth_be_bytes`.
+
+**Invariant:** `parent_depth_be_bytes = V2 token chain_depth - 1`.
+**Per R11 H1:** `chain_depth` lives ONLY on `CapabilityTokenV2`
+(the wire form); `CapabilityKey` (key material) does NOT carry
+depth.
+
+**`parent_depth_be_bytes` fixed-width:** 4 bytes BE
+(`to_be_bytes::<4>()`).
+
+### MPC threshold identity
+
+```rust
+/// Per `crates/octo-wallet/src/identity.rs` — 9 existing fields
+/// UNCHANGED + 3 new fields ADDED (per R16 M4).
+pub struct IdentityKey {
+    pub signer: Arc<dyn HsmAdapter>,
+    pub public_key: [u8; 32],
+    pub lifecycle: crate::lifecycle::LifecycleState,
+    pub activated_at_unix_secs: Option<u64>,
+    pub revoked_at_unix_secs: Option<u64>,
+    pub revoked_proof: Option<[u8; 64]>,
+    pub successor_key: Option<Box<IdentityKey>>,
+    pub rotation_started_at_unix_secs: Option<u64>,
+    pub deprecated: bool,
+
+    pub threshold_signer: Option<Arc<dyn ThresholdSigner>>,
+    /// Per R15 M3 + R16 M3: coordinator handle (Option; None = single-key only).
+    pub coordinator: Option<Arc<dyn ThresholdCoordinator>>,
+    /// Per R19 M2: shareholders registered at ceremony (carried
+    /// alongside threshold_signer).
+    pub shareholders: Vec<ShareHolderId>,
+    /// Per R18 L10: REMOVED per R22 M2 — field was write-only
+    /// (initialized + set + assigned; never read). Warning happens
+    /// at construction; no once-guard needed.
+    /// (Placeholder removed; struct field count = 9 existing + 3
+    /// new = 12 per R22 H1.)
+}
+
+/// Per R11 C1: matches `HsmAdapter::sign` symbol in
+/// `crates/octo-wallet/src/hsm.rs`.
+pub trait HsmAdapter: Send + Sync {
+    fn sign(&self, msg: &[u8]) -> Result<[u8; 64], HsmError>;
+    /// Per R12 H4: device transport can fail; Result wrapper required.
+    fn get_public_key(&self) -> Result<PublicKeyBytes, HsmError>;
+}
+
+/// Per R33 L2: `IdentityHolderId` definition (referenced in
+/// §Roles and Authorities Source column).
+pub struct IdentityHolderId(pub [u8; 32]);
+
+/// Per R33 L3: `ShareHolderId` definition (referenced in
+/// §Roles and Authorities Source column + used in
+/// `ThresholdCoordinator::collect_shares` +
+/// `IdentityKey.shareholders` + `IdentityKey::new`).
+pub struct ShareHolderId(pub [u8; 32]);
+
+impl ShareHolderId {
+    /// Placeholder for ceremonial shareholder identification;
+    /// production wiring uses registry from RFC-0853 §F3 key-share
+    /// ceremony. Kept as separate constructor to make ceremony
+    /// registration explicit at call sites (replaces R15 M3
+    /// `from_index` placeholder which was undefined per R19 M2).
+    pub fn from_registry_index(_registry: &KeyShareRegistry, _index: u16) -> Self {
+        Self([0u8; 32])
+    }
+}
+
+pub struct KeyShareRegistry;
+
+pub type PublicKeyBytes = [u8; 32];
+
+pub trait ThresholdSigner: Send + Sync {
+    /// M = required shares, N = total holders.
+    fn threshold_sign(
+        &self,
+        msg: &[u8],
+        shares: &BoundedShareVec,
+    ) -> Result<ThresholdSigBytes, ThresholdError>;
+
+    fn threshold_params(&self) -> (usize, usize);
+
+    /// Per R12 M7: group PK exposed for `Authorization::ThresholdSignature`
+    /// aggregated_pk_check (forward-pointed per R12 H3).
+    /// Per R18 H2: sum type — BLS12-381 PK is 48 bytes (NOT 32);
+    /// FROST Ed25519 PK is 32 bytes.
+    fn group_public_key(&self) -> GroupPublicKey;
+}
+
+/// Per R18 H2: sum type for group PKs (BLS12-381 = 48 bytes,
+/// Ed25519 = 32 bytes).
+#[derive(Clone, PartialEq, Eq)]
+pub enum GroupPublicKey {
+    Bls12381([u8; 48]),
+    SchnorrEd25519([u8; 32]),
+}
+
+/// Per R11 M4: fail-closed when threshold_signer configured.
+/// Per R12 H2: spec return type matches actual `IdentityKey::sign`
+/// at `crates/octo-wallet/src/identity.rs` (returns
+/// `Result<Signature, WalletError>` wrapping
+/// `ed25519_dalek::Signature`); threshold fallback rewrapped via
+/// `WalletError::Hsm(...)`.
+/// Per R15 M3 + R16 M3: ThresholdCoordinator wired via `coordinator`
+/// field on IdentityKey struct (not impl block; Rust forbids
+/// field decls in impl).
+/// Per R19 M2: `shareholders` registered at ceremony (carried on
+/// IdentityKey struct, set via `new`); `sign_threshold` uses the
+/// registry, not `from_index` placeholders.
+impl IdentityKey {
+    /// Per R18 L10 + R22 M2: warning happens at construction; no
+    /// once-guard needed (AtomicBool field removed per R22 M2).
+    /// Per R19 M2: `shareholders` registered at ceremony.
+    pub fn new(
+        signer: Arc<dyn HsmAdapter>,
+        public_key: [u8; 32],
+        threshold_signer: Option<Arc<dyn ThresholdSigner>>,
+        coordinator: Option<Arc<dyn ThresholdCoordinator>>,
+        shareholders: Vec<ShareHolderId>,
+    ) -> Self {
+        if threshold_signer.is_some() && coordinator.is_none() {
+            tracing::warn!("IdentityKey constructed with threshold_signer but no coordinator; sign_threshold will fail");
+        }
+        Self {
+            signer,
+            public_key,
+            lifecycle: crate::lifecycle::LifecycleState::Active,
+            activated_at_unix_secs: None,
+            revoked_at_unix_secs: None,
+            revoked_proof: None,
+            successor_key: None,
+            rotation_started_at_unix_secs: None,
+            deprecated: false,
+            threshold_signer,
+            coordinator,
+            shareholders,
+        }
+    }
+
+    pub fn sign(&self, msg: &[u8]) -> Result<ed25519_dalek::Signature, WalletError> {
+        if self.threshold_signer.is_some() {
+            return Err(WalletError::Hsm(HsmError::ThresholdSignerRequired));
+        }
+        let bytes = self.signer.sign(msg)?;
+        Ok(ed25519_dalek::Signature::from_bytes(&bytes)
+            .expect("HsmAdapter::sign returns 64-byte Ed25519 signature"))
+    }
+
+    pub async fn sign_threshold(&self, msg: &[u8])
+        -> Result<ThresholdSigBytes, ThresholdError>
+    {
+        let thresh = self.threshold_signer.as_ref()
+            .ok_or(ThresholdError::NoThresholdSigner)?;
+        let coordinator = self.coordinator.as_ref()
+            .ok_or(ThresholdError::NoThresholdCoordinator)?;
+        // Per R20 H1: rename for clarity — `m` = threshold count
+        // (required shares), `n` = total registered shareholders.
+        let (m, n) = thresh.threshold_params();
+        let shareholders = &self.shareholders;
+        // Per R20 H1: check against `n` (total), NOT `m` (threshold).
+        if shareholders.len() != n {
+            return Err(ThresholdError::ShareholderCountMismatch { actual: shareholders.len(), expected: n });
+        }
+        let shares = coordinator.collect_shares(msg, shareholders, m, 30_000).await?;
+        // Per R19 L4: caller (sign_threshold) runs validate_shares_scheme
+        // before sort + aggregate. ThresholdSigner::threshold_sign impls
+        // MAY re-check but MUST NOT be relied on for the property.
+        validate_shares_scheme(shares.as_slice())?;
+        let mut sortable = shares.as_slice().to_vec();
+        sort_shares_for_aggregation(&mut sortable);
+        // Reconstruct BoundedShareVec for threshold_sign.
+        let bounded = BoundedShareVec::new(sortable, m)?;
+        thresh.threshold_sign(msg, &bounded)
+    }
+}
+```
+
+**`verify_chain_parent` (per R11 C2 — corrected):**
+
+```rust
+/// Per R11 C2: actually binds child to parent via concatenation
+/// hash (NOT just re-hashing parent — `chain_parent` must commit
+/// to both the parent AND the child position in the chain).
+pub fn verify_chain_parent(
+    parent_cap_key: &CapabilityKey,
+    child_cap_key: &CapabilityKey,
+    chain_parent: &[u8; 32],
+    child_depth: u8,
+) -> bool {
+    let binding_input = [
+        parent_cap_key.as_bytes().as_slice(),
+        child_cap_key.as_bytes().as_slice(),
+        child_depth.to_be_bytes().as_slice(),
+    ].concat();
+    *chain_parent == *blake3::hash(&binding_input).as_bytes()
+}
+```
+
+**`compute_chain_parent` (per R12 M5 — symmetric mint side):**
+
+```rust
+/// Per R12 M5: symmetric mint-side construction. Without this
+/// function, an implementer cannot derive `chain_parent` correctly
+/// (verify uses 1-byte `child_depth`; info string uses 4-byte BE
+/// parent_depth — DO NOT confuse the two).
+pub fn compute_chain_parent(
+    parent_cap_key: &CapabilityKey,
+    child_cap_key: &CapabilityKey,
+    child_depth: u8,
+) -> [u8; 32] {
+    let binding_input = [
+        parent_cap_key.as_bytes().as_slice(),
+        child_cap_key.as_bytes().as_slice(),
+        child_depth.to_be_bytes().as_slice(), // 1 byte, NOT 4
+    ].concat();
+    *blake3::hash(&binding_input).as_bytes()
+}
+```
+
+**`check_wrapped_chain` (per R21 L7 — moved here from §A7):**
+
+```rust
+/// Multi-step chain walk for cascading revocation. Walks
+/// `chain_parent` chain from leaf to root, verifying each step
+/// via `verify_chain_parent`. Returns Ok if entire chain is
+/// valid + un-revoked; Err if any ancestor is revoked.
+pub fn check_wrapped_chain(
+    leaf: &CapabilityKey,
+    chain: &[CapabilityTokenV2],  // root..leaf order
+    revoked_set: &HashSet<[u8; 32]>,  // chain_parent hashes of revoked ancestors
+) -> Result<(), CapabilityError> {
+    for window in chain.windows(2) {
+        let parent = &window[0];
+        let child = &window[1];
+        if revoked_set.contains(&parent.chain_parent) {
+            return Err(CapabilityError::AncestorRevoked);
+        }
+        if !verify_chain_parent(
+            &parent.cap_key,
+            &child.cap_key,
+            &child.chain_parent,
+            child.chain_depth,
+        ) {
+            return Err(CapabilityError::ChainLinkInvalid);
+        }
+    }
+    Ok(())
+}
+```
+
+**`Authorization::ThresholdSignature` extension (per R11 M3 + R12 H3):**
+
+```rust
+// Per R12 H3: actual `crates/octo-protocol/src/authorization.rs`
+// variant has ONLY `signers` + `sig`; the `aggregated_pk_check` +
+// `dkg_proof` fields are NOT in substrate. Concrete threshold-
+// signature semantics (BLS aggregate, key registration, DKG proof)
+// land in `crates/octo-cap-threshold-mpc/` per RFC-0871
+// §Future Work. RFC-0009 v1.2 cross-references the extension
+// schema; verifier MUST semantics are ASPIRATIONAL until the
+// substrate lands.
+// Per R18 M5: ThresholdSignature variant is BLS-only; FROST
+// signatures emitted via `ThresholdSigBytes::SchnorrEd25519` use
+// a separate `Authorization::FrostSignature` envelope variant
+// (also defined in RFC-0871 §Future Work). Adding the FROST
+// variant prevents coverage gap for FROST-signed envelopes.
+pub enum Authorization {
+    ThresholdSignature {
+        signers: Vec<WireDid>,
+        sig: BlsSignature,
+        // Forward-pointer (RFC-0871 §Future Work):
+        // aggregated_pk_check: bool,
+        // dkg_proof: Vec<u8>,
+    },
+    FrostSignature {
+        signers: Vec<WireDid>,
+        sig: FrostEd25519Signature,
+        group_pk: [u8; 32],
+        // Forward-pointer (RFC-0871 §Future Work per R20 L6):
+        // nonce_proof: Vec<u8>,  // FROST nonce-binding proof
+        // dkg_proof: Vec<u8>,    // shared with ThresholdSignature
+    },
+    // ...
+}
+```
+
+**Per R12 H3:** BC#5 revised — this RFC documents the EXTENSION
+SCHEMA only. `aggregated_pk_check` + `dkg_proof` fields + verifier
+MUST semantics land in `crates/octo-cap-threshold-mpc/` per
+RFC-0871 §Future Work. RFC-0009 v1.2 does NOT commit to substrate
+fields.
+
+**`BoundedShareVec`:**
+
+```rust
+pub const MAX_M: usize = 7;  // per R20 L8 — bounds BoundedShareVec
+                                  // allocation (7 shareholders); aligned with
+                                  // `static_assertions` MAX_M >= 2 check below
+                                  // (CONSTANT floor per R31 M3; MAX_M <= 7
+                                  // ceiling enforced by struct literal cap).
+/// Per R21 L3: chain depth cap (W3C VC-DID best practice per G1).
+pub const MAX_CHAIN_DEPTH: u8 = 8;
+
+pub struct BoundedShareVec {
+    shares: Vec<ThresholdShare>,
+    m: usize,
+}
+
+impl BoundedShareVec {
+    pub fn new(shares: Vec<ThresholdShare>, threshold: usize) -> Result<Self, ThresholdError> {
+        let m = shares.len();
+        if m == 0 || m > MAX_M {
+            return Err(ThresholdError::InvalidShareCount { actual: m, max: MAX_M });
+        }
+        if m != threshold {
+            return Err(ThresholdError::ShareCountMismatch { actual: m, expected: threshold });
+        }
+        Ok(Self { shares, m })
+    }
+
+    pub fn len(&self) -> usize { self.m }
+
+    /// Per R19 M1: accessor so callers can compose with
+    /// `sort_shares_for_aggregation` + `validate_shares_scheme`.
+    pub fn as_slice(&self) -> &[ThresholdShare] { &self.shares }
+}
+
+pub enum ThresholdShare {
+    Bls12381([u8; 32]),
+    SchnorrEd25519([u8; 32]),
+}
+
+pub enum ThresholdSigBytes {
+    Bls12381([u8; 96]),
+    SchnorrEd25519([u8; 64]),
+}
+
+/// Per R11 H5: sort by FULL 32-byte slice (NOT single byte `b[0]`).
+/// Class A determinism requires total order.
+/// Per R18 L7: mixed-scheme aggregation fails closed (returns
+/// `Ordering::Greater` to push mixed schemes to end + signals
+/// caller via separate `validate_shares_scheme` precondition
+/// check).
+pub fn sort_shares_for_aggregation(shares: &mut [ThresholdShare]) {
+    shares.sort_by(|a, b| {
+        let (a_bytes, b_bytes) = match (a, b) {
+            (ThresholdShare::Bls12381(a), ThresholdShare::Bls12381(b)) => (a, b),
+            (ThresholdShare::SchnorrEd25519(a), ThresholdShare::SchnorrEd25519(b)) => (a, b),
+            _ => return std::cmp::Ordering::Greater,  // mixed-scheme: fail-closed sort
+        };
+        a_bytes.cmp(b_bytes)
+    });
+}
+
+/// Per R18 L7: separate precondition check that rejects mixed
+/// schemes before sort + aggregate.
+pub fn validate_shares_scheme(shares: &[ThresholdShare]) -> Result<(), ThresholdError> {
+    if shares.is_empty() { return Err(ThresholdError::InvalidShareCount { actual: 0, max: MAX_M }); }
+    let first = match shares[0] {
+        ThresholdShare::Bls12381(_) => Scheme::Bls12381,
+        ThresholdShare::SchnorrEd25519(_) => Scheme::SchnorrEd25519,
+    };
+    for s in &shares[1..] {
+        let s_scheme = match s {
+            ThresholdShare::Bls12381(_) => Scheme::Bls12381,
+            ThresholdShare::SchnorrEd25519(_) => Scheme::SchnorrEd25519,
+        };
+        if s_scheme != first { return Err(ThresholdError::MixedSchemes); }
+    }
+    Ok(())
+}
+
+enum Scheme { Bls12381, SchnorrEd25519 }
+```
+
+**Cargo deps pinned exact** in `crates/octo-wallet/Cargo.toml`
+(per R12 M6 — actual file at commit `bf58559d` does NOT contain
+these; AC#1 Commit 1 must ADD them):
+
+```toml
+[dependencies]
+# Layer A — BLS12-381 threshold primitives.
+# Per R17 L4 + R30 L4: pinned to 0.3.11 for cross-arch CI baseline
+# ABI; bump requires re-running x86_64 + ARM64 determinism suite
+# per A5 (BLS12-381 deterministic cross-arch) + §Implicit
+# Assumptions Audit Platform row (BLS12-381 deterministic across
+# x86_64 + ARM64).
+blst = "=0.3.11"
+# Layer A — Shamir secret sharing (RFC-0009 §MPC threshold identity).
+# Per R17 H1: crate name is `vsss-rs` (NOT `vsss`); 0.5.2 not
+# on crates.io — use latest stable 6.0.1.
+vsss-rs = "=6.0.1"
+# Layer A — RFC-9591 FROST Ed25519 threshold signing.
+# Per R17 H2: 2.0.3 not on crates.io — use 2.2.0.
+frost-ed25519 = "=2.2.0"
+# Layer B-substrate — compile-time invariant assertions
+# (per R20 L7 + R22 L5 + R31 M3): `const _: () = assert!(MAX_M >= 2)`
+# asserts the CONSTANT floor (prevents MAX_M < 2 future regression);
+# chain depth `const _: () = assert!(MAX_CHAIN_DEPTH >= 2)`
+# asserts depth constant floor. (Per R31 M3 — assertion guards
+# the constant, NOT runtime `m`; BoundedShareVec::new still
+# accepts m = 1 + threshold = 1 (M=1 degenerate). Add explicit
+# runtime `m >= 2` check below if M=1 must be forbidden at
+# runtime; for now M=1 is allowed.)
+static_assertions = "=1.1.0"
+```
+
+**`ThresholdShare` deserialization validation** — length check +
+BLS subgroup check via `blst` + Schnorr scalar range via
+`frost-ed25519`.
+
+### Dual-format signature algorithms and the ZK-capable key
+
+Added in v1.3. This section extends RFC-0009 §Capability Keys with a
+second signature algorithm on the same identity, and replaces the hardcoded
+Ed25519 verification with a registry.
+
+#### Why two keys and not one
+
+RFC-0958 §Algorithms needs a signature whose verification is cheap _inside a
+STARK_. That is a property of the algorithm, and Ed25519 cannot supply it:
+measured on the capability circuit, a conformant Ed25519 verifier costs 44,443
+CASM words against a 3,004-word baseline, and Schnorr over the Cairo STARK curve
+costs 295 words and about 5.6% additional proving time. There is no derivation
+between an Ed25519 key and a STARK-curve key, so no single key serves both
+purposes.
+
+**The measured baseline is not a holder-signature verification.** The
+capability circuit's holder-slot is a structural commitment — it Poseidon-hashes
+four commitments and asserts non-zero, and `stage2_main` feeds all four the same
+commitment. The conformant Ed25519 module and the STARK-curve Schnorr module are
+both `#[cfg(test)]` and neither is called from the entrypoint. The 44,443-word
+figure is the cost of adding a conformant verifier to a circuit that does not
+currently have one; the 295-word figure is the cost of adding the cheap one. The
+ratio is what motivates this design and it is sound. What is _not_ yet true is
+that either is wired in, so G8 below is aspirational and this section specifies a
+target, not a shipped capability. Closing that gap is a circuit change, which
+changes the CASM hash, which requires an RFC-0958 amendment — it is mission work,
+not an RFC edit.
+
+One identity therefore carries **two keys, one DID document, two verification
+methods**. Not two identities: lifecycle, revocation and hardware custody are
+all per-identity, and splitting identities splits the security boundary for no
+gain.
+
+#### The registry, and why `VerificationMethodKind` goes
+
+`VerificationMethodKind` is a central `enum { Ed25519 = 0x01, Reserved = 0x00 }`
+carried in the DID document. Two problems, both live today.
+
+**It is a central enum.** That is the one shape this project's
+§Extension over enumeration rule forbids: every new algorithm becomes a central
+edit plus cross-crate review. The rule asks for a typed discriminator rather than
+a byte anyone can improvise, and the repository has the general shape already:
+the transport crates key a trait-object registry by a typed discriminator whose
+extension variant wraps a `Uuid`. That key is still an enum, which is precisely
+the part this section drops.
+
+**Its unknown-byte handling is lossy, not fail-closed.** `from_byte` maps every
+unrecognised byte to `Reserved`, and `Reserved.as_byte()` returns `0x00`. So any
+two unknown algorithms collapse onto the same value and become mutually
+indistinguishable, and `0x42` does not survive a round trip. A second algorithm
+landed in another crate would be silently absorbed rather than refused. The
+function's own doc comment claims the opposite — that the mapping makes old code
+"fail-closed on unknown discriminators" — and the code is what decides.
+
+The replacement is a trait plus a registry. `VerificationMethodKind` is
+**removed**, which is BREAKING — see BC#13.
+
+```rust
+/// Typed discriminator. Not a `u8`: a new algorithm must not be able to
+/// collide with an existing one by picking a free byte.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AlgorithmId(Uuid);
+
+/// Typed discriminator for a circuit revision. Same shape and same rationale
+/// as `AlgorithmId`: a compiled-CASM digest is stable and unforgeable, but it
+/// is not a *name*, so two registries cannot tell "the Ed25519 verifier in
+/// circuit A" from "the Ed25519 verifier in circuit B" — and those are
+/// different statements about what a proof asserts.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CircuitId(Uuid);
+
+/// Stable identity of one key within one DID document. This is the `key_id`
+/// in the mandatory signable prefix, so it MUST have a fixed wire width: the
+/// prefix concatenates it directly, and the fixed-16-byte property that makes
+/// the raw form self-delimiting depends on it. A variable-width identifier —
+/// a string fragment, say — would let `key_id = ""` with payload `"abc"` and
+/// `key_id = "a"` with payload `"bc"` produce one identical signable byte
+/// string, which is the exact collision the prefix exists to prevent.
+///
+/// A `Uuid`, not a string, and NOT the existing string-fragment key id that
+/// `DidDocument::authenticates` matches on today: that value is a display
+/// handle, is not carried on the wire, and is not stable across resolvers.
+/// Distinct from RFC-0909's quota API-key id, which is a different domain.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct VerificationMethodId(Uuid);
+
+/// What the circuit can do with this algorithm.
+pub enum ZkSupport {
+    /// No constrained in-circuit verifier exists. A holder whose key is
+    /// registered here cannot produce a ZK capability proof, and a mint
+    /// attempt MUST fail closed rather than fall back to another key.
+    None,
+    /// A constrained in-circuit verifier exists and is named by the circuit
+    /// that carries it.
+    Circuit { circuit: CircuitId },
+}
+
+pub trait SignatureAlgorithm: Send + Sync {
+    fn id(&self) -> AlgorithmId;
+    fn public_key_len(&self) -> usize;
+    fn signature_len(&self) -> usize;
+    /// Host verification. MUST be constant-time for the algorithms that
+    /// claim it, and MUST NOT accept a truncated or over-long signature.
+    fn verify(&self, pk: &[u8], msg: &[u8], sig: &[u8]) -> Result<(), SignatureError>;
+    fn zk_support(&self) -> ZkSupport;
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AlgorithmRegistryError {
+    /// A second implementation claimed an `AlgorithmId` already registered.
+    /// MUST NOT silently replace — a last-writer-wins swap is a silent
+    /// wrong answer inside the very mechanism meant to prevent them.
+    #[error("algorithm already registered: {0:?}")]
+    AlreadyRegistered(AlgorithmId),
+    /// Lookup before `populate()` completed, or after it failed.
+    #[error("algorithm registry not populated")]
+    NotPopulated,
+    /// No registration for this identifier. Fail closed, never default.
+    #[error("unknown algorithm: {0:?}")]
+    UnknownAlgorithm(AlgorithmId),
+}
+
+/// Core-owned registry, populated once at startup before any verification.
+pub struct AlgorithmRegistry {
+    entries: HashMap<AlgorithmId, Arc<dyn SignatureAlgorithm>>,
+}
+
+impl AlgorithmRegistry {
+    pub fn new() -> Self { /* empty */ }
+
+    /// MUST be called once per distinct `AlgorithmId`. A duplicate
+    /// registration MUST return `AlreadyRegistered` rather than overwrite,
+    /// even when the two implementations are byte-identical: two crates
+    /// linking two versions of the same algorithm is a link-time fact the
+    /// registry must surface, not absorb.
+    pub fn register(&self, alg: Arc<dyn SignatureAlgorithm>) -> Result<(), AlgorithmRegistryError>;
+
+    /// Populates the registry and marks it ready. Until this returns, every
+    /// lookup is `NotPopulated` — a verifier must not run against a
+    /// partially-populated registry and observe "unknown" as "absent".
+    pub fn populate(&self, algs: Vec<Arc<dyn SignatureAlgorithm>>) -> Result<(), AlgorithmRegistryError>;
+
+    /// MISS on an unregistered id. There is no `Default` arm and no
+    /// fallback algorithm; returning `Ed25519` here is the exact silent
+    /// wrong answer A12 exists to prevent.
+    pub fn get(&self, id: AlgorithmId) -> Result<&Arc<dyn SignatureAlgorithm>, AlgorithmRegistryError>;
+}
+```
+
+The registry MUST be a process-wide singleton owned by the crate that defines
+it, populated during startup by an init function before any verification runs,
+and a lookup that arrives before population is `NotPopulated` rather than
+`UnknownAlgorithm`. The two are different failures: the first is a deployment
+that has not finished booting, the second is an algorithm nobody registered.
+
+Dispatch goes through the registry at every verification site. `Ed25519`
+registers as the unchanged baseline with `ZkSupport::None`. A STARK-curve
+Schnorr implementation is intended to register as a separate crate with
+`ZkSupport::Circuit { .. }`, and is what would make RFC-0958 §Algorithms
+affordable — subject to the wiring caveat at the head of this section, no
+such crate exists yet.
+
+#### Domain separation is mandatory, not hygiene
+
+Ed25519 signatures are 64 bytes (`R ‖ S`) and STARK-curve Schnorr signatures
+are also 64 bytes (`r ‖ s`). Same length, different meaning, and neither is a
+type error for the other.
+
+**Every signed message MUST be prefixed with the algorithm id and the key id:**
+
+```
+signable = algorithm_id ‖ key_id ‖ canonical_ser(payload)
+```
+
+That line is only half a rule. A prefix with two legal encodings is not a rule,
+so the following is normative:
+
+- **`algorithm_id` is the 16 raw bytes of its `Uuid`, not its 36-character
+  hyphenated form.** The two are both in use in this codebase — borsh encodes
+  the raw form, serde the textual one — and an implementation that picks
+  differently from its peers signs a different domain.
+- **`key_id` is the 16 raw bytes of the `VerificationMethodId` field added by
+  BC#13**, carried on the DID document. It MUST NOT be derived from the public
+  key, and it MUST NOT be locally allocated at signing time.
+- **Both components are fixed at 16 bytes, so the prefix is self-delimiting
+  and needs no length framing.** If either is ever variable-width, the
+  construction MUST move to the BLAKE3-domain-tag form below in the same
+  amendment that makes it variable.
+- **The 16 bytes are the newtype's own storage, not a borsh encoding of
+  `Uuid`.** `AlgorithmId`, `VerificationMethodId` and `CircuitId` MUST each
+  store a `[u8; 16]` field and expose `to_uuid` / `from_uuid`. This is not a
+  preference: `Uuid` has no borsh implementation available in this workspace.
+  No crate enables a `uuid` borsh feature, and no crate in `crates/` derives
+  borsh on a struct containing a `Uuid` field, so `#[derive(BorshSerialize)]
+struct AlgorithmId(Uuid)` does not compile here. Storing the bytes directly
+  also makes the self-delimiting property above true by construction rather
+  than by a serialiser's behaviour, and it is the only form in which the
+  storage decode in BC#13 and the signable prefix agree on what a `key_id`
+  byte is.
+- **`canonical_ser` means RFC-0126 §Part 3: Deterministic Canonical
+  Serialization, which this repository implements in the `octo-determin` crate
+  as the `dcs_serialize_*` family.** RFC-0126 defines no symbol of that name,
+  so the earlier instruction to resolve it "by name" resolved to nothing and
+  left an implementer to search the repository, where **five** functions
+  carry the bare symbol: `zk_circuit::canonical_ser`,
+  `CapabilityBundleV2::canonical_ser`,
+  `CapabilityBundleV2Envelope::canonical_ser`, `Caveat::canonical_ser` and
+  `HolderRecord::canonical_ser`. Two of those five are JSON, and RFC-0126
+  §JSON Allowed Contexts lists cryptographic proofs among the contexts where
+  JSON is forbidden, so `Caveat::canonical_ser` and `HolderRecord::canonical_ser`
+  are excluded by rule rather than by preference — a signer that reached either
+  by searching for the bare symbol would be signing a domain the serialization
+  RFC prohibits. An earlier draft of this bullet said three functions; there
+  are five. Naming the bare symbol would let two implementations sign
+  different domains.
+
+```
+signable = BLAKE3-256("cipherocto/sigdomain/v1" ‖ algorithm_id ‖ key_id)
+           ‖ canonical_ser(payload)
+```
+
+The hashed form is the preferred encoding for new implementations: it removes
+every framing question above in one step and leaves 32 bytes of fixed prefix.
+Both forms bind the same two identifiers, so they are not interoperable — an
+implementation states which it uses, and a verifier MUST reject the other.
+
+A verifier MUST reject a message that does not carry the prefix, and MUST
+verify under the algorithm the prefix names rather than the one it prefers. A
+signature replayed across algorithms then fails as a malformed signature rather
+than silently verifying against the wrong equation — the same silent-wrong-answer
+shape as the point-decoding sign-bit defect recorded in RFC-0974 §Step 1, where
+every vector in the original suite happened to have the sign bit clear.
+
+#### The DID document carries both keys
+
+`VerificationMethod` gains a stable identifier and a typed `AlgorithmId` in
+place of `VerificationMethodKind`, and its `public_key` becomes length-generic
+(`Vec<u8>` bounded by `public_key_len`) because algorithms do not agree on key
+size. The identifier is not optional: the mandatory signable prefix names a
+`key_id`, and a verifier holding only a public key cannot reconstruct one. A
+locally-allocated id would make the signed domain depend on who signed.
+
+```rust
+pub struct VerificationMethod {
+    /// Stable identity of this key within its DID document. This is the
+    /// `key_id` in the signable prefix. Distinct from RFC-0909's quota
+    /// API-key id, which is a different domain and a different identifier.
+    pub id: VerificationMethodId,
+    pub algorithm_id: AlgorithmId,
+    pub public_key: Vec<u8>,
+    /// Per R41: without this the revocation cascade below has nothing to
+    /// act on, because the registry revokes identities and nothing else.
+    pub revoked_at: Option<u64>,
+    /// Per R41: G9 needs a carrier, or it is an unenforceable MUST.
+    pub custody: CustodyPosture,
+}
+```
+
+**Packing a STARK-curve key for the circuit.** A STARK-curve public key is a
+32-byte x-coordinate plus a parity bit, so it does **not** fit the
+31-bytes-per-felt packing that RFC-0958 applies to _digests_ in
+`PublicInputs`. That digest convention is not a key convention and must not be
+copied: it carries no parity bit and says nothing about half ordering. The
+normative packing is:
+
+```
+pk_lo = felt252 from the low 31 bytes of the x-coordinate, little-endian
+pk_hi = felt252 carrying the remaining byte, with the parity bit as its
+        only significant bit
+```
+
+The verifier MUST recompute `pk_lo` / `pk_hi` from the DID-resolved
+`public_key` and MUST reject a proof whose public inputs disagree. A verifier
+that trusted the prover's halves would be accepting a key it never resolved.
+
+The circuit MUST NOT resolve the DID. RFC-0958's step-1 pseudocode calls
+`did_resolve_pubkey(holder_did)`, which would force a circuit to hash or verify a
+DID document. Instead the verifier supplies `(algorithm_id, verification_method_id,
+pk_lo, pk_hi)` as public inputs and checks the DID binding out of circuit,
+exactly as it already recomputes the Ed25519 challenge hash rather than trusting
+the prover for it. An unverifiable binding is a soundness hole, not a cost
+saving, so the verifier MUST perform the resolution and MUST bind the resolved
+key into the public inputs.
+
+#### Revocation cascades, and ZK proofs are point-in-time
+
+Revoking an identity MUST revoke every key registered to it, in every algorithm.
+A key that survives its identity's revocation is a standing forgery.
+
+That cascade is only half of what is required, and the half is currently
+vacuous. RFC-0958's revocation check reads a `revoked_identities` set, so with
+v1.3 as previously drafted **every key of a revoked identity was revoked** —
+there was no per-key revocation path at all, and revoking a single compromised
+key forced you to revoke the whole identity and with it every other key the
+holder owns. Two keys per identity makes that collateral damage the normal case
+rather than an emergency.
+
+So per-key revocation is required, and it needs somewhere to act on: the
+`revoked_at` field on `VerificationMethod` added above.
+
+- Revoking a **key** sets `revoked_at` on that `VerificationMethod`. Other keys
+  of the same identity are unaffected.
+- Revoking an **identity** sets `revoked_at` on every `VerificationMethod` of that
+  identity, in every algorithm, and MUST NOT be expressible as anything less.
+- A verifier MUST consult key revocation first and identity revocation second,
+  and MUST reject on either. RFC-0958's identity-scoped check is the second
+  gate, not the whole control; the first gate lives with the DID document.
+
+The oracle is the asymmetric case: one STARK-curve key compromised, identity
+otherwise sound, Ed25519 key untouched — the holder must survive that, and the
+cascade must not take them down with it. See A14.
+
+A STARK proof is a statement about one instant. A key revoked at 10:00 can mint
+a proof at 09:00 that still verifies at 15:00, and a circuit cannot read live
+revocation state — it has no access to anything mutable.
+
+Settled in RFC-0958 §Revocation and freshness: the circuit carries no revocation
+state, and the verifier performs a mandatory revocation check against a snapshot
+whose staleness is bounded by the proof's freshness window, on top of the
+key-level check above. Keying the second gate on the identity is only
+expressible because v1.3 puts two algorithms on one identity. The freshness
+window is the replay exposure and it is a deployment policy value. Full
+reasoning in A13.
+
+#### Custody parity is a separate obligation
+
+RFC-0009 v1.2 does not in fact require identity keys to be hardware-backed —
+the HSM adapter (`HsmAdapter::sign`) is a trait with a software
+`ed25519_dalek` signer among its implementors, and the `custody = "HSM"`
+field is a signer-provided string. The obligation this section states is
+therefore a **new** requirement, not a description of existing behaviour, and
+it says so rather than borrowing authority it does not have.
+
+What survives that correction is the underlying problem: most hardware backends
+do not implement the STARK curve, so the ZK-capable key is the one most likely
+to fall back to software. An implementation that registers a STARK-curve key
+MUST declare its posture on the `VerificationMethod.custody` field, and MUST NOT
+present a software-held ZK key as equivalent to a hardware-held Ed25519 key
+beside it. Two keys means two custody stories, and the weaker one is the one an
+attacker will target.
+
+```rust
+pub enum CustodyPosture {
+    /// Non-exportable, hardware-backed. Equivalent to the v1.2 posture.
+    Hardware,
+    /// Software-resident. MUST be reflected in any trust display or
+    /// authorization decision that compares the two keys of an identity.
+    Software,
+    /// Delegated to a threshold scheme.
+    Threshold,
+}
+```
+
+A verifier MUST treat `Software` on a ZK-capable key as a distinct, weaker
+posture rather than as a default — the failure mode is a software key that
+displays identically to a hardware one beside it. Enforced by AC#15.
+
+## Determinism Requirements
+
+Per RFC-0008 Execution Class mapping:
+
+| Operation                         | Class | Justification                                       |
+| --------------------------------- | ----- | --------------------------------------------------- |
+| HKDF-BLAKE3 derivation            | **A** | Pure function                                       |
+| BLS12-381 signature aggregation   | **A** | IETF BLS Signatures + `hash_to_curve` deterministic |
+| FROST Ed25519 signing             | **A** | RFC-9591 §5.3 deterministic nonce                   |
+| Cascading revocation verification | **A** | Pure cryptographic walk                             |
+| Share collection coordination     | **B** | Coordinator-dependent                               |
+| **Share aggregation (sorted)**    | **A** | Per R11 H5 — sort by full 32-byte slice             |
+| IdentityKey dispatch routing      | **B** | Init-time decision                                  |
+
+## Implicit Assumptions Audit
+
+| Category          | Assumption                                                               | Risk                             | Mitigation                                                                                                                                                      |
+| ----------------- | ------------------------------------------------------------------------ | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Operator          | Key-share ceremony with secure RNG                                       | Ceremony compromise              | Per-scheme ceremony + audit log                                                                                                                                 |
+| Platform          | BLS12-381 deterministic across x86_64 + ARM64                            | Cross-arch divergence            | blst `DISABLE_PREFETCH` + cross-arch CI                                                                                                                         |
+| Platform          | FROST Ed25519 deterministic (RFC-9591 §5.3)                              | Same                             | frost-ed25519 deterministic nonce + cross-arch CI                                                                                                               |
+| Platform          | Linux baseline                                                           | BSD/Windows divergence           | x86_64 Ubuntu 22.04 + ARM64 macOS runners in CI per A6 + A9 cross-arch defenses (per R28 L4 — concrete CI matrix documented; was tautological "Linux baseline") |
+| Platform          | stoolap fork at pin                                                      | API drift                        | Pin commit hash                                                                                                                                                 |
+| Time              | Chain depth ≤ 8                                                          | Migration if raised              | Depth cap constant                                                                                                                                              |
+| Network           | Threshold coordinator timeout                                            | Coordinator failure stalls       | Timeout (default 30s) + retry                                                                                                                                   |
+| Upgrade           | v1.1 → v1.2 capability keys valid                                        | v1.1 wallets reject `v2/child/`  | Info-string discriminator check                                                                                                                                 |
+| Config            | `parent_cap_key` default `None`                                          | Forgetting = security regression | Clippy lint naming the 4-param form                                                                                                                             |
+| Identity          | BLS threshold master key independent from Ed25519                        | Cross-scheme confusion           | Per-scheme key generation (RFC-0853 §F3 — key-separation ceremony contract per R18 L9)                                                                          |
+| Identity          | FROST Ed25519 threshold master key independent                           | Same                             | Per-scheme key generation (RFC-0853 §F3 — key-separation ceremony contract per R18 L9)                                                                          |
+| Identity          | `chain_parent` bound via `blake3(parent                                  |                                  | child                                                                                                                                                           |     | depth)` | Spoofing | `verify_chain_parent` predicate (per R11 C2 — binds child too) |
+| Identity          | **M of N holders mutually distrusting AND evictable by Identity Holder** | Collusion attack                 | Governance + economic stake (RFC-0853 §F3 per R11 L2)                                                                                                           |
+| Storage           | M shares persist on ShareHolder devices                                  | Host memory compromise           | HSM-internal share persistence                                                                                                                                  |
+| Resource          | `BoundedShareVec::new` enforces m == threshold                           | Unbounded M                      | Runtime check                                                                                                                                                   |
+| Hash Construction | HKDF-BLAKE3                                                              | Implementer picks one            | HKDF-BLAKE3 documented (HMAC-BLAKE3 has zero callsites per R15 M2 — dropped from audit)                                                                         |
+
+## Security Considerations
+
+- **HKDF-BLAKE3 PRF property.**
+- **BLS aggregate PK check + DKG-based PK-set derivation.**
+- **FROST nonce reuse** defenses (per R11 H6 — quartet, not triplet):
+  (a) exact crate pin, (b) `frost-ed25519` cross-arch determinism
+  check (per R15 H1 — `blst` `DISABLE_PREFETCH` is BLS-specific,
+  not FROST nonce defense), (c) integration test, (d) compile-time
+  audit dep.
+- **Cascading revocation** purely cryptographic.
+- **HSM seed isolation.**
+- **Share-loss DoS.**
+- **Caller-supplied malicious shares.**
+- **`chain_parent` forgery vs tampering** — `verify_chain_parent`
+  (per R11 C2 binds child too).
+- **HSM vs Identity Holder separation.**
+- **`IdentityKey::sign` fail-closed** when `threshold_signer` configured
+  (per R11 M4).
+
+## Adversary Analysis (per R11 H3 — full body content)
+
+### A1 — Child key leak via parent.
+
+- **Threat:** attacker observes child capability key on the wire.
+- **Attack:** derive parent capability key from child.
+- **Defense:** HKDF-BLAKE3 PRF property (RFC-5869 analogue); child key
+  is `HKDF(salt=parent, ikm=audience, info=".../v2/child/<depth>")`;
+  inverting HKDF requires breaking BLAKE3.
+- **Residual:** computationally infeasible (BLAKE3-256 security).
+- **Test:** `root_vs_child_distinct_keys`.
+
+### A2 — Chain depth > `MAX_CHAIN_DEPTH` DoS.
+
+- **Threat:** attacker mints chain at depth > `MAX_CHAIN_DEPTH`.
+- **Attack:** verifier does exponential walk over chain.
+- **Defense:** `CapabilityError::ChainTooDeep` at mint time
+  (`depth > MAX_CHAIN_DEPTH` returns error); no chain at depth
+  > `MAX_CHAIN_DEPTH` exists. (Per R22 L4 — literal 8 replaced
+  > with constant.)
+- **Residual:** soft cap (amendable).
+- **Test:** `chain-depth-bounded-at-MAX_CHAIN_DEPTH`.
+
+### A3 — Threshold signing race.
+
+- **Threat:** attacker requests two concurrent sign ops.
+- **Attack:** produce two signatures that look identical.
+- **Defense (FROST):** nonce per request (RFC-9591 §5.3);
+  different nonce → different signature.
+- **Defense (BLS):** aggregation deterministic given shares + msg;
+  no bypass.
+- **Residual:** none (both schemes covered).
+- **Test:** `threshold_race_distinct_nonces_produce_distinct_sigs`
+  - `bls_aggregation_deterministic_given_shares_msg`.
+
+### A4 — Threshold fallback bypass.
+
+- **Threat:** operator misconfigures threshold as (1, 1) and falls
+  back to single-key.
+- **Attack:** produce single-key signatures when M-of-N was intended.
+- **Defense (per R11 M4):** `IdentityKey::sign` fails-closed with
+  `ThresholdSignerRequired` when `threshold_signer` configured.
+- **Residual:** configuration error still possible (operator sets
+  `threshold_signer = None` despite intended M-of-N); A4 covers the
+  configured-with-wrong-params case.
+- **Test:** `sign_fails_closed_when_threshold_signer_configured`.
+
+### A5 — BLS aggregation malicious key.
+
+- **Threat:** attacker submits a malicious BLS PK share.
+- **Attack:** aggregate signature over unintended message.
+- **Defense:** BLS aggregate verification includes PK check
+  (RFC-0009 §Verification); DKG-based PK-set derivation (RFC-9591
+  §5 for FROST; Pedersen DKG / Joint-Feldman variant for BLS12-381
+  per R15 L5 — `BLS Shamir` is informal shorthand, not a real DKG
+  protocol); shares outside the key set fail PK check.
+- **Residual:** none.
+- **Test:** `bls_threshold_2_of_3_with_malicious_pk_share_fails`.
+
+### A6 — FROST nonce reuse.
+
+- **Threat:** attacker exploits FROST nonce reuse.
+- **Attack:** recover private key from two signatures with same nonce.
+- **Defense (per R11 H6 — quartet):** (a) `frost-ed25519 = "=2.2.0"`
+  exact pin (per R17 H2 — 2.0.3 not on crates.io); (b) `frost-ed25519`
+  cross-arch determinism check
+  (per R15 H1 — `blst` `DISABLE_PREFETCH` is BLS-specific, not
+  FROST nonce defense; correct fix is x86_64 + ARM64 CI test
+  suite + per-implementation cross-arch nonce audit); (c)
+  integration test `frost_nonce_determinism.rs` asserting 100K ops
+  produce deterministic nonces (per R20 L8 + R21 L2 — 100K is a
+  CI budget choice; large enough to detect cross-arch divergence
+  without excessive runtime; NOT an RFC-9591 §5.3 mandated count);
+  (d) **CI-tool audit dep** (per R31 M2 — `cargo audit` invoked
+  via §Validation exec command; NOT a `[dependencies]` entry; CI
+  tooling only).
+- **Residual:** library-level guarantee; trust boundary on
+  `frost-ed25519` impl.
+- **Test:** `frost_nonce_determinism_100k_iterations`.
+
+### A7 — Cascading revocation false negative.
+
+- **Threat:** holder of a child capability whose parent was revoked.
+- **Attack:** continue using revoked capability.
+- **Defense:** `check_wrapped_chain` (per R20 M2 — defined in
+  §Specification > MPC threshold identity per R21 L7)
+  cryptographically walks `chain_parent` chain; revocation of any
+  ancestor invalidates all descendants.
+- **Residual:** none (cryptographic guarantee).
+- **Test:** `cascading_revocation_kills_descendants`.
+
+### A8 — Share-loss DoS.
+
+- **Threat:** single shareholder refuses participation.
+- **Attack:** stall signing past coordinator timeout.
+- **Defense:** shareholder liveness monitoring + replaceable share
+  holder (governance).
+- **Residual:** operator must manually replace non-responsive
+  shareholder; out-of-scope for code.
+- **Test:** `shareholder_unresponsive_triggers_coordinator_timeout`.
+
+### A9 — BLS rogue-key attack.
+
+- **Threat:** malicious BLS shareholder constructs PK that aggregates
+  with honest shares.
+- **Attack:** rogue-key attack on aggregate signature.
+- **Defense:** DKG-based PK-set derivation (Pedersen DKG /
+  Joint-Feldman variant for BLS12-381 per R15 L5 — per R26 M2,
+  RFC-9591 §5 is FROST-specific, not BLS; A5 differentiates FROST
+  vs BLS schemes consistently with this fix); PK-set fixed at
+  ceremony; malicious shareholder cannot inject.
+- **Residual:** none.
+- **Test:** `rogue_pk_attack_mitigated_by_dkg`.
+
+### A10 — `chain_parent` forgery.
+
+- **Threat:** attacker constructs `chain_parent` claiming a parent
+  that doesn't exist.
+- **Attack:** child capability accepted without real parent chain.
+- **Defense (per R11 C2):** `verify_chain_parent` checks
+  `blake3(parent || child || depth) == chain_parent`; forgery
+  requires inverting BLAKE3.
+- **Residual:** none (BLAKE3-256 security).
+- **Test:** `chain_parent_forgery_breaks_verification`.
+
+### A11 — Caller-supplied malicious shares.
+
+- **Threat:** caller passes malformed `ThresholdShare` bytes.
+- **Attack:** aggregate signature over unintended message.
+- **Defense:** `BoundedShareVec::new` runtime check (m ≤ MAX_M +
+  m == threshold) + `ThresholdShare` deserialization validation
+  (length + BLS subgroup + Schnorr scalar range).
+- **Residual:** none (validation chain at type boundary).
+- **Test:** `caller_supplied_malicious_shares_rejected`.
+
+### A12 — Cross-algorithm signature replay.
+
+- **Threat:** holder holds an Ed25519 key and a STARK-curve key on one
+  identity and wants a signature for one to be accepted under the other.
+- **Attack:** Ed25519 emits 64 bytes (`R ‖ S`) and STARK-curve Schnorr
+  emits 64 bytes (`r ‖ s`). Same length, different curve, and neither is
+  a type error for the other. A verifier that dispatches on its own
+  configured algorithm rather than the one named in the message gets a
+  silent wrong answer — no exception, no rejection, just a check run
+  against the wrong equation.
+- **Defense:** the `algorithm_id ‖ key_id` signable prefix is mandatory,
+  and the verifier MUST verify under the algorithm the prefix names. A
+  message without the prefix MUST be rejected, not parsed leniently.
+  Prefix-stripping is therefore not a downgrade path.
+- **Residual:** a verifier that keeps a hardcoded algorithm alongside the
+  registry still accepts the algorithm it prefers. Removed by AC#11.
+- **Test:** `cross_algorithm_signature_replay_rejected`, over the
+  Ed25519 / STARK-Schnorr pair, including the stripped-prefix case.
+
+### A13 — Revocation replay against a ZK proof.
+
+- **Threat:** a holder's identity is revoked, and an old capability proof
+  outlives the revocation.
+- **Attack:** mint a proof before revocation, present it after. The proof
+  is sound — it correctly proves that at some instant the holder signed —
+  but the verifier treats a valid proof as a valid capability. A circuit
+  cannot fix this: it cannot read live revocation state, because
+  nothing mutable is reachable from inside a proof.
+- **Defense, as specified in RFC-0958 §Verification:** a mandatory
+  verifier-side revocation check on `holder_did`, fail-closed, on every
+  ZK path, ordered after STWO verification. The revocation snapshot carries
+  an `effective_at` stamp and the verifier rejects a snapshot older than
+  `max_revocation_staleness_secs`. Corrected per R41: a stale snapshot makes
+  revocation **slow**, not replay unbounded — the proof's own freshness window
+  still bounds replay. Identity revocation MUST cascade to every key of that
+  identity in every algorithm, so there is no per-algorithm survival path.
+- **Deliberately rejected:** committing a revocation-set Merkle root as a
+  public input and proving non-membership in-circuit. The set mutates, so
+  every revocation event breaks every outstanding proof — which is what
+  the direct check already delivers — while non-membership in an
+  append-only set is the hard case and costs real CASM plus a
+  coordination requirement on every verifier, for no soundness gain.
+- **Residual, quantified per R41.** Not one window. Proof lifetime is
+  `max_age_secs + max_prover_future_skew_secs`, because the prover controls
+  `current_unix_time` and front-dating extends survival. Revocation response
+  is `max_age_secs + max_revocation_staleness_secs`. Both are deployment
+  policy parameters, not cryptographic ones; the first two fields are
+  constrained relative to each other by RFC-0958 §Configuration Validation so
+  the asymmetry cannot be configured into meaninglessness. The configuration
+  that actually breaks the property is an _optional_ check, which turns a
+  bounded window into unbounded replay.
+- **Test:** `revoked_identity_replay_rejected`, plus
+  `stale_revocation_snapshot_is_rejected` (vectors
+  `zk-verify-revoked-identity.json` and `zk-verify-stale-revocation.json`).
+
+### A14 — Per-key revocation bypass across algorithms.
+
+- **Threat:** one key of a two-key identity is compromised. The holder
+  revokes that key and expects the other to survive.
+- **Attack:** the identity-scoped check is satisfied by _not_ revoking the
+  identity, so a verifier that implements only the identity gate has no way
+  to express the situation at all. The holder is pushed into revoking the
+  whole identity, taking a sound Ed25519 key down with a broken STARK-curve
+  key. The pressure is structural: the only revocation primitive available
+  revokes too much.
+- **Defense:** per-key revocation via `VerificationMethod.revoked_at`,
+  consulted as a gate before the identity gate. Identity revocation remains
+  the strictly stronger operation and is not expressible as anything less.
+- **Residual:** a key revoked in the DID document is only refused once the
+  verifier resolves that document. The freshness of the resolver's view is
+  the same staleness question A13 raises for the revocation snapshot, and is
+  bounded the same way.
+- **Ownership, settled (v1.5).** This gate belongs to **neither** RFC-0958's
+  verifier mission nor the verification-dispatch mission. Both are verifier
+  work, and a verifier-side key gate cannot fire while RFC-0958 §Algorithms
+  resolves the DID inside the circuit: the verifier never reaches the
+  decision. The circuit's `BatchSigPublicInputs` today carries only
+  `signer_roots` and `message_root` — no holder DID, no `algorithm_id`, no
+  `key_id` — so a verifier holds no cryptographically bound statement of
+  _which_ key signed and cannot check that key's revocation even in principle.
+  Closing this requires a **circuit change**: publish `holder_did`,
+  `algorithm_id` and `key_id` as public inputs, and constrain the circuit so
+  the signing key is the document method bearing that `key_id` and that
+  `algorithm_id`. The verifier then gates on `(holder_did, key_id)` before the
+  identity gate. That moves the committed CASM digest, so it is its own
+  amendment and its own mission rather than a verifier fix. Until it lands,
+  A14 is unmitigated on the ZK path and is recorded as such instead of being
+  half-claimed by two missions.
+- **Test:** `compromised_key_revoked_without_identity_revocation` — currently
+  expected to **fail** on the ZK path, kept as a documented failing vector so
+  the hole stays visible.
+
+### A15 — Verification-method kind has a normative citation that resolves nowhere.
+
+- **Threat:** not an attack — a correctness defect. `VerificationMethodKind` is
+  the wire discriminator for `octo-ident`'s rich DID documents, and its doc
+  comment cites "RFC-0010 §VerificationMethodKind" as normative.
+- **Attack:** n/a. The consequence is that an implementer looking for the
+  specification of the discriminator finds nothing. `VerificationMethodKind`
+  appears in no Accepted RFC: neither RFC-0010 file contains the symbol or such
+  a section. An earlier draft of this entry claimed RFC-0010 _competed_ with this
+  RFC to define it, which was wrong — there was never a competing definition,
+  only a dangling citation.
+- **Defense:** BC#13 removes the enum, and this section becomes its
+  specification. The stale doc comment in `rich_document.rs` goes with it.
+  Recorded here so the gap is visible rather than rediscovered.
+- **Residual:** none once BC#13 lands. Before then, the discriminator is
+  specified only by source.
+- **Test:** n/a — documentation defect, closed by BC#13.
+
+## Economic Analysis
+
+N/A. Identity-substrate gating.
+
+## Compatibility
+
+### Backward compatibility
+
+- `derive_capability_key` signature change (BC#8). Call sites migrate with
+  Commit 3: 1 prod + 7 test sites, one commit, no compatibility path.
+- **`HsmAdapter::get_public_key` return type change** (BC#7).
+- **`sign` NON-BREAKING** for current code (per R11 C1).
+- **`IdentityKey::sign` fail-closed when `threshold_signer`
+  configured** (BC#11).
+- **`VerificationMethodKind` removed** (BC#13). No shim and no
+  deprecation window. Nothing has shipped, so there is no deployed
+  document a shim would have to keep readable, and a
+  `#[deprecated]` constructor for a decoder that silently collapsed
+  unknown bytes into `Reserved` is an obstacle with no one behind it.
+  A document carrying a `kind` byte with no matching registry entry is
+  rejected.
+
+### Forward compatibility
+
+- V2 wire = separate `CapabilityBundleV2` struct.
+- V1 consumers reject V2 via unknown struct.
+- V2 consumers recognize V1 via `bundle_version == 1` field and use the V1
+  path.
+- **New algorithms are additive** (BC#13). A verifier built before an
+  algorithm existed rejects its `AlgorithmId` rather than misreading
+  it, and rejection is a refusal — not a wrong answer — because the
+  identifier is a UUID rather than a byte anyone can improvise. That is
+  the whole reason BC#13 is a break: paying the migration once buys
+  fail-closed behaviour for every algorithm added afterwards.
+
+**`CapabilityBundleV2` struct (per R15 L6 — schema sketch lives in
+§Compatibility > §Forward compatibility so implementers don't need
+cross-RFC jump):**
+
+```rust
+#[derive(Clone, BorshSerialize, BorshDeserialize)]
+pub struct CapabilityBundleV2 {
+    pub bundle_version: u8, // = 2
+    pub token: CapabilityTokenV2,
+    pub holder_record: HolderRecord,
+    pub discharge_macaroon: DischargeMacaroon,
+}
+
+#[derive(Clone, BorshSerialize, BorshDeserialize)]
+pub struct CapabilityTokenV2 {
+    pub chain_depth: u8,            // per R11 H1 — lives on token, not key
+    pub chain_parent: [u8; 32],     // per R11 C2 — binds parent || child || depth
+    pub audience_did: String,
+    pub channel_id: [u8; 16],
+    pub expires_at_unix_secs: u64,
+    pub issuer_did: String,
+}
+```
+
+## Alternatives Considered
+
+1. **HKDF-BLAKE3 salt chain** (chosen).
+2. **HD-wallet-style hardened derivation (BIP32/SLIP-0010)**.
+3. **BLS aggregate signature over the chain**.
+
+## Implementation Phases
+
+**Commit 1 — substrate trait + Cargo deps:**
+
+- NEW `ThresholdSigner::threshold_sign`
+- NEW `BoundedShareVec::new` (enforces m == threshold)
+- NEW `ThresholdCoordinator` trait interface
+- Cargo deps pinned in `crates/octo-wallet/Cargo.toml`
+- `HsmAdapter::get_public_key` signature update
+- `OperatorId::pubkey()` method + `OperatorId` struct definition
+  `pub struct OperatorId(pub [u8; 32]);` (per R33 L4 — Commit 1
+  owns struct definition, not just `pubkey()`)
+- **Clippy lint registration in `clippy.toml`** (per R21 L6 — owns
+  §Configuration Validation threshold misconfig lint)
+- **`test` entry in `crates/octo-wallet/Cargo.toml`** (per R22 M3):
+  ```toml
+  `test`
+  name = "frost_nonce_determinism"
+  path = "tests/integration/frost_nonce_determinism.rs"
+  ```
+  Maps AC#8b subdirectory test path to binary name.
+
+**Commit 2 — impls + Xor2Of3Signer additive field:**
+
+- `BLS12381ThresholdSigner` impl
+- `SchnorrThresholdSigner` impl
+- `Xor2Of3Signer` additive `threshold_signer` field
+- `InMemorySigner` + `LedgerSigner` + `YubiHsmSigner` updated
+- `IdentityKey::sign` fail-closed when `threshold_signer` configured
+  (per R11 M4)
+
+**Commit 3 — derive + Phase 1 TV + fixture:**
+
+- `derive_capability_key` 4-param signature (with `as_bytes()`
+  extraction per R11 M1)
+- `tests/fixtures/phase1_tv.json` (RFC-0009 TV-1..3)
+- `phase1_tv_json_*` functions
+
+**Commit 4 — V2 wire form** (atomic with Commit 5 per RFC-0870
+§NodeEnvelope Adoption):
+
+- `CapabilityBundleV2` struct (per R29 L5 — embeds existing
+  `HolderRecord` + `DischargeMacaroon` types; these are
+  pre-existing substrate types from RFC-0009 §Capability Keys
+  - RFC-0957 §Capability Macaroon, NOT new in Commit 4)
+- `CapabilityTokenV2` struct (carries `chain_depth` + `chain_parent`
+  — per R11 H1; `CapabilityKey` does NOT)
+
+**Commit 5 — V2 consumer migration** (atomic with Commit 4):
+
+- Wallet + Capability issuer + `octo-cap-macaroon` + `octo-cap-zk`
+
+### Configuration Validation
+
+A4 enforced via:
+
+- `IdentityKey::sign` fails-closed with `ThresholdSignerRequired`
+  when `threshold_signer` configured (per R11 M4)
+- `tracing::warn!` at construction when threshold_signer configured
+  but coordinator is None (per R22 M2 — AtomicBool removed; no
+  once-guard)
+- Clippy lint registered in `clippy.toml` (per R15 L9 — actual file
+  is `clippy.toml`, not `cargo-clippy.toml`); owned by Commit 1
+  per R21 L6 (substrate additions)
+
+## Future Work
+
+(Dropped all phantom rows per R8 M2 + R9 M3 + R10 M4.)
+
+## Rationale
+
+- HKDF-BLAKE3 over HKDF-SHA256: faster.
+- Depth ≤ 8: W3C VC-DID best practice.
+- BLS12-381 over BN254: ZK-friendly.
+- FROST Ed25519 over MuSig: RFC-9591 (Proposed Standard, June 2025 —
+  per R21 L1; stale "(draft)" qualifier dropped).
+- `parent_depth_be_bytes` as 4-byte BE.
+- `vsss-rs` crate for Shamir (per R17 H1 — crate name is
+  `vsss-rs`, not `vsss`; `vsss` does not exist on crates.io).
+- `BoundedShareVec::new` enforces m == threshold.
+- Separate `threshold_signer` field.
+- V2 = separate struct.
+- `sign` + `sign_threshold` separate methods.
+- **`Authorization::ThresholdSignature` BREAKING extension** +
+  verifier MUST check new fields (cross-ref to RFC-0871).
+- `chain_depth` lives on `CapabilityTokenV2` only (per R11 H1).
+- `verify_chain_parent` binds parent + child + depth (per R11 C2).
+- `IdentityKey::sign` fail-closed when `threshold_signer` configured
+  (per R11 M4).
+- `sort_shares_for_aggregation` sorts by full 32-byte slice
+  (per R11 H5).
+- A6 FROST defenses are a quartet (per R11 H6).
+
+## Test Vectors (preview)
+
+External acceptance artifact: `tests/fixtures/phase1_tv.json`.
+
+- **Phase 1 TV (RFC-0009 v1.2):**
+  - TV-1: `phase1_tv_json_v11_round_trip_equivalence` — name asserts
+    equivalence to a v1.1 form that the v1.3 removal of
+    `derive_capability_key_v11` no longer has a comparator for. Per R41 the
+    test keeps its name (renaming breaks CI invocations named in §Validation)
+    but its assertion MUST be restated: v1.2 documents round-trip through the
+    v1.2 serializer, and the v1.1 comparison it was named for is gone. A test
+    whose name promises an equivalence nothing checks is the same
+    silent-wrong-answer shape A12 exists to prevent.
+  - TV-2: `phase1_tv_json_child_unlinkability`
+  - TV-3: `phase1_tv_json_hsm_boundary_no_seed_exfil`
+
+## Layer direction
+
+**Per R11 H4:** `octo-wallet` (Layer B) does NOT depend on
+`octo-cap-macaroon` (Layer 4 — cleaned up per R25 L8; previous
+Layer E label stale per R29 L2) directly. The registrar pattern
+is L4 registers into B, not B → L4. The macaroon substrate uses
+`Arc<dyn CapabilityToken>` interface injected at construction;
+`octo-wallet` registers as the registrar.
+
+- `octo-wallet` (Layer B) — registrar for capability extensions
+- `octo-protocol` (Layer A) — `Authorization::ThresholdSignature`
+  variant EXTENDED (ownership: RFC-0871)
+- `octo-cap-zk` (Layer 4 — per R30 L5 relabel from Layer E to
+  match octo-cap-macaroon post-Phase-2c convention) — sibling;
+  registers into `octo-wallet` registrar
+- **`octo-cap-macaroon` (Layer 4) — REMOVED from layer table per R25 L8**
+  (post Phase 2c cleanup: zero cross-layer deps; previously
+  registered into `octo-wallet` registrar at Phase 2b; current
+  L4↔L-D coupling is via `crates/octo-cap-macaroon-transport/`
+  glue crate to TransportDeliveryCatalog)
+
+Dependency direction:
+
+- `octo-wallet` → `octo-protocol` (B → A; OK)
+- `octo-cap-zk` → `octo-wallet` (L4 → B registrar; OK)
+- `octo-cap-macaroon-transport` → `octo-cap-macaroon` (L4↔D glue
+  crate per R29 L3; mediates TransportDeliveryCatalog via
+  Phase 2c-1; OK — L4↔D coupling is isolated to this glue crate,
+  NOT a direct L4 → L-D dep)
+
+**Per R20 M4 + R23 M3 + R24 L4:** post Phase 2c cleanup (commit
+`a471843b` + `4cfe7165` on 2026-08-09), `octo-cap-macaroon` has
+zero DIRECT cross-layer deps on L-B / L-C. L4↔L-D coupling is
+isolated to `crates/octo-cap-macaroon-transport/` glue crate
+(TransportDeliveryCatalog, per Phase 2c-1) — this is the only
+cross-layer coupling, mediated by an L4↔D glue crate (not a
+direct L4 → L-D dep). The previous `octo-cap-macaroon` →
+`octo-wallet` (L4 → B registrar) line was true at Phase 2b but
+is now obsolete; no L4↔C coupling exists.
+
+No reverse dependencies. ✓
+
+## Validation
+
+```bash
+cargo fmt --all
+cargo fmt --all -- --check
+cargo clippy -p octo-wallet -p octo-cap-macaroon -p octo-cap-zk --all-targets -- -D warnings
+cargo build -p octo-wallet  # per R11 L3 — validates Phase 0 compile
+cargo test -p octo-wallet --lib -p octo-cap-macaroon --lib -p octo-cap-zk --lib
+cargo test -p octo-wallet --lib -- --list phase1_tv_json | grep -qE "phase1_tv_json_(v11_round_trip_equivalence|child_unlinkability|hsm_boundary_no_seed_exfil)"  # per R11 H2 + R22 L6 + R23 M2
+cargo test -p octo-wallet --lib phase1_tv_json_*  # per R11 L3 — actual test run
+cargo test -p octo-wallet --test frost_nonce_determinism  # per R21 L4 + AC#8b (R26 L4)
+cargo audit  # per R27 M1 — exercises A6 quartet (d) CI-tool audit dep (R31 M2)
+cargo doc --workspace --no-deps
+cargo test -p octo-ident --lib  # per R41 — gates AC#12, AC#13, AC#15, AC#16; AC#11 is a workspace grep, NOT this run
+```
+
+**Note on the v1.3 tests.** The `octo-ident` block above gates AC#12, AC#13
+and AC#15/AC#16. It does **not** gate AC#11 — see AC#11 for why a run scoped to
+`octo-ident` cannot observe that criterion's sites.
+
+At v1.3 every test named in those criteria was specified and unwritten; the
+criteria were forward pointers, not claims of passing tests. `0009-b` has since
+landed and the named tests are written. They do **not** all live in the
+`--lib` target: the registry-level vectors, including AC#16's two `list`
+vectors, are integration tests in the `octo-ident-storage` test target, so
+`cargo test -p octo-ident --lib` does not run them. A green `--lib` run is not
+evidence for AC#16 on its own.
+
+## Cross-references
+
+- RFC-0009 §Capability Keys
+- **RFC-0009 §Wallet Audience Validation** (per R10 H4; per R23 L4
+  version pin dropped per RFC Reference Conventions)
+- RFC-0853 §F3
+- **RFC-0871 §Specification** (Authorization ownership — per R11 M3)
+- **RFC-0871 §Future Work** (field-named threshold-signature
+  semantics, `aggregated_pk_check` + `dkg_proof` — per R12 H3 +
+  R29 L4; ASPIRATIONAL per AC#9 + AC#10 until RFC-0871 amendment
+  FILED)
+- **RFC-0870 §NodeEnvelope Adoption** (atomicity invariant per R10 H18)
+- **RFC-0008 §RFC-0008 Execution Class Mapping** (per R12 H1 — RFC-0104 has no
+  Class A/B/C content; the taxonomy lives in RFC-0008)
+- Mission `0957-f-v2-bundle` (V2 spec; per R11 H1 — `chain_depth`
+  on `CapabilityTokenV2` only; per R11 M2 — fixture file count
+  consistent with RFC: 1 file `tests/fixtures/phase1_tv.json` for
+  RFC-0009 + 1 file `tests/fixtures/phase1_tv_0862.json` for
+  RFC-0862 + 1 file `tests/fixtures/v2_bundle_tv.json` for V2
+  wire form)
+- Mission `0957-phase1-fixture-author` (RFC-0009 Phase 1 fixture
+  scope; per R17 M3 — does NOT cover RFC-0862)
+- Mission `0862-phase1-tv-fixture` (RFC-0862 Phase 1 fixture scope;
+  FILED per R17 M3)
+- **RFC-0010** (per R41 — dangling normative citation). `VerificationMethodKind`
+  appears in **no** Accepted RFC. The only trace is a doc comment in
+  `crates/octo-ident/src/rich_document.rs` citing "RFC-0010
+  §VerificationMethodKind", and neither RFC-0010 file contains such a section or
+  the symbol. So the enum this section removes is currently defined in code with
+  a citation that resolves nowhere — an earlier draft of this line claimed a
+  cross-RFC conflict with RFC-0010, which was wrong. Tracked as A15.
+- **RFC-0958 §Algorithms** (v1.6 — revocation contract this RFC's A13 and
+  AC#14 depend on; `RevocationSnapshot` identity gate)
+- **RFC-0126** (canonical serialization — per R41; `canonical_ser` in the
+  signable prefix is ambiguous without naming which of the repository's
+  functions is meant. Per R42 the count was three and is **five**, and the
+  name belongs to RFC-0126 §Part 3: Deterministic Canonical Serialization — the
+  `octo-determin` crate's `dcs_serialize_*` — not to RFC-0126 itself)
+- **RFC-0909 §Quota API Key** (per R41 — the quota API-key id is a distinct
+  identifier from `VerificationMethodId`; naming them alike invites collision)
+
+## Version History
+
+| Version | Date       | Status               | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------- | ---------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0     | 2026-07-19 | Accepted             | Initial specification                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 1.1     | 2026-08-08 | Accepted (amendment) | HSM routing + wallet audience validation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 1.2     | 2026-08-10 | Accepted             | Hierarchical attenuation + MPC threshold identity                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 1.3     | 2026-10-08 | Accepted (amendment) | Dual-format keys + `SignatureAlgorithm` registry replacing the `VerificationMethodKind` enum. R41 review applied: `VerificationMethod` gains `VerificationMethodId`, `revoked_at` and `custody`; the signable prefix is specified byte-exactly with a hashed form; `CircuitId` and registry population semantics defined; per-key revocation added as A14 so the cascade stops being vacuous; BC#13 gains the load-bearing storage-migration requirement; AC#12 rewritten because its round-trip test was unreachable, AC#15 and AC#16 added with named tests; §Validation extended with the `octo-ident` gate; A15 records the RFC-0010 conflict; TV-1's assertion restated after the shim removal; the G9 custody premise corrected against the actual `HsmAdapter` implementors; the RFC-0974 §Step 1 digest-packing attribution corrected, since a 32-byte STARK-curve key plus parity bit does not fit the 31-bytes-per-felt digest convention.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 1.4     | 2026-10-09 | Accepted (amendment) | R42 mission review applied. §Domain separation: `VerificationMethodId` **defined** as `struct VerificationMethodId(Uuid)` — it was named as a field type by BC#13 and by the signable prefix but had no representation anywhere in the specification or the codebase, so the prefix's "both components are fixed at 16 bytes" property rested on nothing, and the repository's existing string-fragment key id (`DidDocument::authenticates`) was the obvious wrong answer. The `canonical_ser` disambiguation corrected on two counts: RFC-0126 defines no symbol of that name, so "by name" resolved to nothing; and the count was three where there are **five** (`zk_circuit`, `CapabilityBundleV2`, `CapabilityBundleV2Envelope`, `Caveat`, `HolderRecord`), two of which are JSON — which RFC-0126 §JSON Allowed Contexts lists among the contexts where JSON is forbidden. The bullet now names RFC-0126 §Part 3: Deterministic Canonical Serialization as implemented by `octo-determin`'s `dcs_serialize_*`, and excludes the two JSON functions by rule. BC#13 and AC#16 extended to cover `list`: the third read path in `octo-ident-storage`, which selects `public_key` alone and builds every document with `..Default::default()`, so it returns zero verification methods for every row with no error — the same silent-downgrade shape as the resolver path, reached by a shorter route, and a vacuous revocation cascade once `revoked_at` exists per key. Adds `listed_documents_carry_their_verification_methods`. |
+| 1.5     | 2026-10-09 | Accepted (amendment) | Settles the two questions the R42 mission review left open. **Per-key revocation ownership:** A14's gate belongs to neither `0958-a` nor `0009-c`. A verifier-side key gate cannot fire while RFC-0958 §Algorithms resolves the DID inside the circuit, and `BatchSigPublicInputs` today carries only `signer_roots` and `message_root` — no holder DID, no `algorithm_id`, no `key_id` — so a verifier has no bound statement of which key signed. Closing A14 needs a circuit change publishing those three as public inputs and constraining the signing key to the method bearing that `key_id`. Recorded on A14 rather than split across two missions that each half-claimed it. **Uuid wire form:** `AlgorithmId`, `VerificationMethodId` and `CircuitId` store a `[u8; 16]` with `to_uuid`/`from_uuid`, because `Uuid` has no borsh implementation available here — no workspace crate enables a `uuid` borsh feature and none derives borsh on a `Uuid` field, so the derive does not compile. Storing the bytes also makes the prefix's fixed-16-byte self-delimiting property true by construction rather than by a serialiser's behaviour.                                                                                                                                                                                                                                                                                                                                                                                  |
+
+| 1.6 | 2026-10-09 | Accepted (amendment) | Corrects AC#11's **gate** and **scope**. **Gate:** v1.3 named `cargo test -p octo-ident --lib` as AC#11's gate, but the sites span 11 crates and 7 of them do not depend on `octo-ident` at all, so a run scoped to that crate passes with 25 of the 38 sites still hardcoded — the named test is a workspace-root grep, and §Validation's command comment is corrected to match. **Scope:** AC#11 names two _constructors_, so a site that takes an already-typed `&VerifyingKey` parameter calls neither and never chooses an algorithm — it is outside AC#11's reach. That is still a real coupling, but it is a distinct defect, and widening AC#11 to sweep it in converts a falsifiable criterion into an unfalsifiable one. AC#11 is delivered across three missions split by prerequisite chain (`0009-c`, `0009-c2`, `0009-c3`); the last is blocked on the RFC-0010 canonical OctoID codec because `pubkey_from_did` returns a bare `[u8; 32]` that cannot name an algorithm. §Validation's blanket "does not exist yet" note corrected: `0009-b` has landed and the named tests are written — but not all in the target the note names. The registry-level vectors, including AC#16's two `list` vectors that pin the read-path repair where `list` selected `public_key` alone and returned zero verification methods per row, are integration tests in the `octo-ident-storage` test target, so `cargo test -p octo-ident --lib` does not run them and is not by itself evidence for AC#16. |
+
+## Review Process
+
+Multi-round adversarial review per BLUEPRINT §RFC Process. R1-R38
+completed (2026-08-11). Convergence target: zero NEW findings per
+R40+. Note: the "R-count" line in §Review State is a
+mechanical bookkeeping pointer — its drift each round is
+expected and is NOT classified as a substantive finding in
+the per-round report (per R39 meta-decision: drift is
+bookkeeping, not spec defect).

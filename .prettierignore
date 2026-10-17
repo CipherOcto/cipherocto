@@ -1,0 +1,18 @@
+# JSON5 fixtures — pre-existing intentional metadata keys (`_comment`,
+# `_rfc`, `_phase`, `_scope`) survive only in JSON5; strict-JSON
+# prettier rejects them. Loaded by Rust test code via `serde_json`
+# with manual stripping of the metadata fields. Reformatting these
+# to strict JSON would either break the metadata convention or require
+# a JSON5 parser, neither of which is in scope for the lint gate.
+# Per RFC-0862 R17 M3 scope discipline, Phase 3 TVs split into one
+# fixture per TV (TV-5/6/7/8 each own a file). RFC-0862 v1.4 also
+# added a sync-vs-data-sync benchmark split (phase1_tv_0862.json).
+tests/fixtures/phase1_tv.json
+tests/fixtures/phase1_tv_0862.json
+tests/fixtures/phase3_tv_0862.json
+tests/fixtures/phase3_tv_0862_tv6.json
+tests/fixtures/phase3_tv_0862_tv7.json
+tests/fixtures/phase3_tv_0862_tv8.json
+
+# Vendored third-party code — not maintained by cipherocto contributors.
+vendor/

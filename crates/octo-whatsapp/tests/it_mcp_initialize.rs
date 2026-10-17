@@ -20,7 +20,15 @@ async fn mcp_initialize_returns_protocol_version_2025_06_18() {
         socket_dir: tmp.path().to_path_buf(),
         media_buffer: MediaBufferConfig::default(),
         events: EventsConfig::default(),
-        security: SecurityConfig::default(),
+        // Explicit opt-out: `bearer_required` now defaults to true, so a test
+        // that needs to reach the handler must disable it deliberately rather
+        // than inheriting an insecure default. Matches the idiom already used
+        // by `it_daemon_chain.rs`.
+        security: SecurityConfig {
+            bearer_required: false,
+            hermetic_bypass: true,
+            ..SecurityConfig::default()
+        },
         observability: Default::default(),
         rules: RulesConfig::default(),
         ..Default::default()
@@ -100,7 +108,15 @@ async fn mcp_tools_list_advertises_full_surface() {
         socket_dir: tmp.path().to_path_buf(),
         media_buffer: MediaBufferConfig::default(),
         events: EventsConfig::default(),
-        security: SecurityConfig::default(),
+        // Explicit opt-out: `bearer_required` now defaults to true, so a test
+        // that needs to reach the handler must disable it deliberately rather
+        // than inheriting an insecure default. Matches the idiom already used
+        // by `it_daemon_chain.rs`.
+        security: SecurityConfig {
+            bearer_required: false,
+            hermetic_bypass: true,
+            ..SecurityConfig::default()
+        },
         observability: Default::default(),
         rules: RulesConfig::default(),
         ..Default::default()

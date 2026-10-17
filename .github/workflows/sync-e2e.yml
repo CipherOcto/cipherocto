@@ -16,7 +16,7 @@ jobs:
     name: L1 Unit Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -32,11 +32,11 @@ jobs:
     name: L2 Adapter Integration
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
           path: cipherocto
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: CipherOcto/stoolap
           ref: feat/blockchain-sql
@@ -50,7 +50,7 @@ jobs:
     name: L3 In-Process E2E
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -66,7 +66,7 @@ jobs:
     name: L4 Cross-Process E2E
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -83,7 +83,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[integration]')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -97,7 +97,22 @@ jobs:
       - name: Cleanup Docker
         if: always()
         run: |
-          docker kill $(docker ps -q) 2>/dev/null || true
-          docker rm -f $(docker ps -aq) 2>/dev/null || true
-          docker network rm $(docker network ls -q --filter "name=sync-e2e") 2>/dev/null || true
+          # SC2046 is right about the general hazard and wrong about this
+          # idiom, so it is suppressed with the reason rather than "fixed"
+          # into a bug. See audit §8 R15.
+          #
+          # Word splitting is REQUIRED on the three commands below: each
+          # passes a LIST of container / network ids to docker. Quoting the
+          # substitution collapses two ids into one newline-joined argument
+          # and docker rejects it.
+          #
+          # The `{ …; }` group exists only so this single directive scopes
+          # to all three; a bare `disable=` applies to the next command
+          # alone, and the commands are independent (each ends `|| true`).
+          # shellcheck disable=SC2046
+          {
+            docker kill $(docker ps -q) 2>/dev/null || true
+            docker rm -f $(docker ps -aq) 2>/dev/null || true
+            docker network rm $(docker network ls -q --filter "name=sync-e2e") 2>/dev/null || true
+          }
           docker rmi -f stoolap-node-test 2>/dev/null || true

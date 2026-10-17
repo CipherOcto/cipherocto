@@ -119,6 +119,22 @@ impl BindEnvelope {
             Some(peers) => peers.iter().any(|p| p == peer_id),
         }
     }
+
+    /// Substrate-faithful lookup helper for `octo network
+    /// bind-envelope show <domain_id>` (RFC-0011-l Phase 4).
+    ///
+    /// Returns `None` until the persistence adapter lands (Phase 6
+    /// follow-on per `0011-h-s-a-bind-envelope-persistence`). The
+    /// CLI receives `None` and translates to exit 89
+    /// `NetworkSubstrateUnavailable`. The substrate-faithful pattern
+    /// matches `CoordinatorRecord::load` (RFC-0011-k Phase 3 G12b)
+    /// — both use `Option<Self>` rather than `Result<Self, Error>`
+    /// because the persistence adapter is the future owner of the
+    /// error class, not the lookup helper.
+    #[must_use]
+    pub fn load(_domain_id: &str) -> Option<Self> {
+        None
+    }
 }
 
 // ── Mission 0850p-c-cross-node-rebind envelopes ──────────────────
@@ -282,5 +298,23 @@ mod tests {
         let json = serde_json::to_string(&env).unwrap();
         let back: RebindEnvelope = serde_json::from_str(&json).unwrap();
         assert_eq!(back, env);
+    }
+
+    // === G22 substrate tests (RFC-0011-l Phase 4 row G22) ===
+
+    #[test]
+    fn t_bind_envelope_load_returns_none_substrate_faithful() {
+        let r = BindEnvelope::load("d1");
+        assert!(
+            r.is_none(),
+            "BindEnvelope::load must return None until persistence adapter lands"
+        );
+    }
+
+    #[test]
+    fn t_bind_envelope_load_idempotent_for_same_domain_id() {
+        let a = BindEnvelope::load("d2");
+        let b = BindEnvelope::load("d2");
+        assert!(a.is_none() && b.is_none(), "idempotent None today");
     }
 }

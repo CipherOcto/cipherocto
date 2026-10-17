@@ -1,0 +1,76 @@
+[package]
+name = "zk-verifier"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "CipherOcto ZK verifier: STWO STARK Fiat-Shamir proof verification. Crypto home extracted from stoolap fork per [[stoolap-general-purpose-db]] (2026-07-22). Stable-rust only."
+
+[lib]
+name = "zk_verifier"
+path = "src/lib.rs"
+
+[features]
+# **Mission 0958-a R4 review fix-up (2026-08-04):** the BLAKE3 stub
+# verifier path is forgeable by design (commitment is computable from
+# publicly-known inputs). The stub path is opt-in only — a vanilla
+# `cargo build` (release or otherwise) does NOT enable it. To activate
+# the stub proofer (e.g. for local dev or CI without a built
+# `libstwo_sys.so`), pass `--features allow-stub-verifier` explicitly.
+# Production deployments MUST NOT enable this feature.
+#
+# R4 rationale: the previous default-on behavior created a silent
+# forgery channel (any release build would accept stub-shaped proofs
+# if `libstwo_sys.so` failed to load). Removing the default closes
+# that channel without changing the test surface (CI workflows pass
+# `--features allow-stub-verifier` in the test command).
+allow-stub-verifier = []  # cipherocto-internal dev flag; document in dev guide
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+blake3.workspace = true
+sha2.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+hex = "0.4"
+# STWO runtime loader (libloading into `libstwo_sys.so` produced by
+# crates/zk-vendor/stwo-sys/). Falls back to stub when lib missing.
+zk-vendor = { path = "../zk-vendor" }
+
+# Constant-time byte-array compare (R2 fix-up 2026-08-05: closes timing
+# side-channel in stub-pattern rejection — HIGH-1 of R2 review).
+subtle = "2.6"
+
+# ZK canonicalization primitives (ZKP_DOMAIN_PREFIX constant). R3
+# fix-up 2026-08-05: dropped the orphan `canonical_ser` symbol that was
+# shipped in R2 but had zero non-test callers. Full canonical_ser
+# consolidation is deferred to mission 0958-b.
+cipherocto-zkp-canonical = { path = "../cipherocto-zkp-canonical" }
+
+# **Mission 0958-b S3 (2026-08-05):** `ProverError` is defined HERE in
+# `zk-verifier` (not in `zk-circuit`) so `stub_commitment` can return
+# `Result<[u8; 32], ProverError>` directly. `zk-circuit` re-exports it
+# via `pub use zk_verifier::ProverError;`. This keeps the DAG acyclic:
+# `zk-verifier` (leaf) ← `zk-circuit` ← `octo-wallet`. An earlier
+# attempt to add `zk-circuit` as a `zk-verifier` dep cycled (`zk-circuit`
+# already depends on `zk-verifier` for verify round-trips). No `zk-circuit`
+# dep line is needed in this Cargo.toml.
+
+# STWO is vendored under `zk-vendor/` (NOT a crates.io dep). Stubbed below
+# until the source drop + curve25519 patches land in zk-vendor.
+# zk-vendor = { path = "../zk-vendor" }
+
+[dev-dependencies]
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

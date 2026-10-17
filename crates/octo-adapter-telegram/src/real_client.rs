@@ -989,7 +989,7 @@ impl TelegramClient for RealTelegramClient {
         // PERF-L1: pre-allocate for typical poll size
         let mut updates = Vec::with_capacity(8);
         let mut guard = self.state.pending_updates_rx.lock();
-        // parking_lot::MutexGuard derefs to &Option, use as_deref_mut pattern
+        // parking_lot::MutexGuard derefs to &&Option, use as_deref_mut pattern
         if let Some(ref mut rx) = *guard {
             use mpsc::error::TryRecvError;
             loop {
@@ -1005,7 +1005,7 @@ impl TelegramClient for RealTelegramClient {
 
     async fn authenticate(&self) -> Result<()> {
         // Bot mode: caller provides the validated `TelegramConfig` (with
-        // bot_token + api_id + api_hash) via `RealTelegramClient::new(&config)`.
+        // bot_token + api_id + api_hash) via `RealTelegramClient::new(&&config)`.
         // User mode: caller uses `RealTelegramClient::new_user(user_auth)` instead.
         // This method is a no-op for bot mode.
         Ok(())

@@ -82,7 +82,7 @@ DTC-Train defines:
 Implementation extends the existing stack:
 
 ```
-RFC-0106 (Numeric Tower)
+RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric Tower)
        ↓
 RFC-0120 (Deterministic AI-VM)
        ↓
@@ -955,7 +955,7 @@ Millions of training steps cannot produce a single proof. Recursive aggregation 
 
 ## Related RFCs
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower
 - RFC-0120 (AI Execution): Deterministic AI Virtual Machine
 - RFC-0107 (Numeric/Math): Deterministic Transformer Circuit
 - RFC-0121 (AI Execution): Verifiable Large Model Execution
@@ -1005,7 +1005,7 @@ Millions of training steps cannot produce a single proof. Recursive aggregation 
 └─────────────────────────┬───────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────┐
-│        Deterministic Numeric Tower (RFC-0106)        │
+│        Deterministic Numeric Tower (RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal))        │
 └─────────────────────────────────────────────────────┘
 ```
 

@@ -19,6 +19,7 @@ $ octo-whatsapp-onboard pair-link --ci --session-path <MOUNTED_SECRET> --out <CO
 ```
 
 The CI mode:
+
 1. Skips the `Event::Connected` wait
 2. Verifies the session DB is valid (calls `has_valid_session()` from F6 once that's implemented, or checks `self_handle().is_some()`)
 3. Writes the sidecar and config
@@ -34,22 +35,21 @@ The mode is opt-in (`--ci`); a normal `pair-link` invocation still requires the 
 - [ ] Unit test: `--ci` with an empty/invalid DB exits 1 with a clear error
 - [ ] Documentation: CI integration guide (Kubernetes Secret, GitHub Actions encrypted secret, etc.)
 
-
 ### Implementation Guide
 
 Reference: `crates/octo-whatsapp-onboard/src/pair_link.rs` (existing `pair-link` subcommand).
 
-
 ### Type Coverage
 
-| RFC-0850p-a Type | Implemented By |
-|-----------------|----------------|
-| `pair-link --no-wait --session-db <PATH>` flag | This mission |
-| CI-friendly error codes | This mission |
+| RFC-0850p-a Type                               | Implemented By |
+| ---------------------------------------------- | -------------- |
+| `pair-link --no-wait --session-db <PATH>` flag | This mission   |
+| CI-friendly error codes                        | This mission   |
 
 ## Dependencies
 
 Depends on:
+
 - Mission 0850p-a-session-export (the source of pre-paired session DBs)
 - Mission 0850p-a-multi-account (the CI host's account store)
 

@@ -51,9 +51,9 @@ persistence layer for it (the E2EE persistence section is authoritative).
     state machine from the OIDC flows is a separate API and is NOT
     used here). UI is a TUI prompt, not a GUI.
   - `octo-matrix-onboard e2ee recovery generate --config <path>
-    --out <path>` — generate a 4S recovery key, write to file (mode 0600).
+--out <path>` — generate a 4S recovery key, write to file (mode 0600).
   - `octo-matrix-onboard e2ee recovery restore --config <path>
-    --key <4S>` — restore from a 4S key.
+--key <4S>` — restore from a 4S key.
   - `octo-matrix-onboard e2ee verify-session --config <path>` —
     out-of-band verification of an already-logged-in session (UX
     reference: EXA's `features/verifysession` — see Reference
@@ -187,7 +187,7 @@ file `/home/mmacedoeu/.claude/plans/radiant-beaming-clock.md`
 
 - [ ] `octo-adapter-matrix-sdk/Cargo.toml` updates `matrix-sdk` to
       `version = "=0.17.0"` with features `["e2e-encryption", "sqlite",
-      "qrcode"]` and `default-features = false`. The originally
+    "qrcode"]` and `default-features = false`. The originally
       spec'd `rustls-tls` + `sqlite-cryptostore` features are not
       valid on 0.17.0 (TLS is provided by the embedded reqwest's
       default backend; the SQLite crypto store is enabled
@@ -252,8 +252,8 @@ file `/home/mmacedoeu/.claude/plans/radiant-beaming-clock.md`
 - [x] ~~`octo-adapter-matrix-sdk/src/lib.rs` adds
       `.token(SyncToken::NoToken)` to the three `sync_once`
       call sites~~ — **NOT NEEDED**. The 0.18 default
-      `SyncToken::ReusePrevious` is the *correct* behaviour
-      for our use case: the inner sync loop at lib.rs:957-959
+      `SyncToken::ReusePrevious` is the _correct_ behaviour
+      for our use case: the inner sync loop in `lib.rs`
       explicitly passes `.token(token)` (where `token: String`
       converts via `impl Into<SyncToken>` to `SyncToken::Specific`),
       which gives proper incremental sync — actually a
@@ -339,21 +339,21 @@ file `/home/mmacedoeu/.claude/plans/radiant-beaming-clock.md`
 
 ### mx01 Sync-Timeout acceptance
 
-- [ ] `crates/octo-adapter-matrix-sdk/src/lib.rs:858`
+- [ ] `crates/octo-adapter-matrix-sdk/src/lib.rs`
       changes `Duration::from_secs(5)` to
       `Duration::from_secs(60)` in the `send_message`
       initial-sync path. The 5 s → 60 s bump is justified
       by the cold-session E2EE bootstrap cost; the
       comment above the call site is updated to explain
       the budget.
-- [ ] `crates/octo-adapter-matrix-sdk/src/lib.rs:1099`
+- [ ] `crates/octo-adapter-matrix-sdk/src/lib.rs`
       changes the `tokio::time::timeout` argument from
       `Duration::from_secs(5)` to
       `Duration::from_secs(60)` in `health_check`.
       The 1 ms `SyncSettings::timeout` (server-side
       long-poll) is preserved — only the outer tokio
       budget changes.
-- [ ] The inner sync loop at `lib.rs:957` is **NOT**
+- [ ] The inner sync loop in `lib.rs` is **NOT**
       touched. It carries an explicit since-token and
       is incremental on warm sessions; the 5 s budget
       is correct for that path.
@@ -392,7 +392,7 @@ The live integration suite (`mx01`–`mx08`) creates
 short-lived test rooms whose names follow the prefix
 `octo-test-mx-*` (mx04 uses `octo-test-mx-mx04-{ts}`, mx07
 uses `octo-test-mx-mx07-{ts}`). When a test panics before
-its cleanup block runs (lines 313–325 of
+its cleanup block runs (of
 `tests/live_matrix_test.rs`), the room it created is left
 orphaned on the homeserver, and the next test run picks up
 the stale `room_id` from `~/.config/octo/matrix.json`'s
@@ -415,7 +415,7 @@ extension of 0850h-b replicates that pattern for Matrix.
   2. Build a raw `matrix_sdk::Client`, restore the session
      via `client.restore_session(MatrixSession { meta, tokens })`,
      then `client.sync_once(SyncSettings::default()
-       .timeout(Duration::from_secs(60)))`. The 60 s window
+  .timeout(Duration::from_secs(60)))`. The 60 s window
      is generous enough for E2EE bootstrap (one-time key
      upload + crypto-store init) on a fresh session —
      the 5 s timeout used in the live tests themselves is
@@ -430,36 +430,37 @@ extension of 0850h-b replicates that pattern for Matrix.
   4. If `--dry-run`, print the would-be cleanup plan
      (prefixed-name rooms + orphaned session-file rooms)
      and exit without state change. Otherwise:
-       a. For each prefix-match room, `room.leave().await`
-          and log success/failure.
-       b. For each orphaned session-file room, attempt
-          `client.get_room(&rid)` (already established to
-          return None in phase 3 — leave is impossible, so
-          we just record that it's orphaned).
-       c. If `--update-config` was passed, rewrite
-          `~/.config/octo/matrix.json` with the `rooms[]`
-          array containing only the rooms that the SDK
-          still knows about (intersection of the original
-          array with the joined-rooms set). This is the
-          "self-healing" mode that fixes the `mx04_05_06`
-          failure without manual `--config` editing.
+     a. For each prefix-match room, `room.leave().await`
+     and log success/failure.
+     b. For each orphaned session-file room, attempt
+     `client.get_room(&rid)` (already established to
+     return None in phase 3 — leave is impossible, so
+     we just record that it's orphaned).
+     c. If `--update-config` was passed, rewrite
+     `~/.config/octo/matrix.json` with the `rooms[]`
+     array containing only the rooms that the SDK
+     still knows about (intersection of the original
+     array with the joined-rooms set). This is the
+     "self-healing" mode that fixes the `mx04_05_06`
+     failure without manual `--config` editing.
   5. Print a summary (`X left, Y orphaned in session file,
-     Z session-file rooms pruned`) and exit.
+Z session-file rooms pruned`) and exit.
 
   Flags:
-    - `--dry-run` — scan only, no leaves, no writes
-    - `--config <path>` — override session path
-    - `--update-config` — prune `rooms[]` in the session
-       file (off by default; off is safer)
-    - `--verbose` — INFO-level tracing for the SDK calls
+  - `--dry-run` — scan only, no leaves, no writes
+  - `--config <path>` — override session path
+  - `--update-config` — prune `rooms[]` in the session
+    file (off by default; off is safer)
+  - `--verbose` — INFO-level tracing for the SDK calls
 
   Usage:
-    ```bash
-    cargo run -p octo-adapter-matrix-sdk \
-      --bin cleanup_test_rooms -- --dry-run
-    cargo run -p octo-adapter-matrix-sdk \
-      --bin cleanup_test_rooms -- --update-config
-    ```
+
+  ```bash
+  cargo run -p octo-adapter-matrix-sdk \
+    --bin cleanup_test_rooms -- --dry-run
+  cargo run -p octo-adapter-matrix-sdk \
+    --bin cleanup_test_rooms -- --update-config
+  ```
 
 - `crates/octo-adapter-matrix-sdk/tests/live_matrix_test.rs`
   gets two additions:
@@ -474,7 +475,7 @@ extension of 0850h-b replicates that pattern for Matrix.
      pattern) and `room.leave()` any joined room whose
      name starts with `octo-test-mx-`. This makes each
      test run self-healing — even if a previous run
-     panicked at line 280 and skipped cleanup, the next
+     panicked mid-body and skipped cleanup, the next
      run cleans up before creating its own room.
 
 **Out of scope for this extension.**
@@ -505,7 +506,7 @@ causes:
   `"Health check timed out after 5s"` on every cold call.
 - `mx04_05_06_envelope_round_trip` to fail with
   `"Room <id> not found in joined rooms"` because the
-  one-shot sync in `send_message` (lib.rs:858) times out
+  one-shot sync in `send_message` (in `lib.rs`) times out
   before the freshly-created room is indexed by the SDK's
   in-memory room map.
 
@@ -519,7 +520,7 @@ room, so the 60 s sync code path doesn't execute.
 
 **Two sync_once callsites are touched:**
 
-- `crates/octo-adapter-matrix-sdk/src/lib.rs:858`
+- `crates/octo-adapter-matrix-sdk/src/lib.rs`
   (initial sync in `send_message`):
   - **Before:** `SyncSettings::default().timeout(Duration::from_secs(5))`
   - **After:** `SyncSettings::default().timeout(Duration::from_secs(60))`
@@ -530,7 +531,7 @@ room, so the 60 s sync code path doesn't execute.
     once per process for cold sessions; never paid on
     warm sessions.
 
-- `crates/octo-adapter-matrix-sdk/src/lib.rs:1099`
+- `crates/octo-adapter-matrix-sdk/src/lib.rs`
   (tokio outer timeout around the health-check sync):
   - **Before:** `tokio::time::timeout(Duration::from_secs(5), self.client.sync_once(sync_settings))`
   - **After:** `tokio::time::timeout(Duration::from_secs(60), self.client.sync_once(sync_settings))`
@@ -544,7 +545,7 @@ room, so the 60 s sync code path doesn't execute.
 
 **Two callsites are intentionally NOT touched:**
 
-- `crates/octo-adapter-matrix-sdk/src/lib.rs:957`
+- `crates/octo-adapter-matrix-sdk/src/lib.rs`
   (inner sync loop):
   - The sync here carries an explicit since-token
     (`.token(token)` where `token: String` → `SyncToken::Specific`

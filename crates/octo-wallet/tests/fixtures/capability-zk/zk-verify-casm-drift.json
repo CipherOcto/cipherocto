@@ -1,0 +1,10 @@
+{
+  "vector_id": "zk-verify-casm-drift",
+  "rfc": "RFC-0958 §Test Vectors TV5 + CASM Hash Drift Detection",
+  "description": "Mutated compiled_casm_hash → CasmHashMismatch at mint AND verify paths",
+  "node_type": "self-host",
+  "expected_error_variant_at_mint": "CasmHashMismatch",
+  "expected_error_variant_at_verify": "CasmHashMismatch",
+  "mutated_casm_hash_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+  "notes": "Two-layer defense: mint rejects when casm_hash != bundled_casm_hash; verify rejects when proof.casm_hash != compiled_casm_blake3_hash."
+}

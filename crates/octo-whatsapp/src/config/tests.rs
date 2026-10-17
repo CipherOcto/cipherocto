@@ -243,9 +243,23 @@ fn media_config_default_disables_view_once_persistence() {
     assert!(!c.view_once_media_persist);
 }
 
+/// Serializes the tests that mutate `OCTO_WA_MEDIA__VIEW_ONCE_PERSIST`.
+///
+/// The previous comment here claimed "tests run on a single thread per
+/// `cargo test` test binary", which is false: cargo test runs tests in
+/// parallel threads by default. Two tests set the same process-global variable
+/// to opposite values and read it back, so whichever lost the race saw the
+/// other's value and failed intermittently — reproduced in a full workspace
+/// run, invisible when the suite is filtered down to these four tests.
+fn media_env_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[test]
 fn media_config_env_override_enables_persistence() {
-    // SAFETY: tests run on a single thread per `cargo test` test binary.
+    let _guard = media_env_lock();
     let prev = std::env::var("OCTO_WA_MEDIA__VIEW_ONCE_PERSIST").ok();
     std::env::set_var("OCTO_WA_MEDIA__VIEW_ONCE_PERSIST", "true");
     let c = MediaConfig::from_env_or_default();
@@ -258,6 +272,7 @@ fn media_config_env_override_enables_persistence() {
 
 #[test]
 fn media_config_env_override_disables_persistence_when_false() {
+    let _guard = media_env_lock();
     let prev = std::env::var("OCTO_WA_MEDIA__VIEW_ONCE_PERSIST").ok();
     std::env::set_var("OCTO_WA_MEDIA__VIEW_ONCE_PERSIST", "false");
     let c = MediaConfig::from_env_or_default();

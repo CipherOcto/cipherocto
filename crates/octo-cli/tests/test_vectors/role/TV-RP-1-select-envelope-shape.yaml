@@ -1,0 +1,9 @@
+# TV-RP-1 — RFC-0011-d §11 Test Vectors.
+vector: TV-RP-1
+description: select envelope contains nonce + body_hash + chain_id (M5 + M4)
+schema_version: octo.role.test.v1
+invocation:
+  args: [role, select, provider, --confirm]
+expect:
+  exit_code: 0
+  envelope_required_fields: [nonce, body_hash, chain_id, role_binding_hash]

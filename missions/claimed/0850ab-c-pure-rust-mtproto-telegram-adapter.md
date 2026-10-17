@@ -50,7 +50,7 @@ The new crate co-exists with the existing TDLib-based `octo-adapter-telegram`. N
 - [ ] Workspace `Cargo.toml` updated to include the new crate in `members`
 - [ ] Crate compiles in isolation: `cargo build -p octo-adapter-telegram-mtproto`
 - [ ] Workspace still compiles: `cargo build --workspace`
-- [ ] No transitive C/C++ dependencies added (verified by `cargo tree --target x86_64-unknown-linux-gnu --no-default-features | grep -v '^[[:space:]]*├\|└' | grep -E '\.so|\.a|\.dll'` returns empty)
+- [ ] No transitive C/C++ dependencies added (verified by `cargo tree --target x86_64-unknown-linux-gnu --no-default-features | grep -v '^`:space:`*├\|└' | grep -E '\.so|\.a|\.dll'` returns empty)
 
 ### Module skeleton
 
@@ -137,51 +137,51 @@ The new crate co-exists with the existing TDLib-based `octo-adapter-telegram`. N
 
 For each RFC type defined in RFC-0850ab-c §"Specification / Data Structures", note which mission implements it. Per BLUEPRINT.md Mission template, **no RFC type may be unaccounted for**:
 
-| RFC-0850ab-c Type | Implemented By | Status |
-|-------------------|----------------|--------|
-| `MtprotoAdapterConfig` | **This mission (Phase 1)** | Open |
-| `AuthMode` (enum: `BotToken`, `UserCredentials`, `QrLogin`) | This mission (`BotToken` only); `UserCredentials` + `QrLogin` deferred to sub-mission 0850ab-c-user | Partial |
-| `AdapterLifecycle` | **This mission (Phase 1)** | Open |
-| `BotAuthLifecycle` | **This mission (Phase 1)** | Open |
-| `UserAuthLifecycle` | This mission (Phase 1, enum skeleton only); full state machine in sub-mission 0850ab-c-user | Partial |
-| `TelegramCapabilities` | **This mission (Phase 1)** | Open |
-| `TelegramError` | **This mission (Phase 1)** | Open |
-| `ProxyConfig` / `ProxyKind` | This mission (Phase 1, type skeleton only); SOCKS5/HTTP CONNECT impl in sub-mission 0850ab-c-wrappers (conditional) | Partial |
-| `StoolapSession` (custom impl of `grammers_session::Session`) | **This mission (Phase 1)** | Open |
-| `MtprotoAdapter` (struct + `PlatformAdapter` impl) | **This mission (Phase 1)** | Open |
-| `SelfHandleFilter` | **This mission (Phase 1)** | Open |
-| Algorithm 1 (bot sign-in), 4 (receive batch), 5 (send envelope) | **This mission (Phase 1)** | Open |
-| Algorithm 2 (user sign-in), 3 (QR login) | Sub-mission 0850ab-c-user | Deferred |
-| Bot-API HTTP fallback types (`HttpFallbackConfig`) | Sub-mission 0850ab-c-http | Deferred |
-| Wrapper 1 (Gap G1: temp keys) | Skipped for v1 (not needed); future if cipherocto use case emerges | N/A |
-| Wrapper 2 (Gap G2: SOCKS5/CONNECT) | Sub-mission 0850ab-c-wrappers (conditional) | Deferred |
-| Wrapper 3 (Gap G3: fake-TLS) | Sub-mission 0850ab-c-wrappers (conditional) | Deferred |
+| RFC-0850ab-c Type                                               | Implemented By                                                                                                      | Status   |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | -------- |
+| `MtprotoAdapterConfig`                                          | **This mission (Phase 1)**                                                                                          | Open     |
+| `AuthMode` (enum: `BotToken`, `UserCredentials`, `QrLogin`)     | This mission (`BotToken` only); `UserCredentials` + `QrLogin` deferred to sub-mission 0850ab-c-user                 | Partial  |
+| `AdapterLifecycle`                                              | **This mission (Phase 1)**                                                                                          | Open     |
+| `BotAuthLifecycle`                                              | **This mission (Phase 1)**                                                                                          | Open     |
+| `UserAuthLifecycle`                                             | This mission (Phase 1, enum skeleton only); full state machine in sub-mission 0850ab-c-user                         | Partial  |
+| `TelegramCapabilities`                                          | **This mission (Phase 1)**                                                                                          | Open     |
+| `TelegramError`                                                 | **This mission (Phase 1)**                                                                                          | Open     |
+| `ProxyConfig` / `ProxyKind`                                     | This mission (Phase 1, type skeleton only); SOCKS5/HTTP CONNECT impl in sub-mission 0850ab-c-wrappers (conditional) | Partial  |
+| `StoolapSession` (custom impl of `grammers_session::Session`)   | **This mission (Phase 1)**                                                                                          | Open     |
+| `MtprotoAdapter` (struct + `PlatformAdapter` impl)              | **This mission (Phase 1)**                                                                                          | Open     |
+| `SelfHandleFilter`                                              | **This mission (Phase 1)**                                                                                          | Open     |
+| Algorithm 1 (bot sign-in), 4 (receive batch), 5 (send envelope) | **This mission (Phase 1)**                                                                                          | Open     |
+| Algorithm 2 (user sign-in), 3 (QR login)                        | Sub-mission 0850ab-c-user                                                                                           | Deferred |
+| Bot-API HTTP fallback types (`HttpFallbackConfig`)              | Sub-mission 0850ab-c-http                                                                                           | Deferred |
+| Wrapper 1 (Gap G1: temp keys)                                   | Skipped for v1 (not needed); future if cipherocto use case emerges                                                  | N/A      |
+| Wrapper 2 (Gap G2: SOCKS5/CONNECT)                              | Sub-mission 0850ab-c-wrappers (conditional)                                                                         | Deferred |
+| Wrapper 3 (Gap G3: fake-TLS)                                    | Sub-mission 0850ab-c-wrappers (conditional)                                                                         | Deferred |
 
 **Coverage check:** Every type and algorithm in RFC-0850ab-c §"Specification" is accounted for above. Nothing is unassigned.
 
 ## Location
 
-| Path | Change |
-|------|--------|
-| `crates/octo-adapter-telegram-mtproto/Cargo.toml` | New file; grammers deps (no `sqlite` feature on `grammers-session`) + CipherOcto stoolap fork (`stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }`, per the project-wide persistence convention) + serde + tokio + reqwest (for future use) + base64 + blake3 + thiserror + tracing |
-| `crates/octo-adapter-telegram-mtproto/src/lib.rs` | New file; re-exports + dispatch |
-| `crates/octo-adapter-telegram-mtproto/src/config.rs` | New file; `MtprotoAdapterConfig` + `AuthMode` + `ProxyConfig` + `ProxyKind` |
-| `crates/octo-adapter-telegram-mtproto/src/adapter.rs` | New file; `MtprotoAdapter` + `PlatformAdapter` impl |
-| `crates/octo-adapter-telegram-mtproto/src/mtproto_client.rs` | New file; `grammers_client::Client` wrapper |
-| `crates/octo-adapter-telegram-mtproto/src/auth.rs` | New file; bot-mode sign-in + lifecycle transitions |
-| `crates/octo-adapter-telegram-mtproto/src/envelope.rs` | New file; DOT codec (base64 encode + canonicalize) |
-| `crates/octo-adapter-telegram-mtproto/src/error.rs` | New file; `TelegramError` |
-| `crates/octo-adapter-telegram-mtproto/src/self_handle.rs` | New file; loop filter |
-| `crates/octo-adapter-telegram-mtproto/src/groups.rs` | New file; chat discovery (list groups, lookup chat_id) |
-| `crates/octo-adapter-telegram-mtproto/src/files.rs` | New file; upload/download stubs (return `TelegramError::Unsupported` until Phase 2) |
-| `crates/octo-adapter-telegram-mtproto/src/cleanup.rs` | New file; graceful shutdown |
-| `crates/octo-adapter-telegram-mtproto/src/lifecycle.rs` | New file; `AdapterLifecycle` + `BotAuthLifecycle` + `UserAuthLifecycle` enums |
-| `crates/octo-adapter-telegram-mtproto/src/stoolap_session.rs` | New file; custom `StoolapSession` impl of `grammers_session::Session` trait, backed by CipherOcto's stoolap fork (project-wide persistence convention; closest RFC: RFC-0914); ~150 LOC |
-| `crates/octo-adapter-telegram-mtproto/README.md` | New file; quick-start + architecture + config |
-| `crates/octo-adapter-telegram-mtproto/CHANGELOG.md` | New file; 0.1.0 entry |
-| `crates/octo-adapter-telegram-mtproto/tests/integration_telegram_mtproto.rs` | New file; integration test |
-| `Cargo.toml` (workspace) | Add `crates/octo-adapter-telegram-mtproto` to `members` |
-| `crates/octo-adapter-telegram/src/config.rs` | Add `adapter_kind: AdapterKind` with default `Tdlib` (backward-compatible additive change) |
+| Path                                                                         | Change                                                                                                                                                                                                                                                                                                                        |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `crates/octo-adapter-telegram-mtproto/Cargo.toml`                            | New file; grammers deps (no `sqlite` feature on `grammers-session`) + CipherOcto stoolap fork (`stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }`, per the project-wide persistence convention) + serde + tokio + reqwest (for future use) + base64 + blake3 + thiserror + tracing |
+| `crates/octo-adapter-telegram-mtproto/src/lib.rs`                            | New file; re-exports + dispatch                                                                                                                                                                                                                                                                                               |
+| `crates/octo-adapter-telegram-mtproto/src/config.rs`                         | New file; `MtprotoAdapterConfig` + `AuthMode` + `ProxyConfig` + `ProxyKind`                                                                                                                                                                                                                                                   |
+| `crates/octo-adapter-telegram-mtproto/src/adapter.rs`                        | New file; `MtprotoAdapter` + `PlatformAdapter` impl                                                                                                                                                                                                                                                                           |
+| `crates/octo-adapter-telegram-mtproto/src/mtproto_client.rs`                 | New file; `grammers_client::Client` wrapper                                                                                                                                                                                                                                                                                   |
+| `crates/octo-adapter-telegram-mtproto/src/auth.rs`                           | New file; bot-mode sign-in + lifecycle transitions                                                                                                                                                                                                                                                                            |
+| `crates/octo-adapter-telegram-mtproto/src/envelope.rs`                       | New file; DOT codec (base64 encode + canonicalize)                                                                                                                                                                                                                                                                            |
+| `crates/octo-adapter-telegram-mtproto/src/error.rs`                          | New file; `TelegramError`                                                                                                                                                                                                                                                                                                     |
+| `crates/octo-adapter-telegram-mtproto/src/self_handle.rs`                    | New file; loop filter                                                                                                                                                                                                                                                                                                         |
+| `crates/octo-adapter-telegram-mtproto/src/groups.rs`                         | New file; chat discovery (list groups, lookup chat_id)                                                                                                                                                                                                                                                                        |
+| `crates/octo-adapter-telegram-mtproto/src/files.rs`                          | New file; upload/download stubs (return `TelegramError::Unsupported` until Phase 2)                                                                                                                                                                                                                                           |
+| `crates/octo-adapter-telegram-mtproto/src/cleanup.rs`                        | New file; graceful shutdown                                                                                                                                                                                                                                                                                                   |
+| `crates/octo-adapter-telegram-mtproto/src/lifecycle.rs`                      | New file; `AdapterLifecycle` + `BotAuthLifecycle` + `UserAuthLifecycle` enums                                                                                                                                                                                                                                                 |
+| `crates/octo-adapter-telegram-mtproto/src/stoolap_session.rs`                | New file; custom `StoolapSession` impl of `grammers_session::Session` trait, backed by CipherOcto's stoolap fork (project-wide persistence convention; closest RFC: RFC-0914); ~150 LOC                                                                                                                                       |
+| `crates/octo-adapter-telegram-mtproto/README.md`                             | New file; quick-start + architecture + config                                                                                                                                                                                                                                                                                 |
+| `crates/octo-adapter-telegram-mtproto/CHANGELOG.md`                          | New file; 0.1.0 entry                                                                                                                                                                                                                                                                                                         |
+| `crates/octo-adapter-telegram-mtproto/tests/integration_telegram_mtproto.rs` | New file; integration test                                                                                                                                                                                                                                                                                                    |
+| `Cargo.toml` (workspace)                                                     | Add `crates/octo-adapter-telegram-mtproto` to `members`                                                                                                                                                                                                                                                                       |
+| `crates/octo-adapter-telegram/src/config.rs`                                 | Add `adapter_kind: AdapterKind` with default `Tdlib` (backward-compatible additive change)                                                                                                                                                                                                                                    |
 
 ## Complexity
 
@@ -227,6 +227,7 @@ For each RFC type defined in RFC-0850ab-c §"Specification / Data Structures", n
 - `stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }` (per the project-wide cipherocto persistence convention; closest Accepted RFC: RFC-0914 (Economics); **NOT** `rusqlite` / `sqlx` / `sqlite` — those are reserved for legacy libraries that require them)
 
 > **Dependency Validation Rules:**
+>
 > 1. The mission's RFC (0850ab-c) depends on RFC-0850, RFC-0850ab-a, RFC-0850p-c, RFC-0851p-a. All four are Accepted.
 > 2. No upstream dependency cycles: this mission does not block any other mission (Phase 2/3 sub-missions depend on this one).
 > 3. grammers crates are at the version documented in RFC-0850ab-c Appendix B; pin in `Cargo.toml` and bump only with explicit mission amendment.
@@ -237,12 +238,12 @@ For each RFC type defined in RFC-0850ab-c §"Specification / Data Structures", n
 
 The 4-layer architecture maps to 4 modules:
 
-| Layer | Module | LOC estimate |
-|-------|--------|--------------|
-| grammers MTProto | `mtproto_client.rs` | 200 |
-| PlatformAdapter glue | `adapter.rs` | 400 |
-| DOT codec | `envelope.rs` | 100 |
-| (Bot-API HTTP — deferred) | `http_fallback.rs` | 0 (Phase 3) |
+| Layer                     | Module              | LOC estimate |
+| ------------------------- | ------------------- | ------------ |
+| grammers MTProto          | `mtproto_client.rs` | 200          |
+| PlatformAdapter glue      | `adapter.rs`        | 400          |
+| DOT codec                 | `envelope.rs`       | 100          |
+| (Bot-API HTTP — deferred) | `http_fallback.rs`  | 0 (Phase 3)  |
 
 Plus supporting modules: `config.rs` (150), `error.rs` (100), `lifecycle.rs` (100), `stoolap_session.rs` (150; custom `StoolapSession` impl of `grammers_session::Session`, backed by CipherOcto stoolap fork per the project-wide persistence convention), `auth.rs` (250), `envelope.rs` (100), `self_handle.rs` (50), `groups.rs` (100), `files.rs` (50), `cleanup.rs` (50).
 
@@ -486,27 +487,27 @@ Test: `cargo test -p octo-adapter-telegram-mtproto --target ${{ matrix.target }}
 
 ## Sub-Missions (Future)
 
-| Sub-Mission | Phase | Status | Depends On |
-|-------------|-------|--------|------------|
-| 0850ab-c-user | Phase 2 | Planned | This mission (Phase 1) |
-| 0850ab-c-http | Phase 3 | Planned | This mission (Phase 1) |
+| Sub-Mission       | Phase                 | Status   | Depends On             |
+| ----------------- | --------------------- | -------- | ---------------------- |
+| 0850ab-c-user     | Phase 2               | Planned  | This mission (Phase 1) |
+| 0850ab-c-http     | Phase 3               | Planned  | This mission (Phase 1) |
 | 0850ab-c-wrappers | Phase 4 (conditional) | Optional | This mission (Phase 1) |
 
 Each sub-mission follows the same template (Status, RFC, Summary, Acceptance Criteria, etc.) and references the parent RFC-0850ab-c.
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0 | 2026-06-21 | Initial mission; Phase 1 Core implementation work. Derived from RFC-0850ab-c §"Implementation Phases / Phase 1: Core" |
-| 1.1 | 2026-06-21 | Storage layer switched from raw SQLite to CipherOcto's stoolap fork; added `src/stoolap_session.rs` module reference. Commit `0079d0b`. |
-| 1.2 | 2026-06-21 | Round 1 of RFC+Mission co-review: 9 issues fixed (BLUEPRINT template; Prerequisites→Dependencies; Type Coverage subsection; stoolap API correction). Commit `1e166b5`. |
-| 1.3 | 2026-06-21 | Round 2: 3 issues fixed (stoolap API realism; `db.execute(sql, ())`; grammers InputPeer boundary). Commit `a64879e`. |
-| 1.4 | 2026-06-21 | Round 3: Security invariants subsection added (5 acceptance checks for log redaction, sign_out DB cleanup, file permissions, no transitive SQLite, tracing-only output). Commit `8a7b823`. |
-| 1.5 | 2026-06-21 | Round 4: Version History tables added to both RFC and Mission; cross-ref verification (RFCs, crates, docs, paths). Commit `5eadca2c`. |
-| 1.6 | 2026-06-21 | Round 5: Sync with RFC algorithm unambiguity fixes (Algorithm 1 6-step flow; Algorithm 5 InputPeer/access_hash; stale SQLite refs). Commit `e67e84ba`. |
-| 1.7 | 2026-06-21 | Round 6: Sync with RFC Background/Glossary section addition; SQL schema plaintext-at-rest contradiction fixed. Commit `139322b7`. |
-| 1.8 | 2026-06-21 | RFC-0850ab-c promoted to Accepted (v1.9). Mission's RFC link updated to point to `rfcs/accepted/networking/`. Mission status remains Open (awaiting claimant). RFC §"Version History" 1.9 records the acceptance. |
+| Version | Date       | Changes                                                                                                                                                                                                           |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0     | 2026-06-21 | Initial mission; Phase 1 Core implementation work. Derived from RFC-0850ab-c §"Implementation Phases / Phase 1: Core"                                                                                             |
+| 1.1     | 2026-06-21 | Storage layer switched from raw SQLite to CipherOcto's stoolap fork; added `src/stoolap_session.rs` module reference. Commit `0079d0b`.                                                                           |
+| 1.2     | 2026-06-21 | Round 1 of RFC+Mission co-review: 9 issues fixed (BLUEPRINT template; Prerequisites→Dependencies; Type Coverage subsection; stoolap API correction). Commit `1e166b5`.                                            |
+| 1.3     | 2026-06-21 | Round 2: 3 issues fixed (stoolap API realism; `db.execute(sql, ())`; grammers InputPeer boundary). Commit `a64879e`.                                                                                              |
+| 1.4     | 2026-06-21 | Round 3: Security invariants subsection added (5 acceptance checks for log redaction, sign_out DB cleanup, file permissions, no transitive SQLite, tracing-only output). Commit `8a7b823`.                        |
+| 1.5     | 2026-06-21 | Round 4: Version History tables added to both RFC and Mission; cross-ref verification (RFCs, crates, docs, paths). Commit `5eadca2c`.                                                                             |
+| 1.6     | 2026-06-21 | Round 5: Sync with RFC algorithm unambiguity fixes (Algorithm 1 6-step flow; Algorithm 5 InputPeer/access_hash; stale SQLite refs). Commit `e67e84ba`.                                                            |
+| 1.7     | 2026-06-21 | Round 6: Sync with RFC Background/Glossary section addition; SQL schema plaintext-at-rest contradiction fixed. Commit `139322b7`.                                                                                 |
+| 1.8     | 2026-06-21 | RFC-0850ab-c promoted to Accepted (v1.9). Mission's RFC link updated to point to `rfcs/accepted/networking/`. Mission status remains Open (awaiting claimant). RFC §"Version History" 1.9 records the acceptance. |
 
 ---
 

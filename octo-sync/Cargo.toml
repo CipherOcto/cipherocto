@@ -1,10 +1,8 @@
-[workspace]
-
 [package]
 name = "octo-sync"
 version = "0.1.0"
 edition = "2021"
-description = "Wire-protocol primitives, DatabaseSyncAdapter trait, and Stoolap sync types for the CipherOcto Stoolap Data Sync Protocol (RFC-0862 v1.1.0)"
+description = "Wire-protocol primitives, DatabaseSyncAdapter trait, Stoolap sync types, and RFC-0862 v1.3/v1.4 writer-election + cross-instance DID coordination substrate for the CipherOcto Stoolap Data Sync Protocol"
 license = "Apache-2.0"
 repository = "https://github.com/CipherOcto/cipherocto"
 
@@ -14,6 +12,9 @@ thiserror = "1.0"
 
 # Concurrency
 parking_lot = "0.12"
+# DashMap for per-shard noncelock (RFC-0862 v1.3 R12 L1; RFC-0862 v1.4 §Concrete Impl).
+# Sibling crates use 5.0 — keep aligned.
+dashmap = "5.0"
 
 # Hash + crypto (matches cipherocto network deps per crates/octo-network/Cargo.toml)
 blake3 = "1.5"
@@ -29,17 +30,34 @@ lz4_flex = "0.12"
 # CRC32 for WAL entry validation (mission 0862m)
 crc32fast = "1.4"
 
-# Async traits (used by Carrier)
+# Async traits (used by Carrier + sealed trait pattern in RFC-0862 v1.3)
 async-trait = "0.1"
 
 # Concurrent fan-out for MultiCarrierSync::broadcast
 futures = "0.3"
 
+# Borsh serialization (RFC-0862 v1.3 §Substrate types: newtypes derive BorshSerialize / BorshDeserialize).
+# Same pin as octo-protocol / quota-router-core.
+borsh = { version = "=1.5.0", features = ["derive"] }
+
+# octo-ident (Layer B). Per RFC-0862 v1.3 R12 M19 + v1.4 §Concrete Impl:
+# octo-sync consumes ChainId, DidDocument, DidWriteCoordinator (sealed),
+# canonical_hash, and VerificationMethod from octo-ident. The `borsh`
+# feature is needed for borsh-derived DidDocument serialization in WAL
+# entry payloads. Layer direction: octo-sync (Layer B-substrate) -> octo-ident
+# (Layer B). One-way; no cycle.
+octo-ident = { path = "../crates/octo-ident", features = ["borsh"] }
+
 [dev-dependencies]
 # Property-based testing (RFC-0862 §Test Vectors)
 proptest = "1.4"
-# Async test runtime
-tokio = { version = "1", features = ["macros", "rt"] }
+# Async test runtime (sync feature needed for the multi-instance test harness)
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
+# Mutex for the cluster fixture in tests/cross_instance_tv.rs
+parking_lot = "0.12"
+# Hex codec for fixture encoding in tests/phase1_tv_0862.rs (mission
+# `0862-phase1-tv-fixture`). RFC-0862 v1.3.0 Phase 1 TV gate.
+hex = "0.4"
 # Enable the `test-util` feature for integration tests so they can use the
 # MockAdapter. This is a self-referential dev-dependency on the same crate.
 octo-sync = { path = ".", features = ["test-util"] }
@@ -49,6 +67,10 @@ octo-sync = { path = ".", features = ["test-util"] }
 # to downstream crates (e.g., the cipherocto sync engine tests). The MockAdapter
 # is always available in this crate's own `cargo test` (gated on `#[cfg(test)]`).
 test-util = []
+# Opt-in CRDT (Last-Write-Wins) substrate for partition-tolerance
+# (RFC-0862 v1.4 §Motivation 4 + §Concrete Impl Extension §CRDT).
+# Default builds stay linearizable via the leader-election path.
+crdt = []
 
 [profile.release]
 codegen-units = 1

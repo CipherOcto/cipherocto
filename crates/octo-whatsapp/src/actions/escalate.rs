@@ -70,16 +70,12 @@ pub async fn dispatch(target: &str, reason: &str, ctx: &ActionContext) -> Result
     // carried as a marker; the events buffer stores it via its
     // existing push path. We construct a synthetic
     // InboundEvent::Unknown so it lands in the same ring.
-    use crate::events::{EventEnvelope, InboundEvent};
+    use crate::events::InboundEvent;
     let raw_envelope = format!(
         "DaemonEscalated(rule_id={}, target={}, reason={}, token={})",
         ctx.rule_id, target, reason, token
     );
-    let _escalation_event = InboundEvent::parse(EventEnvelope {
-        raw: raw_envelope,
-        ts_unix_ms: now_ms,
-        ts_mono_ns: 0,
-    });
+    let _escalation_event = InboundEvent::synthetic_unknown("daemon_escalated", raw_envelope);
     // The above `parse` may produce an Unknown variant; we do not
     // push it into the buffer to avoid disturbing the inbound
     // event stream semantics. Operators discover escalations via

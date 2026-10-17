@@ -20,7 +20,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::events::{EventEnvelope, InboundEvent};
+use crate::events::InboundEvent;
 use crate::events_buffer::EventsBuffer;
 use crate::observability::metrics::Metrics;
 
@@ -125,7 +125,7 @@ impl std::fmt::Debug for EventsRouter {
 }
 
 impl EventsRouter {
-    /// Build a new router. Source is a broadcast::Receiver<String>
+    /// Build a new router. Source is a broadcast::Receiver<Arc<InboundEvent>>
     /// from `octo-adapter-whatsapp::WhatsAppWebAdapter::subscribe_raw_events()`.
     /// Buffer is the daemon's `EventsBuffer`.
     pub fn new(buffer: Arc<EventsBuffer>, cancel: CancellationToken) -> Arc<Self> {
@@ -235,10 +235,21 @@ impl EventsRouter {
     /// ```
     ///
     /// On every raw event:
-    /// 1. Parse to `InboundEvent`.
+    /// 1. Parse to `InboundEvent` (via `events::parse`).
     /// 2. Persist to `buffer.push`.
     /// 3. For each sink: `try_send` a clone; on `Full`/`Closed` increment sink.lagged.
-    pub async fn run(self: Arc<Self>, mut raw_rx: tokio::sync::broadcast::Receiver<String>) {
+    ///
+    /// Events first-class overhaul (plan
+    /// `2026-07-18-whatsapp-events-first-class-overhaul.md`): the raw
+    /// channel now carries typed `Arc<InboundEvent>` directly — the
+    /// adapter match arms project wacore events into typed variants
+    /// before pushing here. The legacy `events::parse_many` Debug-string
+    /// path is kept as a transitional helper for tests but no longer
+    /// runs on the hot path.
+    pub async fn run(
+        self: Arc<Self>,
+        mut raw_rx: tokio::sync::broadcast::Receiver<Arc<crate::events::InboundEvent>>,
+    ) {
         loop {
             tokio::select! {
                 _ = self.cancel.cancelled() => {
@@ -247,43 +258,28 @@ impl EventsRouter {
                 }
                 recv = raw_rx.recv() => {
                     match recv {
-                        Ok(raw) => {
-                            // Parse the envelope into one or more
-                            // events. A `Messages(MessageBatch { ... })`
-                            // envelope fans out to one event per inner
-                            // message so group conversations land as
-                            // searchable rows instead of an opaque
-                            // Unknown (see events::parse_many).
-                            let events = InboundEvent::parse_many(
-                                EventEnvelope {
-                                    raw,
-                                    ts_unix_ms: 0,
-                                    ts_mono_ns: 0,
-                                },
-                                None,
-                            );
-                            for ev in events {
-                                if let Some(m) = &self.metrics {
-                                    let kind = event_kind_label(&ev);
-                                    m.inc_inbound_event(&kind);
-                                }
-                                // Buffer is the single source of truth
-                                // for the monotonic id — every sink
-                                // (persister, query, MCP) sees the
-                                // SAME id so NDJSON rows and SQL rows
-                                // correlate 1:1.
-                                let id = self.buffer.push(ev.clone());
-                                self.fanout(id, ev.clone());
-                                // Phase 5 Part F: fire the action-dispatch hook
-                                // (if registered) on a clone so the buffer
-                                // entry + sink fan-out are unaffected.
-                                if let Some(hook) = self.action_hook.as_ref() {
-                                    let hook = hook.clone();
-                                    let ev2 = ev.clone();
-                                    tokio::spawn(async move {
-                                        hook(ev2);
-                                    });
-                                }
+                        Ok(arc_ev) => {
+                            let ev: &crate::events::InboundEvent = &arc_ev;
+                            if let Some(m) = &self.metrics {
+                                let kind = event_kind_label(ev);
+                                m.inc_inbound_event(&kind);
+                            }
+                            // Buffer is the single source of truth
+                            // for the monotonic id — every sink
+                            // (persister, query, MCP) sees the
+                            // SAME id so NDJSON rows and SQL rows
+                            // correlate 1:1.
+                            let id = self.buffer.push(ev.clone());
+                            self.fanout(id, ev.clone());
+                            // Phase 5 Part F: fire the action-dispatch hook
+                            // (if registered) on a clone so the buffer
+                            // entry + sink fan-out are unaffected.
+                            if let Some(hook) = self.action_hook.as_ref() {
+                                let hook = hook.clone();
+                                let ev2 = ev.clone();
+                                tokio::spawn(async move {
+                                    hook(ev2);
+                                });
                             }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -350,21 +346,7 @@ impl EventsRouter {
 /// Phase 5 Part B: stable per-event-kind string used as the
 /// `inbound_events_total{kind}` label pre-hash.
 fn event_kind_label(ev: &InboundEvent) -> String {
-    match ev {
-        InboundEvent::Message { .. } => "message".into(),
-        InboundEvent::Reaction { .. } => "reaction".into(),
-        InboundEvent::Receipt { .. } => "receipt".into(),
-        InboundEvent::GroupChange { .. } => "group_change".into(),
-        InboundEvent::Presence { .. } => "presence".into(),
-        InboundEvent::Connection { .. } => "connection".into(),
-        InboundEvent::Call { .. } => "call".into(),
-        InboundEvent::Story { .. } => "story".into(),
-        InboundEvent::CommunityUpdate { .. } => "community_update".into(),
-        InboundEvent::NewsletterUpdate { .. } => "newsletter_update".into(),
-        InboundEvent::Unavailable { .. } => "unavailable".into(),
-        InboundEvent::DisappearingModeChanged { .. } => "disappearing_mode_changed".into(),
-        InboundEvent::Unknown { .. } => "unknown".into(),
-    }
+    ev.event_kind().to_string()
 }
 
 #[cfg(test)]
@@ -381,24 +363,38 @@ mod tests {
         (router, buffer, cancel)
     }
 
-    fn dummy_msg(id: &str) -> String {
-        format!(
-            "Message(id: \"{id}\", peer: \"P\", sender: \"S\", text: \"hi\", kind: Text, is_group: false)"
-        )
+    fn dummy_msg(id: &str) -> InboundEvent {
+        InboundEvent::Message {
+            id: id.to_string(),
+            peer: "P".to_string(),
+            sender: "S".to_string(),
+            ts_unix_ms: 0,
+            ts_mono_ns: 0,
+            kind: crate::events::MessageKind::Text,
+            text: "hi".to_string(),
+            media_token: None,
+            reply_to: None,
+            mentions: Vec::new(),
+            mentions_truncated: false,
+            from_me: false,
+            is_group: false,
+            view_once: false,
+            ephemeral_expires_at_seconds: None,
+        }
     }
 
     #[tokio::test]
     async fn router_persists_and_fans_out_to_sinks() {
         let (router, buffer, _cancel) = make_router(100);
-        let (tx, _rx) = broadcast::channel::<String>(16);
+        let (tx, _rx) = broadcast::channel::<std::sync::Arc<crate::events::InboundEvent>>(16);
         let mut sub = router.subscribe(8);
 
         let router2 = router.clone();
         let rx = tx.subscribe();
         let handle = tokio::spawn(async move { router2.run(rx).await });
 
-        tx.send(dummy_msg("M1")).unwrap();
-        tx.send(dummy_msg("M2")).unwrap();
+        tx.send(std::sync::Arc::new(dummy_msg("M1"))).unwrap();
+        tx.send(std::sync::Arc::new(dummy_msg("M2"))).unwrap();
 
         // Wait for both events to land.
         let e1 = sub.recv().await.expect("first event");
@@ -425,7 +421,7 @@ mod tests {
     #[tokio::test]
     async fn slow_sink_increments_lagged_counter() {
         let (router, _buffer, _cancel) = make_router(100);
-        let (tx, _rx) = broadcast::channel::<String>(16);
+        let (tx, _rx) = broadcast::channel::<std::sync::Arc<crate::events::InboundEvent>>(16);
 
         // Capacity 1 → second event will fail TrySendError::Full.
         let _sub = router.subscribe(1);
@@ -434,9 +430,9 @@ mod tests {
         let rx = tx.subscribe();
         let handle = tokio::spawn(async move { router2.run(rx).await });
 
-        tx.send(dummy_msg("M1")).unwrap();
-        tx.send(dummy_msg("M2")).unwrap();
-        tx.send(dummy_msg("M3")).unwrap();
+        tx.send(std::sync::Arc::new(dummy_msg("M1"))).unwrap();
+        tx.send(std::sync::Arc::new(dummy_msg("M2"))).unwrap();
+        tx.send(std::sync::Arc::new(dummy_msg("M3"))).unwrap();
 
         // Give the router a beat to drain.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -454,7 +450,7 @@ mod tests {
     #[tokio::test]
     async fn router_cancellation_exits_run_loop() {
         let (router, _buffer, cancel) = make_router(100);
-        let (_tx, _rx) = broadcast::channel::<String>(16);
+        let (_tx, _rx) = broadcast::channel::<std::sync::Arc<crate::events::InboundEvent>>(16);
         let rx = _tx.subscribe();
 
         let router2 = router.clone();

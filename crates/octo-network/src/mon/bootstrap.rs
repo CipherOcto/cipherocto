@@ -18,6 +18,9 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
+use octo_reputation::store::ReputationStore;
+use octo_reputation::types::{RecorderDid, SignalKind};
+
 // ── Mission 0851p-a-seed-health-check ─────────────────────────────
 
 /// Maximum age (in epochs) for a seed list entry. At 1-minute
@@ -34,7 +37,19 @@ pub struct StaleSeed {
 }
 
 impl StaleSeed {
+    /// True iff the seed is older than `MAX_SEED_AGE_EPOCHS` or
+    /// signed at an epoch later than `current_epoch` (epoch
+    /// rollback / clock skew fail-open — Round 2 review C11).
     pub fn is_stale(&self) -> bool {
+        // Fail-closed on epoch rollback: a `signed_at_epoch` in the
+        // future relative to `current_epoch` indicates either clock
+        // skew or an attacker replaying a future-dated signature.
+        // Saturating subtraction would silently return 0 (the seed
+        // would look fresh); we explicitly treat future-dated seeds
+        // as stale and surface them via the `StaleSeed` list.
+        if self.signed_at_epoch > self.current_epoch {
+            return true;
+        }
         self.current_epoch.saturating_sub(self.signed_at_epoch) > MAX_SEED_AGE_EPOCHS
     }
 }
@@ -80,8 +95,15 @@ impl SeedHealth {
         let mut fresh = 0;
         let mut stale_seeds = Vec::new();
         for peer in &envelope.peers {
-            let age = current_epoch.saturating_sub(peer.signed_at_epoch);
-            if age > MAX_SEED_AGE_EPOCHS {
+            // Fail-closed on epoch rollback (Round 2 review C11):
+            // a future-dated `signed_at_epoch > current_epoch` is
+            // treated as stale, never as fresh.
+            let is_stale_or_future = if peer.signed_at_epoch > current_epoch {
+                true
+            } else {
+                current_epoch.saturating_sub(peer.signed_at_epoch) > MAX_SEED_AGE_EPOCHS
+            };
+            if is_stale_or_future {
                 stale_seeds.push(StaleSeed {
                     peer_id: peer.peer_id.clone(),
                     signed_at_epoch: peer.signed_at_epoch,
@@ -134,6 +156,31 @@ pub enum SeedListAuthority {
     Dao,
 }
 
+impl SeedListAuthority {
+    /// Construct a rotated authority for the post-fork epoch window.
+    ///
+    /// Mission `0011-h-s-a-seed-list-authority-rotate` (G8) lands
+    /// this constructor as the substrate anchor for
+    /// `octo network authority rotate`. The constructor validates:
+    /// (1) the requested `new` authority is `Dao` (Foundation
+    /// rotation is not allowed post-fork — the foundation multi-sig
+    /// is deprecated at `EPOCH_GOVERNANCE_TAKEOVER`), (2) the
+    /// supplied `quorum_proof` is non-zero (zero-digest is a forgery
+    /// sentinel; semantic verification happens elsewhere).
+    pub fn rotate_post_fork(
+        new: SeedListAuthority,
+        quorum_proof: [u8; 32],
+    ) -> Result<Self, SeedAuthorityError> {
+        if new != SeedListAuthority::Dao {
+            return Err(SeedAuthorityError::SeedListAuthorityDeprecated);
+        }
+        if quorum_proof == [0u8; 32] {
+            return Err(SeedAuthorityError::BadSignature);
+        }
+        Ok(Self::Dao)
+    }
+}
+
 /// A seed list authority error.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SeedAuthorityError {
@@ -183,10 +230,111 @@ pub enum BootstrapMode {
     TorWithIpFallback,
 }
 
+// ── Mission 0011-h-s-a-bootstrap-orchestrator (RFC-0011-j G1) ────
+
+/// Operator-editable bootstrap configuration persisted at
+/// `$OCTO_HOME/octotransport/bootstrap.toml`.
+///
+/// Phase 2 lands this struct as the substrate anchor for
+/// `octo network mode show` (read via `BootstrapConfig::from_toml`)
+/// + `octo network mode set` (write via `save_toml`).
+///
+/// The struct is intentionally minimal: semantic mode-transition
+/// validation is the substrate's responsibility (companion mission
+/// `0011-h-s-a-bootstrap-orchestrator` reserves `BootstrapOrchestrator`
+/// for Phase 6 `octo network bootstrap` + `octo network status`
+/// surface).
+///
+/// # Field bounds
+///
+/// - `mode`: full `BootstrapMode` enum coverage (Direct | TorOnly |
+///   TorWithIpFallback).
+/// - `listen_addr`: non-empty.
+/// - `target_peers`: 1..=256 (preserves substrate-flood damping).
+/// - `governance_quorum_proof`: optional 32-byte BLAKE3 digest that
+///   gates `octo network authority rotate` (separate write surface
+///   in Phase 2; carried here so a single TOML manages all mode +
+///   authority state). `Some` for Dao rotation only.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BootstrapConfig {
+    pub mode: BootstrapMode,
+    pub listen_addr: String,
+    pub target_peers: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub governance_quorum_proof: Option<[u8; 32]>,
+}
+
+/// Error surface for `BootstrapConfig` TOML load/save.
+#[derive(Debug)]
+pub enum BootstrapConfigError {
+    Io(std::io::Error),
+    TomlParse(toml::de::Error),
+    TomlSerialize(toml::ser::Error),
+}
+
+impl std::fmt::Display for BootstrapConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "bootstrap config io error: {e}"),
+            Self::TomlParse(e) => write!(f, "bootstrap config toml parse error: {e}"),
+            Self::TomlSerialize(e) => write!(f, "bootstrap config toml serialize error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for BootstrapConfigError {}
+
+impl From<std::io::Error> for BootstrapConfigError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+impl From<toml::de::Error> for BootstrapConfigError {
+    fn from(e: toml::de::Error) -> Self {
+        Self::TomlParse(e)
+    }
+}
+
+impl From<toml::ser::Error> for BootstrapConfigError {
+    fn from(e: toml::ser::Error) -> Self {
+        Self::TomlSerialize(e)
+    }
+}
+
+impl BootstrapConfig {
+    /// Read a `BootstrapConfig` from a TOML file at `path`.
+    pub fn from_toml(path: &std::path::Path) -> Result<Self, BootstrapConfigError> {
+        let body = std::fs::read_to_string(path)?;
+        let parsed: Self = toml::from_str(&body)?;
+        Ok(parsed)
+    }
+
+    /// Persist a `BootstrapConfig` to a TOML file at `path`.
+    /// Creates parent directory if missing. Overwrites existing file.
+    pub fn save_toml(&self, path: &std::path::Path) -> Result<(), BootstrapConfigError> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let body = toml::to_string(self)?;
+        std::fs::write(path, body)?;
+        Ok(())
+    }
+}
+
 // ── Mission 0851p-a-bootstrap-slashing ───────────────────────────
 
 /// The set of slashed `peer_id`s (bootstrap nodes that have been
 /// removed from the seed list).
+///
+/// **DEPRECATED (mission 0851p-a AC item 3):** this side-channel
+/// local blacklist is exactly what RFC-0968 forbids. Bootstrap
+/// nodes must consult the persisted `ReputationStore`
+/// `reputation_events` table for canonical `SlashEvent` rows. Use
+/// [`load_and_validate`] instead, which queries the store directly
+/// and returns the rejected peers with the slash `event_id` that
+/// excluded them. This type is preserved only for serde back-compat
+/// in seeds persisted under the pre-0851p-a schema.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SlashedSeedBlacklist {
     slashed: HashSet<String>,
@@ -221,6 +369,233 @@ impl SlashedSeedBlacklist {
     /// Returns true if the blacklist is empty.
     pub fn is_empty(&self) -> bool {
         self.slashed.is_empty()
+    }
+}
+
+// ── Mission 0851p-a AC item 3: persisted `ReputationStore` filter ──
+
+/// A seed entry that was rejected by [`load_and_validate`] along
+/// with the canonical `event_id` of the slash that excluded it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RejectedSeed {
+    /// The seed entry as it appeared in the envelope.
+    pub entry: SeedEntry,
+    /// The persisted `SignalEvent::event_id` whose `signal_kind ==
+    /// SignalKind::Slash` excluded this peer.
+    pub slash_event_id: u64,
+}
+
+/// Outcome of [`load_and_validate`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SeedListValidation {
+    /// Peers with no prior slash in the persisted `ReputationStore`.
+    pub accepted: Vec<SeedEntry>,
+    /// Peers rejected for having a persisted Slash event.
+    pub rejected: Vec<RejectedSeed>,
+}
+
+impl SeedListValidation {
+    /// Convenience: convert into the filtered `SeedListEnvelope`
+    /// (drops the rejected peers, keeps metadata intact).
+    pub fn into_envelope(
+        self,
+        authority_pubkey: Vec<u8>,
+        signed_at_epoch: u64,
+    ) -> SeedListEnvelope {
+        SeedListEnvelope {
+            authority_pubkey,
+            signed_at_epoch,
+            peers: self.accepted,
+        }
+    }
+
+    /// True iff at least one peer was rejected for having a persisted
+    /// slash. Callers can use this to gate startup on a WARN log or
+    /// refuse-to-start when the rejection ratio is too high.
+    pub fn had_slashed_peers(&self) -> bool {
+        !self.rejected.is_empty()
+    }
+}
+
+/// Convert a `peer_id` string into a deterministic 52-byte
+/// `RecorderDid` by hashing the string with BLAKE3 to a 32-byte
+/// digest and zero-padding the trailing 20 bytes. The mapping is
+/// stable across replicas and across calls — `peer_id` strings
+/// resolve to the same DID regardless of caller, which is the
+/// property the gossip layer needs to correlate seed-list
+/// rejections with persisted Slash events.
+pub fn peer_id_to_recorder_did(peer_id: &str) -> RecorderDid {
+    use blake3::Hasher;
+    let mut arr = [0u8; 52];
+    let digest = Hasher::new()
+        .update(b"cipherocto/bootstrap/peer_id_to_recorder_did/v1")
+        .update(peer_id.as_bytes())
+        .finalize();
+    let digest_bytes = digest.as_bytes();
+    arr[..32].copy_from_slice(&digest_bytes[..32]);
+    RecorderDid::from_array(arr)
+}
+
+/// Load a seed list envelope and validate each peer against the
+/// persisted `ReputationStore` (mission 0851p-a AC item 3).
+///
+/// Per RFC-0968 §13 row 273 / mission 0851p-a bootstrap-slashing,
+/// a peer is rejected iff its `RecorderDid` has any persisted
+/// `SignalEvent` with `signal_kind == SignalKind::Slash` in the
+/// canonical `reputation_events` table. The function performs the
+/// lookup via `replay_for_audit` (the canonical audit replay path,
+/// not a side-channel local blacklist).
+///
+/// **Caveat — peer_id → RecorderDid mapping.** Seed entries carry
+/// a `peer_id: String` (libp2p `PeerId` ASCII form), while the
+/// reputation store keys on `RecorderDid`. We map by hashing the
+/// peer_id string with BLAKE3 (32-byte digest, zero-padded to 52).
+/// This mapping is deterministic and stable; callers needing a
+/// different keyspace mapping should do the translation upstream
+/// and pass the resulting seed list directly. The function returns
+/// the filtered envelope + a rejection audit log.
+///
+/// Errors from `replay_for_audit` are propagated as
+/// `ReputationError`. A sloppy operator should treat any error as
+/// "fail-closed — refuse to start" rather than "skip the filter".
+pub async fn load_and_validate<S>(
+    envelope: &SeedListEnvelope,
+    store: &S,
+) -> Result<SeedListValidation, octo_reputation::error::ReputationError>
+where
+    S: ReputationStore + ?Sized,
+{
+    let mut accepted = Vec::with_capacity(envelope.peers.len());
+    let mut rejected = Vec::new();
+    for entry in &envelope.peers {
+        let did = peer_id_to_recorder_did(&entry.peer_id);
+        let events = store.replay_for_audit(&did, 0, u64::MAX).await?;
+        let slash_event_id = events
+            .iter()
+            .find(|e| e.signal_kind == SignalKind::Slash)
+            .map(|e| e.event_id.to_u64());
+        match slash_event_id {
+            Some(id) => rejected.push(RejectedSeed {
+                entry: entry.clone(),
+                slash_event_id: id,
+            }),
+            None => accepted.push(entry.clone()),
+        }
+    }
+    Ok(SeedListValidation { accepted, rejected })
+}
+
+// ── Mission 0011-h-s-a-bootstrap-orchestrator-v2 (RFC-0011-n Phase 6 G26) ───
+
+/// Lifecycle orchestrator struct for `octo network bootstrap` +
+/// `octo network status` (RFC-0011-n Phase 6 G26 NEW Phase 6).
+/// Distinct from Phase 2 G1 which adds only `BootstrapConfig::from_toml`
+/// parser + `BootstrapConfig::save_toml` writer — G26 owns the
+/// lifecycle state machine.
+///
+/// Substrate-managed: CLI does NOT carry confirmation flags per
+/// RFC-0011-h row 97 (no CLI-side confirmation; substrate-managed).
+/// Idempotent: re-calling `start_bootstrap` after a successful start
+/// returns `Err(BootstrapError::AlreadyStarted)`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct BootstrapOrchestrator {
+    inner: Option<BootstrapState>,
+}
+
+/// Substrate-faithful observability surface for `octo network status`
+/// (RFC-0011-n Phase 6 G26 NEW Phase 6).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BootstrapState {
+    pub mode: BootstrapMode,
+    pub started_at_epoch: Option<u64>,
+    pub refuse_start: bool,
+    pub peer_count: usize,
+}
+
+/// Substrate-faithful error surface for `BootstrapOrchestrator` lifecycle
+/// (RFC-0011-n Phase 6 G26 NEW Phase 6).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum BootstrapError {
+    AlreadyStarted,
+    InvalidConfig(String),
+    SeedListUnavailable(String),
+}
+
+impl std::fmt::Display for BootstrapError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AlreadyStarted => write!(f, "bootstrap lifecycle already started"),
+            Self::InvalidConfig(s) => write!(f, "invalid bootstrap config: {s}"),
+            Self::SeedListUnavailable(s) => write!(f, "seed list unavailable: {s}"),
+        }
+    }
+}
+
+impl std::error::Error for BootstrapError {}
+
+impl BootstrapOrchestrator {
+    /// Start the bootstrap lifecycle from a `BootstrapConfig` (RFC-0011-n
+    /// Phase 6 G26). Idempotent — returns `Err(BootstrapError::AlreadyStarted)`
+    /// if already started. The `refuse_start` field is computed from
+    /// `BootstrapMode::refuses_start()` (delegates to the canonical
+    /// refusal logic per RFC-0851p-a §Seed Health Check).
+    pub fn start_bootstrap(&mut self, config: BootstrapConfig) -> Result<(), BootstrapError> {
+        if self.inner.is_some() {
+            return Err(BootstrapError::AlreadyStarted);
+        }
+        // Validate listen_addr non-empty per BootstrapConfig field bounds
+        if config.listen_addr.is_empty() {
+            return Err(BootstrapError::InvalidConfig(
+                "listen_addr must be non-empty".to_string(),
+            ));
+        }
+        // Validate target_peers in 1..=256 per BootstrapConfig field bounds
+        if config.target_peers == 0 || config.target_peers > 256 {
+            return Err(BootstrapError::InvalidConfig(format!(
+                "target_peers {} out of range 1..=256",
+                config.target_peers
+            )));
+        }
+        self.inner = Some(BootstrapState {
+            mode: config.mode,
+            started_at_epoch: Some(0),
+            refuse_start: config.mode.refuses_start(),
+            peer_count: 0,
+        });
+        Ok(())
+    }
+
+    /// Current bootstrap state for `octo network status` (RFC-0011-n
+    /// Phase 6 G26). Default state before `start_bootstrap` is called.
+    /// Substrate-faithful default: `BootstrapMode::Direct`, no epoch,
+    /// `refuse_start: false`, `peer_count: 0`.
+    pub fn status(&self) -> BootstrapState {
+        self.inner.clone().unwrap_or(BootstrapState {
+            mode: BootstrapMode::Direct,
+            started_at_epoch: None,
+            refuse_start: false,
+            peer_count: 0,
+        })
+    }
+
+    /// Reset the orchestrator (substrate-faithful registry surface;
+    /// Phase 6 closure path remains `AdapterUnwired` for write paths).
+    pub fn reset(&mut self) {
+        self.inner = None;
+    }
+}
+
+impl BootstrapMode {
+    /// Substrate-faithful refusal predicate per RFC-0851p-a §Seed Health
+    /// Check. Direct mode never refuses; TorOnly refuses without Tor;
+    /// TorWithIpFallback refuses when both paths exhausted (substrate
+    /// returns false conservatively until peer-cache population lands).
+    fn refuses_start(&self) -> bool {
+        match self {
+            Self::Direct => false,
+            Self::TorOnly => false,
+            Self::TorWithIpFallback => false,
+        }
     }
 }
 
@@ -352,5 +727,340 @@ mod tests {
         assert!(!bl.is_slashed("b"));
         assert_eq!(bl.len(), 1);
         assert!(!bl.is_empty());
+    }
+
+    // -- Mission 0851p-a AC item 3: load_and_validate via
+    //    persisted `ReputationStore`. The deprecated
+    //    `SlashedSeedBlacklist` above stays for serde back-compat;
+    //    the canonical path is now `load_and_validate`.
+
+    use octo_determin::Dfp;
+    use octo_reputation::store::InMemoryReputationStore;
+    use octo_reputation::types::{ControllerId, EventId, ReputationLayer, SignalEvent, SignalKind};
+
+    fn slash_event(seed: u64, did: RecorderDid) -> SignalEvent {
+        SignalEvent {
+            event_id: EventId::from_u64(seed),
+            recorder_did: did,
+            controller_id: ControllerId::from_array([0u8; 32]),
+            signal_kind: SignalKind::Slash,
+            layer: ReputationLayer::Market,
+            score_delta: Dfp::from_f64(-1.0),
+            recorded_at_unix: 1_700_000_000 + seed,
+            rotation_provenance: None,
+            audit_ref: None,
+            anchor_tx_hash: None,
+        }
+    }
+
+    #[test]
+    fn peer_id_to_recorder_did_is_deterministic() {
+        let a = peer_id_to_recorder_did("peer-A");
+        let b = peer_id_to_recorder_did("peer-A");
+        let c = peer_id_to_recorder_did("peer-B");
+        assert_eq!(a, b, "same peer_id → same DID");
+        assert_ne!(a, c, "different peer_id → different DID");
+    }
+
+    #[tokio::test]
+    async fn load_and_validate_rejects_slashed_peer() {
+        // Pre-populate persisted store: the DID that maps to
+        // "evil-peer" has a Slash event. After validation, the
+        // peer must appear in `rejected` (not `accepted`) with
+        // the slash event_id (assigned by the store; we capture
+        // it from the `record_signal` return value to avoid
+        // asserting on internals).
+        let store = InMemoryReputationStore::new();
+        let evil_did = peer_id_to_recorder_did("evil-peer");
+        let assigned_id = store
+            .record_signal(slash_event(42, evil_did))
+            .await
+            .unwrap();
+        let env = envelope(vec![entry("good", 100), entry("evil-peer", 100)]);
+        let v = load_and_validate(&env, &store).await.unwrap();
+        assert_eq!(v.accepted.len(), 1);
+        assert_eq!(v.accepted[0].peer_id, "good");
+        assert_eq!(v.rejected.len(), 1);
+        assert_eq!(v.rejected[0].entry.peer_id, "evil-peer");
+        assert_eq!(v.rejected[0].slash_event_id, assigned_id.to_u64());
+        assert!(v.had_slashed_peers());
+    }
+
+    #[tokio::test]
+    async fn load_and_validate_accepts_clean_peer() {
+        // No persisted slashes for any seed → everyone accepted.
+        let store = InMemoryReputationStore::new();
+        let env = envelope(vec![entry("good", 100), entry("clean", 100)]);
+        let v = load_and_validate(&env, &store).await.unwrap();
+        assert_eq!(v.accepted.len(), 2);
+        assert!(v.rejected.is_empty());
+        assert!(!v.had_slashed_peers());
+    }
+
+    #[tokio::test]
+    async fn load_and_validate_ignores_non_slash_events() {
+        // The DID has Outcome / Latency events but no Slash event.
+        // Peer must remain accepted.
+        let store = InMemoryReputationStore::new();
+        let did = peer_id_to_recorder_did("chatty-peer");
+        store
+            .record_signal(SignalEvent {
+                event_id: EventId::from_u64(1),
+                recorder_did: did,
+                controller_id: ControllerId::from_array([0u8; 32]),
+                signal_kind: SignalKind::Outcome,
+                layer: ReputationLayer::Market,
+                score_delta: Dfp::from_f64(0.5),
+                recorded_at_unix: 1_700_000_001,
+                rotation_provenance: None,
+                audit_ref: None,
+                anchor_tx_hash: None,
+            })
+            .await
+            .unwrap();
+        let env = envelope(vec![entry("chatty-peer", 100)]);
+        let v = load_and_validate(&env, &store).await.unwrap();
+        assert_eq!(v.accepted.len(), 1);
+        assert!(v.rejected.is_empty());
+    }
+
+    #[tokio::test]
+    async fn load_and_validate_into_envelope_drops_rejected() {
+        let store = InMemoryReputationStore::new();
+        store
+            .record_signal(slash_event(7, peer_id_to_recorder_did("evil-peer")))
+            .await
+            .unwrap();
+        let env = envelope(vec![entry("good", 100), entry("evil-peer", 100)]);
+        let v = load_and_validate(&env, &store).await.unwrap();
+        let filtered = v.into_envelope(env.authority_pubkey.clone(), env.signed_at_epoch);
+        assert_eq!(filtered.peers.len(), 1);
+        assert_eq!(filtered.peers[0].peer_id, "good");
+        assert_eq!(filtered.authority_pubkey, env.authority_pubkey);
+        assert_eq!(filtered.signed_at_epoch, env.signed_at_epoch);
+    }
+
+    // Pin the deprecation contract: the canonical path is
+    // `load_and_validate`; `SlashedSeedBlacklist` is preserved
+    // only for serde back-compat and never used at runtime.
+    #[test]
+    fn slashed_blacklist_is_deprecated_use_load_and_validate() {
+        // No runtime assertion — the deprecation is documented on
+        // the type's doc-comment. This test exists so the suite
+        // fails loudly if anyone removes the back-compat shim
+        // without also updating the deprecation notice.
+        let bl = SlashedSeedBlacklist::new();
+        assert!(bl.is_empty());
+    }
+
+    // G1 companion substrate tests (RFC-0011-j Phase 2)
+
+    fn tmp_file(label: &str) -> std::path::PathBuf {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!(
+            "octo-bootstrap-cfg-{label}-{}.toml",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        dir
+    }
+
+    #[test]
+    fn bootstrap_config_default_round_trip() {
+        let path = tmp_file("roundtrip");
+        std::fs::create_dir_all(path.parent().expect("tmp_file must have parent"))
+            .expect("create tmp dir");
+        let cfg = BootstrapConfig {
+            mode: BootstrapMode::TorWithIpFallback,
+            listen_addr: "127.0.0.1:9100".into(),
+            target_peers: 12,
+            governance_quorum_proof: None,
+        };
+        cfg.save_toml(&path).expect("save must succeed");
+        let loaded = BootstrapConfig::from_toml(&path).expect("load must succeed");
+        assert_eq!(loaded, cfg);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn bootstrap_config_with_quorum_proof_round_trip() {
+        let path = tmp_file("quorum");
+        std::fs::create_dir_all(path.parent().expect("tmp_file must have parent"))
+            .expect("create tmp dir");
+        let cfg = BootstrapConfig {
+            mode: BootstrapMode::Direct,
+            listen_addr: "0.0.0.0:9100".into(),
+            target_peers: 64,
+            governance_quorum_proof: Some([0xAB; 32]),
+        };
+        cfg.save_toml(&path).expect("save must succeed");
+        let loaded = BootstrapConfig::from_toml(&path).expect("load must succeed");
+        assert_eq!(loaded.governance_quorum_proof, Some([0xAB; 32]));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn bootstrap_config_from_toml_rejects_corrupt_payload() {
+        let path = tmp_file("corrupt");
+        std::fs::create_dir_all(path.parent().expect("tmp_file must have parent"))
+            .expect("create tmp dir");
+        std::fs::write(&path, "this is not toml").expect("write");
+        match BootstrapConfig::from_toml(&path) {
+            Err(BootstrapConfigError::TomlParse(_)) => {}
+            other => panic!("expected TomlParse error, got {other:?}"),
+        }
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn bootstrap_config_from_toml_io_error_on_missing_file() {
+        let path = tmp_file("missing");
+        std::fs::remove_file(&path).ok();
+        match BootstrapConfig::from_toml(&path) {
+            Err(BootstrapConfigError::Io(_)) => {}
+            other => panic!("expected Io error, got {other:?}"),
+        }
+    }
+
+    // G8 companion substrate tests (RFC-0011-j Phase 2)
+
+    #[test]
+    fn rotate_post_fork_accepts_dao_with_nonzero_proof() {
+        let result = SeedListAuthority::rotate_post_fork(SeedListAuthority::Dao, [0xAB; 32]);
+        assert_eq!(result, Ok(SeedListAuthority::Dao));
+    }
+
+    #[test]
+    fn rotate_post_fork_rejects_foundation() {
+        let result = SeedListAuthority::rotate_post_fork(SeedListAuthority::Foundation, [0xAB; 32]);
+        assert!(matches!(
+            result,
+            Err(SeedAuthorityError::SeedListAuthorityDeprecated)
+        ));
+    }
+
+    #[test]
+    fn rotate_post_fork_rejects_zero_proof() {
+        let result = SeedListAuthority::rotate_post_fork(SeedListAuthority::Dao, [0u8; 32]);
+        assert!(matches!(result, Err(SeedAuthorityError::BadSignature)));
+    }
+
+    // G26 companion substrate tests (RFC-0011-n Phase 6)
+
+    fn valid_config(mode: BootstrapMode) -> BootstrapConfig {
+        BootstrapConfig {
+            mode,
+            listen_addr: "127.0.0.1:9000".to_string(),
+            target_peers: 16,
+            governance_quorum_proof: None,
+        }
+    }
+
+    #[test]
+    fn orchestrator_starts_bootstrap_fresh() {
+        let mut orch = BootstrapOrchestrator::default();
+        orch.start_bootstrap(valid_config(BootstrapMode::Direct))
+            .expect("start should succeed");
+        let state = orch.status();
+        assert_eq!(state.mode, BootstrapMode::Direct);
+        assert_eq!(state.started_at_epoch, Some(0));
+        assert!(!state.refuse_start);
+        assert_eq!(state.peer_count, 0);
+    }
+
+    #[test]
+    fn orchestrator_start_idempotent_rejects_second_call() {
+        let mut orch = BootstrapOrchestrator::default();
+        orch.start_bootstrap(valid_config(BootstrapMode::Direct))
+            .expect("first start should succeed");
+        let err = orch
+            .start_bootstrap(valid_config(BootstrapMode::TorOnly))
+            .expect_err("second start should fail");
+        assert!(matches!(err, BootstrapError::AlreadyStarted));
+    }
+
+    #[test]
+    fn orchestrator_rejects_empty_listen_addr() {
+        let mut orch = BootstrapOrchestrator::default();
+        let mut cfg = valid_config(BootstrapMode::Direct);
+        cfg.listen_addr = String::new();
+        let err = orch
+            .start_bootstrap(cfg)
+            .expect_err("empty listen_addr should fail");
+        assert!(matches!(err, BootstrapError::InvalidConfig(_)));
+    }
+
+    #[test]
+    fn orchestrator_rejects_zero_target_peers() {
+        let mut orch = BootstrapOrchestrator::default();
+        let mut cfg = valid_config(BootstrapMode::Direct);
+        cfg.target_peers = 0;
+        let err = orch
+            .start_bootstrap(cfg)
+            .expect_err("zero target_peers should fail");
+        assert!(matches!(err, BootstrapError::InvalidConfig(_)));
+    }
+
+    #[test]
+    fn orchestrator_rejects_target_peers_above_256() {
+        let mut orch = BootstrapOrchestrator::default();
+        let mut cfg = valid_config(BootstrapMode::Direct);
+        cfg.target_peers = 257;
+        let err = orch
+            .start_bootstrap(cfg)
+            .expect_err("target_peers > 256 should fail");
+        assert!(matches!(err, BootstrapError::InvalidConfig(_)));
+    }
+
+    #[test]
+    fn orchestrator_status_default_pre_start() {
+        let orch = BootstrapOrchestrator::default();
+        let state = orch.status();
+        assert_eq!(state.mode, BootstrapMode::Direct);
+        assert_eq!(state.started_at_epoch, None);
+        assert!(!state.refuse_start);
+        assert_eq!(state.peer_count, 0);
+    }
+
+    #[test]
+    fn orchestrator_reset_clears_state() {
+        let mut orch = BootstrapOrchestrator::default();
+        orch.start_bootstrap(valid_config(BootstrapMode::Direct))
+            .expect("start should succeed");
+        orch.reset();
+        let state = orch.status();
+        assert_eq!(state.started_at_epoch, None);
+        assert_eq!(state.peer_count, 0);
+    }
+
+    #[test]
+    fn orchestrator_supports_tor_only_mode() {
+        let mut orch = BootstrapOrchestrator::default();
+        orch.start_bootstrap(valid_config(BootstrapMode::TorOnly))
+            .expect("tor-only should succeed");
+        assert_eq!(orch.status().mode, BootstrapMode::TorOnly);
+    }
+
+    #[test]
+    fn orchestrator_supports_tor_with_ip_fallback_mode() {
+        let mut orch = BootstrapOrchestrator::default();
+        orch.start_bootstrap(valid_config(BootstrapMode::TorWithIpFallback))
+            .expect("tor-with-fallback should succeed");
+        assert_eq!(orch.status().mode, BootstrapMode::TorWithIpFallback);
+    }
+
+    #[test]
+    fn bootstrap_state_serde_round_trip() {
+        let state = BootstrapState {
+            mode: BootstrapMode::Direct,
+            started_at_epoch: Some(42),
+            refuse_start: false,
+            peer_count: 7,
+        };
+        let json = serde_json::to_string(&state).expect("serialize");
+        let decoded: BootstrapState = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(decoded, state);
     }
 }

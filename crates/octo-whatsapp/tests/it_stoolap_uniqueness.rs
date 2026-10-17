@@ -34,8 +34,10 @@ use std::path::Path;
 #[test]
 fn no_direct_stoolap_dependency() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    assert!(src.is_dir(), "expected octo-whatsapp src/ at {:?}", src);
+    let entries = walkdir(&src);
     let mut bad = Vec::new();
-    for entry in walkdir(&src) {
+    for entry in &entries {
         if entry.extension().map(|x| x == "rs").unwrap_or(false) {
             // Legitimate boundaries: see module docstring.
             let path_str = entry.to_string_lossy().replace('\\', "/");
@@ -45,7 +47,7 @@ fn no_direct_stoolap_dependency() {
             {
                 continue;
             }
-            let content = fs::read_to_string(&entry).unwrap();
+            let content = fs::read_to_string(entry).unwrap();
             // Skip lines inside `#[cfg(test)]` blocks — those
             // are not compiled into the production binary so
             // they cannot violate the runtime's coupling to
@@ -106,6 +108,20 @@ fn no_direct_stoolap_dependency() {
             // counter never carries across files in the test).
         }
     }
+    // Anti-vacuity: `walkdir` returns an empty Vec when its root is not a
+    // directory, and `bad.is_empty()` is then trivially true. Without this
+    // floor a moved or renamed `src/` turns the guard green while it inspects
+    // nothing — the exact "found nothing wrong" vs "looked at nothing"
+    // confusion this guard exists to rule out. The bound is deliberately far
+    // below today's count so ordinary file churn never trips it; its job is
+    // to catch a collapsed walk, not to track the tree.
+    assert!(
+        entries.len() >= 100,
+        "only {} files walked under {} — the scan saw nothing, so a green \
+         result here means nothing was inspected",
+        entries.len(),
+        src.display()
+    );
     assert!(
         bad.is_empty(),
         "octo-whatsapp src/ must not reference stoolap outside `query/` and `ipc/handlers/sql.rs`; offenders:\n{}",
@@ -115,14 +131,12 @@ fn no_direct_stoolap_dependency() {
 
 fn walkdir(p: &Path) -> Vec<std::path::PathBuf> {
     let mut out = Vec::new();
-    if p.is_dir() {
-        for entry in fs::read_dir(p).unwrap() {
-            let e = entry.unwrap().path();
-            if e.is_dir() {
-                out.extend(walkdir(&e));
-            } else if e.extension().map(|x| x == "rs").unwrap_or(false) {
-                out.push(e);
-            }
+    for entry in fs::read_dir(p).unwrap() {
+        let e = entry.unwrap().path();
+        if e.is_dir() {
+            out.extend(walkdir(&e));
+        } else if e.extension().map(|x| x == "rs").unwrap_or(false) {
+            out.push(e);
         }
     }
     out

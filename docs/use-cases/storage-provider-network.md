@@ -277,8 +277,8 @@ graph TB
 
 ## Related RFCs
 
-- [RFC-0900 (Economics): AI Quota Marketplace Protocol](../rfcs/0900-ai-quota-marketplace.md)
-- [RFC-0107 (Numeric/Math): Deterministic Storage Engine](rfcs/0107-deterministic-storage-engine.md)
+- RFC-0900
+- [RFC-0107: Deterministic Storage Engine](rfcs/0107-deterministic-storage-engine.md)
 
 ---
 

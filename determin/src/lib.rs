@@ -29,14 +29,18 @@ pub const BIGINT_SPEC_VERSION: u32 = 1;
 pub const DECIMAL_SPEC_VERSION: u32 = 1;
 
 mod arithmetic;
+pub mod asset_id;
+pub use asset_id::{asset_id_for, ASSET_ID_DOMAIN_V1, ROLE_TOKENS};
 pub mod bigint;
 pub mod consensus;
 pub mod dact;
 pub mod dact_lut;
+pub mod dcmp;
 pub mod dcs;
 pub mod decimal;
 #[cfg(feature = "use-internal-bigint")]
 pub mod decimal_internal;
+pub mod dfp_compare;
 pub mod dmat;
 pub mod dqa;
 pub mod dvec;
@@ -49,6 +53,10 @@ pub use bigint::{
     bigint_add, bigint_div, bigint_divmod, bigint_mod, bigint_mul, bigint_sub, BigInt, BigIntError,
 };
 pub use dact::{leaky_relu, relu, relu6, sigmoid, tanh_dqa, DactError};
+pub use dcmp::{
+    dfp_abs, dfp_clamp, dfp_cmp, dfp_eq, dfp_eq_ieee754, dfp_ge, dfp_gt, dfp_le, dfp_lt, dfp_max,
+    dfp_min, dfp_neg,
+};
 pub use dcs::{
     dcs_deserialize_bool, dcs_serialize_bool, dcs_serialize_bytes, dcs_serialize_dmat,
     dcs_serialize_dvec, dcs_serialize_enum, dcs_serialize_i128, dcs_serialize_i64,
@@ -66,6 +74,7 @@ pub use dqa::{
     dqa_abs, dqa_add, dqa_assign_to_column, dqa_cmp, dqa_div, dqa_mul, dqa_negate, dqa_sub, Dqa,
     DqaEncoding, DqaError, CANONICAL_ZERO,
 };
+
 pub use dvec::{
     dot_product, norm, normalize, squared_distance, vec_add, vec_mul, vec_scale, vec_sub, DVec,
     DvecError, DvecScalar,
@@ -88,7 +97,20 @@ pub enum DfpClass {
 
 /// Deterministic Floating-Point representation
 /// Uses tagged representation to avoid encoding collisions
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+///
+/// **Equality semantics (RFC-0104 + RFC-0968-A1, 2026-07-26):**
+/// `Dfp` implements `PartialEq`/`Eq`/`Hash` per **IEEE-754** semantics,
+/// defined manually in [`dfp_compare::PartialEq for Dfp`]:
+///   - `+0 == -0` (Zero is sign-blind)
+///   - `+Inf == +Inf`, `-Inf == -Inf`, `+Inf != -Inf`
+///   - All NaN compare equal (`NaN == NaN` is `true`)
+///
+/// Cross-replica agreement MUST use the canonical 24-byte wire form:
+/// `DfpEncoding::from_dfp(&d).to_bytes()`. RFC-0968 §16 mandates that
+/// persisted Dfp BLOBs are bit-deterministic across compilers and platforms;
+/// the `PartialEq`/`Eq`/`Hash` impls here are for in-memory convenience
+/// only.
+#[derive(Clone, Copy, Debug)]
 pub struct Dfp {
     /// Mantissa (always odd for Normal class, canonical form)
     pub mantissa: u128,
@@ -183,11 +205,15 @@ impl Dfp {
             return;
         }
 
-        // Ensure mantissa is odd (canonical form)
+        // Ensure mantissa is odd (canonical form). Use saturating arithmetic
+        // so that `Dfp::new(even_mantissa, i32::MAX, ...)` (or any
+        // other caller that hands us a high exponent) cannot trigger
+        // platform-dependent i32 overflow in release builds where the
+        // overflow check is compiled out.
         let trailing_zeros = self.mantissa.trailing_zeros() as i32;
         if trailing_zeros > 0 {
             self.mantissa >>= trailing_zeros;
-            self.exponent += trailing_zeros;
+            self.exponent = self.exponent.saturating_add(trailing_zeros);
         }
 
         // Mantissa should now be odd
@@ -310,13 +336,99 @@ impl Dfp {
             }
             NaN => f64::NAN,
             Normal => {
-                let mantissa_f64 = self.mantissa as f64;
-                let mut value = mantissa_f64 * 2.0_f64.powi(self.exponent);
-                if self.sign {
-                    value = -value;
-                }
-                value
+                // Construct the IEEE-754 bit pattern deterministically
+                // rather than going through `f64::powi` (whose precision
+                // Rust's stdlib explicitly disclaims as platform/version
+                // dependent and is also affected by CPU FTZ/DAZ modes
+                // for subnormal exponents).
+                f64::from_bits(Self::u128_to_f64_bits(
+                    self.mantissa,
+                    self.exponent,
+                    self.sign,
+                ))
             }
+        }
+    }
+
+    /// Construct the IEEE-754 bit pattern for `mantissa * 2^exponent`
+    /// as a 64-bit value suitable for `f64::from_bits`. Deterministic
+    /// across platforms, optimization levels, and Rust versions.
+    fn u128_to_f64_bits(mantissa: u128, exponent: i32, sign: bool) -> u64 {
+        const KEEP_MASK: u64 = 0x000F_FFFF_FFFF_FFFF; // low 52 bits
+        const EXP_MASK: u64 = 0x7FF0_0000_0000_0000; // bits 52..62
+        const SIGN_BIT: u64 = 0x8000_0000_0000_0000;
+
+        if mantissa == 0 {
+            return if sign { SIGN_BIT } else { 0 };
+        }
+
+        // MSB position of mantissa (0-indexed).
+        let msb = 127 - mantissa.leading_zeros() as i32;
+        // Total exponent of the represented value: mantissa * 2^exponent.
+        let total_exp = msb + exponent;
+        // f64 biased exponent (zero in subnormal range).
+        let biased_exp = total_exp + 1023;
+
+        if biased_exp >= 2047 {
+            // Overflow to ±infinity (NaN/Inf are handled by the caller).
+            return if sign {
+                SIGN_BIT | 0x7FF0_0000_0000_0000
+            } else {
+                0x7FF0_0000_0000_0000
+            };
+        }
+
+        if biased_exp > 0 {
+            // Normal range. Bring mantissa MSB to bit 52 with RNE
+            // rounding of the lost low bits. Bit 52 of `kept` is the
+            // implicit-1 position — having it set is fine (just means
+            // mantissa >= 1.0); true carry into the next exponent
+            // happens only when `kept + 1` overflows into bit 53+.
+            let (kept, exp_increment) = if msb >= 52 {
+                let shift = (msb - 52) as u32;
+                let kept = (mantissa >> shift) as u64;
+                let round_bit = shift >= 1 && (mantissa >> (shift - 1)) & 1 != 0;
+                let sticky = shift >= 2 && (mantissa & ((1u128 << (shift - 1)) - 1)) != 0;
+                let lsb = kept & 1;
+                if round_bit && (sticky || lsb == 1) {
+                    let r = kept + 1;
+                    // True carry: r has bit 53 set, i.e., r > (1<<53) - 1 = 0x1fffffffffffff.
+                    // `kept` lives in bits 0..53 (bit 52 = implicit 1).
+                    // Adding 1 carries into bit 53 only when all of
+                    // bits 0..52 were 1 (the max-value kept).
+                    if r > 0x1fffffffffffffu64 {
+                        (0u64, 1u64)
+                    } else {
+                        (r & KEEP_MASK, 0)
+                    }
+                } else {
+                    (kept & KEEP_MASK, 0)
+                }
+            } else {
+                (((mantissa as u64) << (52 - msb)) & KEEP_MASK, 0u64)
+            };
+            let final_biased = biased_exp as u64 + exp_increment;
+            let exp_bits = (final_biased << 52) & EXP_MASK;
+            return if sign {
+                SIGN_BIT | exp_bits | kept
+            } else {
+                exp_bits | kept
+            };
+        }
+
+        // Subnormal range: value = m * 2^-1074 where m is 52-bit.
+        // shift_left = total_exp + 1074 (the bits we need to shift
+        // mantissa up to land in the 52-bit subnormal mantissa).
+        let shift_left = 1074 + total_exp;
+        if shift_left < 0 {
+            // Below smallest subnormal; flush to ±0.
+            return if sign { SIGN_BIT } else { 0 };
+        }
+        let m = ((mantissa as u64) << shift_left) & KEEP_MASK;
+        if sign {
+            SIGN_BIT | m
+        } else {
+            m
         }
     }
 
@@ -407,9 +519,14 @@ impl DfpEncoding {
             << 24)
             | ((dfp.sign as u32) << 16);
 
+        // Store fields as their native u128/i32/u32 values. `to_bytes`
+        // applies the canonical big-endian byte conversion at the
+        // serialization boundary; storing `.to_be()` here would
+        // double-swap on little-endian hosts and break cross-platform
+        // reproducibility.
         Self {
-            mantissa: dfp.mantissa.to_be(),
-            exponent: dfp.exponent.to_be(),
+            mantissa: dfp.mantissa,
+            exponent: dfp.exponent,
             class_sign,
         }
     }
@@ -419,6 +536,10 @@ impl DfpEncoding {
         let class = (self.class_sign >> 24) & 0xFF;
         let sign = (self.class_sign >> 16) & 0x01;
 
+        // Fields store native values; byte conversion happens at the
+        // `to_bytes`/`from_bytes` boundary. No `from_be` here — the
+        // struct never holds byte-swapped values (paired with
+        // `from_dfp`'s removal of `.to_be()`).
         Dfp {
             class: match class {
                 0 => DfpClass::Normal,
@@ -428,8 +549,8 @@ impl DfpEncoding {
                 _ => DfpClass::NaN,
             },
             sign: sign != 0,
-            mantissa: u128::from_be(self.mantissa),
-            exponent: i32::from_be(self.exponent),
+            mantissa: self.mantissa,
+            exponent: self.exponent,
         }
     }
 
@@ -485,6 +606,47 @@ mod tests {
         assert_eq!(dfp.exponent, 0);
         assert_eq!(dfp.class, DfpClass::Normal);
         assert!(!dfp.sign);
+    }
+
+    /// RFC-0104 + RFC-0968-A1: `PartialEq`/`Eq`/`Hash` per IEEE-754 semantics
+    /// (defined in `dfp_compare.rs`; closed by Session 1 C-C2 / Session 5 P0-18).
+    /// `+0 == -0`; all NaN equal; ±Inf distinct from each other.
+    /// Cross-replica agreement MUST use `DfpEncoding::to_bytes()`, not in-memory `==`.
+    #[test]
+    fn test_dfp_ieee754_eq_semantics() {
+        use std::collections::HashSet;
+
+        // Two NaNs compare equal (IEEE-754 NaN == NaN is true here).
+        assert_eq!(Dfp::nan(), Dfp::nan());
+        assert_eq!(hash_u64(Dfp::nan()), hash_u64(Dfp::nan()));
+
+        // ±0 are equal under IEEE-754 equality (sign-blind).
+        assert_eq!(Dfp::zero(), Dfp::neg_zero());
+
+        // ±Inf are sign-aware: +Inf != -Inf; +Inf == +Inf.
+        assert_eq!(Dfp::infinity(), Dfp::infinity());
+        assert_ne!(Dfp::infinity(), Dfp::neg_infinity());
+
+        // HashSet deduplication uses IEEE-754 equality.
+        let mut set: HashSet<Dfp> = HashSet::new();
+        set.insert(Dfp::zero());
+        set.insert(Dfp::neg_zero()); // collapses to +0 under IEEE-754 hash
+        set.insert(Dfp::nan());
+        assert_eq!(set.len(), 2); // {Zero, NaN}
+
+        // Canonical 24-byte encodings are sign-aware (distinct bytes for ±0).
+        assert_ne!(
+            DfpEncoding::from_dfp(&Dfp::zero()).to_bytes(),
+            DfpEncoding::from_dfp(&Dfp::neg_zero()).to_bytes()
+        );
+    }
+
+    fn hash_u64<H: std::hash::Hash>(h: H) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::Hasher;
+        let mut hasher = DefaultHasher::new();
+        h.hash(&mut hasher);
+        hasher.finish()
     }
 
     #[test]
@@ -741,5 +903,16 @@ mod tests {
         let dfp2 = Dfp::new(6, 0, DfpClass::Normal, false); // 6 = 3 * 2^1
         assert_eq!(dfp2.mantissa, 3);
         assert_eq!(dfp2.exponent, 1);
+    }
+
+    /// `Dqa` is the canonical amount-bearing cross-crate payload
+    /// type (RFC-0862 + RFC-0965 §3). Asserts the canonical
+    /// zero canonicalizes to `scale = 0` so consumers can rely on
+    /// the `scale = 0` invariant for amount-bearing fields.
+    #[test]
+    fn dqa_canonical_zero_is_scale_zero() {
+        let z: Dqa = CANONICAL_ZERO;
+        assert_eq!(z.scale, 0);
+        assert_eq!(z.value, 0);
     }
 }

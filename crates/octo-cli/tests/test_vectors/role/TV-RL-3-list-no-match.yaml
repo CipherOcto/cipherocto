@@ -1,0 +1,9 @@
+# TV-RL-3 — RFC-0011-d §11 Test Vectors.
+vector: TV-RL-3
+description: octo role list --kind nonexistent returns empty
+schema_version: octo.role.test.v1
+invocation:
+  args: [role, list, --kind, nonexistent]
+expect:
+  exit_code: 0
+  stdout_contains: '[]'

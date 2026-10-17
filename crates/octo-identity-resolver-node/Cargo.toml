@@ -1,0 +1,70 @@
+[package]
+name = "octo-identity-resolver-node"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "CipherOcto identity-resolver specialized-node adapter (RFC-0871 §Roles and Authorities). Bridges octo-ident DID codec to the NodeEnvelope mesh."
+
+[lib]
+name = "octo_identity_resolver_node"
+path = "src/lib.rs"
+
+[dependencies]
+# Layer A core — RouterAnnouncePayload type (mission 0871e-phase5c)
+quota-router-core = { path = "../quota-router-core" }
+serde_json = "1"
+# Layer 1 stable substrate (RFC-0871 §Data Structures)
+octo-protocol = { path = "../octo-protocol" }
+# Layer B identity (canonical DID codec, RFC-0010 F4)
+octo-ident = { path = "../octo-ident" }
+# Algorithm dispatch substrate (Layer A years-stable; RFC-0009 AC#11). The hop
+# DID names no algorithm, so the caller supplies one at verify time.
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
+# Layer B identity (HSM-routed IdentityKey for RouterAnnouncePayload
+# binding; mission 0959-placeholder-identity-binding).
+octo-wallet = { path = "../octo-wallet" }
+# Layer D transport adapter (RFC-0863 NodeTransport)
+octo-transport = { path = "../../octo-transport" }
+
+# Async runtime for NetworkReceiver impl + broadcast_announce
+tokio = { version = "1", features = ["rt", "sync", "macros", "time"] }
+# Round-3 review (C4): exact pin — Send-future inference for
+# `pub trait X: Send` is a macro convention that has shifted between
+# minor releases of async-trait. Cross-thread dispatch via
+# `NodeTransport::register_receiver` → `on_receive` (octo-transport)
+# requires the returned future to be `Send`. Pin to the latest 0.1.x
+# patch; the multi-thread TV in `chain.rs` (resolver_backend_send_
+# across_thread_boundary) exercises the Send bound at test time.
+async-trait = "=0.1.92"
+
+# Canonical coding (RFC-0126)
+borsh = "=1.5.0"
+# bs58 for deriving public-key DID wire form (RFC-0010 F4)
+bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
+
+# Errors
+thiserror = "1"
+
+[dev-dependencies]
+# MultiChainMockRegistry in tests/resolve_with_chain.rs (mission
+# 0010-f2-multi-chain-routing). parking_lot::RwLock avoids the
+# poisoning semantics of std::sync::RwLock which complicates test
+# cleanup; same pattern as octo-ident::InMemoryDidRegistry.
+parking_lot = "0.12"
+# AC-14 + AC-13 chain_cross_domain_auth_verifies + true 3-node TV
+# (mission 0871b-cross-node-forwarding closure). Real Ed25519
+# sign+verify cycle over the production `HopSignature::signing_preimage`
+# helper pins the cross-domain auth substrate. Available transitively
+# via octo-protocol; pinned here so the test-file imports compile
+# without touching octo-protocol's semver surface.
+ed25519-dalek = { version = "2.2", features = ["serde", "zeroize"] }
+bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+# Mission 0871b MVP — strict pedantic lints deferred to follow-on polish pass.
+pedantic = "allow"

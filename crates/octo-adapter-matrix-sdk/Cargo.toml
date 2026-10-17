@@ -61,14 +61,21 @@ async-trait = "0.1"
 mime = "0.3"
 # DOT types (PlatformAdapter trait, envelope, domain, error)
 octo-network = { path = "../octo-network" }
+# The envelope carries no algorithm, so a verifying adapter supplies it
+# (RFC-0009 AC#11). DOT envelopes are signed with ed25519-dalek, so Ed25519
+# is the algorithm these call sites verify under. This call site was
+# stranded when the signature changed; `cargo clippy --all-targets` is
+# what surfaced it, because the dispatch missions gated on `--lib` only.
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
 # Auth flows (only required for the integration-matrix feature; the
 # production cdylib doesn't link to it).
 octo-matrix-onboard-core = { path = "../octo-matrix-onboard-core", optional = true }
-# File-based refresh-token writeback (mission 0850h-c): flock via fs4,
-# atomic rename via fs::rename on a `<config>.json.tmp` sibling file.
+# File-based refresh-token writeback (mission 0850h-c): flock via
+# std::fs::File::lock (Rust 1.89+, backed by flock(2) on Unix and
+# LockFileEx on Windows — same primitives fs4 wraps), atomic rename
+# via fs::rename on a `<config>.json.tmp` sibling file.
 # `libc` is needed for the `EWOULDBLOCK` / `EAGAIN` checks on Unix
-# `lock_exclusive` errors (fs4 surfaces these via `raw_os_error`).
-fs4 = { version = "0.7", features = ["sync"] }
+# `try_lock` errors.
 libc = "0.2"
 # Error type for the config writer.
 thiserror = { workspace = true }

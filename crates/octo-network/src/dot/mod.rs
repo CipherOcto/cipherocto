@@ -4,6 +4,7 @@
 //! substrates for decentralized consensus.
 
 pub mod adapters;
+pub mod audit_store;
 pub mod binding;
 pub mod config;
 pub mod dc;
@@ -23,12 +24,17 @@ pub mod route;
 pub mod sequence;
 pub mod slash;
 pub mod sub_group;
+pub mod subgroup_delegation;
+pub mod subgroup_routing;
+pub mod subgroup_state;
+pub mod subgroup_teardown;
 pub mod transport;
 pub mod witness;
 
 pub use adapters::{
     coordinator_admin::{
-        AdminCapabilityReport, CoordinatorAdmin, GroupHandle, GroupId, GroupMemberSpec,
+        dispatch_coordinator_admin_action, AdminCapabilityReport, CoordinatorAdmin,
+        CoordinatorAdminAction, CoordinatorAdminActionError, GroupHandle, GroupId, GroupMemberSpec,
         GroupMetadata, GroupModeFlags, InviteRef, PeerId,
     },
     CapabilityReport, DeliveryReceipt, PlatformAdapter, RawPlatformMessage,
@@ -65,7 +71,31 @@ pub use replay::ReplayCache;
 pub use sequence::OverlaySequence;
 pub use slash::{cross_platform_code, is_cross_platform, reserved as slash_reserved, SlashCode};
 pub use sub_group::{
-    CreateSubGroupEnvelope, SubGroupError, SubGroupExtension, MAX_SUB_LABEL_LEN, SUBGROUP_TAG,
+    CreateSubGroupEnvelope as LegacyCreateSubGroupEnvelope,
+    MAX_SUB_LABEL_LEN as LEGACY_MAX_SUB_LABEL_LEN, SUBGROUP_TAG,
+};
+pub use subgroup_delegation::{
+    check_delegation_policy, CoordinatorTermId, DelegationCheckInputs, DelegationPolicyError,
+    Ed25519Signature, RevocationReasonCode, RevocationReasonError, SdcdReplayKey, SdrtReplayKey,
+    SdrvReplayKey, SubDCDelegationEnvelope, SubDCRevocationEnvelope, SubDCRotationEnvelope,
+    MAX_DELEGATION_CHAIN_PER_TERM, MAX_ROOT_DELEGATION, REVOCATION_REASON_COORDINATOR_ROTATION,
+    REVOCATION_REASON_GROUP_DECOMMISSION, REVOCATION_REASON_SUBDC_KEY_COMPROMISE,
+    REVOCATION_REASON_SUBDC_MISCONDUCT, REVOCATION_REASON_SUBDC_VOLUNTARY_RESIGNATION,
+    REVOCATION_REASON_TERM_EXPIRED, SDCD_CONTEXT, SDRT_CONTEXT, SDRV_CONTEXT, SUBDC_DELEGATION_TAG,
+    SUBDC_REVOCATION_TAG, SUBDC_ROTATION_TAG,
+};
+pub use subgroup_state::{
+    derive_sub_domain_id, reconcile_pending_bind, transition, ActionEncodeError,
+    CreateSubGroupEnvelope, CreateSubGroupError, DelegationId, GroupBindingState,
+    ParentBindingInvariant, SubDCDelegationProof, SubDomainDerivationInvariant, SubGroupAction,
+    SubGroupAuthorityCheck, SubGroupExtension, SubGroupHeaderError, SubGroupLabel,
+    SubGroupLabelError, SubGroupQuery, SubGroupRecord, SubGroupResponse, SubGroupState,
+    TeardownProof, TransitionError, TransitionResult, TransitionTrigger, CREATE_SUBGROUP,
+    MAX_BIND_AWAIT_EPOCHS, MAX_BIND_RETRY_COUNT, MAX_FSKEW_EPOCHS, MAX_ROOT_DEPTH,
+    MAX_SUBGROUP_DEPTH, MAX_SUB_LABEL_BYTES, RACE_EPOCHS, SUBGROUP_ACTION_AGGREGATE,
+    SUBGROUP_ACTION_INVITE, SUBGROUP_ACTION_PAYLOAD_MAX, SUBGROUP_ACTION_ROUTE,
+    SUBGROUP_DOMAIN_CONTEXT, SUBGROUP_RESPONSE_BOUND, SUBGROUP_RESPONSE_DISSOLVED,
+    SUBGROUP_RESPONSE_DISSOLVING, SUBGROUP_RESPONSE_NOT_FOUND, SUBGROUP_RESPONSE_PENDING_BIND,
 };
 pub use witness::{BINDHook, NonceReplayTable, ValidationOutcome, WitnessContext};
 
@@ -139,6 +169,9 @@ impl DotGateway {
     pub async fn process_envelope(
         &self,
         envelope: &DeterministicEnvelope,
+        // The algorithm `source_peer_key` belongs to. Dispatch source, not
+        // assumption (RFC-0009 AC#11).
+        source_peer_algorithm: &octo_ident::AlgorithmId,
         source_peer_key: &[u8; 32],
         current_epoch: u64,
     ) -> Result<ProcessingResult, DotError> {
@@ -161,7 +194,7 @@ impl DotGateway {
         }
 
         // 1. Verify envelope_id derivation (Class A)
-        envelope.verify(source_peer_key)?;
+        envelope.verify(source_peer_algorithm, source_peer_key)?;
 
         // 2. TTL check — reject expired envelopes before forwarding
         if envelope.ttl_hops == 0 {
@@ -244,7 +277,12 @@ mod tests {
         sign_envelope(&mut envelope, &signing_key);
 
         let result = gateway
-            .process_envelope(&envelope, &signing_key.verifying_key().to_bytes(), 100)
+            .process_envelope(
+                &envelope,
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &signing_key.verifying_key().to_bytes(),
+                100,
+            )
             .await;
         assert!(result.is_ok());
     }
@@ -270,7 +308,12 @@ mod tests {
         sign_envelope(&mut envelope, &signing_key);
 
         let result = gateway
-            .process_envelope(&envelope, &signing_key.verifying_key().to_bytes(), 100)
+            .process_envelope(
+                &envelope,
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &signing_key.verifying_key().to_bytes(),
+                100,
+            )
             .await;
         assert!(matches!(
             result,
@@ -302,7 +345,12 @@ mod tests {
         let other_key = SigningKey::from_bytes(&[99u8; 32]);
         let wrong_pubkey = other_key.verifying_key().to_bytes();
         let result = gateway
-            .process_envelope(&envelope, &wrong_pubkey, 100)
+            .process_envelope(
+                &envelope,
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &wrong_pubkey,
+                100,
+            )
             .await;
         assert!(matches!(result, Err(DotError::InvalidSignature { .. })));
     }
@@ -330,12 +378,24 @@ mod tests {
 
         // First insert succeeds
         assert!(gateway
-            .process_envelope(&envelope, &peer_key, 100)
+            .process_envelope(
+                &envelope,
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &peer_key,
+                100
+            )
             .await
             .is_ok());
         // Second insert is a replay
         assert!(matches!(
-            gateway.process_envelope(&envelope, &peer_key, 101).await,
+            gateway
+                .process_envelope(
+                    &envelope,
+                    &octo_algo_ed25519::ed25519_algorithm_id(),
+                    &peer_key,
+                    101
+                )
+                .await,
             Err(DotError::ReplayDetected { .. })
         ));
     }

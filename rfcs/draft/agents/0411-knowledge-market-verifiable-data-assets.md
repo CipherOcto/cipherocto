@@ -522,7 +522,7 @@ The Knowledge Market becomes more valuable as:
 
 ## Related RFCs
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower
 - RFC-0108 (Retrieval): Verifiable AI Retrieval
 - RFC-0109 (Retrieval): Retrieval Architecture
 - RFC-0110 (Agents): Verifiable Agent Memory

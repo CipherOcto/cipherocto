@@ -81,7 +81,7 @@ LOG_DIR="${OCTO_WHATSAPP_LOG_DIR:-$DATA_DIR/$NAME/logs}"
 CAPTURE_LOG_DIR="${OCTO_WHATSAPP_CAPTURE_LOG_DIR:-$DATA_DIR/$NAME/capture}"
 PID_FILE="/run/user/$(id -u)/octo-whatsapp-$NAME.pid"
 LOCK_FILE="/run/user/$(id -u)/octo-whatsapp-$NAME.lock"
-BIN_DIR="$HOME/_w/ai/cipherocto/.worktrees/whatsapp-runtime-cli-mcp/target/$PROFILE"
+BIN_DIR="$HOME/_w/ai/cipherocto/target/$PROFILE"
 BIN="$BIN_DIR/octo-whatsapp"
 # Boot wait: with background NDJSON replay (Phase 7.J follow-up,
 # 2026-07-15) the daemon binds its IPC socket in single-digit
@@ -111,6 +111,19 @@ for arg in "$@"; do
     esac
 done
 
+# === Re-derive per-instance paths (after arg parse) ========================
+# SOCKET / PID_FILE / LOG_DIR / CAPTURE_LOG_DIR / SESSION_PATH are set at the
+# top of the script using the default NAME; if --name=NAME was passed we
+# must rebuild them so every multi-instance action (start / stop / status)
+# targets the right paths. Without this, --name=lia silently fell through
+# to the default socket + pidfile.
+SOCKET="$SOCKET_DIR/octo-whatsapp-$NAME.sock"
+SESSION_PATH="${OCTO_WHATSAPP_SESSION_PATH:-$DATA_DIR/$NAME.session.db}"
+LOG_DIR="${OCTO_WHATSAPP_LOG_DIR:-$DATA_DIR/$NAME/logs}"
+CAPTURE_LOG_DIR="${OCTO_WHATSAPP_CAPTURE_LOG_DIR:-$DATA_DIR/$NAME/capture}"
+PID_FILE="/run/user/$(id -u)/octo-whatsapp-$NAME.pid"
+LOCK_FILE="/run/user/$(id -u)/octo-whatsapp-$NAME.lock"
+
 # Validate profile. Anything outside {debug, release} almost certainly
 # means a typo — fail loud instead of falling back silently.
 case "$PROFILE" in
@@ -118,12 +131,52 @@ case "$PROFILE" in
     *) echo "invalid --profile: $PROFILE (expected: debug | release)" >&2; exit 1 ;;
 esac
 
+# Validate every value that reaches the systemd unit heredoc (and the paths
+# derived from them) BEFORE it is written. The heredoc interpolates these raw,
+# so an unvalidated value carrying a newline injects unit directives and
+# `systemctl --user start` executes them as the operator (RCE). Validation
+# happens here, after the per-instance path re-derivation above, so the derived
+# values are the ones actually checked. Uses `echo` rather than `log()` —
+# `log` is not defined until further down, and this block runs before it.
+case "$NAME" in
+    ''|*[!a-zA-Z0-9._-]*)
+        echo "invalid --name: must match [a-zA-Z0-9._-]+ (got: $NAME)" >&2; exit 1 ;;
+esac
+if [ "${#NAME}" -gt 64 ]; then
+    echo "invalid --name: exceeds 64 characters (got ${#NAME})" >&2; exit 1
+fi
+# systemd unit-file values: no newlines, and no '[' / ']' (they would open a
+# new directive or an unexpected section header).
+for v in "$DATA_DIR" "$SOCKET_DIR" "$LOG_DIR" "$SESSION_PATH" "$CAPTURE_LOG_DIR" "$BIN" "$SOCKET"; do
+    case "$v" in
+        /*) ;;
+        *) echo "invalid path: must be absolute (got: $v)" >&2; exit 1 ;;
+    esac
+    case "$v" in
+        *$'\n'*|*'['*|*']'*|'')
+            echo "invalid path: illegal character in (got: $v)" >&2; exit 1 ;;
+    esac
+done
+
 # === Path discovery (canonical worktree path) ===============================
 
 REPO_ROOT="$HOME/_w/ai/cipherocto"
-for wt in "$REPO_ROOT/.worktrees"/*; do
-    [ -x "$wt/target/$PROFILE/octo-whatsapp" ] && BIN_DIR="$wt/target/$PROFILE" && BIN="$BIN_DIR/octo-whatsapp" && break
-done
+# Discovery order: main checkout first (tracks the `next` branch the
+# active Claude session is committing to), fall back to worktrees. The
+# prior behaviour — worktree first — silently pinned the daemon to the
+# older `feat/whatsapp-runtime-cli-mcp` build and bypassed the typed-event
+# overhaul that lives on `next`. Flip the order so the latest commits
+# always win. Override with OCTO_WHATSAPP_PREFER_WORKTREE=1 to force the
+# legacy worktree-first behaviour.
+if [ "${OCTO_WHATSAPP_PREFER_WORKTREE:-0}" != "1" ] \
+    && [ -x "$REPO_ROOT/target/$PROFILE/octo-whatsapp" ]; then
+    BIN_DIR="$REPO_ROOT/target/$PROFILE"
+    BIN="$BIN_DIR/octo-whatsapp"
+else
+    for wt in "$REPO_ROOT/.worktrees"/*; do
+        [ -x "$wt/target/$PROFILE/octo-whatsapp" ] && BIN_DIR="$wt/target/$PROFILE" && BIN="$BIN_DIR/octo-whatsapp" && break
+    done
+fi
 [ -x "$BIN" ] || { echo "binary not found: $BIN (run: cargo build --profile $PROFILE -p octo-whatsapp --features $FEATURES)" >&2; exit 1; }
 
 # === Helpers ===============================================================
@@ -175,7 +228,14 @@ case "$ACTION" in
         ;;
 
     stop)
-        if ! daemon_running; then log "not running"; rm -f "$SOCKET"; exit 0; fi
+        if ! daemon_running; then
+            log "not running"
+            rm -f "$SOCKET"
+            # Clean stale db.lock even when not running (previous unclean exit)
+            SESSION_DIR="$DATA_DIR/$NAME.session.db"
+            [ -f "$SESSION_DIR/db.lock" ] && rm -f "$SESSION_DIR/db.lock"
+            exit 0
+        fi
         log "graceful shutdown via RPC"
         if "$BIN" --socket "$SOCKET" shutdown >/dev/null 2>&1; then
             sleep 2
@@ -190,10 +250,39 @@ case "$ACTION" in
             rm -f "$PID_FILE" "$SOCKET"
             log "killed"
         fi
+        # Clean db.lock after stop — daemon releases it on graceful shutdown
+        # but a killed daemon leaves it behind.
+        SESSION_DIR="$DATA_DIR/$NAME.session.db"
+        if [ -f "$SESSION_DIR/db.lock" ]; then
+            log "removing db.lock after stop $SESSION_DIR/db.lock"
+            rm -f "$SESSION_DIR/db.lock"
+        fi
         ;;
 
     restart)
+        # First try the graceful path; if --stop hits a daemon in
+        # session_lost, the RPC shutdown may not actually kill the
+        # process, so we force-kill the pid by hand after the stop.
         "$0" --stop || true
+        # Force-kill any surviving pid (RPC shutdown can hang when the
+        # daemon is in session_lost).
+        if [ -f "$PID_FILE" ]; then
+            old_pid=$(cat "$PID_FILE" 2>/dev/null || true)
+            if [ -n "$old_pid" ] && [ -d "/proc/$old_pid" ]; then
+                log "force-kill surviving pid=$old_pid"
+                kill "$old_pid" 2>/dev/null || true
+                sleep 1
+                kill -KILL "$old_pid" 2>/dev/null || true
+            fi
+            rm -f "$PID_FILE"
+        fi
+        rm -f "$SOCKET"
+        # Clean stale db.lock after force-kill (unclean shutdown)
+        SESSION_DIR="$DATA_DIR/$NAME.session.db"
+        if [ -f "$SESSION_DIR/db.lock" ]; then
+            log "removing stale db.lock after force-kill $SESSION_DIR/db.lock"
+            rm -f "$SESSION_DIR/db.lock"
+        fi
         sleep 1
         # Filter out --restart before exec; otherwise we loop forever.
         shift_args=()
@@ -220,7 +309,7 @@ Environment=OCTO_WHATSAPP_DATA_DIR=$DATA_DIR
 Environment=OCTO_WHATSAPP_SOCKET_DIR=$SOCKET_DIR
 Environment=OCTO_WHATSAPP_LOG_DIR=$LOG_DIR
 Environment=OCTO_WHATSAPP_SESSION_PATH=$SESSION_PATH
-ExecStart=$BIN --socket $SOCKET --name $NAME daemon
+ExecStart=$BIN --socket '$SOCKET' --name '$NAME' daemon
 Restart=on-failure
 RestartSec=2
 StandardOutput=append:$CAPTURE_LOG_DIR/octo-whatsapp-$NAME.log
@@ -256,6 +345,15 @@ EOF
             rm -f "$SOCKET"
         fi
 
+        # Stale session db.lock from unclean shutdown (kill -9, crash).
+        # SQLite WAL mode writes this file; it persists after process death
+        # and prevents the next daemon from opening the database.
+        SESSION_DIR="$DATA_DIR/$NAME.session.db"
+        if [ -f "$SESSION_DIR/db.lock" ]; then
+            log "removing stale db.lock (unclean shutdown) $SESSION_DIR/db.lock"
+            rm -f "$SESSION_DIR/db.lock"
+        fi
+
         mkdir -p "$LOG_DIR" "$CAPTURE_LOG_DIR" "$SOCKET_DIR" "/run/user/$(id -u)"
         : > "$CAPTURE_LOG_DIR/octo-whatsapp-$NAME.log"
 
@@ -270,6 +368,7 @@ EOF
         # >>log 2>&1      break stdout/stderr to a file in CAPTURE_LOG_DIR
         # ──────────────────────────────────────────────────────────────────
         setsid -f env \
+            RUST_LOG="${RUST_LOG:-}" \
             OCTO_WHATSAPP_DATA_DIR="$DATA_DIR" \
             OCTO_WHATSAPP_SOCKET_DIR="$SOCKET_DIR" \
             OCTO_WHATSAPP_LOG_DIR="$LOG_DIR" \

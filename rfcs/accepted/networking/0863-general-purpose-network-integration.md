@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-06-25) — Implemented v1.3: all 4 missions complete (0863a-d), 3 adversarial review rounds converged, 313 tests passing, 13/15 goals met.
+Accepted (2026-06-25) — Implemented v1.8 per §Version History latest row (Status header synced with VH v1.8 per M35 corpus-wide sync check; prior header read v1.3): all 4 missions complete (0863a-d), 3 adversarial review rounds converged, 313 tests passing, 13/15 goals met.
 
 ## Authors
 
@@ -218,7 +218,7 @@ All operations are Class C (Probabilistic). The transport layer handles network 
 
 | Error                                  | Source                                                | Recovery                                       |
 | -------------------------------------- | ----------------------------------------------------- | ---------------------------------------------- |
-| `TransportError::AdapterFailure`       | `PlatformAdapter::send_message()` fails              | Failover to next transport in `NodeTransport`  |
+| `TransportError::AdapterFailure`       | `PlatformAdapter::send_message()` fails               | Failover to next transport in `NodeTransport`  |
 | `TransportError::AllTransportsFailed`  | All `NetworkSender::send()` calls fail                | Return error to caller; no retry at this layer |
 | `TransportError::EnvelopeConstruction` | Cannot construct `DeterministicEnvelope` from payload | Log error, skip transport                      |
 | `TransportError::Unhealthy`            | `NetworkSender::is_healthy()` returns false           | Skip transport, try next                       |
@@ -309,6 +309,7 @@ impl BootstrapOrchestrator {
 **State machine:** `BootstrapClientLifecycle` (Init → Connecting → Validating → Cached → Done, with FallbackB/FallbackC/Failed terminals). Full transitions in RFC-0851p-a §3.
 
 **Integration with existing modules:**
+
 - `octo-network::mon::bootstrap::SeedListEnvelope` — seed list loading
 - `octo-network::mon::bootstrap::SeedHealth` — staleness check at load
 - `octo-network::mon::bootstrap::SeedListAuthority` — authority gate (Foundation vs DAO)
@@ -320,28 +321,28 @@ impl BootstrapOrchestrator {
 
 ## Performance Targets
 
-| Metric                  | Target     | Notes                                                              |
-| ----------------------- | ---------- | ------------------------------------------------------------------ |
-| Send latency overhead   | <5ms       | Bridge adds minimal overhead to adapter call                       |
-| Fan-out to N transports | <2x single | Concurrent broadcast should not exceed 2x single-transport latency |
-| Plugin load time        | <100ms     | `.so` loading via `libloading`                                     |
-| Failover time           | <100ms     | Skip unhealthy, try next                                           |
-| Mode A first peer (warm cache) | <2s  | BootstrapOrchestrator with cached seed list (RFC-0851p-a §Performance) |
-| Mode A first peer (cold cache) | <5s  | BootstrapOrchestrator from disk seed list (RFC-0851p-a §Performance) |
-| Seed list verify (5 entries) | <10ms | Ed25519 signature verification (RFC-0851p-a §Performance)         |
+| Metric                         | Target     | Notes                                                                  |
+| ------------------------------ | ---------- | ---------------------------------------------------------------------- |
+| Send latency overhead          | <5ms       | Bridge adds minimal overhead to adapter call                           |
+| Fan-out to N transports        | <2x single | Concurrent broadcast should not exceed 2x single-transport latency     |
+| Plugin load time               | <100ms     | `.so` loading via `libloading`                                         |
+| Failover time                  | <100ms     | Skip unhealthy, try next                                               |
+| Mode A first peer (warm cache) | <2s        | BootstrapOrchestrator with cached seed list (RFC-0851p-a §Performance) |
+| Mode A first peer (cold cache) | <5s        | BootstrapOrchestrator from disk seed list (RFC-0851p-a §Performance)   |
+| Seed list verify (5 entries)   | <10ms      | Ed25519 signature verification (RFC-0851p-a §Performance)              |
 
 ## Implicit Assumptions Audit
 
-| Assumption                                              | Where Relied Upon                     | Blast Radius if False             | Mitigation / Status                                                   |
-| ------------------------------------------------------- | ------------------------------------- | --------------------------------- | --------------------------------------------------------------------- |
-| PlatformAdapter implementations are thread-safe         | §Specification §PlatformAdapterBridge | Race conditions on shared adapter | All adapters implement `Send + Sync` (trait bound)                    |
-| DeterministicEnvelope can be constructed from raw bytes | §Specification §PlatformAdapterBridge | Bridge cannot send any data       | Test vectors verify roundtrip; envelope format is stable per RFC-0850 |
-| AdapterRegistry returns valid adapters                  | §Specification §Dynamic Loading Flow  | Bridge wraps null/broken adapters | `AdapterRegistry::get()` returns `None` for unhealthy adapters        |
-| BroadcastDomainId is stable across restarts             | §Specification §PlatformAdapterBridge | Envelopes routed to wrong domains | BLAKE3-hashed, deterministic per RFC-0850 §5                          |
-| Leaf workspace isolation is maintained                  | §Rationale                            | Circular dependencies break build | `octo-transport` depends on both; neither depends on it               |
-| Seed list file is available at node startup             | §Dynamic Loading Flow step 3a         | Node cannot bootstrap; enters Failed state | Embedded genesis list as fallback; operator guide for config path |
-| Node has Ed25519 signing key for BOOTSTRAP_REQ          | §Dynamic Loading Flow step 3d         | Cannot sign requests; rejected by bootstrap nodes | Key derived from node identity (RFC-0851p-a §2)              |
-| Epoch is synchronized within ±1 of bootstrap nodes      | §Dynamic Loading Flow step 3c/3e      | Stale-response rejection; authority gate fails | RFC-0850 §5 logical timestamp; ±1 tolerance per RFC-0851p-a IA-NB-6 |
+| Assumption                                              | Where Relied Upon                     | Blast Radius if False                             | Mitigation / Status                                                   |
+| ------------------------------------------------------- | ------------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------- |
+| PlatformAdapter implementations are thread-safe         | §Specification §PlatformAdapterBridge | Race conditions on shared adapter                 | All adapters implement `Send + Sync` (trait bound)                    |
+| DeterministicEnvelope can be constructed from raw bytes | §Specification §PlatformAdapterBridge | Bridge cannot send any data                       | Test vectors verify roundtrip; envelope format is stable per RFC-0850 |
+| AdapterRegistry returns valid adapters                  | §Specification §Dynamic Loading Flow  | Bridge wraps null/broken adapters                 | `AdapterRegistry::get()` returns `None` for unhealthy adapters        |
+| BroadcastDomainId is stable across restarts             | §Specification §PlatformAdapterBridge | Envelopes routed to wrong domains                 | BLAKE3-hashed, deterministic per RFC-0850 §5                          |
+| Leaf workspace isolation is maintained                  | §Rationale                            | Circular dependencies break build                 | `octo-transport` depends on both; neither depends on it               |
+| Seed list file is available at node startup             | §Dynamic Loading Flow step 3a         | Node cannot bootstrap; enters Failed state        | Embedded genesis list as fallback; operator guide for config path     |
+| Node has Ed25519 signing key for BOOTSTRAP_REQ          | §Dynamic Loading Flow step 3d         | Cannot sign requests; rejected by bootstrap nodes | Key derived from node identity (RFC-0851p-a §2)                       |
+| Epoch is synchronized within ±1 of bootstrap nodes      | §Dynamic Loading Flow step 3c/3e      | Stale-response rejection; authority gate fails    | RFC-0850 §5 logical timestamp; ±1 tolerance per RFC-0851p-a IA-NB-6   |
 
 ### Categories to Audit
 
@@ -398,13 +399,13 @@ Each adapter operates within its own broadcast domain. The bridge does not cross
 
 ## Alternatives Considered
 
-| Approach                                      | Pros                                         | Cons                                                 |
-| --------------------------------------------- | -------------------------------------------- | ---------------------------------------------------- |
-| Feature-gate in octo-sync                     | Simple                                       | Circular dependency; leaf workspace violation        |
-| Carrier → PlatformAdapter in octo-network     | TCP/UDP join DOT overlay naturally            | Resolved: TCP (`0x0016`) and UDP (`0x0017`) are now PlatformTypes per RFC-0850 §8.8-§8.9 |
-| Node-level wiring (no crate)                  | No new crate                                 | Each binary reimplements wiring                      |
-| Separate `octo-transport` crate (recommended) | Clean deps; reusable pattern; leaf workspace | Third workspace to maintain                          |
-| Type-erased bridge                            | Minimal coupling                             | Loses compile-time guarantees                        |
+| Approach                                      | Pros                                         | Cons                                                                                     |
+| --------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Feature-gate in octo-sync                     | Simple                                       | Circular dependency; leaf workspace violation                                            |
+| Carrier → PlatformAdapter in octo-network     | TCP/UDP join DOT overlay naturally           | Resolved: TCP (`0x0016`) and UDP (`0x0017`) are now PlatformTypes per RFC-0850 §8.8-§8.9 |
+| Node-level wiring (no crate)                  | No new crate                                 | Each binary reimplements wiring                                                          |
+| Separate `octo-transport` crate (recommended) | Clean deps; reusable pattern; leaf workspace | Third workspace to maintain                                                              |
+| Type-erased bridge                            | Minimal coupling                             | Loses compile-time guarantees                                                            |
 
 ## Implementation Phases
 
@@ -449,16 +450,16 @@ Each adapter operates within its own broadcast domain. The bridge does not cross
 
 ## Key Files to Modify
 
-| File                                     | Change                                    |
-| ---------------------------------------- | ----------------------------------------- |
-| `octo-transport/Cargo.toml`              | New crate manifest                        |
-| `octo-transport/src/lib.rs`              | New crate root                            |
-| `octo-transport/src/sender.rs`           | `NetworkSender` trait                     |
-| `octo-transport/src/adapter_bridge.rs`   | `PlatformAdapterBridge`                   |
-| `octo-transport/src/node_transport.rs`   | `NodeTransport` config                    |
-| `octo-transport/src/bootstrap.rs`        | **New:** `BootstrapOrchestrator`, `BootstrapConfig`, `BootstrapClientLifecycle`, `BootstrapRequest`, `BootstrapResponse` (Phase 4) |
-| `crates/octo-network/src/dot/mod.rs:175` | DotGateway fan-out (Phase 3)              |
-| `crates/octo-network/src/lib.rs`         | Export `sync` module (Phase 2)            |
+| File                                   | Change                                                                                                                             |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `octo-transport/Cargo.toml`            | New crate manifest                                                                                                                 |
+| `octo-transport/src/lib.rs`            | New crate root                                                                                                                     |
+| `octo-transport/src/sender.rs`         | `NetworkSender` trait                                                                                                              |
+| `octo-transport/src/adapter_bridge.rs` | `PlatformAdapterBridge`                                                                                                            |
+| `octo-transport/src/node_transport.rs` | `NodeTransport` config                                                                                                             |
+| `octo-transport/src/bootstrap.rs`      | **New:** `BootstrapOrchestrator`, `BootstrapConfig`, `BootstrapClientLifecycle`, `BootstrapRequest`, `BootstrapResponse` (Phase 4) |
+| `crates/octo-network/src/dot/mod.rs`   | DotGateway fan-out (Phase 3)                                                                                                       |
+| `crates/octo-network/src/lib.rs`       | Export `sync` module (Phase 2)                                                                                                     |
 
 ## Future Work
 
@@ -477,16 +478,16 @@ The separate `octo-transport` crate follows the established leaf workspace patte
 
 ## Version History
 
-| Version | Date       | Changes                                                                       |
-| ------- | ---------- | ----------------------------------------------------------------------------- |
-| 1.0     | 2026-06-24 | Initial draft                                                                 |
-| 1.1     | 2026-06-24 | Round 1 review: 11 fixes (roles, cross-refs, adversary analysis, terminology) |
-| 1.2     | 2026-06-24 | Round 2 review: 1 fix (typo) — 0 findings, loop closed                        |
-| 1.3     | 2026-06-25 | Accepted: all 4 missions complete, 3 adversarial review rounds (18 findings fixed), 313 tests, 13/15 goals met |
-| 1.4     | 2026-06-25 | Added `BootstrapOrchestrator` to Specification, Dynamic Loading Flow, Key Files, and Implementation Phases (Phase 4). Wired RFC-0851p-a bootstrap protocol into `octo-transport` startup path. |
-| 1.5     | 2026-06-28 | Resolved TCP/UDP transport gap: updated Alternatives Considered to acknowledge `PlatformType::Tcp = 0x0016` and `PlatformType::Udp = 0x0017` per RFC-0850 §8.8-§8.9. TCP/UDP adapters can now implement `PlatformAdapter` and integrate via `PlatformAdapterBridge`. |
-| 1.6     | 2026-06-28 | Aligned with RFC-0850 v1.3.0: `PlatformAdapter::send_envelope` renamed to `send_message(domain, envelope, payload)`. Updated bridge to pass payload bytes to adapter. |
-| 1.7     | 2026-06-29 | Fixed Phase 3 checklist (inbound dispatch was not implemented). Added `receivers` field, `register_receiver()`, and `dispatch()` to `NodeTransport` spec. Added `NetworkReceiver` inbound dispatch model documentation. Updated Summary, Roles, Determinism tables. |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                              |
+| ------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.0     | 2026-06-24 | Initial draft                                                                                                                                                                                                                                                                                                                                        |
+| 1.1     | 2026-06-24 | Round 1 review: 11 fixes (roles, cross-refs, adversary analysis, terminology)                                                                                                                                                                                                                                                                        |
+| 1.2     | 2026-06-24 | Round 2 review: 1 fix (typo) — 0 findings, loop closed                                                                                                                                                                                                                                                                                               |
+| 1.3     | 2026-06-25 | Accepted: all 4 missions complete, 3 adversarial review rounds (18 findings fixed), 313 tests, 13/15 goals met                                                                                                                                                                                                                                       |
+| 1.4     | 2026-06-25 | Added `BootstrapOrchestrator` to Specification, Dynamic Loading Flow, Key Files, and Implementation Phases (Phase 4). Wired RFC-0851p-a bootstrap protocol into `octo-transport` startup path.                                                                                                                                                       |
+| 1.5     | 2026-06-28 | Resolved TCP/UDP transport gap: updated Alternatives Considered to acknowledge `PlatformType::Tcp = 0x0016` and `PlatformType::Udp = 0x0017` per RFC-0850 §8.8-§8.9. TCP/UDP adapters can now implement `PlatformAdapter` and integrate via `PlatformAdapterBridge`.                                                                                 |
+| 1.6     | 2026-06-28 | Aligned with RFC-0850 v1.3.0: `PlatformAdapter::send_envelope` renamed to `send_message(domain, envelope, payload)`. Updated bridge to pass payload bytes to adapter.                                                                                                                                                                                |
+| 1.7     | 2026-06-29 | Fixed Phase 3 checklist (inbound dispatch was not implemented). Added `receivers` field, `register_receiver()`, and `dispatch()` to `NodeTransport` spec. Added `NetworkReceiver` inbound dispatch model documentation. Updated Summary, Roles, Determinism tables.                                                                                  |
 | 1.8     | 2026-06-30 | Clarified `NodeTransport` receiver-ownership semantics: any number of receivers are supported, typical usage is a single receiver owned by the consumer (e.g., `QuotaRouterNode`'s internal handler), receivers live as long as their `Arc` is held. Aligned with RFC-0870 v1.13 builder change (single-node return, internal handler registration). |
 
 ## Related RFCs
@@ -512,12 +513,12 @@ The separate `octo-transport` crate follows the established leaf workspace patte
 
 The following components were identified as dead code or stubs during analysis. All are now resolved:
 
-| Component                                | Location                                          | Original Status      | Current Status         |
-| ---------------------------------------- | ------------------------------------------------- | -------------------- | ---------------------- |
-| `DotGateway::process_envelope()` fan-out | `crates/octo-network/src/dot/mod.rs:175`          | STUB                 | ✅ Implemented (0863d) |
-| `PlatformAdapter::send_message()`       | 23 implementations                                | NO PRODUCTION CALLER | ✅ Called via bridge    |
-| `SyncNode`                               | `crates/octo-network/src/sync/mod.rs`             | DEAD CODE            | ✅ Exported + wired    |
-| `SyncNetworkBridge`                      | `crates/octo-network/src/sync/dgp_integration.rs` | DEAD CODE            | ✅ Exported + wired    |
+| Component                                | Location                                          | Original Status      | Current Status                         |
+| ---------------------------------------- | ------------------------------------------------- | -------------------- | -------------------------------------- |
+| `DotGateway::process_envelope()` fan-out | `crates/octo-network/src/dot/mod.rs`              | STUB                 | ✅ Implemented (0863d)                 |
+| `PlatformAdapter::send_message()`        | 23 implementations                                | NO PRODUCTION CALLER | ✅ Called via bridge                   |
+| `SyncNode`                               | `crates/octo-network/src/sync/mod.rs`             | DEAD CODE            | ✅ Exported + wired                    |
+| `SyncNetworkBridge`                      | `crates/octo-network/src/sync/dgp_integration.rs` | DEAD CODE            | ✅ Exported + wired                    |
 | `MultiCarrierSync`                       | `octo-sync/src/carrier.rs`                        | UNUSED by consumers  | ⚠️ Deprecated (NodeTransport replaces) |
 
 ### B. Adapter Transport Summary (Representative)

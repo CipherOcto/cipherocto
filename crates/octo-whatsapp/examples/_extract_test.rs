@@ -1,8 +1,8 @@
-use octo_whatsapp::events::{EventEnvelope, InboundEvent};
+use octo_whatsapp::events::{parse_many, EventEnvelope};
 
 fn main() {
     let s = std::env::args().nth(1).unwrap();
-    let events = InboundEvent::parse_many(
+    let events = parse_many(
         EventEnvelope {
             raw: s,
             ts_unix_ms: 0,

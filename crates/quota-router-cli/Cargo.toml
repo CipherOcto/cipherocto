@@ -13,14 +13,25 @@ license.workspace = true
 [dependencies]
 # Core library
 quota-router-core = { path = "../quota-router-core" }
+# Storage types (SettlementEnvelope, ConsumedReceiptIndex, Ask, AskRepository)
+# for `quota-router-cli settle` + `settle-replay` RPC-0959 §CLI subcommands.
+quota-router-storage = { path = "../quota-router-storage" }
+octo-reputation = { path = "../octo-reputation" }
+octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
+blake3.workspace = true
 
 # Transport + adapter for mesh daemon
 octo-transport = { path = "../../octo-transport" }
 octo-adapter-tcp = { path = "../octo-adapter-tcp" }
 octo-network = { path = "../octo-network" }
 
-# Database
-stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
+# Mission 0010-b: test fixtures use sample_did() from octo-ident test_helpers
+octo-ident = { path = "../octo-ident" }
+
+# Layer A storage substrate (mission 0206-001). The CLI's reputation
+# CLI pass-through uses `octo_storage_core::Database` after mission
+# 0206-008.
+octo-storage-core = { path = "../octo-storage-core" }
 
 # CLI
 clap.workspace = true
@@ -48,6 +59,14 @@ uuid.workspace = true
 parking_lot.workspace = true
 hex = "0.4"
 
+# ZK verifier substrate (mission zk-proof-verification AC-1 + AC-2 + AC-5).
+# 0958-a shipped `verify_capability_zk` + `PublicInputs` + `ProofBundle` +
+# `ProverError` in `crates/zk-verifier/`. The CLI calls through this surface
+# for the `verify` subcommands. The stub proofer (for dev/CI without
+# `libstwo_sys.so`) is opt-in via `--features allow-stub-verifier` on the
+# `zk-verifier` crate; production builds fail closed with `StubDisabled`.
+zk-verifier = { path = "../zk-verifier" }
+
 # Logging
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -63,3 +82,22 @@ path = "src/lib.rs"
 [[bin]]
 name = "quota-router"
 path = "src/main.rs"
+
+[features]
+# Mission 0010-b Phase F: enables the cipherocto-fork stoolap backend for
+# `quota-router reputation-show --backend stoolap`. The CLI binary gates the
+# stoolap code path behind this flag so a hermetic build (default) still
+# compiles without the C++ dependencies that may be pulled in transitively.
+# Production deploys must enable this feature.
+stoolap = ["octo-reputation/stoolap"]
+# Test-only flag that propagates `allow-stub-verifier` to zk-verifier so
+# `cargo test` can exercise the stub proofer hermetically (no libstwo_sys.so).
+# NOT enabled in production builds — the stub proofer is forgeable by design.
+allow-stub-verifier = ["zk-verifier/allow-stub-verifier"]
+
+[dev-dependencies]
+# Enable the stub proofer for unit tests only. Production release builds
+# do NOT propagate this feature (cargo feature unification scopes to the
+# `dev-dependencies` declaration under `cargo test`).
+zk-verifier = { path = "../zk-verifier", features = ["allow-stub-verifier"] }
+tempfile = "3"

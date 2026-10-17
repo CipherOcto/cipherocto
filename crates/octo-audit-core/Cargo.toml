@@ -1,0 +1,33 @@
+[package]
+name = "octo-audit-core"
+version = "0.1.0"
+edition = "2021"
+description = "Layer A frozen audit substrate — AuditEvent + AppendOnlyAuditSink trait + verify_chain per RFC-0012 §Specification"
+license = "Apache-2.0"
+authors = ["CipherOcto"]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# Layer A primitive: BLAKE3-256 chain hashing per RFC-0012 §Design Goals G5.
+blake3 = "1.5"
+# Layer A primitive: canonical serde for AuditEvent + AuditEventKind.
+serde = { version = "1", features = ["derive"] }
+# Layer A error type per cipherocto-design-principles Layer A row.
+thiserror = "2.0"
+
+[features]
+# RFC-0015-a §6.4 paired-acceptance bridge: gates the `AuditEventKind::AgentTransition`
+# extension variant on Layer A frozen substrate (default OFF preserves the RFC-0012
+# frozen contract; permanent once RFC-0012-v2 is Accepted). Per
+# cipherocto-design-principles Layer A row, this is the ONLY mutable surface
+# in the substrate — every other change here is a semver-major event.
+octo-audit-internal = []
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+empty_line_after_doc_comments = "allow"
+doc_lazy_continuation = "allow"

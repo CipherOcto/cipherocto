@@ -10,10 +10,12 @@ quota-router-core = { path = "../quota-router-core", features = ["test-helpers"]
 octo-transport = { path = "../../octo-transport" }
 octo-network = { path = "../octo-network" }
 octo-adapter-tcp = { path = "../octo-adapter-tcp" }
+octo-protocol = { path = "../octo-protocol" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
 async-trait = "0.1"
 bincode = "1"
 blake3 = "1.5"
+borsh = "1"
 rand = "0.8"
 
 [dev-dependencies]

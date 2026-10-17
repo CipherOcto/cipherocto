@@ -7,7 +7,7 @@
 //! receiver's gossip cache.
 //!
 //! This test deliberately exercises the production path:
-//!   - `node.receive(payload, &ctx)` → `transport.dispatch(...)` →
+//!   - `node.receive(payload, &&ctx)` → `transport.dispatch(...)` →
 //!     `handler.on_receive(...)` → `handle_capacity_gossip(...)`.
 //!
 //! No parallel call sites; no manual handler wiring.

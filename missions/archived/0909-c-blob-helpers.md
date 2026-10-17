@@ -61,6 +61,7 @@ Low — pure conversion functions with direct byte manipulation
 ## Implementation Note
 
 Implemented in `crates/quota-router-core/src/keys/mod.rs`:
+
 - `hex_to_blob_32`: hex::decode + try_into, panics on invalid/wrong-length
 - `blob_32_to_hex`: hex::encode
 - `uuid_to_blob_16`: *uuid.as_bytes()
@@ -68,17 +69,18 @@ Implemented in `crates/quota-router-core/src/keys/mod.rs`:
 - 10 unit tests: roundtrip, all-zeros, all-ones, invalid hex panic, wrong-length panic
 
 ---
+
 **Mission Type:** Implementation
 **Priority:** Critical
 **Phase:** RFC-0909 Phase 1 Core
 
 ## Changelog
 
-| Version | Date | Changes |
-|---------|------|---------|
-| v7 | 2026-04-20 | Implemented: hex_to_blob_32, blob_32_to_hex, uuid_to_blob_16, blob_16_to_uuid, all 6 AC items complete, 10 unit tests passing |
-| v6 | 2026-04-20 | Round 5 adversarial review fixes: fix L1 (Summary typo "RFC-0903-B1/B1" → "RFC-0903-B1/C1"); fix L2 (AC panic condition: add wrong-length case — hex::decode succeeds on valid-but-short hex, try_into fails; now reads "panics on invalid hex or wrong length, must be exactly 64 hex chars") |
-| v5 | 2026-04-20 | Round 4 adversarial review fixes: fix M1 (replace incorrect "undefined behavior" Rust terminology with accurate "silently accepts any 16-byte sequence without validating RFC 4122 version or variant bits") |
-| v4 | 2026-04-20 | Round 3 adversarial review fixes: fix M1 (Dependencies section now correctly placed before Reference) |
-| v3 | 2026-04-20 | Round 2 adversarial review fixes: fix M1 (remove redundant AC line 23 — function signature already guarantees 16 bytes); fix L1 (move Dependencies before Reference for consistency with other missions) |
-| v2 | 2026-04-20 | Round 1 adversarial review fixes: fix C1/H2 (add RFC-0903-B1 §request_id to references + impl notes); fix C2 (document uuid::Uuid::from_bytes undefined behavior on invalid bytes); fix H1 (add blob_32_to_hex must-not-be-used-for-request_id constraint); fix M1 (document panic vs silent failure asymmetry); fix M2 (add wrong-data-path note); fix L1 (add uuid crate dependency); fix L2 (clarify request_id is raw SHA256 binary, not hex) |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v7      | 2026-04-20 | Implemented: hex_to_blob_32, blob_32_to_hex, uuid_to_blob_16, blob_16_to_uuid, all 6 AC items complete, 10 unit tests passing                                                                                                                                                                                                                                                                                                                     |
+| v6      | 2026-04-20 | Round 5 adversarial review fixes: fix L1 (Summary typo "RFC-0903-B1/B1" → "RFC-0903-B1/C1"); fix L2 (AC panic condition: add wrong-length case — hex::decode succeeds on valid-but-short hex, try_into fails; now reads "panics on invalid hex or wrong length, must be exactly 64 hex chars")                                                                                                                                                    |
+| v5      | 2026-04-20 | Round 4 adversarial review fixes: fix M1 (replace incorrect "undefined behavior" Rust terminology with accurate "silently accepts any 16-byte sequence without validating RFC 4122 version or variant bits")                                                                                                                                                                                                                                      |
+| v4      | 2026-04-20 | Round 3 adversarial review fixes: fix M1 (Dependencies section now correctly placed before Reference)                                                                                                                                                                                                                                                                                                                                             |
+| v3      | 2026-04-20 | Round 2 adversarial review fixes: fix M1 (remove redundant AC — function signature already guarantees 16 bytes); fix L1 (move Dependencies before Reference for consistency with other missions)                                                                                                                                                                                                                                                  |
+| v2      | 2026-04-20 | Round 1 adversarial review fixes: fix C1/H2 (add RFC-0903-B1 §request_id to references + impl notes); fix C2 (document uuid::Uuid::from_bytes undefined behavior on invalid bytes); fix H1 (add blob_32_to_hex must-not-be-used-for-request_id constraint); fix M1 (document panic vs silent failure asymmetry); fix M2 (add wrong-data-path note); fix L1 (add uuid crate dependency); fix L2 (clarify request_id is raw SHA256 binary, not hex) |

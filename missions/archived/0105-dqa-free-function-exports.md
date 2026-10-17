@@ -28,7 +28,7 @@ Re-export DQA free functions (`dqa_add`, `dqa_sub`, `dqa_mul`, `dqa_div`) from t
 
 ## Completion Notes
 
-All four DQA arithmetic functions were already exported in `determin/src/lib.rs:64`:
+All four DQA arithmetic functions were already exported in `determin/src/lib.rs`:
 
 ```rust
 pub use dqa::{

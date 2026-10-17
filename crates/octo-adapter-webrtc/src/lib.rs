@@ -13,6 +13,13 @@
 //! }
 //! ```
 
+// Clippy `[disallowed-methods]` allowlist: this is a messaging-platform
+// adapter (NOT an LLM model provider). The cipherocto capability
+// token boundary lives at `quota-router-core/src/egress/`; this
+// adapter talks to its own platform API using platform-issued
+// credentials.
+#![allow(clippy::disallowed_methods)]
+
 use async_trait::async_trait;
 use base64::Engine;
 use serde::Deserialize;
@@ -157,26 +164,40 @@ impl PlatformAdapter for WebRTCAdapter {
         &self,
         raw: &RawPlatformMessage,
     ) -> Result<DeterministicEnvelope, PlatformAdapterError> {
-        if raw.payload.is_empty() {
-            return Err(transport_err("Empty payload"));
-        }
-        // Payload may be DOT/1/-encoded text or raw wire bytes
-        if let Ok(text) = std::str::from_utf8(&raw.payload) {
-            if let Ok(decoded) = Self::decode_envelope(text) {
-                return DeterministicEnvelope::from_wire_bytes(&decoded).map_err(|e| {
-                    PlatformAdapterError::ApiError {
-                        code: 400,
-                        message: format!("canonicalize failed: {e}"),
-                    }
-                });
+        // M-15: `from_wire_bytes` validates STRUCTURE only — a well-formed
+        // frame with a forged signature or a mismatched `envelope_id` parses
+        // fine. Decoding is factored into a closure bound to a name first,
+        // because calling an inline `(|| { .. })()` trips
+        // `clippy::redundant_closure_call`.
+        let decode = || -> Result<DeterministicEnvelope, PlatformAdapterError> {
+            if raw.payload.is_empty() {
+                return Err(transport_err("Empty payload"));
             }
-        }
-        DeterministicEnvelope::from_wire_bytes(&raw.payload).map_err(|e| {
-            PlatformAdapterError::ApiError {
-                code: 400,
-                message: format!("canonicalize failed: {e}"),
+            // Payload may be DOT/1/-encoded text or raw wire bytes
+            if let Ok(text) = std::str::from_utf8(&raw.payload) {
+                if let Ok(decoded) = Self::decode_envelope(text) {
+                    return DeterministicEnvelope::from_wire_bytes(&decoded).map_err(|e| {
+                        PlatformAdapterError::ApiError {
+                            code: 400,
+                            message: format!("canonicalize failed: {e}"),
+                        }
+                    });
+                }
             }
-        })
+            DeterministicEnvelope::from_wire_bytes(&raw.payload).map_err(|e| {
+                PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("canonicalize failed: {e}"),
+                }
+            })
+        };
+        let env = decode()?;
+        // Ed25519 named explicitly so this reads as an assumption rather than an
+        // accident. CD-6's peer registry binds the key AND names the algorithm
+        // it speaks, so this constant goes away when that registry lands.
+        env.verify(&octo_algo_ed25519::ed25519_algorithm_id(), &env.source_peer)
+            .map_err(|e| transport_err(format!("envelope verify failed: {e}")))?;
+        Ok(env)
     }
 
     fn capabilities(&self) -> CapabilityReport {

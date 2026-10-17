@@ -89,23 +89,31 @@ pub fn init_otlp(endpoint: &str, service_name: &str) -> Result<(), OtlpError> {
     use opentelemetry::trace::TracerProvider as _;
     use opentelemetry::KeyValue;
     use opentelemetry_otlp::{SpanExporter, WithExportConfig};
-    use opentelemetry_sdk::trace::TracerProvider;
+    use opentelemetry_sdk::trace::SdkTracerProvider;
     use opentelemetry_sdk::Resource;
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
+    // 0.32 SDK: `TracerProvider` (struct) renamed to `SdkTracerProvider`.
+    // `Resource::new` was made private — use the public builder.
+    // `with_batch_exporter` is now single-arg; the runtime is selected
+    // implicitly via the `rt-tokio` cargo feature.
     let exporter = SpanExporter::builder()
         .with_tonic()
         .with_endpoint(endpoint)
         .build()
         .map_err(|e| OtlpError::Init(format!("exporter: {e}")))?;
 
-    let provider = TracerProvider::builder()
-        .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
-        .with_resource(Resource::new(vec![KeyValue::new(
-            "service.name",
-            service_name.to_string(),
-        )]))
+    let provider = SdkTracerProvider::builder()
+        .with_batch_exporter(exporter)
+        .with_resource(
+            Resource::builder()
+                .with_attributes(vec![KeyValue::new(
+                    "service.name",
+                    service_name.to_string(),
+                )])
+                .build(),
+        )
         .build();
     let tracer = provider.tracer("octo-whatsapp");
     let otel_layer = tracing_opentelemetry::OpenTelemetryLayer::new(tracer);

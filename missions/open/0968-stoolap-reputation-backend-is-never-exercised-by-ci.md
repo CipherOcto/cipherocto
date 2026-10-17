@@ -1,0 +1,219 @@
+---
+name: 0968-stoolap-reputation-backend-is-never-exercised-by-ci
+description: 'octo-reputation declares default = [] and keeps the stoolap feature off by default. With the feature off, StoolapReputationStore methods return the stub error ChainRefInvalid("stoolap_backend_unimplemented:<name>") rather than doing any SQL, so the CI workspace run tests the stub. 69 integration test functions across two files are gated behind the same feature and never compile in CI. All 69 pass locally when the feature is enabled.'
+metadata:
+  node_type: mission
+  type: implementation
+  created: 2026-10-12T00:00:00.000Z
+  v: "1.0"
+  depends_on:
+    - RFC-0968
+---
+
+# Mission `0968-stoolap-reputation-backend-is-never-exercised-by-ci`
+
+## Status
+
+Open. No workflow has been edited. The finding and the proposed step are
+recorded here for a maintainer.
+
+## The finding
+
+`crates/octo-reputation/Cargo.toml` declares:
+
+```toml
+[features]
+default = []
+```
+
+and documents what the empty default means:
+
+> With `stoolap` enabled, every method is wired against real SQL. Without it
+> (CI default build), the type remains constructible as a marker; methods
+> return the historical stub `ChainRefInvalid("stoolap_backend_unimplemented:<name>")`
+> errors so the `ReputationStore` trait is still nameable.
+
+`ci.yml` runs the workspace under default features:
+
+```
+cargo test --verbose --workspace \
+  --exclude whatsapp_chrome_reconnect_observer \
+  --exclude whatsapp_chrome_driver \
+  --exclude whatsapp_chrome_session_extract
+```
+
+So CI compiles and exercises the **stub** backend. The SQL implementation is
+never called by CI at all.
+
+## How much is gated
+
+Two integration files carry a whole-file `#![cfg(feature = "stoolap")]`:
+
+| File                                 | Test functions |
+| ------------------------------------ | -------------- |
+| `tests/stoolap_integration.rs`       | 48             |
+| `tests/cross_backend_integration.rs` | 21             |
+| **Total**                            | **69**         |
+
+When the feature is off, each file compiles to an empty test binary. `ci.yml`
+already knows this pattern — it says so about the `hex-ids` vectors and adds a
+dedicated step for them.
+
+## Measured
+
+Running the feature locally:
+
+```
+cargo test -p octo-reputation --features stoolap
+```
+
+| Target                               | Tests   | Result       |
+| ------------------------------------ | ------- | ------------ |
+| lib                                  | 267     | ok           |
+| `tests/canonical_blobs.rs`           | 9       | ok           |
+| `tests/cross_backend_integration.rs` | 21      | ok           |
+| `tests/stoolap_integration.rs`       | 48      | ok           |
+| **Total**                            | **345** | **0 failed** |
+
+The backend works. Nothing here suggests a defect — this is a coverage gap,
+not a bug.
+
+## The other feature-gated tests are correctly excluded
+
+A census of test functions behind a whole-file feature gate:
+
+| Feature         | Test functions | Assessment                                           |
+| --------------- | -------------- | ---------------------------------------------------- |
+| `real-network`  | 73             | Correctly excluded — needs live Telegram credentials |
+| `stoolap`       | 69             | **Gap — needs no credentials, only a feature flag**  |
+| `live-matrix`   | 14             | Correctly excluded — needs a live Matrix homeserver  |
+| `live-whatsapp` | 3              | Correctly excluded — needs a live session            |
+| `hex-ids`       | 3              | Already covered by a dedicated `ci.yml` step         |
+
+`stoolap` is the only one of these that is excluded for a build-budget reason
+rather than an external-dependency reason. It is the cheapest of the five to
+recover.
+
+## Proposed step
+
+Mirroring the `hex-ids` step that already exists:
+
+```yaml
+- name: Test stoolap backend (octo-reputation)
+  run: |
+    if [ -f Cargo.toml ]; then
+      cargo test -p octo-reputation --features stoolap;
+    fi
+```
+
+## Why this was not applied
+
+Two reasons, both substantive.
+
+**It is workflow policy.** Earlier in this arc a workflow edit was made only
+where the change was an unambiguous defect — a path filter that omitted a
+directory the workflow already claimed to test. This is different in kind: it
+adds CI work, and the right amount of CI work is an owner decision.
+
+**The disk risk is documented and cannot be validated locally.** `ci.yml`
+carries a long comment explaining that the `build-test` job has already run the
+hosted runner out of disk twice:
+
+> The last of those ran the runner out of disk twice in a row, failing to
+> archive libwaproto.rlib and libwacore.rlib with "No space left on device".
+
+The job sets `CARGO_INCREMENTAL: "0"` and zeroes debug info specifically to stay
+inside that budget. Adding a second feature-gated build of a crate that pulls
+`octo-storage-core` moves the job in exactly the direction that has already
+failed twice. Whether it fits cannot be established from a workstation.
+
+## Acceptance Criteria
+
+- [ ] The `stoolap` step is added to `ci.yml`, or the decision not to is
+      recorded with a reason
+- [ ] If added, the added build cost is measured against the runner disk
+      budget, and the job's existing disk comment is updated to reflect the
+      new total
+- [ ] `StoolapReputationStore` stops returning
+      `ChainRefInvalid("stoolap_backend_unimplemented:<name>")` under the
+      default feature set, or the stub is explicitly documented as
+      intentional and permanent
+
+## The wider census: every feature-gated test CI does not run
+
+`stoolap` is an instance, not the whole class. Every test function gated
+behind a whole-file `#![cfg(feature = ...)]`, with the feature's declared
+dependencies, and whether CI runs it:
+
+| Feature                    | Tests | Feature pulls in                       | CI runs it?                               |
+| -------------------------- | ----- | -------------------------------------- | ----------------------------------------- |
+| `stoolap`                  | 69    | `serde_json`, `octo-storage-core`      | **No**                                    |
+| `real-network`             | 73    | `grammers-client`, `grammers-tl-types` | No — needs live Telegram credentials      |
+| `live-matrix`              | 14    | _(none)_                               | No — needs a live Matrix homeserver       |
+| `real-tdlib`               | 12    | `tdlib-rs` + a TDLib download          | No — needs TDLib                          |
+| `live-whatsapp`            | 3     | `test-helpers`                         | No — needs a live session                 |
+| `octo-attach-key-rotation` | 7     | _(none)_                               | Yes — step added, delta 11                |
+| `crdt`                     | 2     | —                                      | No                                        |
+| `octo-audit-internal`      | 6     | _(none)_                               | Yes — step added, delta 6                 |
+| `testing` (octo-vault)     | 1     | _(none)_                               | **No**                                    |
+| `query`                    | 1     | `tantivy`, `candle`, `tokenizers`      | No — documented as a RAM-budget exclusion |
+| `otlp`                     | 1     | `opentelemetry` stack                  | No                                        |
+| `hex-ids`                  | 3     | _(none)_                               | Yes — pre-existing dedicated step         |
+
+Two things follow.
+
+**The live and external-dependency exclusions are correct.** `real-network`,
+`live-matrix`, `real-whatsapp` and `real-tdlib` need credentials or a hosted
+service. Nothing should change there.
+
+**Four features gate tests and pull in nothing at all.** `hex-ids`,
+`octo-attach-key-rotation`, `octo-audit-internal` and `testing` have empty
+dependency lists, so there is no build-budget reason to exclude them — which
+is precisely the reasoning `ci.yml` already applies when it adds the
+`hex-ids` step. The three that had no step now have one; their measured
+all-target deltas are 11, 6 and 1.
+
+All three were run locally and pass, and the three CI steps run the exact
+commands verified here:
+
+| Command                                                          | Default | With feature |
+| ---------------------------------------------------------------- | ------- | ------------ |
+| `cargo test -p octo-runtime --features octo-attach-key-rotation` | 91      | 102          |
+| `cargo test -p octo-audit --features octo-audit-internal`        | 125     | 131          |
+| `cargo test -p octo-vault --features testing`                    | 94      | 95           |
+
+None of this was a defect. It was the same coverage gap as `stoolap`, three
+more instances of it, and every one was free to fix — an empty feature costs
+no extra dependencies to compile. The `stoolap` case above is the one that
+remains, because it is the only one that pulls dependencies.
+
+### Two measurement corrections worth keeping
+
+`octo-audit-internal` was first measured against `octo-audit-core`, where it
+showed a delta of **zero** — that crate is not where the feature gates
+anything. The same feature name is declared in three crates and means
+different things in each: it gates test modules in `octo-audit`, production
+code in `octo-wallet`, and nothing test-visible in `octo-audit-core`. Had
+the measurement stopped there, the correct step would have been recorded as
+vacuous.
+
+The figures first written down were library-only, which understated two of
+the three once integration targets were counted. A measurement that is
+correct but scoped to the wrong target is still the wrong measurement.
+
+## A near-miss worth recording
+
+The same census appeared to implicate `zk-verifier`, whose twelve library
+tests no `zk-capability-circuit.yml` step runs. It does not: `zk-verifier`
+lives under `crates/*`, so `ci.yml`'s `cargo test --workspace` covers it. The
+distinction that matters is **feature-gated versus workspace-excluded** —
+only the former escapes the default-features test run. Worth stating because
+the two look identical from the workflow file alone.
+
+## Related
+
+The third acceptance criterion is the deeper one. A stub that silently answers
+in the default build is indistinguishable from an implementation to anything
+that only runs the default configuration. Closing the CI gap makes the real
+backend visible; retiring the stub removes the possibility of it being mistaken
+for one.

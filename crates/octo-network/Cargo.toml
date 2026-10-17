@@ -1,6 +1,6 @@
 [package]
 name = "octo-network"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
@@ -8,6 +8,10 @@ tokio = { version = "1.35", features = ["sync", "rt-multi-thread", "macros"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { workspace = true }
 serde_bytes = "0.11"
+# Mission 0011-h-s-a-local-gateway-identity-state: TOML persistence for
+# local gateway identity state at <octo_home>/network/local-gateway-identity.toml
+# per RFC-0011-i §Substrate-Additions row (NEW) + RFC-0011-h §Error Handling row 83
+toml = "0.8"
 async-trait = "0.1"
 thiserror = "2.0"
 tracing = { workspace = true }
@@ -20,6 +24,19 @@ ed25519-dalek = { version = "2.1", features = ["serde"] }
 x25519-dalek = { version = "2.0", features = ["static_secrets"] }
 chacha20poly1305 = "0.10"
 libloading = "0.8"
+# RFC-0009 AC#11 (mission 0009-c7): transport-envelope verification dispatches
+# on the algorithm the caller's key belongs to instead of a hardcoded Ed25519.
+# `octo-ident` is Layer B identity substrate and `octo-algo-ed25519` is a
+# Layer E per-algorithm extension — C → B is permitted, and the arrow that
+# must never point back (E → B internals) is not taken. Same pair
+# `octo-wallet`, `octo-reputation`, `octo-vault` and `octo-coordinator-types`
+# already carry.
+#
+# Note: `octo-ident` was named in this manifest only inside a comment about a
+# future codec swap, which reads at a glance exactly like a dependency. It was
+# not one until this line.
+octo-ident = { path = "../octo-ident" }
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
 wasmtime = { version = "36.0", optional = true }
 # Mission 0850p-d: nonce generation for DcOrchestrator
 rand = "0.9"
@@ -27,12 +44,54 @@ rand = "0.9"
 # Stoolap Data Sync (RFC-0862) — leaf workspace dependency
 octo-sync = { path = "../../octo-sync" }
 parking_lot = "0.12"
+# Mission 0855p-b / 0968 Phase 4 — federation substrate
+octo-reputation = { path = "../octo-reputation" }
+# Mission 0862m1: peer_id hex encoding in slash bridge
+hex = "0.4"
+# Boxed futures for the gossip ingress task (erases the async-fn
+# non-Send future so tokio::spawn can drive it).
+futures = "0.3"
+# Mission 0855p-d1: UTF-8 NFC normalization for SubGroupLabel (optional feature
+# `unicode-nfc`; ASCII fast-path is identity when feature disabled)
+unicode-normalization = { version = "0.1", optional = true }
+# Mission 0855p-e-coordinator-types-shared-crate: shared Layer-B
+# coordinator types (SlashTallyUpdate + SlashReasonCode +
+# HandoverReasonTypeId canonical home). octo-network re-imports;
+# no upward dependency; no duplicate definitions.
+octo-coordinator-types = { path = "../octo-coordinator-types" }
+# Mission 0011-d M11 (RFC-0855p-c + RFC-0011-d v1.7.1 §7.4):
+# `pubkey_from_did` for canonical did:octo:0x<hex> → 32-byte Ed25519
+# pubkey derivation. Used by `bind_domain_coordinator` to extract the
+# operator's pubkey from `operator_did` without round-tripping through
+# the full octo-ident codec (Phase 1 form; production swaps in
+# octo-ident::WireDid round-trip).
+octo-cap-macaroon = { path = "../octo-cap-macaroon" }
+# Mission 0013-governance-network-migration: governance substrate
+# (Layer A frozen per RFC-0013 §Module Layout). mon/governance.rs
+# re-exports canonical GovernancePolicy + GovernanceModel +
+# EmergencyAuthority + GovernanceProposal + ProposalState +
+# DecisionType + voting_weight + tally_quorum.
+octo-governance-core = { path = "../octo-governance-core" }
 
 [dev-dependencies]
 serde_json = "1.0"
 tokio = { version = "1.35", features = ["sync", "rt-multi-thread", "macros"] }
 octo-sync = { path = "../../octo-sync", features = ["test-util"] }
+octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
+# Mission 0855p-b / 0968 Phase 4 — 2-node mesh integration test
+octo-adapter-p2p = { path = "../octo-adapter-p2p" }
+# Second registered algorithm (Layer A, RFC-0009 AC#11). Dev-only, and the
+# reason is specific: a stark-schnorr key is 33 bytes where Ed25519 is 32, so
+# it is the one key in the workspace that PROVES a verification site takes a
+# key by slice rather than by a 32-byte array. Signing with it is what turns
+# "the body calls verify_dispatch" into "a second algorithm is usable here".
+# A test that only rejected an Ed25519 proof proved nothing — mutation showed
+# a hardcoded verifier passing it.
+octo-algo-stark-schnorr = { path = "../octo-algo-stark-schnorr" }
 
 [features]
 default = []
 wasm = ["dep:wasmtime"]
+# Mission 0855p-d1: full UTF-8 NFC normalization via unicode-normalization crate;
+# disable for minimal build (ASCII fast-path retained in SubGroupLabel::new).
+unicode-nfc = ["dep:unicode-normalization"]

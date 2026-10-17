@@ -206,44 +206,53 @@ Once accepted:
 
 ### Process & Meta (RFC-0000-0099)
 
-| RFC                     | Title                            | Status   | Description                   |
-| ----------------------- | -------------------------------- | -------- | ----------------------------- |
-| RFC-0000 (Process/Meta) | CipherOcto Architecture Overview | Draft    | System architecture           |
-| RFC-0001 (Process/Meta) | Mission Lifecycle                | Accepted | Mission framework             |
-| RFC-0002 (Process/Meta) | Agent Manifest Specification     | Accepted | Agent definition              |
-| RFC-0003 (Process/Meta) | Deterministic Execution Standard | Draft    | Core determinism requirements |
-| RFC-0004 (Process/Meta) | Implementation Roadmap           | Draft    | Phased implementation plan    |
+| RFC                     | Title                             | Status   | Description                                                                                                       |
+| ----------------------- | --------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
+| RFC-0000 (Process/Meta) | CipherOcto Architecture Overview  | Draft    | System architecture                                                                                               |
+| RFC-0001 (Process/Meta) | Mission Lifecycle                 | Accepted | Mission framework                                                                                                 |
+| RFC-0002 (Process/Meta) | Agent Manifest Specification      | Accepted | Agent definition                                                                                                  |
+| RFC-0003 (Process/Meta) | Deterministic Execution Standard  | Draft    | Core determinism requirements                                                                                     |
+| RFC-0004 (Process/Meta) | Implementation Roadmap            | Draft    | Phased implementation plan                                                                                        |
+| RFC-0011-x (Process)    | Wallet Store Identity Substrate   | Draft    | `WalletStore`, the unlock split, and the `OctoCliError` slots 92-94                                               |
+| RFC-0009-A1 (Process)   | The V2 Bundle Is Not A Credential | Draft    | Restore the v1 macaroon wire as the mint response payload; the V2 bundle describes a capability without being one |
+
+> **This table is not a complete index of the RFC-0011 family.** RFC-0011 and its
+> amendments `-a` through `-w` are accepted and unindexed here, so the absence of a
+> row for one of them is not evidence that it does not exist. RFC-0011-x is listed
+> because it is the newest and its two companion missions reference it by name. Closing
+> the rest of the family is its own task and is deliberately not bundled into the
+> registration of one draft.
 
 ### Numeric (RFC-0100-0199)
 
-| RFC                | Title                                 | Status | Description                                 |
-| ------------------ | ------------------------------------- | ------ | ------------------------------------------- |
-| RFC-0102 (Numeric) | Wallet Cryptography                   | Draft  | Wallet security and key management          |
-| RFC-0104 (Numeric) | Deterministic Floating-Point (DFP)    | Draft  | Deterministic floating-point types          |
-| RFC-0105 (Numeric) | Deterministic Quant Arithmetic (DQA)  | Draft  | Quantized arithmetic types                  |
-| RFC-0106 (Numeric) | Deterministic Numeric Tower (DNT)     | Superseded | Replaced by 0110-0115 (Track B)      |
-| RFC-0107 (Numeric) | Deterministic Transformer Circuit     | Draft  | Transformer circuit design                  |
-| RFC-0108 (Numeric) | Deterministic Training Circuits       | Draft  | Training circuit design                     |
-| RFC-0109 (Numeric) | Deterministic Linear Algebra Engine   | Draft  | Vector/matrix operations                    |
-| RFC-0110 (Numeric) | Deterministic BIGINT                 | Accepted | Arbitrary-precision integers               |
-| RFC-0111 (Numeric) | Deterministic DECIMAL                | Draft  | Extended precision decimals (i128)         |
-| RFC-0112 (Numeric) | Deterministic Vectors (DVEC)         | Draft  | Vector operations for AI inference         |
-| RFC-0113 (Numeric) | Deterministic Matrices (DMAT)         | Draft  | Matrix operations for linear algebra      |
-| RFC-0114 (Numeric) | Deterministic Activation Functions    | Accepted | ReLU, Sigmoid, Tanh for ML            |
-| RFC-0115 (Numeric) | Deterministic Tensors (DTENSOR)       | Planned | N-dimensional tensors (Phase 4)          |
-| RFC-0116 (Numeric) | Unified Deterministic Execution Model | Draft  | Unified execution framework                 |
-| RFC-0126 (Numeric) | Deterministic Canonical Serialization (DCS) | Accepted | Cross-language deterministic serialization for consensus |
-| RFC-0127 (Numeric) | DCS Blob Amendment | Accepted | Adds Blob as first-class DCS type with schema-driven dispatcher |
+| RFC                | Title                                       | Status     | Description                                                     |
+| ------------------ | ------------------------------------------- | ---------- | --------------------------------------------------------------- |
+| RFC-0102 (Numeric) | Wallet Cryptography                         | Accepted   | Wallet security and key management                              |
+| RFC-0104 (Numeric) | Deterministic Floating-Point (DFP)          | Draft      | Deterministic floating-point types                              |
+| RFC-0105 (Numeric) | Deterministic Quant Arithmetic (DQA)        | Draft      | Quantized arithmetic types                                      |
+| RFC-0106 (Numeric) | Deterministic Numeric Tower (DNT)           | Superseded | Replaced by 0110-0115 (Track B)                                 |
+| RFC-0107 (Numeric) | Deterministic Transformer Circuit           | Draft      | Transformer circuit design                                      |
+| RFC-0108 (Numeric) | Deterministic Training Circuits             | Draft      | Training circuit design                                         |
+| RFC-0109 (Numeric) | Deterministic Linear Algebra Engine         | Draft      | Vector/matrix operations                                        |
+| RFC-0110 (Numeric) | Deterministic BIGINT                        | Accepted   | Arbitrary-precision integers                                    |
+| RFC-0111 (Numeric) | Deterministic DECIMAL                       | Draft      | Extended precision decimals (i128)                              |
+| RFC-0112 (Numeric) | Deterministic Vectors (DVEC)                | Draft      | Vector operations for AI inference                              |
+| RFC-0113 (Numeric) | Deterministic Matrices (DMAT)               | Draft      | Matrix operations for linear algebra                            |
+| RFC-0114 (Numeric) | Deterministic Activation Functions          | Accepted   | ReLU, Sigmoid, Tanh for ML                                      |
+| RFC-0115 (Numeric) | Deterministic Tensors (DTENSOR)             | Planned    | N-dimensional tensors (Phase 4)                                 |
+| RFC-0116 (Numeric) | Unified Deterministic Execution Model       | Draft      | Unified execution framework                                     |
+| RFC-0126 (Numeric) | Deterministic Canonical Serialization (DCS) | Accepted   | Cross-language deterministic serialization for consensus        |
+| RFC-0127 (Numeric) | DCS Blob Amendment                          | Accepted   | Adds Blob as first-class DCS type with schema-driven dispatcher |
 
 ### Storage (RFC-0200-0299)
 
-| RFC                | Title                                    | Status | Description                        |
-| ------------------ | ---------------------------------------- | ------ | ---------------------------------- |
-| RFC-0200 (Storage) | Production Vector-SQL Storage            | Draft  | Vector storage with SQL interface  |
-| RFC-0201 (Storage) | Binary BLOB Type for Hash Storage       | Accepted | Native blob type for crypto hashes |
-| RFC-0202-A (Storage) | Stoolap BIGINT and DECIMAL Core Types | Accepted | DataType, Value, SQL parsing, VM dispatch for BigInt/Decimal |
-| RFC-0202-B (Storage) | BIGINT and DECIMAL Conversions       | Draft | BIGINT↔DQA, BIGINT↔DECIMAL, DECIMAL↔DQA conversions |
-| RFC-0204 (Storage) | Expression Compiler Aggregate Resolution | Accepted | SUM/COUNT/AVG/MIN/MAX inside MVCC transactions |
+| RFC                  | Title                                    | Status   | Description                                                  |
+| -------------------- | ---------------------------------------- | -------- | ------------------------------------------------------------ |
+| RFC-0200 (Storage)   | Production Vector-SQL Storage            | Draft    | Vector storage with SQL interface                            |
+| RFC-0201 (Storage)   | Binary BLOB Type for Hash Storage        | Accepted | Native blob type for crypto hashes                           |
+| RFC-0202-A (Storage) | Stoolap BIGINT and DECIMAL Core Types    | Accepted | DataType, Value, SQL parsing, VM dispatch for BigInt/Decimal |
+| RFC-0202-B (Storage) | BIGINT and DECIMAL Conversions           | Draft    | BIGINT↔DQA, BIGINT↔DECIMAL, DECIMAL↔DQA conversions          |
+| RFC-0204 (Storage)   | Expression Compiler Aggregate Resolution | Accepted | SUM/COUNT/AVG/MIN/MAX inside MVCC transactions               |
 
 ### Retrieval (RFC-0300-0399)
 
@@ -300,54 +309,76 @@ Once accepted:
 
 ### Networking (RFC-0800-0899)
 
-| RFC                         | Title                                                       | Status   | Description                                                      |
-| --------------------------- | ----------------------------------------------------------- | -------- | ---------------------------------------------------------------- |
-| RFC-0843 (Networking)       | OCTO-Network Protocol                                       | Draft    | Network protocol specification                                   |
-| RFC-0845 (Networking)       | Hardware Capability Registry                                | Draft    | Hardware capability tracking                                     |
-| RFC-0850 (Networking)       | Deterministic Overlay Transport (DOT)                       | Accepted | DOT envelope format, broadcast domain IDs, native P2P            |
-| RFC-0850ab-a (Networking)   | Telegram Auth Onboarding                                    | Accepted | TDLib-based adapter onboarding (operator side)                   |
-| RFC-0850p-a (Networking)    | WhatsApp Auth Onboarding                                    | Accepted | WhatsApp Web multi-account operator side, `GroupConfig`         |
-| RFC-0850p-c (Networking)    | Transport Group Binding Ceremony                            | Accepted | `GroupBinding`, `GroupState`, BIND/REBIND/UNBIND envelopes       |
-| RFC-0850p-d (Networking)    | DC-Initiated Transport Group Creation & Invite              | Draft    | CGROUP/INVITE/UNBIND_ALL envelopes; DC creates new groups        |
-| RFC-0850p-e (Networking)    | Kick & Platform Membership Change Detection                 | Draft    | SELF_KICKED/KICK_DETECTED/REJOIN envelopes; closes E2E IS-5.1    |
-| RFC-0850p-f (Networking)    | Transport Group Decommission                                | Draft    | UNBIND_ALL_DONE/AUDIT envelopes; DC rotation handover (early)    |
-| RFC-0851 (Networking)       | Gateway Discovery Protocol                                  | Accepted | Gateway peer discovery and capability advertisement               |
-| RFC-0851p-a (Networking)    | Network Bootstrap Protocol                                  | Accepted | Initial node bootstrap and seed authority                        |
-| RFC-0852 (Networking)       | Deterministic Gossip Protocol                               | Draft    | Gossip-based message propagation                                 |
-| RFC-0853 (Networking)       | Overlay Cryptography                                        | Draft    | Signatures, commitments, encrypted payloads                      |
-| RFC-0854 (Networking)       | Deterministic Proof Substrate                               | Draft    | Proof substrate abstraction                                      |
-| RFC-0855 (Networking)       | Mission Overlay Networks                                    | Accepted | Mission lifecycle, `MissionDescriptor`                           |
-| RFC-0855p-b (Networking)    | Mission Coordinator Lifecycle                               | Accepted | `CoordinatorLifecycle` and `CoordinatorRecord`                   |
-| RFC-0855p-c (Networking)    | DomainCoordinator Role                                      | Accepted | DC authority, slash codes, mission-scoped envelopes              |
-| RFC-0855p-d (Networking)    | Sub-Domain / Sub-Group Nesting                              | Draft    | New `CreateSubGroupEnvelope` envelope variant (subtype `b"CGSB"`) carrying a `SubGroupExtension` payload; sub-DC delegation      |
-| RFC-0855p-e (Networking)    | HandoverRequest Envelope & Coordinator Term Handover        | Draft    | HANDOVER_REQUEST/ACK/DONE envelopes; slash tally transfer         |
-| RFC-0856 (Networking)       | Deterministic Route Selection                               | Draft    | Route selection algorithm                                        |
-| RFC-0857 (Networking)       | Deterministic Overlay Mempool                               | Draft    | Mempool for overlay envelopes                                    |
-| RFC-0858 (Networking)       | Onion Relay Routing                                         | Draft    | Privacy-preserving onion routing                                 |
-| RFC-0859 (Networking)       | Proof-Carrying Envelopes                                    | Draft    | Envelopes with attached proofs                                   |
-| RFC-0860 (Networking)       | Proof-of-Relay (PoRelay)                                    | Draft    | Cryptographic proof of relay participation                       |
-| RFC-0861 (Networking)       | CoordinatorAdmin Adapter Contract Refinements               | Accepted | Closes 11 R1 findings deferred from R20/R21: capability honesty, validation, error semantics |
-| RFC-0863 (Networking)       | General-Purpose Network Integration (`octo-transport`)       | Accepted | `NetworkSender` trait, `PlatformAdapterBridge`, `NodeTransport` — serves all 27+ use cases |
+| RFC                       | Title                                                  | Status   | Description                                                                                                                                                                                                                                                       |
+| ------------------------- | ------------------------------------------------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| RFC-0843 (Networking)     | OCTO-Network Protocol                                  | Draft    | Network protocol specification                                                                                                                                                                                                                                    |
+| RFC-0845 (Networking)     | Hardware Capability Registry                           | Draft    | Hardware capability tracking                                                                                                                                                                                                                                      |
+| RFC-0850 (Networking)     | Deterministic Overlay Transport (DOT)                  | Accepted | DOT envelope format, broadcast domain IDs, native P2P                                                                                                                                                                                                             |
+| RFC-0850ab-a (Networking) | Telegram Auth Onboarding                               | Accepted | TDLib-based adapter onboarding (operator side)                                                                                                                                                                                                                    |
+| RFC-0850p-a (Networking)  | WhatsApp Auth Onboarding                               | Accepted | WhatsApp Web multi-account operator side, `GroupConfig`                                                                                                                                                                                                           |
+| RFC-0850p-c (Networking)  | Transport Group Binding Ceremony                       | Accepted | `GroupBinding`, `GroupState`, BIND/REBIND/UNBIND envelopes                                                                                                                                                                                                        |
+| RFC-0850p-d (Networking)  | DC-Initiated Transport Group Creation & Invite         | Draft    | CGROUP/INVITE/UNBIND_ALL envelopes; DC creates new groups                                                                                                                                                                                                         |
+| RFC-0850p-e (Networking)  | Kick & Platform Membership Change Detection            | Draft    | SELF_KICKED/KICK_DETECTED/REJOIN envelopes; closes E2E IS-5.1                                                                                                                                                                                                     |
+| RFC-0850p-f (Networking)  | Transport Group Decommission                           | Draft    | UNBIND_ALL_DONE/AUDIT envelopes; DC rotation handover (early)                                                                                                                                                                                                     |
+| RFC-0851 (Networking)     | Gateway Discovery Protocol                             | Accepted | Gateway peer discovery and capability advertisement                                                                                                                                                                                                               |
+| RFC-0851p-a (Networking)  | Network Bootstrap Protocol                             | Accepted | Initial node bootstrap and seed authority                                                                                                                                                                                                                         |
+| RFC-0852 (Networking)     | Deterministic Gossip Protocol                          | Draft    | Gossip-based message propagation                                                                                                                                                                                                                                  |
+| RFC-0853 (Networking)     | Overlay Cryptography                                   | Draft    | Signatures, commitments, encrypted payloads                                                                                                                                                                                                                       |
+| RFC-0854 (Networking)     | Deterministic Proof Substrate                          | Draft    | Proof substrate abstraction                                                                                                                                                                                                                                       |
+| RFC-0855 (Networking)     | Mission Overlay Networks                               | Accepted | Mission lifecycle, `MissionDescriptor`                                                                                                                                                                                                                            |
+| RFC-0855p-b (Networking)  | Mission Coordinator Lifecycle                          | Accepted | `CoordinatorLifecycle` and `CoordinatorRecord`                                                                                                                                                                                                                    |
+| RFC-0855p-c (Networking)  | DomainCoordinator Role                                 | Accepted | DC authority, slash codes, mission-scoped envelopes                                                                                                                                                                                                               |
+| RFC-0855p-d (Networking)  | Sub-Domain / Sub-Group Nesting                         | Draft    | New `CreateSubGroupEnvelope` envelope variant (subtype `b"CGSB"`) carrying a `SubGroupExtension` payload; sub-DC delegation                                                                                                                                       |
+| RFC-0855p-e (Networking)  | HandoverRequest Envelope & Coordinator Term Handover   | Draft    | HANDOVER_REQUEST/ACK/DONE envelopes; slash tally transfer                                                                                                                                                                                                         |
+| RFC-0856 (Networking)     | Deterministic Route Selection                          | Draft    | Route selection algorithm                                                                                                                                                                                                                                         |
+| RFC-0857 (Networking)     | Deterministic Overlay Mempool                          | Draft    | Mempool for overlay envelopes                                                                                                                                                                                                                                     |
+| RFC-0858 (Networking)     | Onion Relay Routing                                    | Draft    | Privacy-preserving onion routing                                                                                                                                                                                                                                  |
+| RFC-0859 (Networking)     | Proof-Carrying Envelopes                               | Draft    | Envelopes with attached proofs                                                                                                                                                                                                                                    |
+| RFC-0860 (Networking)     | Proof-of-Relay (PoRelay)                               | Draft    | Cryptographic proof of relay participation                                                                                                                                                                                                                        |
+| RFC-0861 (Networking)     | CoordinatorAdmin Adapter Contract Refinements          | Accepted | Closes 11 R1 findings deferred from R20/R21: capability honesty, validation, error semantics                                                                                                                                                                      |
+| RFC-0863 (Networking)     | General-Purpose Network Integration (`octo-transport`) | Accepted | `NetworkSender` trait, `PlatformAdapterBridge`, `NodeTransport` — serves all 27+ use cases                                                                                                                                                                        |
+| RFC-0871 (Networking)     | Specialized Node Protocol Envelope                     | Accepted | Unified `NodeEnvelope` for all specialized nodes (quota router, identity resolver, reputation anchor, capability issuer, market node, wallet); DID-bound, 128-bit `PayloadKindId` UUID, `Vec<Authorization>`, replay defense; 7-round adversarial review (R7 DRY) |
 
 ### Economics (RFC-0900-0999)
 
-| RFC                  | Title                           | Status | Description                       |
-| -------------------- | ------------------------------- | ------ | --------------------------------- |
-| RFC-0900 (Economics) | AI Quota Marketplace Protocol   | Draft  | Marketplace for AI compute quotas |
-| RFC-0901 (Economics) | Quota Router Agent              | Draft  | Agent for routing requests        |
-| RFC-0909 (Economics) | Deterministic Quota Accounting     | Accepted | Deterministic quota accounting    |
-| RFC-0910 (Economics) | Pricing Table Registry            | Draft  | Versioned immutable pricing tables |
-| RFC-0919 (Economics) | Stoolap Partial Indexes            | Planned | `CREATE INDEX ... WHERE` support      |
-| RFC-0950 (Economics) | Agent Mission Marketplace (AMM)     | Draft  | Mission marketplace                     |
-| RFC-0955 (Economics) | Model Liquidity Layer           | Draft  | Tokenized AI models               |
-| RFC-0956 (Economics) | Model Liquidity Layer (MLL) v2  | Draft  | Tokenized AI models (updated)     |
+| RFC                   | Title                                             | Status              | Description                                                                                                                       |
+| --------------------- | ------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| RFC-0900 (Economics)  | AI Quota Marketplace Protocol                     | Accepted            | Marketplace for AI compute quotas                                                                                                 |
+| RFC-0901 (Economics)  | Quota Router Agent                                | Draft               | Agent for routing requests                                                                                                        |
+| RFC-0909 (Economics)  | Deterministic Quota Accounting                    | Final               | Deterministic quota accounting                                                                                                    |
+| RFC-0910 (Economics)  | Pricing Table Registry                            | Accepted (v31)      | Versioned immutable pricing tables                                                                                                |
+| RFC-0918 (Economics)  | Inference Task Market                             | Accepted            | Per-model inference-task marketplace substrate                                                                                    |
+| RFC-0919 (Economics)  | Stoolap Partial Indexes                           | Planned             | `CREATE INDEX ... WHERE` support                                                                                                  |
+| RFC-0950 (Economics)  | Agent Mission Marketplace (AMM)                   | Archived Superseded | Subsumed by RFC-0960 + RFC-0959 + RFC-0957 (grand-design family, Accepted 2026-07-23 / 2026-08-04)                                |
+| RFC-0955              | Model Liquidity Layer                             | Accepted 2026-07-27 | Tokenized AI models (canonical: 4 asset types, multi-owner, 5-way split, liquidity pools, governance)                             |
+| RFC-0955-R1           | Reputation Anchoring (Amendment)                  | Accepted 2026-07-27 | On-chain reputation anchoring binding; requires RFC-0968 (also Accepted)                                                          |
+| RFC-0956 (Economics)  | Model Liquidity Layer (MLL) v2                    | Archived Superseded | Simplified models-only v2 superseded by RFC-0955 + RFC-0957 (2026-05-16)                                                          |
+| RFC-0957 (Economics)  | Capability Token Format (Macaroon v1)             | Accepted            | Capability tokens: bearer + caveat; 23-variant Constrain Set                                                                      |
+| RFC-0957-A1           | Holder Registry + Catalog Storage (Amendment)     | Accepted 2026-08-02 | On-chain holder registry + cross-DC catalog storage (in-place amendment to RFC-0957)                                              |
+| RFC-0959 (Economics)  | Ask Settlement Chain (Independent)                | Accepted 2026-08-04 | Per-Ask settlement receipts; independent from RFC-0126 settlement carrier                                                         |
+| RFC-0959-A1           | Market Delivery Envelope (Amendment)              | Accepted 2026-08-02 | Market-side DeliveryEnvelope format (in-place amendment to RFC-0959)                                                              |
+| RFC-0960 (Economics)  | Grand Design — Vaults, Capabilities, Reservations | Accepted (v2.0)     | Umbrella architecture: 4 primitives (Vault, Capability, Reservation, Settlement) over 7 RFC stack (0961/0962/0963/0964/0965/0967) |
+| RFC-0961 (Economics)  | CIPHERO_SQL — Deterministic SQL Dialect           | Accepted            | Strategic reframe (v2.0): deterministic SQL spec for cipherocto-side persistence + cross-DC federation                            |
+| RFC-0962 (Economics)  | ExecutionEnvelope — DB Transaction Object         | Accepted            | `ExecutionEnvelope` as database transaction object over RFC-0862 stoolap sync layer                                               |
+| RFC-0963 (Economics)  | Resource Shard Routing                            | Accepted            | Strategic reframe (v2.0): shard routing over `ExecutionEnvelope`                                                                  |
+| RFC-0964 (Economics)  | Constraint Encoding Standard                      | Accepted            | 23-variant Constraint Set catalog + encoding (per RFC-0957 §caveats)                                                              |
+| RFC-0965 (Economics)  | Capability Extension Format (Caveat DSL)          | Accepted            | Caveat extension type-set for RFC-0957                                                                                            |
+| RFC-0967 (Economics)  | Policy Object Graph                               | Accepted            | Separable authorization policy: policy_ref + caveat + PolicyGraph                                                                 |
+| RFC-0968              | Reputation Registry                               | Accepted            | Reputation registry (353 KB; canonical reputation substrate)                                                                      |
+| RFC-0969 (Economics)  | Dual-Pipeline Authorization                       | Accepted 2026-08-02 | Legacy bearer + capability dual-pipeline authorization (RFC-0969)                                                                 |
+| RFC-0972 (Economics)  | Capability `root_id` Derivation Reconciliation    | Draft               | In-place amendment to RFC-0957 §Mint: spec reconciles to the implemented `root_id` form (no wire change)                          |
+| RFC-0970 (Networking) | Forwarding-Hop Authorization Envelope             | Accepted 2026-08-02 | Forwarding-hop authorization envelope form                                                                                        |
+| RFC-0971 (Networking) | Destination-Node Role Consolidation               | Accepted 2026-08-02 | Consolidates destination-node roles                                                                                               |
+| RFC-0973 (Economics)  | Pluggable Proof Attestation for Capabilities      | Accepted            | Attestation strategy trait + fail-closed registry in `octo-wallet`; operator-selected acceptance set; two reference strategies    |
 
 ### Archived
 
-| RFC                | Title                      | Status                           |
-| ------------------ | -------------------------- | -------------------------------- |
-| RFC-0103 (Storage) | Unified Vector-SQL Storage | Superseded by RFC-0200 (Storage) |
-| RFC-0106 (Numeric) | Deterministic Numeric Tower | Superseded by 0110-0115          |
+| RFC                  | Title                           | Status                                                                       |
+| -------------------- | ------------------------------- | ---------------------------------------------------------------------------- |
+| RFC-0103 (Storage)   | Unified Vector-SQL Storage      | Superseded by RFC-0200 (Storage)                                             |
+| RFC-0106 (Numeric)   | Deterministic Numeric Tower     | Superseded by 0110-0115                                                      |
+| RFC-0950 (Economics) | Agent Mission Marketplace (AMM) | Superseded by RFC-0960 + RFC-0959 + RFC-0957 (grand-design family, Accepted) |
+| RFC-0956 (Economics) | Model Liquidity Layer (MLL) v2  | Superseded by RFC-0955 + RFC-0957 (simplified models-only v2; 2026-05-16)    |
 
 ---
 
@@ -401,13 +432,13 @@ RAG Execution (RFC-0550 AI Execution)
         ↓
 Agent Runtime (RFC-0450 Agents)
         ↓
-Mission Marketplace (RFC-0950 Economics)
+Mission Marketplace (RFC-0960 Grand Design + RFC-0959 Settlement + RFC-0957 Capability Tokens)
         ↓
 Proof Verification (RFC-0651 Proof Systems)
         ↓
 Model Execution (RFC-0555 AI Execution)
         ↓
-Model Liquidity (RFC-0956 Economics)
+Model Liquidity (RFC-0955 Economics)
 ```
 
 ---

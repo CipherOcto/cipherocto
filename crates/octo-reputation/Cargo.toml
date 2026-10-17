@@ -1,0 +1,81 @@
+[package]
+name = "octo-reputation"
+version = "0.7.0"
+edition = "2021"
+description = "CipherOcto Reputation Registry per RFC-0968 — Phases 1-3 + stoolap backend + 0855p-b gossip contract (Phase 4)"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["rlib"]
+
+[features]
+default = []
+# Session 4 parity binary pulls in CLI + JSON output.
+parity-bin = ["dep:clap", "dep:serde_json"]
+# Session 6 — StoolapReputationStore impl over the workspace-wide stoolap
+# fork at feat/blockchain-sql. With `stoolap` enabled, every method is
+# wired against real SQL. Without it (CI default build), the type
+# remains constructible as a marker; methods return the historical stub
+# `ChainRefInvalid("stoolap_backend_unimplemented:<name>")` errors so
+# the `ReputationStore` trait is still nameable. Real impls gate on
+# `#[cfg(feature = "stoolap")]` so the build is hermetic in CI.
+stoolap = ["dep:serde_json", "dep:octo-storage-core"]
+
+[dependencies]
+# Deterministic Floating-Point per RFC-0104 — score_ewma / score_delta canonical encoding
+octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
+# Canonical OctoID codec per RFC-0010 — `RecorderDid::to_wire()` delegate.
+# `serde` feature: `SuspensionAuth` now carries the algorithm its governance
+# signature is verified under (mission 0009-c), and `AlgorithmId` only
+# serialises when that feature is on.
+octo-ident = { path = "../octo-ident", features = ["serde"] }
+
+# Mission 0009-c: Ed25519 `SignatureAlgorithm` implementation, so
+# `auth::verify_governance_signature` dispatches through `AlgorithmRegistry`
+# instead of constructing a `VerifyingKey` (RFC-0009 AC#11). Layer E
+# per-algorithm extension over the Layer B registry.
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
+# Hashing — 13 reputation domain separators + governance-set domain + RetirementEligibility envelope
+blake3 = "1.5"
+# Error enum with `#[repr(u8)]` discriminants 0x01..=0x39
+thiserror = "1"
+# Serialize/Deserialize on wire types
+serde = { version = "1.0", features = ["derive"] }
+# Hex / binary helpers for blob types
+hex = { version = "0.4", features = ["serde"] }
+# Governance signature verification substrate (Layer A; RFC-0968 §21 mandates
+# ed25519 verification of every authoritative proof). Added for C-4: the
+# governance/slash proof structs carried a `signature` field that nothing in the
+# tree verified, so proofs were forgeable without key material.
+ed25519-dalek = { version = "2.2", features = ["serde"] }
+# Async runtime for storage layer (Session 2)
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+# Session 4 parity sweep uses block_on to drive the canonical store synchronously
+futures-lite = "2"
+# Session 4 parity binary — CLI parsing + JSON output
+clap = { version = "4", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+# Layer A storage substrate (mission octo-storage-split S2). The migration
+# runner that the historical `substrate_runner` module bundled is now
+# delegated to the substrate's `apply_pending`. The substrate also re-exports
+# `stoolap::{Error, Value}` (RFC-0206 §Substrate Re-export Block),
+# so the store module no longer takes a direct `stoolap` Cargo.toml dep.
+octo-storage-core = { path = "../octo-storage-core", optional = true }
+
+[dev-dependencies]
+# Round-trip serde coverage on ReputationFilter + PeerReputation (Phase 10 R1.5)
+serde_json = "1"
+# Second registered algorithm (Layer A, RFC-0009 AC#11). Dev-only, and the
+# reason is specific to this crate: governance keys are 32 raw bytes with
+# nothing naming an algorithm, so `verify_governance_signature` takes the
+# AlgorithmId from the caller. Its other vectors cannot tell dispatch from a
+# hardcoded Ed25519 verifier — every governance key in this crate is 32 bytes,
+# so no assertion distinguishes the two. A stark-schnorr key is 33 bytes, which
+# makes the difference observable. Dev-only because no governance key in the
+# product is stark-schnorr; the vector exists to keep the site honest.
+octo-algo-stark-schnorr = { path = "../octo-algo-stark-schnorr" }
+
+[[bin]]
+name = "reputation-parity"
+path = "src/bin/reputation-parity.rs"
+required-features = ["parity-bin"]

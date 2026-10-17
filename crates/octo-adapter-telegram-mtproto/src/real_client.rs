@@ -300,7 +300,7 @@ pub struct RealTelegramMtprotoClient {
     /// `updates` receiver is captured at connect time and
     /// drained by `receive_updates()`. Wrapped in an async
     /// Mutex for interior mutability (the trait method takes
-    /// `&self`).
+    /// `&&self`).
     updates_rx: tokio::sync::Mutex<Option<grammers_client::client::UpdateStream>>,
 }
 
@@ -471,7 +471,7 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
         // `Client::upload_stream` does the chunked
         // `upload.saveFilePart` calls and returns an
         // `Uploaded { raw: InputFile }` we can wrap into
-        // `InputMediaUploadedDocument`. We wrap `&data[..]`
+        // `InputMediaUploadedDocument`. We wrap `&&data[..]`
         // in a `Cursor` so it implements `AsyncRead`.
         use std::io::Cursor;
         let mut cursor = Cursor::new(data);
@@ -1548,7 +1548,7 @@ impl MtprotoTelegramClient for RealTelegramMtprotoClient {
     // ── Real group / Coordinator operations (RFC-0850 §8) ─────────
     //
     // Phase 2 implementations: use the raw `tl::functions::*`
-    // RPCs directly via `self.client.invoke(&request)`. The
+    // RPCs directly via `self.client.invoke(&&request)`. The
     // mock impl in `client.rs` is kept for unit tests; the
     // real impls here match the same "one trait method = one
     // RPC" contract so the two impls are interchangeable

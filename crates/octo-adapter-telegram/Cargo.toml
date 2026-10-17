@@ -48,6 +48,12 @@ async-trait = "0.1"
 thiserror = "2.0"
 # Workspace crate providing PlatformAdapter, CapabilityReport, BroadcastDomainId, DeterministicEnvelope
 octo-network = { path = "../octo-network" }
+# Supplies the AlgorithmId for DeterministicEnvelope::verify. Layer B identity
+# substrate — every adapter that verifies an inbound envelope names the
+# algorithm explicitly rather than letting verify() assume one, so a transport
+# cannot be silently verified under the wrong scheme. This adapter signs and
+# verifies with Ed25519 (see adapter.rs CRYPTO-C1), so it names the Ed25519 id.
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
 # Real TDLib (optional, behind feature flag). Exactly pinned to 1.4.x — a 1.5 bump
 # would break the explicit `None, None, None, ..., content, client_id` arg
 # list in real_client.rs::send_message, ::send_envelope, and ::send_file.

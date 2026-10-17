@@ -10,6 +10,7 @@ For TRAP entries, uses sentinel encoding: {mantissa: 0x8000000000000000, scale: 
 import struct
 import hashlib
 import math
+import sys
 
 OPS = {
     'ADD': 1, 'SUB': 2, 'MUL': 3, 'DIV': 4, 'SQRT': 5, 'ROUND': 6,
@@ -450,6 +451,10 @@ print("=" * 60)
 
 hashes = []
 leaf_hashes = []  # Preserve leaf hashes before Merkle tree build
+# A failed entry used to become a zero hash and the run still printed an
+# authoritative root. Failures are counted; the run refuses to emit a
+# reference value when any entry errored.
+failures = []
 for entry in DATA:
     idx, op, a_mant, a_scl, b_mant, b_scl, desc = entry
     try:
@@ -467,10 +472,14 @@ for entry in DATA:
             r_mant, r_scl = result
             print(f"{idx:2d} {op:14} OK: {desc} → {r_mant}e{r_scl}")
     except Exception as e:
+        failures.append(f"{idx:2d} {op}: {e}")
         print(f"{idx:2d} {op:14} ERROR: {e} - {desc}")
         hashes.append(b'\x00' * 32)
 
-print(f"\n57 entries computed, building Merkle tree...")
+# Captured before the tree build, which folds `hashes` down to one node.
+n_entries = len(hashes)
+print(f"\n{n_entries - len(failures)} of {n_entries} entries computed,"
+      " building Merkle tree...")
 
 # Build Merkle tree
 while len(hashes) > 1:
@@ -481,6 +490,14 @@ while len(hashes) > 1:
     print(f"  Level complete: {len(hashes)} nodes")
 
 print("\n" + "=" * 60)
+if failures:
+    print(f"{len(failures)} of {n_entries} probe entries FAILED.")
+    for line in failures:
+        print(f"  {line}")
+    print("NOT A REFERENCE VALUE (computed over zero-hash placeholders): "
+          + hashes[0].hex())
+    print("=" * 60)
+    sys.exit(1)
 print(f"DECIMAL PROBE MERKLE ROOT (80-byte format): {hashes[0].hex()}")
 print("=" * 60)
 

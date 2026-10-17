@@ -5,18 +5,25 @@ on:
     branches: [main, next, feat/*]
   pull_request:
     paths:
-      - 'crates/quota-router-pyo3/**'
-      - 'python/**'
+      - "crates/quota-router-pyo3/**"
+      - "python/**"
+      # The suite this workflow runs lives here: `pytest tests/` and
+      # `python tests/smoke_test.py`. Without this entry a pull request that
+      # edits only the tests skips the job entirely, which is precisely when
+      # a broken test lands. Measured: all six most recent commits touching
+      # this directory touched no filtered path, so every one of them would
+      # have skipped the gate.
+      - "tests/**"
 
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.12']
+        python-version: ["3.12"]
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v6
@@ -41,7 +48,19 @@ jobs:
       - name: Build and install
         run: |
           source .venv/bin/activate
-          maturin develop --manifest-path crates/quota-router-pyo3/Cargo.toml
+          # Maturin invokes `cargo build` under the hood and respects
+          # `[tool.maturin].features` in `python/pyproject.toml`. We pin
+          # `--no-default-features -F pyo3-extension-module -F full` here
+          # so the build is robust to Cargo.toml default-feature drift:
+          # default = ["full"] enables `quota-router-core/full` (correct)
+          # BUT does NOT include `pyo3/extension-module`, so maturin's
+          # manylinux check fails with "Your library links libpython".
+          # Argument layout MUST stay on ONE line or use shell line
+          # continuation: maturin passes trailing CLI args as positional
+          # `cargo rustc` inputs and a `\`-escaped new line inserts a
+          # leading-space + literal flag into the rustc argv, which cargo
+          # then fails with "multiple input filenames provided".
+          maturin develop --manifest-path crates/quota-router-pyo3/Cargo.toml --no-default-features -F pyo3-extension-module -F full
 
       # Install the user-facing Python package `quota_router` (in
       # python/). The native extension is installed as
@@ -68,12 +87,12 @@ jobs:
   type-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       # Install Rust explicitly. Without this, `maturin develop` below
       # tries to bootstrap its own rustc via rustup and fails on fresh
@@ -98,7 +117,7 @@ jobs:
         run: |
           source .venv/bin/activate
           pip install maturin
-          maturin develop --manifest-path crates/quota-router-pyo3/Cargo.toml
+          maturin develop --manifest-path crates/quota-router-pyo3/Cargo.toml --no-default-features -F pyo3-extension-module -F full
           # Install the user-facing Python package `quota_router`
           # so mypy can resolve `from quota_router_native import ...`
           # inside `python/quota_router/`.
@@ -112,33 +131,38 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
+      # Identical to the `test` and `type-check` jobs above, deliberately.
+      #
+      # This step used to carry `profile: default`, with a long comment
+      # explaining that the action defaults to `--profile minimal` and that
+      # switching to the default profile was what installed cargo. That input
+      # does not exist — actionlint reported it as
+      #   input "profile" is not defined in action "dtolnay/rust-toolchain@stable"
+      #   available inputs are "components", "target", "targets", "toolchain"
+      # so it was silently ignored and the build job ran with exactly the
+      # configuration it has now.
+      #
+      # Whether the original maturin failure
+      #   error: 'cargo' is not installed for the toolchain '1.96.0-…'
+      # is actually resolved is NOT established by this change; see audit §8
+      # R11. What is established is that the previous comment claimed a fix
+      # that never took effect. If the failure reappears, `components:` is the
+      # supported input, not `profile:`.
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          # dtolnay/rust-toolchain defaults to `--profile minimal`, which
-          # installs only rustc (no cargo, no clippy, no rustfmt). The
-          # `test` and `type-check` jobs in this workflow happen to work
-          # because their runners have cargo pre-installed in the Ubuntu
-          # image. The `build` job hit a fresh runner without that, and
-          # maturin failed with:
-          #   error: 'cargo' is not installed for the toolchain '1.96.0-x86_64-unknown-linux-gnu'
-          # Switching to `profile: default` installs cargo (and clippy,
-          # rustfmt, rust-docs) explicitly via rustup, making the build
-          # job self-sufficient regardless of the runner image.
-          profile: default
 
       - name: Install maturin
         run: pip install --upgrade pip && pip install maturin
 
       - name: Build wheel
-        run: maturin build --manifest-path crates/quota-router-pyo3/Cargo.toml
+        run: maturin build --manifest-path crates/quota-router-pyo3/Cargo.toml --no-default-features -F pyo3-extension-module -F full
         env:
           MATURIN_PYTHON_TAGS: true
 

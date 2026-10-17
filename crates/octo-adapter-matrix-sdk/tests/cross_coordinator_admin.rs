@@ -146,7 +146,7 @@ fn mx_cross_coord_admin_smoke() {
     // adapter's `as_coordinator_admin()` bridge directly via a fresh
     // pair of adapters (we can't reach the moved ones from the gateway).
 
-    // Cross-adapter invariant via `&dyn PlatformAdapter`:
+    // Cross-adapter invariant via `&&dyn PlatformAdapter`:
     // - matrix -> as_coordinator_admin() = Some(self)
     // - stub   -> as_coordinator_admin() = None (trait default)
     let stub2 = NonAdminStubAdapter;

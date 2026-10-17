@@ -1,0 +1,131 @@
+# Multi-node nightly
+#
+# Runs the project's ENTIRE multi-node verification strategy, which until
+# now was manual-only: 21 scenarios, every one `#[ignore]`d, with no workflow
+# declaring a `schedule:` that reached them. Counting rule: a scenario is a
+# `#[test]`/`#[tokio::test]` whose preceding attribute block carries
+# `#[ignore...]`. 21 = 15 + 5 + 1; all 21 are also the total test count of
+# these six files, so this job runs every test in them.
+#
+#   layer A — octo-cli L4 docker suite (15 scenarios): mesh peer table,
+#            TCP reachability, partition-and-heal, 3-node convergence,
+#            teardown completeness, §22 wipe/restore
+#   layer B — quota-router integration layer3/layer4 (5 scenarios):
+#            cross-process TCP, 2-node compose, 3-node gossip convergence,
+#            disconnect-heal
+#   layer C — octo-runtime-revocation-store cross_process (1 scenario)
+#
+# A and B are the two independent MULTI-NODE layers and they are DISJOINT —
+# A exercises the mesh peer table, B exercises the router — so neither
+# substitutes for the other and both are scheduled. C is not a network
+# layer: it re-execs its own test binary three times against one shared
+# Stoolap ledger, needs no docker, and is scheduled for completeness. See
+# docs/audits/2026-10-04-operator-guide-and-multipeer-e2e-audit.md §2.5.
+#
+# Not PR-gated on purpose: these need a docker engine with compose v2, the
+# L4 image compiles the CLI inside the container on first run, and the
+# container suites are the only assertions in the guide's coverage that
+# cross a network boundary. Making them a merge gate would make the default
+# build slow for everyone to protect against a nightly nobody sees.
+#
+# `--test-threads=1` is required, not politeness: every scenario creates its
+# own compose project, network and volumes, but the L4 image tag is shared,
+# so concurrent scenarios race on it.
+
+name: multi-node-nightly
+
+on:
+  schedule:
+    # 04:17 UTC nightly — deliberately off the hour so this does not pile
+    # onto the :00 spike every scheduled workflow shares.
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+    inputs:
+      layer:
+        description: "Which layer to run (all = every layer)"
+        required: false
+        default: all
+        type: choice
+        options: [all, mesh, router, revocation]
+
+concurrency:
+  group: multi-node-nightly
+  cancel-in-progress: false
+
+jobs:
+  mesh:
+    name: L4 mesh multi-node (docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify docker engine + compose v2
+        run: |
+          docker version
+          docker compose version
+      - name: Free disk space
+        run: |
+          # The L4 image builds the CLI inside the container on first run.
+          # Leave room for that plus the host-side test binary.
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost
+          df -h /
+      - name: Run the L4 mesh suite
+        if: github.event_name == 'schedule' || inputs.layer == 'all' || inputs.layer == 'mesh'
+        run: |
+          cargo test -p octo-cli \
+            --test e2e_l4_multinode_docker \
+            -- --ignored --test-threads=1
+
+  router:
+    name: Quota-router multi-node (layer3/layer4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify docker engine + compose v2
+        run: |
+          docker version
+          docker compose version
+      # The layer3 suites spawn `target/debug/quota-router` directly. That binary
+      # lives in quota-router-cli, which is NOT a test dependency of
+      # quota-router-integration-tests, so `cargo test` alone never builds it and
+      # the suites fail with ENOENT. Build it first.
+      - name: Build the quota-router CLI the layer3 suites spawn
+        if: github.event_name == 'schedule' || inputs.layer == 'all' || inputs.layer == 'router'
+        run: cargo build -p quota-router-cli
+      - name: Run the router layer3/layer4 suites
+        if: github.event_name == 'schedule' || inputs.layer == 'all' || inputs.layer == 'router'
+        run: |
+          cargo test -p quota-router-integration-tests \
+            --test layer3_cross_process_tcp \
+            --test layer4_2node \
+            --test layer4_3node_gossip \
+            --test layer4_disconnect_heal \
+            -- --ignored --test-threads=1
+
+  revocation:
+    name: Revocation store cross-process
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run the cross-process revocation test
+        if: github.event_name == 'schedule' || inputs.layer == 'all' || inputs.layer == 'revocation'
+        run: |
+          cargo test -p octo-runtime-revocation-store \
+            --test cross_process -- --ignored --test-threads=1

@@ -8,6 +8,10 @@ description = "Phase 7.J investigation binary: reuse an existing Chrome profile 
 # Standalone workspace member — no octo-* deps, no wacore dep.
 
 [dependencies]
+# Canonical filesystem permission primitives (H-6). Shared with the wallet and the
+# session-export path rather than re-implemented here: this crate deliberately has
+# no octo-* dependency, so the rule has to come from somewhere neutral.
+cipherocto-fs-perms = { path = "../cipherocto-fs-perms" }
 tokio = { version = "1", features = ["sync", "time", "fs", "rt-multi-thread", "macros", "process", "io-util"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 futures = "0.3"

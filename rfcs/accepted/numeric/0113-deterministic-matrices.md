@@ -121,7 +121,7 @@
 > - MED-2: MAT_VEC_MUL Phase 6 includes sequential loop mandate (RFC-0112 alignment)
 > - MED-3: Probe Entry 46 comment clarifies 3×2 × 2×3 = 3×3 dimensions
 > - MED-4: Gas Model table includes Type column (DQA/Decimal)
-> - LOW-1: NUMERIC_SPEC_VERSION references RFC-0110 §Spec Version
+> - LOW-1: NUMERIC_SPEC_VERSION references RFC-0110 §Spec Version & Replay Pinning
 > - LOW-2: TRAP Sentinel reference matches RFC-0111 §Verification Probe naming
 
 > **Adversarial Review v1.3 Changes (Round 3 - HIGH/MEDIUM fixes):**
@@ -221,12 +221,12 @@ pub struct DMat<T: NumericScalar> {
 
 > **Note:** This RFC uses `NumericScalar` trait for generic element operations, enabling composition with DVEC (RFC-0112). The trait approach replaces the earlier enum-based `Numeric` type for better composability across the Deterministic Numeric Tower.
 >
-> **Trait Evolution (HIGH-NEW-1):** This RFC **supersedes** the `NumericScalar` trait definition in RFC-0112 v1.12 by adding `const MAX_MANTISSA: i128` and `fn new(mantissa: i128, scale: u8) -> Self`.
+> **Trait Evolution (HIGH-NEW-1):** This RFC **supersedes** the `NumericScalar` trait definition in RFC-0112 by adding `const MAX_MANTISSA: i128` and `fn new(mantissa: i128, scale: u8) -> Self`.
 > **Normative requirement:** Any type implementing `NumericScalar` that is intended to be used inside `DMat<T>` (via MAT_MUL, MAT_VEC_MUL, MAT_SCALE, etc.) **MUST** implement the RFC-0113 version of the trait with `MAX_MANTISSA` and `new(...)`. Implementations that only target pure DVEC usage MAY continue using the RFC-0112 trait definition until they adopt matrix operations.
 >
 > **Trait Version Enforcement (CRITICAL):** The `NumericScalar` trait defined in this RFC is the **canonical and exclusive** trait definition for all consensus-critical numeric operations involving DMAT.
 >
-> Within a single execution context processing a DMAT operation, the `NumericScalar` implementation used **MUST** conform to the RFC-0113 trait definition (including `MAX_MANTISSA`, `new(...)`, and `is_trap()`). A type **MAY** additionally implement the RFC-0112 trait methods (`div`, `sqrt`) as separate trait items or via a subtrait, provided those methods are not invoked during DMAT operation execution. The prohibition is on *mixing trait versions within a single operation dispatch*, not on a type implementing methods from both definitions.
+> Within a single execution context processing a DMAT operation, the `NumericScalar` implementation used **MUST** conform to the RFC-0113 trait definition (including `MAX_MANTISSA`, `new(...)`, and `is_trap()`). A type **MAY** additionally implement the RFC-0112 trait methods (`div`, `sqrt`) as separate trait items or via a subtrait, provided those methods are not invoked during DMAT operation execution. The prohibition is on _mixing trait versions within a single operation dispatch_, not on a type implementing methods from both definitions.
 >
 > 1. Any `NumericScalar` implementation used in consensus-critical DMAT contexts **MUST** conform to the RFC-0113 trait definition.
 > 2. Mixing trait versions across modules, dynamic libraries, or execution boundaries (e.g., WASM, FFI) is **FORBIDDEN**.
@@ -317,10 +317,9 @@ All scalar values stored in `DMat<T>` MUST be in canonical form as defined by RF
 
 ```
 
-
 mat_add(a: &DMat<T>, b: &DMat<T>) -> DMat<T>
 where
-    T: NumericScalar<Scalar = T>,
+T: NumericScalar<Scalar = T>,
 
 Preconditions:
 
@@ -377,10 +376,9 @@ Return result
 
 ```
 
-
 mat_sub(a: &DMat<T>, b: &DMat<T>) -> DMat<T>
 where
-    T: NumericScalar<Scalar = T>,
+T: NumericScalar<Scalar = T>,
 
 Preconditions:
 
@@ -437,10 +435,9 @@ Return result
 
 ```
 
-
 mat_mul(a: &DMat<T>, b: &DMat<T>) -> DMat<T>
 where
-    T: NumericScalar<Scalar = T>,
+T: NumericScalar<Scalar = T>,
 
 > ⚠️ **REQUIREMENT**: Naive triple loop algorithm ONLY. No Strassen, no blocking.
 
@@ -505,6 +502,7 @@ For MAT_MUL(A, B) where A[i][k] has scale s_a and B[k][j] has scale s_b:
 - If result_scale > MAX_SCALE (18 for DQA, 36 for Decimal): TRAP(INVALID_SCALE)
 
 **Example (HIGH-6 fix):**
+
 - A[i][k] scale = 4, B[k][j] scale = 5
 - product scale = 4 + 5 = 9
 - If result mantissa is 1000 at scale 9, canonicalization produces 1 at scale 6
@@ -513,6 +511,7 @@ For MAT_MUL(A, B) where A[i][k] has scale s_a and B[k][j] has scale s_b:
 ### Overflow Detection
 
 Per RFC-0105 I128_ROUNDTRIP:
+
 - Accumulator uses i128 for intermediate computation
 - Final overflow check uses `MAX_MANTISSA` constant: `if abs(accumulator) > T::MAX_MANTISSA: TRAP(OVERFLOW)`
 - For DQA: `MAX_MANTISSA = i64::MAX = 2^63 - 1`
@@ -532,34 +531,42 @@ where
 **Phase 0: TRAP Sentinel Pre-check (CRIT-4)**
 
 ```
+
 For each element e in a.data:
-  if e.is_trap(): TRAP(TRAP_INPUT_ERROR)
+if e.is_trap(): TRAP(TRAP_INPUT_ERROR)
 For each element e in v:
-  if e.is_trap(): TRAP(TRAP_INPUT_ERROR)
+if e.is_trap(): TRAP(TRAP_INPUT_ERROR)
+
 ```
 
 **Phase 1: Validate dimension preconditions (CRIT-3: prevents OOB access)**
 
 ```
+
 1. if a.cols != v.len: TRAP(DIMENSION_MISMATCH)
 2. if a.rows * a.cols > MAX_DMAT_ELEMENTS (64): TRAP(DIMENSION_ERROR)
 3. if a.rows > 8 or a.cols > 8: TRAP(DIMENSION_ERROR)
-4. if a.rows < 1 or a.cols < 1: TRAP(DIMENSION_ERROR)  // CRIT-NEW-1: empty matrix
+4. if a.rows < 1 or a.cols < 1: TRAP(DIMENSION_ERROR) // CRIT-NEW-1: empty matrix
+
 ```
 
 **Phase 2: Validate matrix element scales (CRIT-3: SCALE_MISMATCH before INVALID_SCALE)**
 
 ```
+
 For i in 0..a.rows:
-  For j in 0..a.cols:
-    if a.data[i * a.cols + j].scale() != a.data[0].scale(): TRAP(SCALE_MISMATCH)
+For j in 0..a.cols:
+if a.data[i * a.cols + j].scale() != a.data[0].scale(): TRAP(SCALE_MISMATCH)
+
 ```
 
 **Phase 3: Validate vector element scales (HIGH-NEW-FINAL-1: internal uniformity only)**
 
 ```
+
 For j in 0..v.len:
-  if v[j].scale() != v[0].scale(): TRAP(SCALE_MISMATCH)
+if v[j].scale() != v[0].scale(): TRAP(SCALE_MISMATCH)
+
 ```
 
 > **Note (HIGH-NEW-FINAL-1):** Phase 3 validates internal uniformity of vector `v` only. Unlike the previous version, it does NOT require `v.scale() == a.scale()`. Mixed-scale multiplication is allowed: result_scale = a.scale() + v.scale() per RFC-0105 MUL semantics. Matrix scale validation remains in Phase 2.
@@ -567,8 +574,10 @@ For j in 0..v.len:
 **Phase 4: Validate result scale (CRIT-3: INVALID_SCALE after SCALE_MISMATCH)**
 
 ```
+
 4. result_scale = a.data[0].scale() + v[0].scale()
 5. if result_scale > T::MAX_SCALE: TRAP(INVALID_SCALE)
+
 ```
 
 **Phase 5: Compute dot products (HIGH-2: uses MAX_MANTISSA constant)**
@@ -579,14 +588,16 @@ Deterministic TRAP Location: Overflow TRAP conditions are order-dependent.
 Sequential left-to-right accumulation is MANDATORY for consensus safety.
 
 ```
-For i in 0..a.rows:
-  accumulator = BigInt(0)
-  For j in 0..a.cols:
-    product = a.data[i * a.cols + j].mul(v[j])?
-    accumulator = accumulator + BigInt::from(product.raw_mantissa())
 
-  if abs(accumulator) > T::MAX_MANTISSA: TRAP(OVERFLOW)
-  result[i] = T::new(accumulator, result_scale)?
+For i in 0..a.rows:
+accumulator = BigInt(0)
+For j in 0..a.cols:
+product = a.data[i * a.cols + j].mul(v[j])?
+accumulator = accumulator + BigInt::from(product.raw_mantissa())
+
+if abs(accumulator) > T::MAX_MANTISSA: TRAP(OVERFLOW)
+result[i] = T::new(accumulator, result_scale)?
+
 ````
 
 ### Result Scale
@@ -623,37 +634,45 @@ Preconditions:
 **Phase 0: TRAP Sentinel Pre-check (CRIT-4)**
 
 ```
+
 For each element e in a.data:
-  if e.is_trap(): TRAP(TRAP_INPUT_ERROR)
+if e.is_trap(): TRAP(TRAP_INPUT_ERROR)
+
 ```
 
 **Phase 1: Validate dimensions (MED-2 fix)**
 
 ```
+
 if a.rows * a.cols > MAX_DMAT_ELEMENTS (64): TRAP(DIMENSION_ERROR)
 if a.rows > 8 or a.cols > 8: TRAP(DIMENSION_ERROR)
-if a.rows < 1 or a.cols < 1: TRAP(DIMENSION_ERROR)  // CRIT-NEW-1: empty matrix
+if a.rows < 1 or a.cols < 1: TRAP(DIMENSION_ERROR) // CRIT-NEW-1: empty matrix
+
 ```
 
 **Phase 2: Validate all element scales (MED-6 fix: separate validation from computation)**
 
 ```
+
 For i in 0..a.rows:
-  For j in 0..a.cols:
-    if a.data[i * a.cols + j].scale() != a.data[0].scale(): TRAP(SCALE_MISMATCH)
+For j in 0..a.cols:
+if a.data[i * a.cols + j].scale() != a.data[0].scale(): TRAP(SCALE_MISMATCH)
+
 ```
 
 **Phase 3: Compute**
 
 ```
+
 result.rows = a.cols
 result.cols = a.rows
 For i in 0..a.rows:
-  For j in 0..a.cols:
-    // MED-1: Inputs guaranteed canonical per RFC-0111 Lazy Canonicalization.
-    // Transpose preserves canonicality (no value change).
-    result.data[j * result.cols + i] = a.data[i * a.cols + j].clone()
+For j in 0..a.cols:
+// MED-1: Inputs guaranteed canonical per RFC-0111 Lazy Canonicalization.
+// Transpose preserves canonicality (no value change).
+result.data[j * result.cols + i] = a.data[i * a.cols + j].clone()
 Return result
+
 ```
 
 Note: Transpose does not change element values or scales, only layout.
@@ -661,7 +680,6 @@ Note: Transpose does not change element values or scales, only layout.
 **Canonicalization (HIGH-4):** Result elements must be in row-major order with canonical representation (no padding, no special formatting).
 
 ```
-
 
 ### MAT_SCALE — Matrix Scale
 
@@ -684,41 +702,48 @@ Preconditions:
 **Phase 0: TRAP Sentinel Pre-check (CRIT-4)**
 
 ```
+
 // Check scalar FIRST — scalar is O(1), matrix is O(M×N); cheapest-first
 if scalar.is_trap(): TRAP(TRAP_INPUT_ERROR)
 For each element e in a.data:
-  if e.is_trap(): TRAP(TRAP_INPUT_ERROR)
+if e.is_trap(): TRAP(TRAP_INPUT_ERROR)
+
 ```
 
 **Phase 1: Validate dimensions (HIGH-3: explicit dimension pre-validation)**
 
 ```
+
 if a.rows * a.cols > MAX_DMAT_ELEMENTS (64): TRAP(DIMENSION_ERROR)
 if a.rows > 8 or a.cols > 8: TRAP(DIMENSION_ERROR)
-if a.rows < 1 or a.cols < 1: TRAP(DIMENSION_ERROR)  // CRIT-NEW-1: empty matrix
+if a.rows < 1 or a.cols < 1: TRAP(DIMENSION_ERROR) // CRIT-NEW-1: empty matrix
+
 ```
 
 **Phase 2: Validate all element scales BEFORE computation (MED-3/HIGH-1 fix: separate validation from computation, result_scale check outside loop)**
 
 ```
+
 For i in 0..a.rows:
-  For j in 0..a.cols:
-    if a.data[i * a.cols + j].scale() != a.data[0].scale(): TRAP(SCALE_MISMATCH)
+For j in 0..a.cols:
+if a.data[i * a.cols + j].scale() != a.data[0].scale(): TRAP(SCALE_MISMATCH)
 // Validate result scale once (after all scale mismatch checks, before any computation)
 result_scale = a.data[0].scale() + scalar.scale()
 if result_scale > T::MAX_SCALE: TRAP(INVALID_SCALE)
+
 ```
 
 **Phase 3: Compute (MED-3 fix: no validation in compute phase)**
 
 ```
+
 For i in 0..a.rows:
-  For j in 0..a.cols:
-    result.data[i * result.cols + j] = a.data[i * a.cols + j].mul(&scalar)?
-```
+For j in 0..a.cols:
+result.data[i * result.cols + j] = a.data[i * a.cols + j].mul(&scalar)?
 
 ```
 
+```
 
 ## Gas Model
 
@@ -731,14 +756,14 @@ Gas derivation follows RFC-0105 where:
 
 ### Per-Operation Gas
 
-| Operation     | Type        | Formula                                              | Derivation                                                         |
-| ------------- | ----------- | ---------------------------------------------------- | ------------------------------------------------------------------ |
-| MAT_ADD       | DQA/Decimal | `10 × M × N`                                         | M×N × RFC-0105 ADD (10 gas flat)                                 |
-| MAT_SUB       | DQA/Decimal | `10 × M × N`                                         | M×N × RFC-0105 SUB (10 gas flat)                                 |
-| MAT_MUL       | DQA/Decimal | `M × N × K × (30 + 3 × s_a × s_b)`                  | Per MAC: DQA MUL (20 + 3×s_a×s_b) + DQA ADD (10)                 |
-| MAT_VEC_MUL   | DQA/Decimal | `rows × cols × (30 + 3 × s_a × s_v)`                | rows dot products, each cols elements                              |
-| MAT_TRANSPOSE | DQA/Decimal | `2 × M × N`                                         | M×N reads + M×N writes (1 gas per memory operation)             |
-| MAT_SCALE     | DQA/Decimal | `M × N × (20 + 3 × s_a × s_scalar)`                 | M×N × RFC-0105 MUL (20 + 3×s_a×s_scalar)                         |
+| Operation     | Type        | Formula                              | Derivation                                          |
+| ------------- | ----------- | ------------------------------------ | --------------------------------------------------- |
+| MAT_ADD       | DQA/Decimal | `10 × M × N`                         | M×N × RFC-0105 ADD (10 gas flat)                    |
+| MAT_SUB       | DQA/Decimal | `10 × M × N`                         | M×N × RFC-0105 SUB (10 gas flat)                    |
+| MAT_MUL       | DQA/Decimal | `M × N × K × (30 + 3 × s_a × s_b)`   | Per MAC: DQA MUL (20 + 3×s_a×s_b) + DQA ADD (10)    |
+| MAT_VEC_MUL   | DQA/Decimal | `rows × cols × (30 + 3 × s_a × s_v)` | rows dot products, each cols elements               |
+| MAT_TRANSPOSE | DQA/Decimal | `2 × M × N`                          | M×N reads + M×N writes (1 gas per memory operation) |
+| MAT_SCALE     | DQA/Decimal | `M × N × (20 + 3 × s_a × s_scalar)`  | M×N × RFC-0105 MUL (20 + 3×s_a×s_scalar)            |
 
 Where `s_a` is the scale of matrix A and `s_b` is the scale of matrix B (for MAT_MUL), or `s_v` is the scale of vector V (for MAT_VEC_MUL).
 
@@ -756,8 +781,8 @@ See RFC-0112 §Gas Model for derivation.
 
 ### Gas Examples (scale=0, DQA)
 
-| Operation     | Dimensions | Gas |
-| ------------- | ---------- | --- |
+| Operation     | Dimensions | Gas  |
+| ------------- | ---------- | ---- |
 | MAT_ADD       | 8×8        | 640  |
 | MAT_MUL       | 4×4 × 4×4  | 1920 |
 | MAT_VEC_MUL   | 4×4 × 4    | 480  |
@@ -792,12 +817,12 @@ MAT_MUL at MAX_DMAT_ELEMENTS (8×8=64) with K=8 and scale=9:
 
 ### MAT_MUL
 
-| A                    | B                    | Scale | Expected                                            | Notes              |
-| -------------------- | -------------------- | ----- | --------------------------------------------------- | ------------------ |
-| [[1, 0], [0, 1]]     | [[2, 3], [4, 5]]     | 0     | [[2, 3], [4, 5]]                                    | Identity           |
-| [[1, 2], [3, 4]]     | [[5, 6], [7, 8]]     | 0     | [[19, 22], [43, 50]]                                | Standard           |
-| [[1, 2, 3]]          | [[1], [2], [3]]      | 0     | [[14]]                                              | Vector result      |
-| [[2, 2], [2, 2]]     | [[3, 3], [3, 3]]     | 0     | [[12, 12], [12, 12]]                                | Uniform            |
+| A                    | B                    | Scale | Expected                                     | Notes                    |
+| -------------------- | -------------------- | ----- | -------------------------------------------- | ------------------------ |
+| [[1, 0], [0, 1]]     | [[2, 3], [4, 5]]     | 0     | [[2, 3], [4, 5]]                             | Identity                 |
+| [[1, 2], [3, 4]]     | [[5, 6], [7, 8]]     | 0     | [[19, 22], [43, 50]]                         | Standard                 |
+| [[1, 2, 3]]          | [[1], [2], [3]]      | 0     | `14`                                         | Vector result            |
+| [[2, 2], [2, 2]]     | [[3, 3], [3, 3]]     | 0     | [[12, 12], [12, 12]]                         | Uniform                  |
 | [[10, 20], [30, 40]] | [[10, 20], [30, 40]] | 0     | [[1400, 2200], [3000, 4600]] (pre-canonical) | Canonical form: see note |
 
 ### MAT_VEC_MUL
@@ -883,6 +908,7 @@ TRAP = { mantissa: -(1 << 63), scale: 0xFF }  # i64::MIN as signed integer
 > **Probe Indexing Rule (CRITICAL):** Probe entries are **zero-indexed**. Previous version contained entries [0..58]. Entries [59..62] were added in v1.19 and v1.20. Total entries: 63. Independent implementations MUST use zero-indexed entries to reproduce the Merkle root.
 
 > **Note (v1.20 entries):**
+>
 > - Entry 59: MAT_SCALE canonicalization (1000×10⁻³ → 1×10⁰)
 > - Entry 60: MAT_MUL at MAX_SCALE boundary (result_scale=18, valid)
 > - Entry 61: TRAP propagation chain (2×2, TRAP at [0][0])
@@ -993,12 +1019,12 @@ The following properties hold under valid (non-TRAP) execution:
 ## TRAP Codes
 
 | Code               | Condition                                                       | Reference | Global Index |
-| ------------------ | --------------------------------------------------------------- | --------- |--------------|
-| TRAP_INPUT_ERROR   | Input contains TRAP sentinel                                   | RFC-0113  | TBD          |
+| ------------------ | --------------------------------------------------------------- | --------- | ------------ |
+| TRAP_INPUT_ERROR   | Input contains TRAP sentinel                                    | RFC-0113  | TBD          |
 | OVERFLOW           | i128 accumulator exceeds i64 range for DQA, or i128 for Decimal | RFC-0105  | TBD          |
 | INVALID_SCALE      | Result scale exceeds MAX_SCALE (18 DQA, 36 Decimal)             | RFC-0105  | TBD          |
 | SCALE_MISMATCH     | Matrix/vector elements have different scales                    | RFC-0105  | TBD          |
-| DIMENSION_ERROR    | Matrix dimensions M×N > 64, M,N > 8, or M,N < 1                | RFC-0113  | TBD          |
+| DIMENSION_ERROR    | Matrix dimensions M×N > 64, M,N > 8, or M,N < 1                 | RFC-0113  | TBD          |
 | DIMENSION_MISMATCH | Matrix dimensions incompatible for operation                    | RFC-0113  | TBD          |
 
 > **Note (MED-NEW-1):** `DIMENSION_ERROR` and `DIMENSION_MISMATCH` require global error code indices assigned from the unified error registry (per RFC-01XX). The "TBD" indices will be finalized when the global error registry RFC is approved. DMAT-specific codes use the DMAT namespace (0x01xx) for operation IDs, but error codes should align with the global system.
@@ -1039,7 +1065,7 @@ TRAP = { mantissa: -(1 << 63), scale: 0xFF }  # i64::MIN as signed integer
 
 ```
 
-Per RFC-0111 v1.20 §Verification Probe (TRAP Sentinel Definition).
+Per RFC-0111 §Verification Probe (TRAP Sentinel Definition).
 Encoding: 24-byte canonical format per RFC-0111 §Canonical Byte Format.
 
 ## Implementation Checklist
@@ -1074,3 +1100,10 @@ Encoding: 24-byte canonical format per RFC-0111 §Canonical Byte Format.
 Run with: `python3 scripts/compute_dmat_probe_root.py`
 
 > **Note:** The canonical reference is the script file. This RFC takes precedence over embedded descriptions.
+
+## Version History
+
+| Version | Date       | Change                                                                                 |
+| ------- | ---------- | -------------------------------------------------------------------------------------- |
+| 1.21    | 2026-03-19 | Status block: v1.21 (2026-03-19) — DMAT operations normative specification.            |
+| 1.0     | 2026-08-22 | Retroactive VH table addition (per long-horizon plan v1.3 Phase 1 + Option C per M37). |

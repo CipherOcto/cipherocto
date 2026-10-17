@@ -44,7 +44,7 @@ RFC-0201 uses `BYTEA(32)` for SHA256/HMAC-SHA256 key hashes. The `serialize_blob
 
 ### Changes to RFC-0126
 
-The following changes apply to RFC-0126 v2.5.1 ("Deterministic Canonical Serialization").
+The following changes apply to RFC-0126 ("Deterministic Canonical Serialization").
 
 #### Change 1: Primitive Type Encodings Table (Section Part 3, line ~323)
 
@@ -122,7 +122,7 @@ That is, the byte output of serializing type A is byte-for-byte identical to the
 
 #### Change 3: Probe Entries Table (Section Part 3, line ~625)
 
-Add Entry 17 for Blob. Entries 0-16 are unchanged from RFC-0126 v2.5.1:
+Add Entry 17 for Blob. Entries 0-16 are unchanged from RFC-0126:
 
 | Index | Type | Description | Input | Expected Serialization |
 |-------|------|-------------|-------|----------------------|
@@ -147,7 +147,7 @@ Add Entry 17 for Blob. Entries 0-16 are unchanged from RFC-0126 v2.5.1:
 
 > **Note:** Entry 4 (DMAT column-major) was removed because serialization output is indistinguishable for valid row-major input. DMAT input validation ensures data is stored row-major per RFC-0113.
 >
-> **Correction:** RFC-0126 v2.5.1 Entry 10 in the probe table incorrectly states "per RFC-0112." The authoritative source is RFC-0111, which is correctly cited in the RFC-0126 dependencies table and Entry 10 detail section. This amendment corrects the probe table reference to RFC-0111.
+> **Correction:** RFC-0126 Entry 10 in the probe table incorrectly states "per RFC-0112." The authoritative source is RFC-0111, which is correctly cited in the RFC-0126 dependencies table and Entry 10 detail section. This amendment corrects the probe table reference to RFC-0111.
 >
 > **Wire format note:** Only Entry 16 (Struct) includes field_id in the wire format (`field_id || encoded_value`). Entries 0-15 and 17 are top-level type serializations without field_id prefixes.
 >
@@ -237,7 +237,7 @@ Split the pre-existing combined String/Bytes error into type-specific errors. Ad
 | DCS_TRAILING_BYTES | Bytes remain after all schema-required fields have been deserialized, indicating trailing garbage in the input |
 | DCS_RECURSION_LIMIT_EXCEEDED | Returned when `depth >= 64` in `deserialize_struct` (top-level call = depth 0). Maximum allowed is 63 nested levels below top-level (64 total struct deserialization frames). All conformant implementations use this exact threshold. |
 
-> **Note:** The prior combined `DCS_LENGTH_OVERFLOW` ("String/Bytes length exceeds 2^32 - 1") is replaced by two separate errors with distinct limits. String is capped at 1MB per RFC-0126 SectionString. Blob is capped at 4GB by the u32 length prefix. `DCS_INVALID_BLOB` covers buffer-underrun and length-mismatch conditions during deserialization. This change also resolves the pre-existing inconsistency between the error table (2^32-1) and the String section prose (1MB) in RFC-0126 v2.5.1.
+> **Note:** The prior combined `DCS_LENGTH_OVERFLOW` ("String/Bytes length exceeds 2^32 - 1") is replaced by two separate errors with distinct limits. String is capped at 1MB per RFC-0126 SectionString. Blob is capped at 4GB by the u32 length prefix. `DCS_INVALID_BLOB` covers buffer-underrun and length-mismatch conditions during deserialization. This change also resolves the pre-existing inconsistency between the error table (2^32-1) and the String section prose (1MB) in RFC-0126.
 
 #### Change 8: Deserialization (Section Part 3, after Existing Deserialization Rules)
 
@@ -532,8 +532,8 @@ Update the Known Issues table:
 
 | ID | Description |
 |----|-------------|
-| MED-10 | Entries 5 (Option::None) and 9 (Bool false) produce identical leaf hashes (`96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7`). Domain-separated leaf hashing prevents Merkle root collision. Note: RFC-0126 v2.5.1 published `6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d` (SHA256 of raw `0x00` without domain separation), which was incorrect. The correct domain-separated hash is `96a296d2...`. |
-| NEW-KI-1 | Blob entry (Entry 17) did not appear in RFC-0126 v2.5.1 Primitive Type Encodings table or Probe table. This amendment adds it. |
+| MED-10 | Entries 5 (Option::None) and 9 (Bool false) produce identical leaf hashes (`96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7`). Domain-separated leaf hashing prevents Merkle root collision. Note: RFC-0126 published `6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d` (SHA256 of raw `0x00` without domain separation), which was incorrect. The correct domain-separated hash is `96a296d2...`. |
+| NEW-KI-1 | Blob entry (Entry 17) did not appear in RFC-0126 Primitive Type Encodings table or Probe table. This amendment adds it. |
 | NEW-KI-2 | Prior versions of this RFC (v6.3 and earlier) used `b"hello"` as Entry 17's blob payload, which is valid UTF-8 and produces identical entry data and leaf hash to Entry 4 (String `"hello"`). This was corrected in v6.5 by replacing the payload with `SHA256(b"")` -- a 32-byte sequence that is NOT valid UTF-8 -- ensuring the probe distinguishes Blob from String serialization. The old Entry 17 hash `01cc2c521e69293f581e0df49c071c2e9d44b16586b36024872d77244b405be6` is superseded. The Merkle root `78154bb3...` published in versions 6.2-6.4 was replaced in v6.5 by `907f481e59ce67996f6c859c2cb6f8e5078245fee3baada58110489cdbdc0e47` due to the Entry 17 payload replacement. **Encoding policy:** DCS intentionally allows byte-identical representations across distinct types. Type disambiguation is schema-driven and enforced at deserialization time; the wire format does not carry type information. The probe now correctly verifies that Blob serialization of non-UTF-8 data produces a distinct leaf hash from any String entry. |
 | NEW-KI-3 | Adding Entry 17 changes the Merkle tree from odd (17, last leaf duplicated) to even (18, no duplication) leaf count. This structural change affects the root. See Change 9. |
 | LOW-R4-1 | Entry 12 leaf hash had a transcription error in RFC-0127 v6.1 and earlier: displayed as 63 hex characters (missing a leading zero in byte 28: `0904b0` instead of `09004b0`). Corrected to the full 64-character value `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c` in v6.2. **Verification:** `python3 -c "import hashlib; data = bytes([0x00]) + bytes.fromhex('0000000000000000000000000000002a'); print(hashlib.sha256(data).hexdigest())"` yields `170e5f45c1585c19f017f3c0df39c010e09004b0980fc8251ff4dd8eeef0376c`. The Entry 12 correction alone did not change the Merkle root (the reference script computed from raw bytes). See NEW-KI-2 for the subsequent root change. |

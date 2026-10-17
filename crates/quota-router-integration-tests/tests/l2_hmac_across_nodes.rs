@@ -19,6 +19,7 @@ use quota_router_integration_tests::TestCluster;
 /// We verify the gossip path specifically by checking that node 0's
 /// gossip broadcast (with capacities) appears in node 1's cache.
 #[tokio::test]
+
 async fn l2_t22_gossip_hmac_verified() {
     let cluster = TestCluster::new(2, vec![vec!["gpt-4o".into()], vec!["gpt-4o".into()]]);
     cluster.start_all().await;
@@ -41,6 +42,7 @@ async fn l2_t22_gossip_hmac_verified() {
 /// T23 — gossip_hmac_rejected
 /// Gossip with wrong HMAC is silently dropped; peer cache remains unchanged.
 #[tokio::test]
+
 async fn l2_t23_gossip_hmac_rejected() {
     let cluster = TestCluster::new(2, vec![vec!["gpt-4o".into()], vec!["gpt-4o".into()]]);
     cluster.start_all().await;
@@ -95,6 +97,7 @@ async fn l2_t23_gossip_hmac_rejected() {
 /// T24 — announce_hmac_verified
 /// Valid announce (correct HMAC) adds peer to peer cache if model overlap.
 #[tokio::test]
+
 async fn l2_t24_announce_hmac_verified() {
     let cluster = TestCluster::new(2, vec![vec!["gpt-4o".into()], vec!["gpt-4o".into()]]);
     cluster.start_all().await;
@@ -112,6 +115,7 @@ async fn l2_t24_announce_hmac_verified() {
 /// T25 — announce_hmac_rejected
 /// Announce with wrong HMAC is silently dropped; peer not added.
 #[tokio::test]
+
 async fn l2_t25_announce_hmac_rejected() {
     let cluster = TestCluster::new(2, vec![vec!["gpt-4o".into()], vec!["gpt-4o".into()]]);
     cluster.start_all().await;
@@ -129,6 +133,7 @@ async fn l2_t25_announce_hmac_rejected() {
         capacities: vec![],
         timestamp: monotonic_now(),
         hmac: [0u8; 32],
+        pricing_policy: None,
     };
     bad_announce.hmac = bad_announce.compute_hmac(&wrong_key);
     let body = bincode::serialize(&bad_announce).unwrap();
@@ -153,6 +158,7 @@ async fn l2_t25_announce_hmac_rejected() {
 /// T26 — withdraw_hmac_verified
 /// Valid withdraw (correct HMAC) removes peer from cache.
 #[tokio::test]
+
 async fn l2_t26_withdraw_hmac_verified() {
     let cluster = TestCluster::new(2, vec![vec!["gpt-4o".into()], vec!["gpt-4o".into()]]);
     cluster.start_all().await;
@@ -196,6 +202,7 @@ async fn l2_t26_withdraw_hmac_verified() {
 /// T27 — withdraw_hmac_rejected
 /// Withdraw with wrong HMAC is silently dropped; peer remains.
 #[tokio::test]
+
 async fn l2_t27_withdraw_hmac_rejected() {
     let cluster = TestCluster::new(2, vec![vec!["gpt-4o".into()], vec!["gpt-4o".into()]]);
     cluster.start_all().await;

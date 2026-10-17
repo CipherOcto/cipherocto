@@ -1,0 +1,252 @@
+---
+name: six-accepted-rfcs-have-no-version-history-after-three-linter-fixes
+description: "lint_no_vh_accepted.sh reported PASS while examining 7 of 155 Accepted RFCs, because its detection regex required Accepted on the same line as the status heading and the corpus writes it on the following lines. Its CHECKED counter incremented once per markdown file rather than per Accepted RFC, so the summary read CHECKED=247 against PASS=7 and the gap looked like unexamined work rather than a silent skip. It reported PASS while examining 7 of 155 Accepted RFCs. Three successive fixes to what counts as a Version History, a same-line status match, a numbered heading, a v-prefixed version column and a bullet-form history, took the reported figure from 51 to 6. Six Accepted RFCs genuinely have no Version History section."
+metadata:
+  node_type: mission
+  type: implementation
+  created: 2026-10-12T00:00:00.000Z
+  v: "1.0"
+  depends_on:
+    - RFC-0001
+---
+
+# Mission `six-accepted-rfcs-have-no-version-history-after-three-linter-fixes`
+
+## Status
+
+**Resolved, and two of the six need author review.** The entry below deferred
+these as author work. They were then repaired under the standing autonomy
+directive, which is a decision worth surfacing rather than folding silently
+into a passing count.
+
+Two different repairs, and only one of them wrote anything new:
+
+| Document                                        | Repair                                       | Wrote history? |
+| ----------------------------------------------- | -------------------------------------------- | -------------- |
+| `0011-s`, `0011-t`, `0011-u`, `0011-v`          | Renamed `## History` to `## Version History` | **No**         |
+| `0001-mission-lifecycle`, `0002-agent-manifest` | Added a Version History section              | Yes            |
+
+The four renames were conformance, not authorship. Each already carried a
+detailed dated revision history under a name the guard did not read, and
+`## History` is ambiguous as an RFC section name where `§Version History` is
+not. `## History` appears in exactly these 4 files; the other 149 Accepted RFCs
+already use `## Version History` or `## Changelog`, so the corpus had converged
+and these were the minority rendering.
+
+The two additions did write history, and that is the part warranting review.
+Both entries state explicitly that no version was ever declared and no
+Draft-to-Accepted promotion was recorded, and the rows are dated bullets
+reconstructed from each file's commit history rather than invented versions.
+The dates are taken from `git log` and are checkable, but the choice to
+reconstruct rather than leave the sections absent is a judgement call that
+belongs to the author.
+
+Note also that `0001-mission-lifecycle.md` sits in `rfcs/draft/process/` while
+its Status block reads Accepted. Filed separately, since the directory and the
+status contradict each other and moving an RFC is not a mechanical repair.
+
+The guard now reports `PASS=155 FAIL=0 MISSING_VH=0` and exits 0.
+
+## The linter that should have caught this
+
+`scripts/lint_no_vh_accepted.sh` is Guard 4, and its own header says
+`BLOCKING promotion: YES`. It ran on this tree and printed:
+
+```
+Summary: CHECKED=247 (Accepted RFCs scanned)
+         PASS=7 FAIL=0 MISSING_VH=0
+PASS: all Accepted RFCs have ## Version History.
+```
+
+`PASS=7 + FAIL=0 + MISSING_VH=0` is 7. The summary claimed 247 were scanned.
+The 240-file gap was the tell, and it was invisible in the output because the
+two counters counted different populations.
+
+There are **155** Accepted RFCs in the tree. The linter examined **7**.
+
+## Why it examined 7
+
+```bash
+grep -qE '^## (Status|## Status|Status:).*Accepted' "$rfc_file"
+```
+
+`Accepted` must appear on the same line as the heading. The corpus writes:
+
+```markdown
+## Status
+
+Accepted (v2.0) — promoted 2026-08-20 by user instruction ...
+```
+
+So the match failed for 148 of 155 files, they hit `[ "$is_accepted" -eq 0 ] &&
+continue`, and were never examined. The linter reported a clean pass over a
+population it had mostly skipped.
+
+The second counter is what made it invisible. `CHECKED` incremented once per
+markdown file _found_, before any filtering, while `PASS` incremented only for
+detected Accepted RFCs. A skip therefore widened the gap between two numbers
+that are printed together, and neither number said how many were eligible.
+
+Fixed. The linter now reads the Status block rather than the heading line, and
+separates `SCANNED` (files found) from `CHECKED` (Accepted RFCs examined). It
+now reports `SCANNED=247 markdown files, CHECKED=155 Accepted RFCs`.
+
+## The 39 findings
+
+| Class                                                  | Count | Meaning                                            |
+| ------------------------------------------------------ | ----- | -------------------------------------------------- |
+| `MISSING_VH` — no Version History or Changelog section | 6     | the section is absent entirely                     |
+| `MISSING_VH_ROWS` — section present, no data rows      | 33    | the heading exists and the table under it is empty |
+
+`PASS=116`.
+
+**Correction: the first row was 18, not 6.** Twelve of those eighteen carry a
+fully populated Version History under a **numbered** heading — `## 6. Version
+History` — and the linter required the heading to be unnumbered. They were
+reported as having no Version History at all.
+
+Measured across the whole tree before changing anything: allowing an optional
+section number recognizes 14 files and loses none, so the change is strictly
+additive. Verified in both directions by mutation — adding a numbered Version
+History to a file that lacked one is now accepted, and deleting a populated
+one is still reported.
+
+Six rather than eighteen is the real size of this problem. Half of what looked
+like missing history was a linter that could not read a numbered heading.
+
+### 6 with no Version History section
+
+```
+draft/process/0001-mission-lifecycle.md
+accepted/process/0002-agent-manifest.md
+accepted/process/0011-s-oct-cli-network-phase-11.md
+accepted/process/0011-t-oct-cli-network-phase-12.md
+accepted/process/0011-u-oct-cli-network-phase-13.md
+accepted/process/0011-v-oct-cli-network-phase-14.md
+```
+
+`0001-mission-lifecycle.md` is a draft that declares itself Accepted in its
+Status block. That is a status/placement inconsistency in its own right and is
+called out rather than folded in.
+
+The remaining twelve from the earlier list of eighteen carry a populated
+Version History under a numbered heading and are no longer findings:
+
+```
+accepted/process/0010-v17-chain-id-registration-authority.md
+accepted/process/0206-v30-value-transfer-surface.md
+accepted/economics/0105-v34-private-asset-namespace.md
+accepted/economics/0105-v35-payment-caveat-asset-generality.md
+accepted/economics/0903-d1-litellm-persistence.md
+accepted/economics/0959-v27-burn-event-wire-form.md
+accepted/economics/0959-v28-settlement-cost-dqa-migration.md
+accepted/economics/0960-v35-vault-path-taxonomy.md
+accepted/economics/0960-v36-burn-event-dqa-migration.md
+accepted/economics/0960-v37-vault-balance-projection-substrate.md
+accepted/economics/0965-v21-payment-caveat-asset-binding.md
+accepted/economics/0967-a1-policy-registry.md
+```
+
+### 33 with an empty Version History
+
+A representative sample, all under `rfcs/accepted/`:
+
+```
+process/0011-k-oct-cli-network-phase-3.md
+process/0011-m-oct-cli-network-phase-5.md
+process/0011-p-oct-cli-network-phase-8.md
+process/0012-v3-audit-substrate-amendment.md
+process/0014-v2-settlement-substrate-amendment.md
+process/0015-a-wallet-agent-write-path.md
+process/0015-wallet-agent-operations.md
+process/0016-a-audit-receipt-write-path.md
+```
+
+The full list is the current output of `scripts/lint_no_vh_accepted.sh`; it is
+not duplicated here so it cannot drift.
+
+## The third defect: a section sign in the heading
+
+Two files write the heading as `## §Version History`. The pattern
+`^## (Version History|Changelog)$` did not allow a leading `§`, so both were
+reported as having no Version History when they have populated ones.
+
+This is the same shape as the citation work in
+`scripts/validate_cites.sh`: this repository writes `§section_name`, and
+patterns written against a bare `section_name` silently miss the `§` form.
+
+The first attempt at the fix used `§? *`, which cannot match a plain heading —
+the star repeats the space, and the sign is optional, so zero repetitions means
+zero spaces. It collapsed `PASS` from 104 to 2. Explicit alternation is correct.
+
+## Acceptance criteria
+
+- [ ] Each of the 6 files gains a Version History section, or a decision is
+      recorded for why an Accepted RFC does not need one.
+- [ ] `0001-mission-lifecycle.md` is resolved: either promoted out of `draft/`
+      or its Status block corrected.
+- [ ] Any exemption is expressed as a mechanism the linter honours, not as a
+      deletion of the check.
+- [ ] If the linter is wired, it reports zero on the tree at the moment of
+      adoption.
+
+## Notes
+
+Verification of the linter fix was done by mutation, both directions:
+
+- reverting the detection regex drops findings from 51 to 12, which accounts
+  for the difference exactly
+- deleting every Version History data row from a known Accepted RFC is still
+  detected as `MISSING_VH_ROWS`
+
+The first positive control replaced a single data row rather than removing all
+of them, so it correctly did not fire. That was a bad control, not a bad fix;
+it was rewritten to remove every numeric row, and then fired.
+
+This is the third instance in this repository of a gate whose counters
+disagreed with each other and whose output looked clean because the
+disagreement was arithmetic rather than visible:
+
+| Script                      | Symptom                                       |
+| --------------------------- | --------------------------------------------- |
+| `lint_no_vh_accepted.sh`    | CHECKED counted files, PASS counted eligible  |
+| `mutation-verify-guards.sh` | an unmatched filter yields `passed=0` quietly |
+| `lint_status_vh_sync.sh`    | newest version read as the first row          |
+
+A counter that does not match the population it describes is the failure mode
+worth hunting for next.
+
+## Correction: 39 was still wrong, and 6 is the real number
+
+A further two checks in the same script, each a different rendering of the same
+content:
+
+| Shape the corpus uses                    | Files affected | Effect |
+| ---------------------------------------- | -------------- | ------ |
+| `                                        | 2.12           | `vs`   | v2.12 | ` in the version column | 28  | −28 |
+| Version History written as a bullet list | 5              | −5     |
+
+So the sequence is 51 → 39 → 11 → **6**. The 33 empty-Version-History findings
+were almost entirely populated tables the linter could not read:
+
+- 28 have real tables whose version column is written `v2.12` rather than
+  `2.12`
+- 5 write the history as bullets, either `- **v3** (date): note` or
+  `- date — v3 note`
+
+Six Accepted RFCs genuinely have no Version History section, and that is the
+figure this mission should have carried from the start.
+
+Three implementation notes, each caught by testing rather than by reading:
+
+- mawk on this system does not support `{n}` interval quantifiers, so a date
+  pattern written that way silently matched nothing and the whole linter went
+  red. Written with explicit repetition instead.
+- A single `(\*\*)?v?[0-9]+\.` alternative failed to match `- **v3**`, which
+  has no dot after the version. Split into two explicit alternatives.
+- The bullet rule is kept to single-line awk patterns. A multi-line version
+  containing an em-dash inside a bracket expression matched nothing at all.
+
+Verified in both directions after each change: adding a Version History in any
+of the three shapes is accepted, and removing the entries from a populated one
+is still reported.

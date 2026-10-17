@@ -3,9 +3,9 @@ pub mod models;
 
 pub use errors::{BudgetError, KeyError, QuotaRouterError, StorageError};
 pub use models::{
-    ApiKey, CreateTeamRequest, GenerateKeyRequest, GenerateKeyResponse, KeySpend, KeyType,
-    KeyUpdates, MerkleNode, PricingModel, RevokeKeyRequest, SpendEvent, Team, TokenSource,
-    UpdateTeamRequest,
+    cost_u64_to_i64, ApiKey, CreateTeamRequest, GenerateKeyRequest, GenerateKeyResponse,
+    KeyRotationEvent, KeySpend, KeyType, KeyUpdates, MerkleNode, PricingModel, RevokeKeyRequest,
+    SpendEvent, SpendEventError, Team, TokenSource, UpdateTeamRequest, KEY_ROTATION_GRACE_SECS,
 };
 
 use hmac_sha256::HMAC;
@@ -82,6 +82,23 @@ pub fn blob_32_to_hex(blob: &[u8; 32]) -> String {
 #[inline]
 pub fn uuid_to_blob_16(uuid: &uuid::Uuid) -> [u8; 16] {
     *uuid.as_bytes()
+}
+
+/// Parse a caller-supplied `key_id` / `team_id` string into a `Uuid`.
+///
+/// These identifiers arrive from HTTP route paths, so they are
+/// attacker-controlled. A malformed value must surface as
+/// [`KeyError::InvalidUuid`] rather than an `expect` panic: a panic inside a
+/// request handler is a denial-of-service primitive, reachable by anyone who
+/// can send `GET /team/<anything>`.
+///
+/// `kind` names the field so the error message points at the offending input.
+#[inline]
+pub fn parse_uuid(value: &str, kind: &'static str) -> Result<uuid::Uuid, KeyError> {
+    uuid::Uuid::parse_str(value).map_err(|_| KeyError::InvalidUuid {
+        kind,
+        value: value.to_owned(),
+    })
 }
 
 /// Convert 16 raw bytes from key_id/team_id BLOB(16) retrieval to a Uuid.
@@ -223,7 +240,7 @@ pub fn compute_cost(pricing: &PricingModel, input_tokens: u32, output_tokens: u3
 
 /// Compute cost delegating to RFC-0910 canonical implementation.
 ///
-/// Takes `&PricingTable` (RFC-0910 struct) and returns `Result<u64, BudgetError>`.
+/// Takes `&&PricingTable` (RFC-0910 struct) and returns `Result<u64, BudgetError>`.
 /// Converts `CostError::Overflow` → `BudgetError::CostOverflow`.
 #[inline]
 pub fn compute_cost_from_pricing_table(
@@ -1654,5 +1671,98 @@ mod tokenizer_helpers_tests {
         // Verify output is exactly 16 bytes
         let id = tokenizer_version_to_id("any-version-string");
         assert_eq!(id.len(), 16);
+    }
+}
+
+// =============================================================================
+// Mission 0957-b AC-7 — Provider key rotation event flow (Session 2026-07-28).
+//
+// Operators rotate an API key by issuing a `KeyRotationEvent` that
+// records the predecessor key hash + the rotation epoch. For
+// `KEY_ROTATION_GRACE_SECS = 3600` (one hour) after the rotation the
+// predecessor remains honoured so in-flight requests using the
+// old key complete cleanly. The flow here is the pure validation
+// + event-construction surface; persistence lives in the storage
+// layer under a separate `key_rotation_history` table.
+// =============================================================================
+
+/// Build a `KeyRotationEvent` for a successor key replacing a
+/// predecessor. The predecessor is honoured for
+/// `KEY_ROTATION_GRACE_SECS = 3600` (one hour) after
+/// `rotated_at_unix`; the validator returns `Ok` only when the
+/// caller's clock is within the grace window OR past the cutover
+/// (the predecessor is dead).
+pub fn make_rotation_event(
+    key_id: String,
+    predecessor_key_hash: Vec<u8>,
+    successor_key_hash: Vec<u8>,
+    rotated_at_unix: i64,
+) -> KeyRotationEvent {
+    KeyRotationEvent {
+        key_id,
+        rotated_at_unix,
+        predecessor_key_hash,
+        successor_key_hash,
+        predecessor_expires_at_unix: rotated_at_unix + KEY_ROTATION_GRACE_SECS,
+    }
+}
+
+/// True iff `now_unix` is inside the predecessor-key grace window
+/// for the given `rotation_event`. The validator accepts predecessor
+/// keys during this window; outside the window the predecessor is
+/// dead and validation fails (return `Err` from the caller).
+///
+/// Boundary:
+/// - `now_unix < rotated_at_unix` — pre-rotation epoch; the
+///   predecessor is still valid (the cutover hasn't happened yet);
+///   return `true`.
+/// - `rotated_at_unix <= now_unix < predecessor_expires_at_unix` —
+///   grace window; return `true`.
+/// - `now_unix >= predecessor_expires_at_unix` — past cutover;
+///   return `false`.
+pub fn is_predecessor_grace(rotation_event: &KeyRotationEvent, now_unix: i64) -> bool {
+    if now_unix < rotation_event.rotated_at_unix {
+        return true;
+    }
+    if now_unix >= rotation_event.predecessor_expires_at_unix {
+        return false;
+    }
+    true
+}
+
+#[cfg(test)]
+mod rotation_tests {
+    use super::*;
+
+    #[test]
+    fn rotation_event_default_grace_one_hour() {
+        let ev = make_rotation_event("key-1".to_string(), vec![1, 2, 3], vec![4, 5, 6], 1_000_000);
+        assert_eq!(ev.key_id, "key-1");
+        assert_eq!(ev.predecessor_key_hash, vec![1, 2, 3]);
+        assert_eq!(ev.successor_key_hash, vec![4, 5, 6]);
+        assert_eq!(ev.rotated_at_unix, 1_000_000);
+        assert_eq!(ev.predecessor_expires_at_unix, 1_000_000 + 3_600);
+    }
+
+    #[test]
+    fn predecessor_grace_active_inside_window() {
+        let ev = make_rotation_event("k".to_string(), vec![], vec![], 1_000_000);
+        assert!(is_predecessor_grace(&ev, 1_000_000));
+        assert!(is_predecessor_grace(&ev, 1_000_000 + 1_799));
+        assert!(is_predecessor_grace(&ev, 1_000_000 + 3_599));
+    }
+
+    #[test]
+    fn predecessor_expired_past_window() {
+        let ev = make_rotation_event("k".to_string(), vec![], vec![], 1_000_000);
+        assert!(!is_predecessor_grace(&ev, 1_000_000 + 3_600));
+        assert!(!is_predecessor_grace(&ev, 1_000_000 + 10_000));
+    }
+
+    #[test]
+    fn predecessor_pre_rotation() {
+        let ev = make_rotation_event("k".to_string(), vec![], vec![], 1_000_000);
+        assert!(is_predecessor_grace(&ev, 999_000));
+        assert!(is_predecessor_grace(&ev, 0));
     }
 }

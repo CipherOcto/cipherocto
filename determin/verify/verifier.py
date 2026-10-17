@@ -15,6 +15,7 @@ Usage:
     python verifier.py --vectors          # Run test vectors
 """
 
+import json
 import subprocess
 import random
 import sys
@@ -26,15 +27,43 @@ from typing import Tuple, Optional, List
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
+def _cargo_target_dir(cli_dir: str) -> str:
+    """Return the directory cargo writes build output to for `cli_dir`.
+
+    Cargo always writes to the WORKSPACE root's target/, never to a member's
+    own directory. `determin/` is its own workspace (`members = ["cli"]`) and
+    is excluded from the repository workspace, so the binary lands in
+    `determin/target/`, not `determin/cli/target/`.
+
+    This used to be masked by a stale committed binary under
+    `determin/cli/target/release/`, built back when `determin/cli` was a
+    standalone package rather than a workspace member. Removing those committed
+    artifacts exposed the stale path. Asking cargo removes the assumption
+    entirely, so moving the workspace again cannot reintroduce it.
+    """
+    result = subprocess.run(
+        ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+        cwd=cli_dir,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"cargo metadata failed in {cli_dir}: {result.stderr}"
+        )
+    return json.loads(result.stdout)["target_directory"]
+
+
 def rust_call(op: str, mantissa_a: int, exponent_a: int,
               mantissa_b: Optional[int] = None, exponent_b: Optional[int] = None) -> Tuple[int, int, int]:
     """Call the Rust CLI and parse result. Returns (sign, mantissa, exponent)"""
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     cli_dir = os.path.join(base_dir, "cli")
-    binary_path = os.path.join(cli_dir, "target", "release", "dfp_cli")
+    target_dir = _cargo_target_dir(cli_dir)
+    binary_path = os.path.join(target_dir, "release", "dfp_cli")
 
     if not os.path.exists(binary_path):
-        binary_path = os.path.join(cli_dir, "target", "debug", "dfp_cli")
+        binary_path = os.path.join(target_dir, "debug", "dfp_cli")
 
     if not os.path.exists(binary_path):
         print(f"Building dfp_cli in {cli_dir}...")
@@ -47,7 +76,7 @@ def rust_call(op: str, mantissa_a: int, exponent_a: int,
         if result.returncode != 0:
             print(f"Failed to build: {result.stderr}")
             raise RuntimeError("Cannot build dfp_cli")
-        binary_path = os.path.join(cli_dir, "target", "debug", "dfp_cli")
+        binary_path = os.path.join(target_dir, "debug", "dfp_cli")
 
     cmd = [binary_path, op, str(mantissa_a), str(exponent_a)]
     if mantissa_b is not None:

@@ -75,7 +75,7 @@ OCTO-Network defines:
 Implementation integrates with existing stack:
 
 ```
-RFC-0106 (Numeric Tower)
+RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric Tower)
        ↓
 RFC-0120 (AI-VM)
        ↓
@@ -83,7 +83,7 @@ RFC-0107 (Transformer Circuit)
        ↓
 RFC-0630 (Proof-of-Inference)
        ↓
-RFC-0143 (OCTO-Network) ← NEW
+RFC-0843 (OCTO-Network) ← NEW (canonical replacement per numeric-tier phantom sweep)
 ```
 
 ## Specification
@@ -127,56 +127,41 @@ graph TB
 
 ### Node Types
 
+**This section no longer defines node roles.** It previously declared a
+`NodeType { Compute { flops, gpus }, Storage { capacity_tb, datasets },
+Prover { proof_speed }, Verifier { verifications_per_sec }, Router,
+Backbone { region, bandwidth_gbps } }` enum. That is a second role taxonomy
+alongside RFC-0871, and it is the closed-enum shape that RFC-0871 §Design
+Goals G1 rejects.
+
+The two halves are owned elsewhere and are referenced rather than restated:
+
+- **Role** — which protocol payloads a node serves. Defined by RFC-0871
+  §Node Role — Payload-Kind Declared as the served `PayloadKindId` UUID set.
+  RFC-0009's closed `NodeType` enum was removed 2026-10-07 (v1.2) for the
+  same reason.
+- **Capacity** — what a node can offer. RFC-0845 defines a
+  `HardwareCapability` descriptor and a real capability-match rule, and
+  explicitly rejects raw hardware specs on privacy grounds. RFC-0843 sits
+  below it in the declared stack (RFC-0918 → RFC-0845 → RFC-0843 → RFC-0630).
+
+A compute node is therefore a node that serves the inference payload kinds
+**and** advertises compute capacity. Those are two independent facts and are
+not fused into one enum: a coordination node serves coordinator payload kinds
+and advertises capacity only if it also executes.
+
 ```rust
-/// Node types in OCTO-Network
-enum NodeType {
-    /// Compute node - runs AI inference
-    Compute {
-        /// Available FLOPs
-        flops: u64,
-        /// GPU models
-        gpus: Vec<GPUInfo>,
-    },
-
-    /// Storage node - stores model/dataset shards
-    Storage {
-        /// Available storage in TB
-        capacity_tb: u64,
-        /// Dataset IDs hosted
-        datasets: Vec<Digest>,
-    },
-
-    /// Prover node - generates STARK proofs
-    Prover {
-        /// Proof generation speed
-        proof_speed: u64,
-    },
-
-    /// Verifier node - verifies proofs
-    Verifier {
-        /// Verification capacity
-        verifications_per_sec: u32,
-    },
-
-    /// Router node - routes tasks
-    Router,
-
-    /// Backbone node - network coordination
-    Backbone {
-        /// Geographic region
-        region: String,
-        /// Bandwidth in Gbps
-        bandwidth_gbps: u32,
-    },
-}
-
-/// Node capability advertisement
+/// Node advertisement. Role is the served payload-kind set (RFC-0871);
+/// capacity is a separate descriptor (RFC-0845). Neither is an enum here.
 struct NodeCapability {
     /// Node identity
     node_id: PeerId,
 
-    /// Node types
-    types: Vec<NodeType>,
+    /// Payload kinds this node serves — the node's role (RFC-0871)
+    served_payload_kinds: Vec<crate::octo_protocol::payload_kind::PayloadKindId>,
+
+    /// Advertised capacity (RFC-0845), if any
+    hardware: Option<crate::octo_protocol::HardwareCapability>,
 
     /// Network endpoint
     endpoint: Multiaddr,
@@ -202,6 +187,11 @@ struct NodeMetrics {
     reputation: u64,
 }
 ```
+
+> **Open, not resolved here:** the exact `HardwareCapability` field set and the
+> selection rule are RFC-0845's to specify. This RFC's `Task Routing` needs to
+> grow a real capability match to replace the presence check it used to do; that
+> is deferred with the rest of this draft rather than answered here.
 
 ### Peer Discovery with Kademlia DHT
 
@@ -262,13 +252,16 @@ enum DHTRecord {
 struct PeerDiscovery;
 
 impl PeerDiscovery {
-    /// Find nodes with specific capabilities
-    async fn find_nodes(
+    /// Find nodes serving a given payload kind (RFC-0871 role model).
+    /// Was `find_nodes(capability: NodeType, count)`; the enum it took is
+    /// removed. Role queries are now payload-kind queries.
+    async fn find_nodes_serving(
         &self,
-        capability: NodeType,
+        payload_kind: &crate::octo_protocol::payload_kind::PayloadKindId,
         count: usize,
     ) -> Vec<PeerId> {
-        // Query DHT for capability
+        // Query DHT for the payload kind, then filter on advertised
+        // capacity via the RFC-0845 capability-match rule.
         // Return nearest nodes
     }
 
@@ -322,9 +315,14 @@ impl TaskRouter {
         let shard_nodes = self.find_shard_nodes(task.model_id, &task.required_shards).await?;
 
         // 2. Filter by capability (compute + prover)
+        // NOTE: was `has_capability(id, NodeType::Compute)`, a presence check
+        // on the removed enum. It never compared the advertised FLOPs against
+        // task.difficulty, so `difficulty` was declared and unrouted. RFC-0845
+        // owns the real capability-match rule; this call site is deferred with
+        // the rest of the draft.
         let compute_nodes: Vec<PeerId> = shard_nodes
             .iter()
-            .filter(|id| self.has_capability(id, NodeType::Compute))
+            .filter(|id| self.serves_compute_payload_kinds(id))
             .cloned()
             .collect();
 
@@ -875,7 +873,7 @@ Backbone nodes provide:
 
 ## Related RFCs
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower
 - RFC-0120 (AI Execution): Deterministic AI Virtual Machine
 - RFC-0630 (Proof Systems): Proof-of-Inference Consensus
 - RFC-0107 (Numeric/Math): Deterministic Transformer Circuit
@@ -884,7 +882,7 @@ Backbone nodes provide:
 - RFC-0416 (Agents): Self-Verifying AI Agents
 - RFC-0140 (Consensus): Sharded Consensus Protocol
 - RFC-0141 (Consensus): Parallel Block DAG Specification
-- RFC-0142 (Consensus): Data Availability & Sampling Protocol
+- RFC-0742 (Consensus): Data Availability & Sampling Protocol
 
 ## Related Use Cases
 
@@ -917,7 +915,7 @@ Backbone nodes provide:
 └─────────────────────────┬───────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────┐
-│        Network Layer (RFC-0143)                        │
+│        Network Layer (RFC-0843)                        │
 │   OCTO-Network (libp2p)                               │
 │   Peer Discovery, Task Routing, Block Propagation     │
 └─────────────────────────────────────────────────────┘
@@ -945,6 +943,19 @@ Heartbeat:          30 seconds
 
 ---
 
-**Version:** 1.0
+**Version:** 1.1
 **Submission Date:** 2026-03-07
-**Last Updated:** 2026-03-07
+**Last Updated:** 2026-10-07
+
+> **v1.1 (2026-10-07):** the `NodeType` enum in §Node Types is removed. It was a
+> second role taxonomy alongside RFC-0871 and the closed-enum shape RFC-0871
+> §Design Goals G1 rejects. Role is the served `PayloadKindId` UUID set
+> (RFC-0871 §Node Role — Payload-Kind Declared); capacity is a separate
+> descriptor owned by RFC-0845, which rejects raw hardware specs on privacy
+> grounds. `NodeCapability` now carries `served_payload_kinds` plus an optional
+> hardware descriptor instead of `types: Vec<NodeType>`. `PeerDiscovery::find_nodes`
+> becomes `find_nodes_serving(payload_kind, count)`. The `Task Routing` presence
+> check is replaced with `serves_compute_payload_kinds` and flagged: the old check
+> never compared advertised FLOPs against `task.difficulty`, so the difficulty
+> field was declared and unrouted. The remaining capacity-match detail belongs to
+> RFC-0845 and is deferred with the rest of this Draft, not answered here.

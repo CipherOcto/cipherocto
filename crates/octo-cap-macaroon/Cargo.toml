@@ -1,0 +1,144 @@
+[package]
+name = "octo-cap-macaroon"
+version = "0.1.0"
+edition = "2021"
+description = "Macaroon v1 capability substrate (RFC-0957 §3.1–3.2). Layer 4 extension crate; per RFC-0965 caveat discriminator pattern."
+license = "MIT OR Apache-2.0"
+authors = ["CipherOcto"]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+
+# Mission 0009-c: the Layer B registry + the Ed25519 `SignatureAlgorithm`
+# implementation, so the canonical governance verifier dispatches through
+# `AlgorithmRegistry` instead of naming dalek (RFC-0009 AC#11). Layer E
+# extension over Layer B. `octo-ident` was previously a dev-dependency of
+# this crate only, which a lib-side dispatch needs promoted.
+octo-ident = { path = "../octo-ident" }
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
+
+# BLAKE3 keyed-hash primitive (Layer A per RFC-0853 §1.1) — used for
+# HMAC-BLAKE3 = blake3::keyed_hash per RFC-0957 §Algorithms.
+blake3 = "1.5"
+# Poseidon over felt252 (Layer A) — the STARK-native MAC used for the
+# verifier-bound caveat chain in `substrate::poseidon`. Not a substitute for
+# BLAKE3: the credential chain stays HMAC-BLAKE3 per RFC-0957 §Algorithms, and
+# this exists so a ZK circuit can re-derive the same value without paying for
+# BLAKE3 in-field (measured 17,628 CASM words against 2,182 for Poseidon).
+# Same crate the Cairo toolchain uses, which is what makes host/circuit parity
+# possible rather than assumed.
+starknet-crypto = "0.8"
+# hex for Debug redaction output (does NOT appear in wire form; safe).
+hex = "0.4"
+# Serde derives for Caveat + Macaroon + CapabilityCatalog (RFC-0126 canonical ser).
+serde = { version = "1", features = ["derive"] }
+# serde_bytes for `HolderRecord` 32-byte field wrappers (`cap_root_hash`,
+# `holder_pub`, `ask_id`) — mission 0206-003 v3.0 moved HolderRecord
+# into this crate from quota-router-storage.
+serde_bytes = "0.11"
+# serde_json for `caveat::canonical_ser` JSON serialization (RFC-0126).
+serde_json = "1"
+# RNG for the 16-byte macaroon nonce (RFC-0957 §3.2 root_id derivation).
+rand = "0.9"
+# `#[async_trait]` for `CapabilityGossip::gossip_to_buyer` (mission 0959-c3).
+async-trait = "0.1"
+# thiserror for `MacaroonError` + `CatalogGossipError` derive.
+thiserror = "1"
+# RFC-0964 constraint encoding (used by `caveat::FactoryVet::pre_conditions`).
+cipherocto-encoding = { path = "../cipherocto-encoding" }
+# RFC-0973 §Phase 2: `AttestationAdmission::required_payload_kinds` returns
+# `PayloadKindId`. The attestation traits are declared here rather than in the
+# wallet because a Layer-E strategy crate has to implement them, and the wallet
+# depends on the strategy crate for its ZK mint substrate.
+octo-protocol = { path = "../octo-protocol" }
+# `octo-determin` (mission 0862-c9 RETIRED — local `MicroOctoW`
+# alias killed project-wide per user mandate 2026-08-17): provides
+# the canonical amount-bearing type `Dqa` (RFC-0862 + RFC-0105
+# §3) used directly across all amount-bearing caveat payload fields
+# (`PaymentCaveat.budget`, `RateLimit.max_per_1k`, `Caveat::AmountMax`,
+# `query_cost`, etc.). NO `MicroOctoW` re-exports exist in this
+# crate — `Dqa` is the canonical type. Path dep used during local
+# dev (the `determin` crate at repo root is workspace-excluded).
+octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
+# Layer B `HolderRegistry` accessor on `CapabilityCatalog` was REMOVED
+# in Phase 2c-2 (mission 0957-ext-macaroon). The accessor had zero call
+# sites (verified 2026-08-09 across workspace) so dropping it removes
+# the cross-layer `quota-router-storage` dep without breaking any caller.
+# Holder registry lookups are wired directly by downstream crates
+# (`octo-wallet` uses `Arc<dyn HolderRegistry>` directly in verify.rs +
+# gateway_authenticator.rs + audit_log.rs + federation.rs).
+# Ed25519 signature type (CapabilityToken.holder_sig field).
+ed25519-dalek = { version = "2.2", features = ["serde"] }
+# base64 for capability token wire format encoding (RFC-0957 §Wire Format).
+base64 = "0.22"
+# Borsh derives for `caveat::PaymentCaveat` only (mission
+# 0957-phase2b): the `PaidQueryRequest` envelope + the
+# `MintRequest::payment_caveat` field both derive
+# BorshSerialize/BorshDeserialize and embed `PaymentCaveat`. Adding
+# borsh ONLY here (not on the rest of the macaroon substrate) keeps
+# the coupling minimal — the canonical serde form remains the wire
+# substrate for `Macaroon` / `CapabilityToken` / `Caveat` (RFC-0126
+# + RFC-0957 §Wire Format). Borsh is required by the wallet-node + paid-query
+# envelope layer (Layer C / Layer E) which sit above the substrate.
+borsh = { version = "=1.5.0", features = ["derive"] }
+# Mission D substrate primitives (`AssetRegistry`, `NonceRegistry`,
+# newtypes `Nonce`/`Epoch`/`GovernanceSignature`/`AssetId`/`ChainId`/`VaultId`/)
+# live in `crate::substrate` per RFC-0105 §3.1/§3.11/§3.12
+# canonical home rule. Living in octo-cap-macaroon (rather than
+# octo-vault) preserves the B→B substrate-handle dependency direction:
+# `octo-vault` (B) depends on `octo-cap-macaroon` (B) for substrate
+# primitives; consumer crates depend on `octo-cap-macaroon` for the
+# primitives (not on `octo-vault`, which carries the storage coupling).
+# This avoids the cycle that would arise if octo-cap-macaroon's
+# `caveat::PaymentCaveat::verify` gates imported registry/nonce
+# traits from octo-vault directly.
+
+[dev-dependencies]
+# Property-based tests in `macaroon.rs` (`proptest!` macros).
+proptest = "1"
+# Test-only sample-DID helper used by `caveat.rs` + `macaroon.rs` tests.
+octo-ident = { path = "../octo-ident" }
+# Second registered algorithm (Layer A, RFC-0009 AC#11). Dev-only, and the
+# reason is specific to this module: `verify_governance_signature` is the
+# substrate's shared governance verifier, and every other test here reaches it
+# through `governance_algorithm_id()` with 32-byte keys and 64-byte Ed25519
+# signatures. A verifier that hardcoded those widths would pass all of them — a
+# stark-schnorr key is 33 bytes, which makes the difference observable. This is
+# the crate's first real second-algorithm evidence since the key and signature
+# parameters were widened off their fixed-size aliases. Dev-only because no
+# governance key in the product is stark-schnorr; the vector keeps the site
+# honest.
+octo-algo-stark-schnorr = { path = "../octo-algo-stark-schnorr" }
+# Tokio for `CompositeCapabilityCatalog` async TV (mission 0959-c4).
+tokio = { version = "1", features = ["macros", "rt"] }
+
+# Mission 0011-vault-asset-chain-id-hex Phase 2: feature-gates the
+# 64-char hex wire form for the three 32-byte id newtypes
+# (`AssetId` / `ChainId` / `VaultId`) in `crate::substrate`. Defaults
+# OFF per the open-limitations drift audit's "no amendment warranted"
+# verdict on the newtype change (the migration is opt-in). When
+# enabled, each newtype's inner `[u8; 32]` field is annotated with
+# `#[serde(with = "crate::hex_id_32")]` (via `#[cfg_attr]`), which
+# delegates to the paired Phase 1 `hex_id_32` adapter from mission
+# 0011-caveat-form-amendment. The adapter accepts BOTH the 64-hex
+# canonical form AND the 32-element byte-array legacy form (dual-form
+# deserialize is delegated to `hex_id_32`'s `visit_str` / `visit_seq`).
+[features]
+hex-ids = []
+
+[lints.rust]
+unsafe_code = "forbid"
+# `missing_docs` is a rustc lint; the crate-level `#![allow(missing_docs)]`
+# in src/lib.rs covers it. (Clippy's `missing_docs` lint doesn't exist —
+# clippy reuses the rustc lint under the same name.)
+
+[lints.clippy]
+# Pedantic doc-comment style nits (empty lines after docs, doc list
+# indentation) — original octo-wallet source was hand-written, not
+# pedantic-style-compliant. Phase 2 keeps the substrate verbatim;
+# a polish pass can normalize.
+empty_line_after_doc_comments = "allow"
+doc_lazy_continuation = "allow"
+

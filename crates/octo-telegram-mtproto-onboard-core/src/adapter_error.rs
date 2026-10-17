@@ -23,7 +23,7 @@
 //!
 //! ## R2-IE-9: typed "already authorized" signal
 //!
-//! `classify(&err)` returns `AdapterErrorKind::AlreadyAuthorized`
+//! `classify(&&err)` returns `AdapterErrorKind::AlreadyAuthorized`
 //! for `MtprotoTelegramError::Internal("qr_login: already
 //! authorized ...")` — the call site can match on the enum
 //! variant instead of string-matching the `Display` output.
@@ -151,7 +151,7 @@ pub fn classify(err: &MtprotoTelegramError) -> AdapterErrorKind {
 /// variant. Pure function.
 ///
 /// `last_state` is the adapter's last-observed lifecycle
-/// state (from `auth_state_name(&adapter)`), used to populate
+/// state (from `auth_state_name(&&adapter)`), used to populate
 /// the `Lifecycle` variant for `NotReady` errors.
 ///
 /// The mapping is intentionally lossy with respect to
@@ -174,7 +174,7 @@ pub fn map(err: MtprotoTelegramError, last_state: &str) -> OnboardError {
         K::Capability | K::Envelope | K::Internal | K::QrLoginHandle => O::Adapter(err.to_string()),
         K::AlreadyAuthorized => {
             // Callers that care about this case must check
-            // `classify(&err)` BEFORE calling `map`, because
+            // `classify(&&err)` BEFORE calling `map`, because
             // `map` collapses it to `Adapter(...)` (the
             // generic "we don't know what happened" variant
             // — the onboarding flow would never reach this
@@ -301,7 +301,7 @@ mod tests {
         // the match above; we can't construct a
         // hypothetical "future variant" without changing
         // the upstream enum. Instead, we exercise the
-        // catch-all path by using a `&` reference with a
+        // catch-all path by using a `&&` reference with a
         // known-non-matching variant to confirm the
         // default fall-through behaves as documented.
         // The point of this test is to confirm that a new
@@ -322,7 +322,7 @@ mod tests {
     /// `AlreadyAuthorized` to `Adapter(...)` (the generic
     /// "we don't know what happened" variant). Callers
     /// that care about the "already authorized" case
-    /// must inspect `classify(&err)` BEFORE calling
+    /// must inspect `classify(&&err)` BEFORE calling
     /// `map`. This test pins the contract.
     #[test]
     fn map_collapses_already_authorised_to_adapter() {

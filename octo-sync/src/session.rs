@@ -10,7 +10,7 @@
 //!
 //! The `SyncSessionManager` is the single entry point for the cipherocto sync
 //! engine. It is generic over `DatabaseSyncAdapter` (the trait boundary per
-//! RFC-0862 v1.1.0).
+//! RFC-0862).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -59,7 +59,7 @@ pub struct PeerSession {
 /// (suitable for `Arc<SyncSessionManager>`). The cipherocto async runtime
 /// (`tokio`) wraps every method call at the boundary via `tokio::task::spawn_blocking`.
 pub struct SyncSessionManager {
-    /// The database adapter (trait object, per RFC-0862 v1.1.0).
+    /// The database adapter (trait object, per RFC-0862).
     adapter: Arc<dyn DatabaseSyncAdapter>,
     /// The session configuration.
     config: SyncConfig,

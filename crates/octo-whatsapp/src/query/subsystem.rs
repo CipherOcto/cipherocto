@@ -46,7 +46,7 @@ use crate::query::embedder_job::{EmbedderJob, EmbedderQueue, JobConfig};
 use crate::query::ingester::{QueryError, QueryIngester};
 use crate::query::schema;
 use crate::query::tantivy_sidecar::{IndexedMessage, TantivyError, TantivySidecar};
-use stoolap::Database;
+use octo_storage_core::Database;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
@@ -91,7 +91,9 @@ impl std::fmt::Debug for QuerySubsystem {
 #[derive(Debug, Error)]
 pub enum SubsystemError {
     #[error("stoolap error: {0}")]
-    Stoolap(#[from] stoolap::Error),
+    Stoolap(#[from] octo_storage_core::stoolap::Error),
+    #[error("substrate error: {0}")]
+    Substrate(#[from] octo_storage_core::SubstrateError),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("tantivy error: {0}")]
@@ -879,21 +881,24 @@ fn replay_ndjson_is_idempotent() {
     assert_eq!(hits.len(), 1, "tantivy also collapses on event_id PK");
 }
 
-/// New test (2026-07-12): NDJSON lines that don't match the
-/// `PersistedEvent` schema (legacy `{raw, ts_unix_ms, ts_mono_ns}`
-/// envelope shape) must be reported as `lines_failed_parse` rather
-/// than silently skipped — this is what surfaced the production
-/// bug where replay appeared to succeed with `replayed = 0`.
+/// NDJSON lines that don't match the `PersistedEvent` schema (the
+/// legacy `{raw, ts_unix_ms, ts_mono_ns}` envelope shape, or the
+/// pre-overhaul `Unknown { raw, untrusted }` shape) must be
+/// reported as `lines_failed_parse` rather than silently skipped —
+/// this is what surfaced the production bug where replay appeared
+/// to succeed with `replayed = 0`.
 #[test]
 fn replay_ndjson_reports_parse_failures() {
     let dir = tempfile::tempdir().expect("tmpdir");
     let ndjson = dir.path().join("events.ndjson");
-    // Mix of one correct PersistedEvent line + one line in the
-    // legacy EventEnvelope shape + one garbage line.
+    // Mix: one correct PersistedEvent line (new shape) + one line in
+    // the legacy EventEnvelope shape + one pre-overhaul Unknown
+    // shape + one garbage line.
     std::fs::write(
         &ndjson,
-        b"{\"id\":1,\"ts_unix_ms\":100,\"ts_mono_ns\":0,\"event\":{\"event\":\"unknown\",\"raw\":\"Message(id: \\\"M1\\\", peer: \\\"p\\\", sender: \\\"p\\\", text: \\\"hi\\\", kind: Text, is_group: false)\",\"ts_unix_ms\":100,\"ts_mono_ns\":0,\"untrusted\":false}}\n\
+        b"{\"id\":1,\"ts_unix_ms\":100,\"ts_mono_ns\":0,\"event\":{\"event\":\"unknown\",\"wacore_event\":\"Message(id: \\\"M1\\\", peer: \\\"p\\\", sender: \\\"p\\\", text: \\\"hi\\\", kind: Text, is_group: false)\",\"variant_label\":\"debug_fallback\",\"ts_unix_ms\":100,\"ts_mono_ns\":0}}\n\
           {\"raw\":\"Message(id: \\\"legacy\\\", peer: \\\"p\\\", sender: \\\"p\\\", text: \\\"old\\\", kind: Text, is_group: false)\",\"ts_unix_ms\":1,\"ts_mono_ns\":0}\n\
+          {\"id\":2,\"ts_unix_ms\":200,\"ts_mono_ns\":0,\"event\":{\"event\":\"unknown\",\"raw\":\"old\",\"untrusted\":false,\"ts_unix_ms\":200,\"ts_mono_ns\":0}}\n\
           not even close to json\n",
     )
     .unwrap();
@@ -902,14 +907,14 @@ fn replay_ndjson_reports_parse_failures() {
         open_subsystem(&dir.path().join("query"), embedder, JobConfig::default()).expect("open"),
     );
     let stats = replay_ndjson(&sub, &ndjson).expect("replay");
-    assert_eq!(stats.lines_read, 3);
+    assert_eq!(stats.lines_read, 4);
     assert_eq!(
         stats.lines_handled, 1,
-        "only the PersistedEvent shape parses"
+        "only the new PersistedEvent shape parses"
     );
     assert_eq!(
-        stats.lines_failed_parse, 2,
-        "legacy + garbage lines are flagged"
+        stats.lines_failed_parse, 3,
+        "legacy envelope + pre-overhaul Unknown + garbage lines flagged"
     );
 }
 
@@ -963,9 +968,9 @@ fn replay_ndjson_receipt_uses_recorded_at_for_ts() {
     );
 }
 
-/// Best-effort extraction of a `&str` from a `catch_unwind` payload.
+/// Best-effort extraction of a `&&str` from a `catch_unwind` payload.
 /// The standard library intentionally exposes no introspection API;
-/// the canonical pattern is to `downcast_ref::<&str>()` /
+/// the canonical pattern is to `downcast_ref::<&&str>()` /
 /// `downcast_ref::<String>()`. Anything else collapses to a fixed
 /// "non-string panic" message — operators still get a usable
 /// failure label and the daemon's `Failed { error }` state is set.

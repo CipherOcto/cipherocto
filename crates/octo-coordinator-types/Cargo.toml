@@ -1,0 +1,41 @@
+[package]
+name = "octo-coordinator-types"
+version = "0.1.0"
+edition = "2021"
+description = "Shared coordinator substrate types (Layer B per CLAUDE.md §Architectural Principles). Canonical home for SlashTallyUpdate + SlashReasonCode + HandoverReasonTypeId lifted from octo-network local Layer-C surface per RFC-0855p-e §Layer-C Substrate Types follow-on note + RFC-0855p-b §Slash tally references. Both RFCs re-import from this crate (no upward dependency; no duplicate definitions)."
+license = "MIT OR Apache-2.0"
+authors = ["CipherOcto"]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# Ed25519 public key 32-byte wrapper (RFC-0009 identity substrate Layer A).
+ed25519-dalek = { version = "2.1", features = ["serde"] }
+# RFC-0009 AC#11: slash-proof adjudication verifies under the algorithm the
+# governance key was registered under, not a hardcoded Ed25519. Layer E
+# per-algorithm extension depending on Layer B — the arrow never points back,
+# which is why `octo-ident` itself has no ed25519-dalek dependency. Same edge
+# `octo-wallet`, `octo-reputation` and `octo-vault` take.
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
+# RFC-0009 AC#11: the governance key set names the algorithm each adjudicator
+# key speaks. Layer B identity substrate, reached for `AlgorithmId`.
+octo-ident = { path = "../octo-ident" }
+# Typed-discriminator serialization helpers (Borsh canonical BE bytes per
+# RFC-0126). Used by HandoverReasonTypeId canonical_ser.
+borsh = { version = "=1.5.0", features = ["derive"] }
+# thiserror for SlashReasonCode parse + SlashReasonCodeError derives.
+thiserror = "2.0"
+# Serde derives for slash tally + reason code types (debug + cross-crate
+# message passing via serde_json in future coordinators).
+serde = { version = "1", features = ["derive"] }
+# BLAKE3 keyed hash for canonical-bytes derivation on CoordinatorRecord
+# per RFC-0008 §Class A + RFC-0126 §3.2 (Layer A primitive, years-stable).
+blake3 = { version = "1.5" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+empty_line_after_doc_comments = "allow"
+doc_lazy_continuation = "allow"

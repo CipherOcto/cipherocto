@@ -170,7 +170,7 @@ impl JobDistributor {
     pub fn select_executor(&self, task: &ExecutionTask) -> Option<[u8; 32]> {
         self.executors
             .iter()
-            .filter(|e| e.supports_type(task.task_type) && e.is_available())
+            .filter(|e| e.supports_type(task.task_type) & e.is_available())
             .min_by(|a, b| {
                 // Higher trust score is better (reverse sort)
                 b.trust_score

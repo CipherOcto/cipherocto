@@ -66,9 +66,9 @@ Integration with existing stack:
 ```
 RFC-0918 (Task Market)
        ↓
-RFC-0145 (Hardware Capability Registry) ← NEW
+RFC-0845 (Hardware Capability Registry) ← NEW (canonical replacement per numeric-tier phantom sweep)
        ↓
-RFC-0143 (OCTO-Network)
+RFC-0843 (OCTO-Network)
        ↓
 RFC-0630 (Proof-of-Inference)
 ```
@@ -428,7 +428,7 @@ This RFC uses capability bitmaps instead.
 
 ## Related RFCs
 
-- RFC-0143 (Networking): OCTO-Network Protocol
+- RFC-0843 (Networking): OCTO-Network Protocol
 - RFC-0918 (Economics): Inference Task Market
 - RFC-0630 (Proof Systems): Proof-of-Inference Consensus
 

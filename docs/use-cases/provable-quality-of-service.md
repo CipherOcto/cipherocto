@@ -373,6 +373,6 @@ sequenceDiagram
 
 ## Related RFCs
 
-- [RFC-0108 (Numeric/Math): Deterministic Training Circuits](../rfcs/0108-deterministic-training-circuits.md)
-- [RFC-0109 (Numeric/Math): Linear Algebra Engine](../rfcs/0109-linear-algebra-engine.md)
-- [RFC-0615 (Proof Systems): Probabilistic Verification Markets](../rfcs/0615-probabilistic-verification-markets.md)
+- RFC-0108
+- RFC-0109
+- RFC-0615

@@ -1,0 +1,46 @@
+[package]
+name = "octo-policy"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Policy Object Graph: separable, versioned, shareable authorization policy (RFC-0967). Renamed from cipherocto-policy per RFC-0206 §Adapter Crate List row 5."
+
+[lib]
+name = "octo_policy"
+path = "src/lib.rs"
+
+[dependencies]
+serde.workspace = true
+blake3.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+cipherocto-encoding = { path = "../cipherocto-encoding" }
+# Per-policy-kind UUIDv5 derivation (RFC-0967-A1 v1.9.2 §2.6)
+uuid = { version = "1", features = ["v5"] }
+# Mission F substrate (RFC-0960 BurnEventRef): AssetRegistry,
+# VaultRegistry, NonceRegistry traits + newtypes live in the
+# octo-cap-macaroon substrate (canonical home per RFC-0105).
+octo-cap-macaroon = { path = "../octo-cap-macaroon" }
+# Mission F amount-bearing field (RFC-0960 Dqa wire form).
+octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
+# Mission F wire form (RFC-0960 §3 borsh encoding).
+borsh = { version = "=1.5.0", features = ["derive"] }
+# Mission B (RFC-0960 §2.5): BurnEventProducer impl lives in
+# Layer C (octo-policy). Dep on Layer B substrate crate (octo-vault).
+octo-vault = { path = "../octo-vault" }
+
+[dev-dependencies]
+serde_json.workspace = true
+# BurnEventRef test helpers — sample_key() / sign_burn()
+ed25519-dalek = { version = "2.2", features = ["serde"] }
+rand = "0.9"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"

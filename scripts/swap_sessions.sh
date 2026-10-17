@@ -31,6 +31,40 @@ A="default"
 B="bak_main_phone"
 STAGE="${B}_NEW"
 
+# --- M-11: validate the base dir before it is used for anything ---
+#
+# Every `mv` below is rooted at `$DIR`, so an operator (or a wrapper, or a
+# compromised env block) that controls `OCTO_WHATSAPP_PERSIST_DIR` chooses which
+# directory this script renames inside. The filenames are fixed, so this is not
+# "rename any path" — it is "rename `<A|.session.db>` wherever you like", which
+# matters when the script is run as root from a supervisor with a writable
+# environment.
+#
+# RULE: the base dir must be absolute, a real directory (not a symlink), owned
+# by the invoking user or by root, and not writable by group or other.
+# A symlink is refused outright rather than resolved: the point is to bind the
+# operator to a directory they named, not to whatever it currently points at.
+case "$DIR" in
+    /*) ;;
+    *) die "OCTO_WHATSAPP_PERSIST_DIR must be an absolute path (got: $DIR)" ;;
+esac
+[[ -d "$DIR" ]] || die "persist dir does not exist: $DIR"
+[[ ! -L "$DIR" ]] || die "persist dir must not be a symlink: $DIR"
+
+if command -v stat >/dev/null 2>&1; then
+    # `%a` prints the mode in OCTAL. It must be re-read as octal (`8#`), not
+    # as decimal: `10#755` is 755 decimal = 0o1363, whose low bits alias the
+    # group/other write bits, and a stock 0755 directory would be refused.
+    dir_mode="$(stat -c '%a' "$DIR" 2>/dev/null || echo '')"
+    if [[ -n "$dir_mode" ]] && (( 8#$dir_mode & 0022 )); then
+        die "persist dir is group- or world-writable (mode $dir_mode): $DIR"
+    fi
+    dir_owner="$(stat -c '%u' "$DIR" 2>/dev/null || echo '')"
+    if [[ -n "$dir_owner" ]] && [[ "$dir_owner" != "0" && "$dir_owner" != "$(id -u)" ]]; then
+        die "persist dir is owned by uid $dir_owner, expected $(id -u) or root: $DIR"
+    fi
+fi
+
 # --- --abort-staging mode ---
 if [[ "${1:-}" == "--abort-staging" ]]; then
     shift
@@ -59,6 +93,20 @@ ok "pre-flight: both pairs present, no open handles"
 # Collision guard
 [[ ! -e "$DIR/$STAGE.session.db" ]] || die "staging $STAGE.session.db already exists — run --abort-staging first"
 ok "collision guard: $STAGE.session.db free"
+
+# M-11: record identity before the swap. The per-phase checks below only test
+# that each name still exists; a mis-ordered or partially-applied rename would
+# satisfy every one of them while leaving the operator on the wrong phone. The
+# inode is the thing that must actually move.
+inode_of() { stat -c '%i' "$1" 2>/dev/null || echo ''; }
+if command -v stat >/dev/null 2>&1; then
+    inode_a="$(inode_of "$DIR/$A.session.db")"
+    inode_b="$(inode_of "$DIR/$B.session.db")"
+    if [[ -z "$inode_a" || -z "$inode_b" ]]; then
+        die "cannot read inode of $A.session.db / $B.session.db — refusing to swap blind"
+    fi
+    ok "pre-flight: recorded inodes (a=$inode_a b=$inode_b)"
+fi
 
 # --- phase 1: stage B as NEW ---
 mv -v "$DIR/$B.session.db" "$DIR/$STAGE.session.db"
@@ -92,6 +140,18 @@ ok "phase 3: $STAGE now at $A"
 
 # --- verify ---
 echo
+# M-11: identity check. `$A` must now hold the directory that used to be `$B`,
+# and vice versa. Existence alone is not evidence the swap happened.
+if command -v stat >/dev/null 2>&1; then
+    inode_a_now="$(inode_of "$DIR/$A.session.db")"
+    inode_b_now="$(inode_of "$DIR/$B.session.db")"
+    [[ "$inode_a_now" == "$inode_b" ]] \
+        || die "post-swap identity check failed: $A.session.db holds inode $inode_a_now, expected $inode_b (the old $B)"
+    [[ "$inode_b_now" == "$inode_a" ]] \
+        || die "post-swap identity check failed: $B.session.db holds inode $inode_b_now, expected $inode_a (the old $A)"
+    ok "identity verified: $A and $B swapped inodes as expected"
+fi
+
 echo "═══════════════ POST-SWAP STATE ═══════════════"
 ls -la "$DIR" | grep -E "(default|bak_main_phone)\.session"
 echo

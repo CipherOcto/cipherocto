@@ -182,7 +182,7 @@ pub fn check_team_key_limit(db: &Database, team_id: &Uuid) -> Result<(), KeyErro
 
 ## Related RFCs
 
-- RFC-0903 (Economics): Virtual API Key System (Final v29)
-- RFC-0904 (Economics): Real-Time Cost Tracking (Planned)
-- RFC-0909 (Economics): Deterministic Quota Accounting (Optional)
+- RFC-0903: Virtual API Key System (Final v29)
+- RFC-0904: Real-Time Cost Tracking (Planned)
+- RFC-0909: Deterministic Quota Accounting (Optional)
 - Research: `docs/research/stoolap-rfc0903-sql-feature-gap-analysis.md`

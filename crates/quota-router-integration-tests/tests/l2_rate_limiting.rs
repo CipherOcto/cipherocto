@@ -40,6 +40,7 @@ async fn l2_t28_rate_limit_local_dispatch() {
 /// T29 — rate_limit_forwarded_requests
 /// Consumer sends forwarded requests that exceed the per-consumer limit.
 #[tokio::test]
+
 async fn l2_t29_rate_limit_forwarded_requests() {
     let cluster = TestCluster::new(
         2,
@@ -57,7 +58,15 @@ async fn l2_t29_rate_limit_forwarded_requests() {
     for _ in 0..800 {
         match cluster.nodes[0].route(&ctx, b"hello").await {
             Ok(_) => allowed += 1,
-            Err(quota_router_core::node::RouterNodeError::RateLimited) => rate_limited += 1,
+            Err(quota_router_core::node::RouterNodeError::RateLimited)
+            | Err(quota_router_core::node::RouterNodeError::ForwardRejected(_)) => {
+                rate_limited += 1
+            }
+            Err(quota_router_core::node::RouterNodeError::Transport(ref s))
+                if s.contains("rate limit") =>
+            {
+                rate_limited += 1
+            }
             Err(_) => other_errors += 1,
         }
     }

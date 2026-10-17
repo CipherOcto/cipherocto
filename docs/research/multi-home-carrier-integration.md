@@ -102,7 +102,7 @@ See §8.2 for the phased approach.
 | Use Case                 | Consumer             | What It Needs                                       | File                                                 |
 | ------------------------ | -------------------- | --------------------------------------------------- | ---------------------------------------------------- |
 | Database sync (RFC-0862) | `SyncSessionManager` | Send/receive WAL chunks via platform adapters       | `rfcs/accepted/networking/0862-stoolap-data-sync.md` |
-| Cross-carrier sync       | `MultiCarrierSync`   | Fan-out sync envelopes to 2+ carriers with failover | `missions/with-pr/0862g-cross-carrier-sync.md`       |
+| Cross-carrier sync       | `MultiCarrierSync`   | Fan-out sync envelopes to 2+ carriers with failover | `missions/archived/0862g-cross-carrier-sync.md`      |
 | Stoolap-node binary      | E2E test infra       | Platform adapter transport (not just raw TCP)       | `sync-e2e-tests/stoolap-node/`                       |
 | DotGateway fan-out       | All DOT consumers    | Central dispatch to adapters (stub)                 | `crates/octo-network/src/dot/mod.rs:175`             |
 
@@ -118,17 +118,17 @@ See §8.2 for the phased approach.
 
 #### Tier 3 — Platform-Level Use Cases
 
-| Use Case              | Consumer            | What It Needs                                | File                                              |
-| --------------------- | ------------------- | -------------------------------------------- | ------------------------------------------------- |
-| Agent marketplace     | Agent runtime       | Cross-platform agent communication           | `docs/use-cases/agent-marketplace.md`             |
-| Agent memory layer    | Memory system       | Persistent memory replicated via network     | `docs/use-cases/verifiable-agent-memory-layer.md` |
-| DeFi agents           | Agent runtime       | Cross-platform task dispatch                 | `docs/use-cases/verifiable-ai-agents-defi.md`     |
-| Enterprise private AI | Enterprise deployer | Private network mode with carrier diversity  | `docs/use-cases/enterprise-private-ai.md`         |
-| Bandwidth providers   | P2P layer           | Bandwidth sharing via adapters               | `docs/use-cases/bandwidth-provider-network.md`    |
-| Storage providers     | Storage layer       | Storage node discovery via network           | `docs/use-cases/storage-provider-network.md`      |
-| Quota marketplace     | Quota router        | Quota trading settlement transport           | `docs/use-cases/ai-quota-marketplace.md`          |
-| Data marketplace      | Marketplace         | Trustless data exchange via network          | `docs/use-cases/data-marketplace.md`              |
-| Orchestrator runtime  | Orchestrator        | Task routing across heterogeneous transports | `missions/orchestrator-runtime.md`                |
+| Use Case              | Consumer            | What It Needs                                | File                                                                                   |
+| --------------------- | ------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Agent marketplace     | Agent runtime       | Cross-platform agent communication           | `docs/use-cases/agent-marketplace.md`                                                  |
+| Agent memory layer    | Memory system       | Persistent memory replicated via network     | `docs/use-cases/verifiable-agent-memory-layer.md`                                      |
+| DeFi agents           | Agent runtime       | Cross-platform task dispatch                 | `docs/use-cases/verifiable-ai-agents-defi.md`                                          |
+| Enterprise private AI | Enterprise deployer | Private network mode with carrier diversity  | `docs/use-cases/enterprise-private-ai.md`                                              |
+| Bandwidth providers   | P2P layer           | Bandwidth sharing via adapters               | `docs/use-cases/bandwidth-provider-network.md`                                         |
+| Storage providers     | Storage layer       | Storage node discovery via network           | `docs/use-cases/storage-provider-network.md`                                           |
+| Quota marketplace     | Quota router        | Quota trading settlement transport           | `docs/use-cases/ai-quota-marketplace.md`                                               |
+| Data marketplace      | Marketplace         | Trustless data exchange via network          | `docs/use-cases/data-marketplace.md`                                                   |
+| Orchestrator runtime  | Orchestrator        | Task routing across heterogeneous transports | `missions/archived/superseded/orchestrator-runtime.md` (legacy, superseded 2026-08-16) |
 
 #### Tier 4 — Already Implemented (but architecturally coupled)
 

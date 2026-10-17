@@ -651,6 +651,42 @@ Tail the event stream (returns recent buffer snapshot; per-sink stream +
 
 - **Optional**: `limit`
 
+### `events.list_kinds`
+
+List every known `kind` value the daemon can produce. Use this to
+discover the canonical kind strings before filtering on
+`events.find kind=<value>`. Plans:
+`docs/plans/2026-07-18-whatsapp-events-first-class-overhaul.md`.
+
+- **Input**: `{}`
+- **Returns**: `{kinds: ["message", "presence", ...], count: int}`
+  — 56 typed kinds + the `unknown` catch-all.
+
+### `events.unknown_stats`
+
+Per-variant aggregate of `InboundEvent::Unknown` emissions (events wacore
+itself emits but the adapter does not yet project into a typed variant).
+The graceful catch-all in
+`octo-adapter-whatsapp/src/adapter.rs:1756` wraps every unmapped
+wacore variant into `InboundEvent::Unknown { wacore_event, variant_label }`
+— this RPC surfaces the per-variant count + first/last seen + capped
+sample so operators can prioritise which typed arms to add next. Sorted
+by `count` desc.
+
+- **Optional**: `limit: integer` (default 100, max 1000)
+- **Returns**: `{stats: [{wacore_variant, count, first_seen_ms, last_seen_ms, last_sample}], count}`
+
+### `events.unknown_stats.history`
+
+Daily-rotated history of `unknown_stats` aggregates. Each bucket is
+`{day, stats: [...]}` sourced from the per-day sidecar files
+(`<events.ndjson>.unknown_stats.ndjson.YYYY-MM-DD`). Operators use this
+to spot new wacore variants that started firing this week and to
+attribute volume spikes to upstream wacore bumps.
+
+- **Optional**: `days: integer` (default 30, clamped 1..=90)
+- **Returns**: `{buckets: [{day: "YYYY-MM-DD", stats: [{...}]}], count, days_requested}`
+
 ---
 
 ## 13. Agent discovery (3)

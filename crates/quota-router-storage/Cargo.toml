@@ -1,0 +1,121 @@
+[package]
+name = "quota-router-storage"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Cipherocto-side persistence for the quota-router domain (Ask + AskRepository + migrations + sync subscription). Owns consumer schema per [[stoolap-general-purpose-db]]; fork stays untouched."
+
+[dependencies]
+# Mission 0010-f8-rich-did-storage: borsh encoding for rich-document columns
+# (matches `octo-ident/borsh` feature + the `CapabilityBundleV2` borsh
+# precedent from mission 0957-f-v2-bundle).
+borsh = { version = "=1.5.0", features = ["derive"] }
+# Schema types + persistence — moved from octo-core 2026-07-21.
+# Cipherocto owns consumer schema; fork is a general-purpose DB.
+# Phase 2.6 (RFC-0206 §Substrate Re-export Block, mission 0206-008b):
+# the substrate's `pub mod stoolap` re-export block now exposes
+# `ResultRow` / `ApiTransaction` / `Rows` / `Error` / `Value`, so
+# this crate no longer needs a direct `stoolap` Cargo.toml dep
+# (consumers use `octo_storage_core::stoolap::*` instead).
+
+# Layer A storage substrate (mission octo-storage-split S2). The migration
+# runner that the local `apply_pending` historically bundled is now
+# re-exported from this substrate. Allowed by layer model: storage
+# (Layer C specialized node for the quota-router domain) depends on
+# the Layer A substrate for the migration runner + DB constructors.
+octo-storage-core = { path = "../octo-storage-core" }
+
+# Per the persistence convention (RFC-0914-a / 0914-a-stoolap-persistence):
+# ALL new persistence uses CipherOcto's stoolap fork on
+# `feat/blockchain-sql`, never raw SQLite. The crate API is
+# `db.execute(sql, params)` and `db.query(sql, params) -> stoolap::Rows`.
+
+# Hashing (BLAKE3 for AskId, settlement_hash, mission key derivation)
+blake3 = "1"
+
+# Ed25519 signature substrate (RFC-0959 §Algorithms `verify_ask`)
+# Uses raw `SigningKey`/`Signature` so the storage crate stays decoupled from
+# the higher-level `octo_wallet::identity::IdentityKey` wrapper (which pulls
+# HSM/MPC/keystore). Callers convert at the boundary.
+ed25519-dalek = { version = "2.2", features = ["serde"] }
+
+# Serialization (rates_json column; model rates table)
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11"
+serde_json = "1.0"
+
+# Error types
+thiserror = "2.0"
+
+# TOML parser for the PricingAxis registry (RFC-0959 §Data Structures)
+toml = "0.8"
+
+# Cross-process advisory file lock (mission 0862-c3). `fs2` provides
+# flock(2) / LockFileEx wrappers for the spend_ledger DB file so two
+# wallet-node processes on the same path serialize their
+# SELECT-then-UPDATE critical section (per S6c Round 1 finding #4 —
+# `drain_lock: Arc<Mutex<()>>` is per-instance, not per-process).
+# MIT/Apache-2.0 dual; small + zero transitive deps beyond std.
+fs2 = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
+# Mission 0959-c1 TV-0959-11..15: byte-exact derivation cross-ref
+# between `cost_vault_id` field and `octo_vault::vault_id_unchecked`
+# (the canonical substrate surface). The TV does not depend on the
+# substrate's runtime; it only stitches the canonical derivation
+# inputs to the wire-form bytes. (Layer B -> Layer B intra-dep
+# allowed per RFC-0957-A1 §Layer Discipline.)
+octo-vault = { path = "../octo-vault" }
+# Second registered algorithm (Layer A, RFC-0009 AC#11). Dev-only, and the
+# reason is specific to this crate: `AskSigned` stores a bare 33-or-fewer
+# byte signature with nothing naming the algorithm, so `AskSigned::verify`
+# takes the AlgorithmId from the caller. Every other vector in `ask.rs` is
+# blind to the difference — `AskSigned::sign` is Ed25519-only (the
+# `SignatureAlgorithm` trait has no `sign`, so signing cannot dispatch), every
+# fixture key in the module is 32 bytes, and a verifier that ignored its
+# `algorithm_id` argument and hardcoded Ed25519 would pass all of them. A
+# stark-schnorr key is 33 bytes, which makes the difference observable.
+# Dev-only because nothing in the product signs an Ask with stark-schnorr;
+# the vector exists to keep the site honest.
+octo-algo-stark-schnorr = { path = "../octo-algo-stark-schnorr" }
+
+[dependencies.octo-cap-macaroon]
+# Mission 0959-c1: settlement-time vault row lookup reuses the
+# `VaultLookup` trait from octo-cap-macaroon (RFC-0957 §Verify-Time
+# Extension). Settlement-time verifier in
+# `crates/quota-router-storage/src/settlement_verify.rs` takes
+# `&dyn VaultLookup` directly (no shadow impl per audit #5 HIGH).
+# Intra-Layer B dep — allowed per RFC-0957-A1 §Layer Discipline.
+path = "../octo-cap-macaroon"
+
+[dependencies.octo-ident]
+# Mission 0010-b: test fixtures use sample_did() from octo-ident test_helpers
+# Mission 0871b-storage-backend: StoolapDidRegistry impl uses DidRegistry trait +
+# DidDocument + DidRegistryError types defined in octo-ident. Production code dep
+# (not dev-only) so consumers can construct trait objects without a dev-dep
+# opt-in.
+# Mission 0010-f8-rich-did-storage: enable `borsh` feature so the rich-document
+# types (ServiceEndpoint, ControllerReference, VerificationMethod,
+# CapabilityDelegation) expose their BorshSerialize/BorshDeserialize derives
+# for column persistence.
+path = "../octo-ident"
+features = ["borsh"]
+
+[dependencies.octo-algo-ed25519]
+# Mission 0009-c2: the Ed25519 `SignatureAlgorithm` implementation, so the
+# ask and settlement-receipt verifiers dispatch through `AlgorithmRegistry`
+# instead of constructing a `VerifyingKey` inline (RFC-0009 AC#11).
+# Layer E per-algorithm extension over the Layer B registry; the arrow never
+# points back.
+path = "../octo-algo-ed25519"
+
+[dependencies.octo-determin]
+# Mission 0862-c9 RETIRED: `MicroOctoW` alias killed project-wide —
+# amount-bearing fields use `octo_determin::Dqa` directly (RFC-0862
+# v2.0.3 + RFC-0105 §3). Git dep (the `determin` crate at repo
+# root is workspace-excluded, so path dep requires removing it
+# from root Cargo.toml `exclude` first — deferred).
+git = "https://github.com/CipherOcto/cipherocto"
+branch = "next"

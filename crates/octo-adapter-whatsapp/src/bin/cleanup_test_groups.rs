@@ -95,7 +95,7 @@ async fn connect() -> Arc<WhatsAppWebAdapter> {
 /// Must be called before the adapter opens the DB (which locks it).
 fn read_persisted_group_conversations(session_path: &std::path::Path) -> Vec<String> {
     let dsn = format!("file://{}", session_path.display());
-    let db = match stoolap::Database::open(&dsn) {
+    let db = match octo_storage_core::Database::open(&dsn) {
         Ok(db) => db,
         Err(e) => {
             eprintln!("Warning: could not open session DB: {e}");

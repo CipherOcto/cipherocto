@@ -1,0 +1,13 @@
+{
+  "vector_id": "zk-cross-impl-tv1",
+  "rfc": "RFC-0958 §Test Vectors Cross-Implementation TV1",
+  "description": "Two independent proofer paths must produce proofs accepted by the same verifier (cross-impl invariant)",
+  "prover_paths": [
+    "mint_with_zk_and_signers (signer-aware, batch signature proofer)",
+    "stub_commitment path (zk_verifier::stub_commitment, used by direct ProofBundle test)"
+  ],
+  "node_type": "self-host",
+  "expected_verifier_result": "Ok",
+  "byte_equivalent_tolerance": "modulo canonical commitment shape (both paths reduce to BLAKE3(casm || canon_pub))",
+  "notes": "Cross-impl AC-4 acceptance: ≥2 independent prover implementations accepted by same verifier."
+}

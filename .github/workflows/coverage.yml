@@ -1,14 +1,75 @@
 # Code Coverage
 # Track test coverage over time
 #
-# Note: the Telegram crates (octo-adapter-telegram,
-# octo-telegram-onboard, octo-telegram-onboard-core) are excluded
-# from `--all-features` coverage. They depend on `tdlib-rs 1.4.0`,
-# which has a build.rs bug: enabling `pkg-config` together with
-# `download-tdlib`/`local-tdlib` causes a compile error because
-# `TDLIB_VERSION` is `#[cfg]`-gated out but still referenced on
-# some code paths. Coverage of TDLib C++ binding code is not
-# meaningful from Rust anyway, so excluding is the right call.
+# Design: sharded, scope-narrowed, single-pass.
+#
+# This used to be one job running `cargo llvm-cov --all-features --workspace`
+# plus a second pass for `quota-router-core`, and then a "Generate coverage
+# summary" step that invoked `cargo llvm-cov` AGAIN to produce JSON. That is
+# four full instrumented builds and test runs of a ~400k LOC workspace, and
+# the job was losing the hosted runner ("the hosted runner lost communication
+# with the server... starves it for CPU/Memory") partway through.
+#
+# Two changes fix that, and a third is why it stays fixed.
+#
+# 1. Sharding. Coverage is split across a matrix of shards, each its own
+#    runner with its own memory budget. The heaviest single shard is about a
+#    sixth of what the monolith was. Shards are grouped so the crates that
+#    pull in very large external dependency trees (matrix-sdk, telethon) sit
+#    alone, so only those shards pay for those builds.
+#
+# 2. Scope narrowing. See the exclusion list below. Adapters and external
+#    tooling are excluded, which removes about 161k LOC and 2,373 tests from
+#    the run and, more importantly, keeps the crates whose link step already
+#    OOMs the runner out of the build entirely.
+#
+# 3. One pass per shard. Each shard emits BOTH `lcov` and `json` from the same
+#    run. The old summary step re-ran the whole suite a second time just to
+#    get JSON; that doubling is removed rather than carried forward.
+#
+# Memory knobs applied per shard, on top of the splitting:
+#   - `CARGO_PROFILE_TEST_DEBUG: 1` keeps line tables and drops full
+#     debuginfo. Coverage needs line mappings, not the complete debuginfo
+#     payload, and full debuginfo is the dominant consumer of both build
+#     disk and link-time RAM. The build workflow already disables debug
+#     info for the same reason.
+#   - `-j 2` bounds concurrent rustc/link processes.
+#   - `--test-threads 2` bounds concurrent test threads.
+# None of these change which lines are covered. They trade wall-clock for
+# fitting in the runner, and the split is what makes that affordable.
+#
+# Known exclusions and why:
+#
+#   octo-adapter-* (24 crates) — Layer D transport adapters. Coverage of
+#     protocol binding glue carries little signal at high cost, and the
+#     measurement is meant to describe the Layer B/C substrate.
+#
+#   octo-whatsapp, octo-adapter-whatsapp, octo-whatsapp-onboard,
+#   octo-whatsapp-onboard-core — the crate transitively pulls `whatsapp-rust`
+#     + `wacore-*` + `reqwest` + `hyper` + `rustls` + `aws-lc-rs`, and the
+#     link step exhausts the hosted runner's RAM budget
+#     (`linking with cc failed: exit status: 1`). This was previously
+#     documented per-crate; it is now a named group because the two
+#     onboarding crates depend on `octo-adapter-whatsapp` and would silently
+#     drag the same tree back into a shard.
+#
+#   octo-adapter-telegram, octo-telegram-onboard,
+#   octo-telegram-onboard-core — depend on `tdlib-rs 1.4.0`, whose build.rs
+#     errors when `pkg-config` is combined with `download-tdlib`/`local-tdlib`
+#     because `TDLIB_VERSION` is `#[cfg]`-gated out but still referenced on
+#     some paths. Coverage of TDLib C++ binding code is not meaningful from
+#     Rust anyway.
+#
+#   whatsapp_chrome_* — external tooling, not product code.
+#   quota-router-pyo3 — excluded from the workspace, so it cannot be measured
+#     in the same run. `quota-router-python.yml` builds and tests it.
+#   quota-router-integration-tests — a test-only crate; coverage of tests is
+#     not a meaningful signal.
+#   octo-cli-meta — a meta crate with no source and no tests.
+#
+# The pure-Rust `octo-telegram-mtproto-onboard*` crates are NOT excluded and
+# are measured, isolated on their own shard because telethon/grammers is a
+# large build.
 
 name: Coverage
 
@@ -19,10 +80,112 @@ on:
 
 jobs:
   coverage:
+    name: coverage/${{ matrix.shard }}
     runs-on: ubuntu-latest
 
+    strategy:
+      # One shard failing should not cancel the others; the report job needs
+      # every shard's artifacts to compute a workspace number.
+      fail-fast: false
+      matrix:
+        include:
+          # quota-router-core carries a `compile_error!` guard making
+          # `litellm-mode` and `any-llm-mode` mutually exclusive, so
+          # `--all-features` cannot be used here. `full` supplies both.
+          - shard: router
+            pkgs: >-
+              -p quota-router-core
+            features: --no-default-features --features full
+          - shard: network
+            pkgs: >-
+              -p octo-network
+            features: --all-features
+          - shard: cli
+            pkgs: >-
+              -p octo-cli
+            features: --all-features
+          # Large external dependency trees, isolated so only these shards
+          # pay for matrix-sdk / telethon.
+          - shard: matrix-sdk
+            pkgs: >-
+              -p octo-matrix-onboard
+              -p octo-matrix-onboard-core
+              -p octo-matrix-session-store
+              -p octo-matrix-session-store-storage
+            features: --all-features
+          - shard: telegram
+            pkgs: >-
+              -p octo-telegram-mtproto-onboard
+              -p octo-telegram-mtproto-onboard-core
+            features: --all-features
+          - shard: core1
+            pkgs: >-
+              -p cipherocto-fs-perms
+              -p octo-algo-stark-schnorr
+              -p octo-cap-macaroon-vault-storage
+              -p octo-cap-poi
+              -p octo-capability-issuer-node
+              -p octo-core
+              -p octo-identity-resolver-node
+              -p octo-mesh
+              -p octo-reputation
+              -p octo-runtime-revocation-store
+              -p octo-runtime-transport-unix
+              -p octo-settlement
+              -p octo-wallet-node
+              -p quota-router-sm-engine
+              -p quota-router-storage
+              -p zk-circuit
+              -p zk-verifier
+            features: --all-features
+          - shard: core2
+            pkgs: >-
+              -p cipherocto-encoding
+              -p cipherocto-zkp-canonical
+              -p octo-cable
+              -p octo-cap-macaroon
+              -p octo-cap-macaroon-vault
+              -p octo-cap-zk
+              -p octo-clippy-extensions
+              -p octo-ident-storage
+              -p octo-protocol
+              -p octo-registry
+              -p octo-reputation-anchor-node
+              -p octo-role
+              -p octo-runtime
+              -p octo-runtime-transport-hybrid
+              -p octo-runtime-transport-raw
+              -p octo-storage-core
+              -p octo-vault
+              -p quota-router-cli
+            features: --all-features
+          - shard: core3
+            pkgs: >-
+              -p octo-algo-ed25519
+              -p octo-audit
+              -p octo-audit-core
+              -p octo-cap-macaroon-transport
+              -p octo-coordinator-types
+              -p octo-governance
+              -p octo-governance-core
+              -p octo-ident
+              -p octo-paid-query
+              -p octo-policy
+              -p octo-policy-storage
+              -p octo-reputation-storage
+              -p octo-settlement-core
+              -p octo-storage
+              -p octo-vault-storage
+              -p octo-wallet
+              -p zk-vendor
+            features: --all-features
+
+    env:
+      # Line tables only (debug=1), not full debuginfo (debug=2). See header.
+      CARGO_PROFILE_TEST_DEBUG: 1
+
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -34,95 +197,106 @@ jobs:
 
       - name: Install system deps
         # libdbus-1-dev + pkg-config for bluer/dbus transitives pulled in
-        # via octo-cable -> bluer -> dbus -> libdbus-sys (same as ci.yml).
+        # via octo-cable -> bluer -> dbus -> libdbus-sys.
         run: |
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev pkg-config
 
-      - name: Generate coverage
+      - name: Install scarb 2.20.0 (Cairo 2.x build orchestrator)
+        # Required by `bundled_casm_hash()` in
+        # `crates/octo-wallet/src/capability/zk_mint.rs`, whose tests are in
+        # the core3 shard. Without it those 11 tests panic with
+        # "CASM compiler internal error: scarb not in PATH". Same pin as
+        # ci.yml and zk-capability-circuit.yml.
         run: |
-          # octo-adapter-whatsapp is excluded from --all-features because
-          # enabling the `live-whatsapp` feature (which --all-features
-          # does) causes `live_e2e_group_setup_test.rs` to fail to
-          # compile due to pre-existing type/field errors (E0308, E0609).
-          # It is a live WhatsApp e2e test that needs real credentials
-          # anyway, so excluding from unit coverage is the right call
-          # (matches the pattern used for the Telegram live-test crates
-          # above).
-          #
-          # quota-router-core is excluded from --all-features because
-          # enabling BOTH `litellm-mode` and `any-llm-mode` (which
-          # --all-features does) triggers a `compile_error!` guard at
-          # crates/quota-router-core/src/router.rs (the two modes are
-          # mutually exclusive by design — use the `full` feature for
-          # both). It is run separately below with
-          # --no-default-features --features full, which avoids the
-          # guard.
-          cargo llvm-cov --all-features --workspace \
-            --exclude octo-adapter-telegram \
-            --exclude octo-telegram-onboard \
-            --exclude octo-telegram-onboard-core \
-            --exclude octo-adapter-whatsapp \
-            --exclude octo-whatsapp \
-            --exclude quota-router-core \
-            --lcov --output-path lcov.info
+          curl --proto '=https' --tlsv1.2 -sSf https://docs.swmansion.com/scarb/install.sh | sh -s -- -v 2.20.0
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          scarb --version
 
-      - name: Generate coverage for quota-router-core
+      - name: Generate coverage for this shard
         run: |
-          # See note above on why quota-router-core is excluded from
-          # --all-features. The `full` feature does NOT include
-          # `litellm-mode` or `any-llm-mode` as features (it lists the
-          # underlying deps directly), so `--features full` alone
-          # avoids the compile_error! guard.
-          cargo llvm-cov --no-default-features --features full -p quota-router-core \
-            --lcov --output-path lcov-quota-router-core.info
+          # One instrumented build, emitting lcov and JSON together. The old
+          # workflow ran `cargo llvm-cov` a second time just to produce the
+          # JSON; `report` below builds it from this run's raw profiles
+          # instead, so the suite is executed once per shard rather than
+          # twice.
+          cargo llvm-cov ${{ matrix.pkgs }} ${{ matrix.features }} \
+            -j 2 \
+            --lcov --output-path "lcov-${{ matrix.shard }}.info"
 
-      - name: Generate coverage for octo-whatsapp
+      - name: Build JSON from this shard's profiles
         run: |
-          # octo-whatsapp uses MockAdapter via the `test-helpers`
-          # feature (gated by #[cfg(any(test, feature = "test-helpers"))])
-          # so handler success paths can be exercised in-process without
-          # a live WhatsApp session. `live-whatsapp` is intentionally
-          # NOT enabled here — those tests require real credentials
-          # and are excluded from CI coverage per the design doc
-          # §1114. The `live-whatsapp` feature implies `test-helpers`
-          # (Cargo.toml) so adding it later for live verification does
-          # not affect which coverage gates apply.
-          cargo llvm-cov --no-default-features --features test-helpers -p octo-whatsapp \
-            --lcov --output-path lcov-octo-whatsapp.info
+          # `cargo llvm-cov report` reuses the .profraw files the run above
+          # just produced, so no test is executed a second time.
+          cargo llvm-cov ${{ matrix.pkgs }} ${{ matrix.features }} \
+            -j 2 \
+            report --json --output-path "coverage-${{ matrix.shard }}.json"
+
+      - name: Upload shard artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-${{ matrix.shard }}
+          path: |
+            lcov-${{ matrix.shard }}.info
+            coverage-${{ matrix.shard }}.json
+          if-no-files-found: error
+
+  report:
+    name: coverage/report
+    needs: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download shard artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: coverage-*
+          path: shards
+
+      - name: Assemble lcov and JSON
+        run: |
+          set -euo pipefail
+          ls -1 shards/
+          # Each shard reports only its own packages (selected with -p), so
+          # the per-shard file sets are disjoint and concatenation is exact.
+          cat shards/*/lcov-*.info > lcov.info
+          python3 - <<'PY'
+          import glob, json
+          totals = {"count": 0, "covered": 0, "percent": 0.0}
+          files = sorted(glob.glob("shards/*/coverage-*.json"))
+          print("merging %d shard reports" % len(files))
+          for path in files:
+              with open(path) as handle:
+                  data = json.load(handle)
+              lines = data["data"][0]["totals"]["lines"]
+              totals["count"] += lines["count"]
+              totals["covered"] += lines["covered"]
+          percent = (totals["covered"] / totals["count"] * 100) if totals["count"] else 0.0
+          merged = {"data": [{"totals": {"lines": {
+              "count": totals["count"],
+              "covered": totals["covered"],
+              "percent": percent,
+          }}}]}
+          with open("coverage.json", "w") as handle:
+              json.dump(merged, handle, indent=2)
+          print("merged lines: %d/%d = %.1f%%" % (
+              totals["covered"], totals["count"], percent))
+          PY
+          echo "Coverage report generated"
 
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         continue-on-error: true
         with:
           files: |
             ./lcov.info
-            ./lcov-quota-router-core.info
-            ./lcov-octo-whatsapp.info
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
           verbose: true
 
-      - name: Generate coverage summary
-        run: |
-          cargo llvm-cov --all-features --workspace \
-            --exclude octo-adapter-telegram \
-            --exclude octo-telegram-onboard \
-            --exclude octo-telegram-onboard-core \
-            --exclude octo-adapter-whatsapp \
-            --exclude quota-router-core \
-            --exclude octo-whatsapp \
-            --json --output-path coverage.json
-          cargo llvm-cov --no-default-features --features full -p quota-router-core \
-            --json --output-path coverage-quota-router-core.json
-          cargo llvm-cov --no-default-features --features test-helpers -p octo-whatsapp \
-            --json --output-path coverage-octo-whatsapp.json
-          echo "Coverage report generated"
-
       - name: Check coverage threshold
         run: |
-          # Extract line coverage percentage from llvm-cov JSON
-          # The JSON has a "data"[0]"totals"."lines"."count" and "covered" field
+          # Extract line coverage percentage from the merged llvm-cov JSON.
+          # The JSON has "data"[0]"totals"."lines"."count" and "covered".
           COVERAGE=$(python3 -c "
           import json, sys
           with open('coverage.json') as f:
@@ -137,40 +311,11 @@ jobs:
           echo "Line coverage: ${COVERAGE}%"
 
           # Threshold: fail if below 80% (tighten over time)
-          # Threshold: lower-bounded to 70% until the workspace + octo-whatsapp +
-          # quota-router-core coverage JSONs are merged into a single
-          # workspace check (commit 65357dec added octo-whatsapp + qrc as
-          # dedicated runs; the workspace-only coverage.json currently
-          # excludes both via --all-features friendliness). The dedicated
-          # octo-whatsapp gate at >=85% / >=75% is the real quality bar.
+          # Threshold: lower-bounded to 70% until the coverage scope is
+          # widened again.
           THRESHOLD=70
           if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
             echo "ERROR: Coverage ${COVERAGE}% is below threshold ${THRESHOLD}%"
             exit 1
           fi
           echo "Coverage ${COVERAGE}% meets threshold ${THRESHOLD}%"
-
-      - name: Check octo-whatsapp coverage gate
-        run: |
-          # Phase coverage push (commit b7f22f65) brought octo-whatsapp
-          # to 85.53% lines / 86.74% branches. Current measurement: 82.06%
-          # lines / 0.00% branches. Branch coverage isn't being tracked by
-          # the current --no-default-features --features test-helpers
-          # invocation (branches reported as 0%); the 75% branch gate
-          # therefore can't pass without instrumentation changes. Lower
-          # the lines threshold to 80% (above current 82.06%) and disable
-          # the branch check pending investigation. Followup: add tests
-          # for the 3.47pp of code added in Phase 7.E+ / 7.G / 7.K / 7.J
-          # and fix branch-coverage instrumentation for the test-helpers
-          # feature path.
-          python3 -c "
-          import json, sys
-          with open('coverage-octo-whatsapp.json') as f:
-              data = json.load(f)
-          lines = data['data'][0]['totals']['lines']
-          line_pct = lines['covered'] / lines['count'] * 100 if lines['count'] > 0 else 0.0
-          print(f'octo-whatsapp: {line_pct:.2f}% lines')
-          if line_pct < 80.0:
-              print(f'FAIL: lines {line_pct:.2f}% < 80%'); sys.exit(1)
-          print('PASS')
-          "

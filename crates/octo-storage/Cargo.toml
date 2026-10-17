@@ -1,0 +1,15 @@
+[package]
+name = "octo-storage"
+version = "0.1.0"
+edition = "2021"
+description = "Layer B storage facade — re-exports octo-storage-core (S2 mission octo-storage-split)"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# Layer B → Layer A substrate. Years-stable; the substrate owns the SQL
+# runner + Database constructors; the facade just exposes them at a
+# friendly name for owner crates that prefer a non-`-core` import.
+octo-storage-core = { path = "../octo-storage-core" }

@@ -15,6 +15,10 @@ blake3 = "1.5"
 tracing = { workspace = true }
 parking_lot = "0.12"
 octo-network = { path = "../octo-network" }
+# RFC-0009 AC#11: names the algorithm explicitly at the envelope-verification
+# call site so the assumption is visible rather than implicit. Layer E
+# per-algorithm extension — same edge the Layer B and C crates take.
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
 
 # Native P2P (libp2p gossipsub)
 libp2p = { version = "0.56", features = ["tokio", "noise", "tcp", "yamux", "gossipsub", "mdns", "identify", "macros"] }

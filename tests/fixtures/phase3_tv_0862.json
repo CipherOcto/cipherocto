@@ -1,0 +1,17 @@
+
+  "_comment": "RFC-0862 v1.3.0 Phase 3 performance test vectors (TV-5 ONLY). Phase 3 TVs are PERFORMANCE BUDGETS — not byte-exact. The fixture stores the budget (`budget_ms`, `ci_slack_factor`, `iterations`); the gate test measures fresh and asserts under CI slack. Re-bootstrap via `UPDATE_PHASE3_TV=1 cargo test -p octo-sync --test phase3_tv_0862 phase3_tv_0862_dump -- --nocapture`. Per RFC-0008 Class A determinism: the budget is canonical; the substrate must stay under it.",
+  "_rfc": "RFC-0862 v1.3.0",
+  "_phase": "Phase 3",
+  "_scope": "TV-5 ONLY. TV-6/7/8 land in separate follow-on missions per RFC-0862 §Test Vectors scope discipline (R17 M3).",
+  "entries": [
+    {
+      "name": "TV-5",
+      "description": "Election acquire returns within 3 s: 100 sequential Cluster::try_acquire_leader calls (each on a unique WriterNodeId + ShardKey so no lease contention) MUST complete within 3000 ms wall-clock. Per RFC-0862 v1.3.0 §Performance Targets. CI slack factor 10x = 30 s assertion threshold.",
+      "test_function": "election_acquire_returns_within_3s",
+      "budget_ms": 3000,
+      "ci_slack_factor": 10,
+      "iterations": 100,
+      "verification_command": "cargo test -p octo-sync --test phase3_tv_0862 phase3_tv_0862_election_acquire_within_3s -- --nocapture"
+    }
+  ]
+}

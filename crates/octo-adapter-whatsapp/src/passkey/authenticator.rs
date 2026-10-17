@@ -10,7 +10,7 @@
 //   * supertrait `wacore::sync_marker::MaybeSendSync` (Send+Sync on native,
 //     relaxed on wasm32 — same as the sibling extension points
 //     `Transport` / `EventHandler`)
-//   * `get_assertion(&self, request: &AssertionRequest)`
+//   * `get_assertion(&&self, request: &&AssertionRequest)`
 //   * `#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]` — so the
 //     returned future is `Send` on native and `!Send` on wasm32 (a browser
 //     authenticator may hold `!Send` JS handles)
@@ -84,7 +84,7 @@ pub trait PasskeyAuthenticator: wacore::sync_marker::MaybeSendSync {
 ///
 /// The closure takes **owned** `AssertionRequest` because the SDK may consume
 /// the request twice (once for the SDK's auto-drive pass, once for any retry
-/// path); a `&AssertionRequest` would require the host to keep the request
+/// path); a `&&AssertionRequest` would require the host to keep the request
 /// alive across the await, which is awkward for an FFI bridge.
 #[derive(Clone)]
 pub struct CallbackAuthenticator {

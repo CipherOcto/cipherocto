@@ -26,7 +26,7 @@ Without standard kernels, every implementation diverges:
 ## Dependencies
 
 - RFC-0126 (Numeric/Math): Deterministic Serialization
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower
 - RFC-0109 (Numeric/Math): Deterministic Linear Algebra Engine
 
 ## Related RFCs

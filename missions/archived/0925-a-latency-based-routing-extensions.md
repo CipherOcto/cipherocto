@@ -49,17 +49,17 @@ struct CooldownTracker {
 
 ### Methods to Implement
 
-| Method | Signature |
-|--------|-----------|
-| record_success | `pub fn record_success(&mut self)` |
-| record_timeout_penalty | `pub fn record_timeout_penalty(&mut self, penalty_us: u64)` — appends penalty_us to penalty_latencies, increments counters |
-| record_429 | `pub fn record_429(&mut self, cooldown_duration_secs: u32, is_single_deployment: bool) -> bool` |
-| record_error | `pub fn record_error(&mut self)` |
-| should_enter_cooldown | `pub fn should_enter_cooldown(&self, failure_threshold_percent: f32, failure_threshold_min_requests: u32, is_single_deployment: bool) -> bool` |
-| reset_minute_window | `pub fn reset_minute_window(&mut self)` |
-| enter_cooldown | `pub fn enter_cooldown(&mut self, duration_secs: u32)` |
-| is_cooldown_expired | `pub fn is_cooldown_expired(&self) -> bool` |
-| is_available | `pub fn is_available(&self) -> bool` |
+| Method                 | Signature                                                                                                                                      |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| record_success         | `pub fn record_success(&mut self)`                                                                                                             |
+| record_timeout_penalty | `pub fn record_timeout_penalty(&mut self, penalty_us: u64)` — appends penalty_us to penalty_latencies, increments counters                     |
+| record_429             | `pub fn record_429(&mut self, cooldown_duration_secs: u32, is_single_deployment: bool) -> bool`                                                |
+| record_error           | `pub fn record_error(&mut self)`                                                                                                               |
+| should_enter_cooldown  | `pub fn should_enter_cooldown(&self, failure_threshold_percent: f32, failure_threshold_min_requests: u32, is_single_deployment: bool) -> bool` |
+| reset_minute_window    | `pub fn reset_minute_window(&mut self)`                                                                                                        |
+| enter_cooldown         | `pub fn enter_cooldown(&mut self, duration_secs: u32)`                                                                                         |
+| is_cooldown_expired    | `pub fn is_cooldown_expired(&self) -> bool`                                                                                                    |
+| is_available           | `pub fn is_available(&self) -> bool`                                                                                                           |
 
 ### TTFT-Aware Scoring
 
@@ -84,6 +84,7 @@ Cooldown ──(cooldown TTL elapsed)──> Healthy
 ```
 
 **Transitions:**
+
 1. `Healthy → Cooldown`: 429 response OR failure rate > threshold (50% + 5 min requests) OR retryable error (408, 409, 429, 500+)
 2. `Cooldown → Healthy`: Cooldown TTL expired (automatic, no health check)
 
@@ -118,8 +119,8 @@ Cooldown ──(cooldown TTL elapsed)──> Healthy
 
 ## Files Modified
 
-| File | Change |
-|------|--------|
+| File                                     | Change                                                                                                           |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `crates/quota-router-core/src/router.rs` | Add `DeploymentState`, `LatencyConfig`, `CooldownTracker`, TTFT-aware `LatencyTracker`, `update_latency_state()` |
 
 ## Test Results

@@ -28,7 +28,7 @@ CipherOcto can operate as a personal AI assistant similar to emerging open assis
 
 | Milestone                                      | Status     |
 | ---------------------------------------------- | ---------- |
-| Architecture Defined (RFC-0000 (Process/Meta)) | ✓ Complete |
+| Architecture Defined (RFC-0000) | ✓ Complete |
 | Token Model Designed                           | ✓ Complete |
 | Documentation Layer                            | ✓ Active   |
 | RFC Stack (0147 RFCs)                          | ✓ Complete |
@@ -49,7 +49,7 @@ CipherOcto's protocol stack is now fully specified:
 | Economy            | 0144-0147       | ✓      |
 | Agents             | 0134, 0118      | ✓      |
 
-**See [RFC-0004 (Process/Meta): Implementation Roadmap](../rfcs/0004-implementation-roadmap.md) for the 6-phase implementation plan.**
+**See RFC-0004 for the 6-phase implementation plan.**
 
 ---
 
@@ -539,14 +539,14 @@ graph TB
 
 | Component                 | RFC                      | Description                                              |
 | ------------------------- | ------------------------ | -------------------------------------------------------- |
-| **Proof-of-Inference**    | RFC-0630 (Proof Systems) | AI inference replaces hash computation as consensus work |
-| **Deterministic AI-VM**   | RFC-0520 (AI Execution)  | Hardware-agnostic AI execution with bit-exact results    |
-| **Transformer Circuits**  | RFC-0107 (Numeric/Math)  | STARK-efficient transformer proofs                       |
-| **Proof Aggregation**     | RFC-0650 (Proof Systems) | O(1) verification for batched proofs                     |
-| **Hardware Registry**     | RFC-0845 (Networking)    | Intelligent task routing to capable workers              |
-| **Self-Verifying Agents** | RFC-0416 (Agents)        | Agents that prove their reasoning                        |
+| **Proof-of-Inference**    | RFC-0630 | AI inference replaces hash computation as consensus work |
+| **Deterministic AI-VM**   | RFC-0520  | Hardware-agnostic AI execution with bit-exact results    |
+| **Transformer Circuits**  | RFC-0107  | STARK-efficient transformer proofs                       |
+| **Proof Aggregation**     | RFC-0650 | O(1) verification for batched proofs                     |
+| **Hardware Registry**     | RFC-0845    | Intelligent task routing to capable workers              |
+| **Self-Verifying Agents** | RFC-0416        | Agents that prove their reasoning                        |
 
-**See [RFC-0000 (Process/Meta): Architecture Overview](../rfcs/0000-cipherocto-architecture-overview.md) for the complete technical specification.**
+**See RFC-0000 for the complete technical specification.**
 
 ---
 
@@ -944,13 +944,13 @@ timeline
     section Phase 2: AI Engine (4 months)
         AI-VM + Circuits : RFC-0520, RFC-0107-0108 (Numeric/Math) : In Progress
     section Phase 3: Network (3 months)
-        P2P + Consensus : RFC-0843 (Networking), RFC-0630 (Proof Systems), RFC-0740-0742 (Consensus) : Planned
+        P2P + Consensus : RFC-0843, RFC-0630, RFC-0740-0742 (Consensus) : Planned
     section Phase 4: Economy (3 months)
-        Markets + Data : RFC-0910 (Economics), RFC-0631 (Proof Systems), RFC-0900-0901 (Economics) : Planned
+        Markets + Data : RFC-0910, RFC-0631, RFC-0900-0901 (Economics) : Planned
     section Phase 5: Intelligence (3 months)
-        Retrieval + Agents : RFC-0108-0109 (Numeric/Math), RFC-0410-0412 (Agents), RFC-0416 (Agents) : Planned
+        Retrieval + Agents : RFC-0108-0109 (Numeric/Math), RFC-0410-0412 (Agents), RFC-0416 : Planned
     section Phase 6: Autonomy (4 months)
-        Organizations : RFC-0414-0415 (Agents), RFC-0845 (Networking), RFC-0650 (Proof Systems) : Planned
+        Organizations : RFC-0414-0415 (Agents), RFC-0845, RFC-0650 : Planned
 ```
 
 ### Milestones by Phase
@@ -964,7 +964,7 @@ timeline
 | **Phase 5** | Intelligence | 3 months | Self-verifying agents     |
 | **Phase 6** | Autonomy     | 4 months | Agent organizations       |
 
-**See [RFC-0004 (Process/Meta): Implementation Roadmap](../rfcs/0004-implementation-roadmap.md) for detailed phase breakdown.**
+**See RFC-0004 for detailed phase breakdown.**
 
 ---
 

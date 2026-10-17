@@ -282,3 +282,9 @@ secret_manager:
 6. Secret caching in stoolap works
 7. Fallback chain: config → ANY_LLM_KEY → provider env var → secret manager (per RFC-0938 precedence)
 8. Configuration validation works
+
+## Version History
+
+| Version | Date       | Change                                                                                |
+|---------|------------|---------------------------------------------------------------------------------------|
+| 1.0     | 2026-08-22 | Retroactive VH table addition (per long-horizon plan v1.3 Phase 1 + Option C per M37). |

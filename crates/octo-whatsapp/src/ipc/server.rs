@@ -130,8 +130,27 @@ impl std::fmt::Debug for UnixSocketServer {
 
 impl UnixSocketServer {
     pub fn bind(path: &Path) -> std::io::Result<Self> {
-        if path.exists() {
-            std::fs::remove_file(path)?;
+        // L-6: `exists()` → `remove_file()` → `bind()` is a TOCTOU window. A
+        // same-UID process can drop a symlink in between and have the socket
+        // created through it. `lstat` also refuses to remove a path that is
+        // not a socket, so an unrelated file that happens to sit there is
+        // reported instead of deleted.
+        match std::fs::symlink_metadata(path) {
+            Ok(meta) => {
+                use std::os::unix::fs::FileTypeExt;
+                if !meta.file_type().is_socket() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::AlreadyExists,
+                        format!(
+                            "{} exists and is not a socket; refusing to remove it",
+                            path.display()
+                        ),
+                    ));
+                }
+                std::fs::remove_file(path)?;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
         }
         let listener = UnixListener::bind(path)?;
         let perms = std::fs::Permissions::from_mode(0o600);
@@ -281,7 +300,7 @@ async fn handle_conn(
         //     RPCs unconditionally even when no tokens are loaded).
         let hermetic_bypass = handle.config().security.hermetic_bypass;
         let must_auth = bearer_required
-            && (active_token_count > 0 || crate::security::auth::is_mutating_method(&req.method));
+            & (active_token_count > 0 || crate::security::auth::is_mutating_method(&req.method));
         if must_auth {
             if let Err(e) = authenticate(
                 &req.method,

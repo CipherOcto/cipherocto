@@ -7,13 +7,23 @@
 services:
   node-a:
     build:
-      context: ../../../../..
+      context: ../../../..
       dockerfile: crates/quota-router-integration-tests/tests/layer4/Dockerfile
     environment:
       LISTEN_ADDR: "0.0.0.0:9100"
       NETWORK_CONFIG: /etc/qr/network.toml
       MOCK_PROVIDER: "1"
       PEERS: ""
+      # The layer4 tests assert on the node's startup log lines
+      # ("QuotaRouterNode started" / "TcpAdapter listening"), and the CLI
+      # installs its subscriber with `tracing_subscriber::fmt::init()`.
+      # With RUST_LOG unset that filter resolves to ERROR only, so the
+      # `info!` lines the tests look for are never emitted and the
+      # assertion fails against a node that is provably healthy — the
+      # healthcheck's `nc` probe passes, the container is Up (healthy),
+      # and the log is empty. Turning the level on is what makes the
+      # test's premise true rather than making the test weaker.
+      RUST_LOG: info
     volumes:
       - ./config/node-a.toml:/etc/qr/network.toml:ro
     ports:
@@ -29,13 +39,23 @@ services:
 
   node-b:
     build:
-      context: ../../../../..
+      context: ../../../..
       dockerfile: crates/quota-router-integration-tests/tests/layer4/Dockerfile
     environment:
       LISTEN_ADDR: "0.0.0.0:9100"
       NETWORK_CONFIG: /etc/qr/network.toml
       MOCK_PROVIDER: "1"
       PEERS: ""
+      # The layer4 tests assert on the node's startup log lines
+      # ("QuotaRouterNode started" / "TcpAdapter listening"), and the CLI
+      # installs its subscriber with `tracing_subscriber::fmt::init()`.
+      # With RUST_LOG unset that filter resolves to ERROR only, so the
+      # `info!` lines the tests look for are never emitted and the
+      # assertion fails against a node that is provably healthy — the
+      # healthcheck's `nc` probe passes, the container is Up (healthy),
+      # and the log is empty. Turning the level on is what makes the
+      # test's premise true rather than making the test weaker.
+      RUST_LOG: info
     volumes:
       - ./config/node-b.toml:/etc/qr/network.toml:ro
     ports:

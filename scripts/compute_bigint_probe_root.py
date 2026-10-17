@@ -2,6 +2,7 @@
 """Compute RFC-0110 BigInt probe Merkle root."""
 
 import hashlib
+import sys
 
 OPS = {'ADD':1,'SUB':2,'MUL':3,'DIV':4,'MOD':5,'SHL':6,'SHR':7,
        'CANONICALIZE':8,'CMP':9,'BITLEN':10,'SERIALIZE':11,'DESERIALIZE':12,'I128_ROUNDTRIP':13}
@@ -75,6 +76,7 @@ DATA = [
 ]
 
 hashes = []
+failures = []
 for i,op,a,b in DATA:
     try:
         e = mk_entry(op,a,b)
@@ -82,13 +84,30 @@ for i,op,a,b in DATA:
         hashes.append(h)
         print(f"{i:2d} {op:14} OK")
     except Exception as x:
+        # A failed entry used to become a zero hash and nothing else. The tree
+        # was then built over 56 placeholders and printed as "MERKLE ROOT",
+        # which is the line a reader pastes into a test vector. A run in which
+        # every entry fails produced a well-formed root and exit 0. Failures
+        # are now counted and the run refuses to emit a reference value.
+        failures.append(f"{i:2d} {op}: {x}")
         print(f"{i:2d} {op:14} ERROR: {x}")
         hashes.append(b'\x00'*32)
 
-print(f"\n56 entries -> tree...")
+print(f"\n{len(DATA)} entries -> tree...")
 while len(hashes) > 1:
     if len(hashes)%2: hashes.append(hashes[-1])
     hashes = [hashlib.sha256(hashes[i]+hashes[i+1]).digest() for i in range(0,len(hashes),2)]
     print(f"  {len(hashes)} nodes")
+
+if failures:
+    # Deliberately NOT the bare "MERKLE ROOT:" label. That string is what gets
+    # copied into a pinned test vector, and a tree built over zero-hash
+    # placeholders is exactly the value that must never be copied.
+    print(f"\n{len(failures)} of {len(DATA)} probe entries FAILED.")
+    for line in failures:
+        print(f"  {line}")
+    print(f"\nNOT A REFERENCE VALUE (computed over {len(failures)} zero-hash "
+          f"placeholder(s)): {hashes[0].hex()}")
+    sys.exit(1)
 
 print(f"\nMERKLE ROOT: {hashes[0].hex()}")

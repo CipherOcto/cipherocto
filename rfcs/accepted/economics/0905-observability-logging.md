@@ -41,12 +41,12 @@ The enhanced quota router needs observability for:
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| G1 | <1ms log overhead | Logging latency (async buffered) |
-| G2 | JSON structured logs | Log format (NDJSON) |
-| G3 | Trace context propagation | W3C Traceparent header |
-| G4 | Health probes | K8s-compatible /healthz endpoints |
+| Goal | Target                    | Metric                            |
+| ---- | ------------------------- | --------------------------------- |
+| G1   | <1ms log overhead         | Logging latency (async buffered)  |
+| G2   | JSON structured logs      | Log format (NDJSON)               |
+| G3   | Trace context propagation | W3C Traceparent header            |
+| G4   | Health probes             | K8s-compatible /healthz endpoints |
 
 ## Scope
 
@@ -86,7 +86,21 @@ enum LogLevel {
 Each log line is a single JSON object written to stdout:
 
 ```json
-{"timestamp":"2026-05-17T10:30:00.000Z","level":"info","component":"proxy","event":"request_completed","trace_id":"abc123","span_id":"def456","request_id":"req-789","provider":"openai","model":"gpt-4o","status":"success","latency_ms":150,"input_tokens":500,"output_tokens":200}
+{
+  "timestamp": "2026-05-17T10:30:00.000Z",
+  "level": "info",
+  "component": "proxy",
+  "event": "request_completed",
+  "trace_id": "abc123",
+  "span_id": "def456",
+  "request_id": "req-789",
+  "provider": "openai",
+  "model": "gpt-4o",
+  "status": "success",
+  "latency_ms": 150,
+  "input_tokens": 500,
+  "output_tokens": 200
+}
 ```
 
 **Required fields:** `timestamp`, `level`, `component`, `event`
@@ -94,21 +108,22 @@ Each log line is a single JSON object written to stdout:
 
 #### Log Events
 
-| Event | Level | When |
-|-------|-------|------|
-| `request_started` | debug | Request received |
-| `request_completed` | info | Request finished successfully |
-| `request_failed` | error | Request finished with error |
-| `key_validated` | debug | API key validated |
-| `provider_selected` | debug | Provider selected by routing |
-| `rate_limit_hit` | warn | Rate limit triggered |
-| `budget_warning` | warn | Budget threshold exceeded |
-| `cache_hit` | debug | Cache hit |
-| `cache_miss` | debug | Cache miss |
+| Event               | Level | When                          |
+| ------------------- | ----- | ----------------------------- |
+| `request_started`   | debug | Request received              |
+| `request_completed` | info  | Request finished successfully |
+| `request_failed`    | error | Request finished with error   |
+| `key_validated`     | debug | API key validated             |
+| `provider_selected` | debug | Provider selected by routing  |
+| `rate_limit_hit`    | warn  | Rate limit triggered          |
+| `budget_warning`    | warn  | Budget threshold exceeded     |
+| `cache_hit`         | debug | Cache hit                     |
+| `cache_miss`        | debug | Cache miss                    |
 
 #### PII Redaction
 
 Log events MUST NOT contain:
+
 - Full API keys (use prefix only: `sk-qr-ab...`)
 - User message content (use token count only)
 - Response content (use token count only)
@@ -153,7 +168,7 @@ Under high load, logging all requests is expensive. Support sampling:
 ```yaml
 logging:
   level: info
-  sample_rate: 1.0  # 1.0 = log all, 0.1 = log 10%
+  sample_rate: 1.0 # 1.0 = log all, 0.1 = log 10%
   # Always log errors regardless of sample rate
   always_log_errors: true
 ```
@@ -226,19 +241,19 @@ fn handle_request(req: Request) -> Response {
 tracing:
   enabled: false
   otlp_endpoint: "http://localhost:4317"
-  sample_rate: 1.0  # 1.0 = trace all, 0.01 = trace 1%
+  sample_rate: 1.0 # 1.0 = trace all, 0.01 = trace 1%
   # Probabilistic sampling (parent-based)
-  sampler: parent_based  # parent_based | always_on | always_off | trace_id_ratio
+  sampler: parent_based # parent_based | always_on | always_off | trace_id_ratio
 ```
 
 **Default:** Tracing disabled (opt-in). When enabled, `parent_based` sampler respects upstream decision.
 
 #### Resource Attributes
 
-| Attribute | Value |
-|-----------|-------|
-| `service.name` | `quota-router` |
-| `service.version` | Cargo package version |
+| Attribute                | Value                                    |
+| ------------------------ | ---------------------------------------- |
+| `service.name`           | `quota-router`                           |
+| `service.version`        | Cargo package version                    |
 | `deployment.environment` | `production` / `staging` / `development` |
 
 ### 3. Health Endpoints
@@ -253,7 +268,7 @@ GET /healthz/ready    — Readiness probe (is it ready to serve traffic?)
 #### Liveness Response
 
 ```json
-{"status": "ok"}
+{ "status": "ok" }
 ```
 
 Returns 200 if the process is alive. Always returns 200 (liveness = process is running).
@@ -285,6 +300,7 @@ Returns 200 if ready to serve. Returns 503 if any check fails:
 ```
 
 **Readiness checks:**
+
 - `stoolap`: Can connect to stoolap database
 - `config`: Config is valid and loaded
 - `providers`: At least one provider is healthy
@@ -311,6 +327,7 @@ Log request/response metadata (NOT content):
 ```
 
 **Never log:**
+
 - Request body (contains user messages)
 - Response body (contains LLM output)
 - Full API keys
@@ -337,68 +354,68 @@ Log errors with structured context:
 
 ```yaml
 logging:
-  level: info              # debug | info | warn | error
-  format: json             # json | text
-  sample_rate: 1.0         # 0.0-1.0
-  always_log_errors: true  # log errors regardless of sample_rate
-  buffer_size: 10000       # async buffer capacity
+  level: info # debug | info | warn | error
+  format: json # json | text
+  sample_rate: 1.0 # 0.0-1.0
+  always_log_errors: true # log errors regardless of sample_rate
+  buffer_size: 10000 # async buffer capacity
 
 tracing:
   enabled: false
   otlp_endpoint: "http://localhost:4317"
   sample_rate: 1.0
-  sampler: parent_based    # parent_based | always_on | always_off | trace_id_ratio
+  sampler: parent_based # parent_based | always_on | always_off | trace_id_ratio
 ```
 
 ## Key Files to Modify
 
-| File | Change |
-|------|--------|
+| File                                      | Change                          |
+| ----------------------------------------- | ------------------------------- |
 | `crates/quota-router-core/src/logging.rs` | New — structured NDJSON logging |
 | `crates/quota-router-core/src/tracing.rs` | New — OpenTelemetry integration |
-| `crates/quota-router-core/src/health.rs` | New — health endpoints |
-| `crates/quota-router-core/src/proxy.rs` | Integrate logging and tracing |
-| `crates/quota-router-core/src/config.rs` | Add logging/tracing config |
+| `crates/quota-router-core/src/health.rs`  | New — health endpoints          |
+| `crates/quota-router-core/src/proxy.rs`   | Integrate logging and tracing   |
+| `crates/quota-router-core/src/config.rs`  | Add logging/tracing config      |
 
 ## Adversarial Review
 
 ### Threat Analysis
 
-| Threat | Impact | Mitigation |
-|--------|--------|------------|
-| PII in logs | High (GDPR/SOC2 violation) | Redaction rules, never log message content |
-| Log flooding (DoS) | Medium (resource exhaustion) | Async buffer with bounded capacity, sampling |
-| Trace context spoofing | Low (misleading traces) | Validate trace ID format, ignore invalid |
-| Health endpoint info leak | Low (operational metadata) | Minimal info in health responses |
-| Log injection | Medium (log forgery) | JSON serialization escapes special chars |
+| Threat                    | Impact                       | Mitigation                                   |
+| ------------------------- | ---------------------------- | -------------------------------------------- |
+| PII in logs               | High (GDPR/SOC2 violation)   | Redaction rules, never log message content   |
+| Log flooding (DoS)        | Medium (resource exhaustion) | Async buffer with bounded capacity, sampling |
+| Trace context spoofing    | Low (misleading traces)      | Validate trace ID format, ignore invalid     |
+| Health endpoint info leak | Low (operational metadata)   | Minimal info in health responses             |
+| Log injection             | Medium (log forgery)         | JSON serialization escapes special chars     |
 
 ### Design Decisions
 
-| Decision | Rationale |
-|----------|-----------|
-| NDJSON to stdout | Standard for container logging (Docker, K8s) |
-| W3C Trace Context | Industry standard, supported by all OTel exporters |
-| Separate /healthz path | K8s convention, avoids conflict with /metrics |
+| Decision               | Rationale                                                        |
+| ---------------------- | ---------------------------------------------------------------- |
+| NDJSON to stdout       | Standard for container logging (Docker, K8s)                     |
+| W3C Trace Context      | Industry standard, supported by all OTel exporters               |
+| Separate /healthz path | K8s convention, avoids conflict with /metrics                    |
 | Async buffered logging | Non-blocking, prevents log writes from affecting request latency |
-| Sampling support | Essential for high-throughput deployments |
+| Sampling support       | Essential for high-throughput deployments                        |
 
 ## Alternatives Considered
 
-| Approach | Pros | Cons |
-|----------|------|------|
-| Structured logging via tracing crate | Rust ecosystem standard | More complex, heavier |
-| Log to file instead of stdout | Persistent logs | Container logging expects stdout |
-| B3 propagation | Zipkin ecosystem | W3C is more widely adopted |
-| Sync logging | Simpler | Blocks request handling |
+| Approach                             | Pros                    | Cons                             |
+| ------------------------------------ | ----------------------- | -------------------------------- |
+| Structured logging via tracing crate | Rust ecosystem standard | More complex, heavier            |
+| Log to file instead of stdout        | Persistent logs         | Container logging expects stdout |
+| B3 propagation                       | Zipkin ecosystem        | W3C is more widely adopted       |
+| Sync logging                         | Simpler                 | Blocks request handling          |
 
 ## Performance Targets
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| Log write latency | <1ms | Async buffered, non-blocking |
-| Trace span creation | <0.1ms | Minimal overhead |
-| Health check latency | <5ms | Simple status checks |
-| Log buffer memory | <10MB | 10K events × ~1KB each |
+| Metric               | Target | Notes                        |
+| -------------------- | ------ | ---------------------------- |
+| Log write latency    | <1ms   | Async buffered, non-blocking |
+| Trace span creation  | <0.1ms | Minimal overhead             |
+| Health check latency | <5ms   | Simple status checks         |
+| Log buffer memory    | <10MB  | 10K events × ~1KB each       |
 
 ## Security Considerations
 
@@ -478,18 +495,17 @@ Observability is essential for:
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| v1 | 2026-03-12 | Initial (Planned) |
-| v2 | 2026-05-17 | Moved to Draft — deferred metrics to RFC-0937, added tracing spec, health endpoints, logging events, adversarial review |
-| v3 | 2026-05-17 | Adversarial review Round 2 fixes — optional fields consistency, log rotation note, install_batch note, write_all fix |
-| v4 | 2026-05-17 | Adversarial review Round 3 fixes — moved to Accepted status |
+| Version | Date       | Changes                                                                                                                 |
+| ------- | ---------- | ----------------------------------------------------------------------------------------------------------------------- |
+| v1      | 2026-03-12 | Initial (Planned)                                                                                                       |
+| v2      | 2026-05-17 | Moved to Draft — deferred metrics to RFC-0937, added tracing spec, health endpoints, logging events, adversarial review |
+| v3      | 2026-05-17 | Adversarial review Round 2 fixes — optional fields consistency, log rotation note, install_batch note, write_all fix    |
+| v4      | 2026-05-17 | Adversarial review Round 3 fixes — moved to Accepted status                                                             |
 
 ## Related RFCs
 
 - RFC-0937: Prometheus Metrics Endpoint (Accepted) — `/metrics` endpoint
 - RFC-0947: Callback System (Accepted) — alerting and third-party integrations
-- RFC-0944: Structured Logging (Accepted) — existing logging implementation
 
 ## Related Use Cases
 

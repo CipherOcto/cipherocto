@@ -1,0 +1,9 @@
+# TV-RX-3 — RFC-0011-d §11 Test Vectors.
+vector: TV-RX-3
+description: octo role select builder --confirm emits signed envelope
+schema_version: octo.role.test.v1
+invocation:
+  args: [role, select, builder, --confirm]
+expect:
+  exit_code: 0
+  envelope_fields: [role_id, operator_did, signature_proof, role_binding_hash, body_hash, chain_id, nonce]

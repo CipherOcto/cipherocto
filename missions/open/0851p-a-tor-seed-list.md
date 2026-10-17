@@ -37,22 +37,21 @@ The Tor exit node sees only the gateway's Tor circuit, not its real IP. The seed
 - [ ] Integration test: gateway IP not visible to seed list operator (verified via network trace)
 - [ ] Documentation: how to set up a `.onion` seed list service using `tor` or `arti-server`
 
-
 ### Implementation Guide
 
 Reference: `arti` crate (Rust Tor client); RFC-0851p-a (existing bootstrap modes).
 
-
 ### Type Coverage
 
-| RFC-0851p-a Type | Implemented By |
-|-----------------|----------------|
-| `bootstrap_mode = TorOnly` config option | This mission |
-| `crates/octo-bootstrap/src/transport/tor.rs` | This mission |
+| RFC-0851p-a Type                             | Implemented By |
+| -------------------------------------------- | -------------- |
+| `bootstrap_mode = TorOnly` config option     | This mission   |
+| `crates/octo-bootstrap/src/transport/tor.rs` | This mission   |
 
 ## Dependencies
 
 Depends on:
+
 - The `arti` crate (Rust Tor client)
 - A `.onion` seed list service (out-of-scope for this mission; documented in operator guide)
 

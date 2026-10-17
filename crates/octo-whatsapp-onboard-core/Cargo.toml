@@ -7,6 +7,10 @@ edition = "2021"
 name = "octo_whatsapp_onboard_core"
 
 [dependencies]
+# Canonical filesystem permission primitives (H-7): the session export bundle
+# carries the device Noise private key, so it is written 0600 from birth. Shared
+# with the wallet and the CDP dump path so the rule has one definition.
+cipherocto-fs-perms = { path = "../cipherocto-fs-perms" }
 octo-adapter-whatsapp = { path = "../octo-adapter-whatsapp" }
 octo-network = { path = "../octo-network" }
 tokio = { version = "1", features = ["sync", "time", "fs", "rt-multi-thread", "macros"] }

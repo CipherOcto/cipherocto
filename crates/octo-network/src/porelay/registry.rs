@@ -105,6 +105,40 @@ impl TrustRegistry {
         }
         updated
     }
+
+    /// Authoritative precedence admission gate (mission 0860a AC #10,
+    /// Round 2 review C7). Returns `true` iff the gateway is admitted
+    /// into the registry. PoRelay's own trust scoring says "trusted"
+    /// OR "not yet seen" → provisional admission; this method then
+    /// consults the canonical RFC-0968 reputation state via
+    /// `coalition_query(registry_id, gateway_id)` which returns `true`
+    /// iff the gateway is `CoalitionQuarantined` (RFC-0968 §13
+    /// error code 0x30, amendment 50). If quarantined, admission is
+    /// refused regardless of PoRelay trust score.
+    ///
+    /// The `coalition_query` is supplied by the caller so this method
+    /// stays decoupled from the concrete store implementation
+    /// (`ReputationStore::read_aggregate` in
+    /// `crates/octo-reputation/src/store/` reads the canonical
+    /// `reputation_aggregates` table; production wiring passes a
+    /// closure that calls that method).
+    ///
+    /// When `coalition_query` is `None`, the admission gate accepts
+    /// every gateway (PoRelay-only mode, no precedence check). This
+    /// mirrors the lookup-less fallback in `start_reputation_gossip`
+    /// (Round 2 review C5) — production deployments MUST supply a
+    /// real `coalition_query` to get the cross-rule coherence
+    /// mandated by Round 7 cross-mission-governance #6.
+    pub fn admit_with<F>(&self, gateway_id: &[u8; 32], coalition_query: Option<F>) -> bool
+    where
+        F: Fn(&[u8; 32]) -> bool,
+    {
+        match coalition_query {
+            Some(q) => !q(gateway_id),
+            // PoRelay-only mode: no canonical cross-check; admit.
+            None => true,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -237,5 +271,45 @@ mod tests {
         let reg = TrustRegistry::new(100);
         let updated = reg.feed_sync_session(&session);
         assert_eq!(updated, 0);
+    }
+
+    // -------- C7 authoritative precedence gate (mission 0860a AC #10) --------
+
+    #[test]
+    fn admit_rejects_coalition_quarantined() {
+        let reg = TrustRegistry::new(100);
+        let gw = [0xAB; 32];
+        let q = |g: &[u8; 32]| *g == gw; // gateway is CoalitionQuarantined
+        assert!(!reg.admit_with(&gw, Some(q)));
+    }
+
+    #[test]
+    fn admit_accepts_clean_gateway() {
+        let reg = TrustRegistry::new(100);
+        let gw = [0xCD; 32];
+        let q = |_g: &[u8; 32]| false; // none quarantined
+        assert!(reg.admit_with(&gw, Some(q)));
+    }
+
+    #[test]
+    fn admit_with_no_consult_falls_back_to_accept() {
+        // Round 2 review C7 back-compat: when `coalition_query` is `None`,
+        // admit unconditionally (PoRelay-only mode, like the
+        // `start_reputation_gossip` lookup-less fallback in C5).
+        // Production callers MUST supply a real query.
+        let reg = TrustRegistry::new(100);
+        let gw = [0xEF; 32];
+        assert!(reg.admit_with::<fn(&[u8; 32]) -> bool>(&gw, None));
+    }
+
+    #[test]
+    fn admit_does_not_consult_underlying_scores() {
+        // Authoritative precedence: even if the registry's own RelayScore
+        // says "trusted", a CoalitionQuarantined gateway is refused.
+        let mut reg = TrustRegistry::new(100);
+        let gw = [0x55; 32];
+        reg.update_score(make_score(0x55, 1_000_000)); // very high PoRelay trust
+        let q = |g: &[u8; 32]| *g == gw; // but RFC-0968 says quarantined
+        assert!(!reg.admit_with(&gw, Some(q)));
     }
 }

@@ -1,0 +1,131 @@
+[package]
+name = "octo-ident"
+version = "0.1.0"
+edition = "2021"
+description = "Canonical OctoID codec per RFC-0010 — translates between 52-byte raw storage form and W3C multibase-z wire form. Mission 0010-a."
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# BLAKE3-256 per RFC-0853; used for DID hash + discriminator derivation
+blake3 = "1.5"
+# Display + Debug
+thiserror = "1"
+# Hex encoding for Debug formatting only (no wire form dependency).
+hex = "0.4"
+# Bitcoin base58btc encoder/decoder — RFC-0010 §Specification §raw_to_wire / §wire_to_raw
+bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
+# async-trait for dyn-compatible async trait surface on `DidWriteCoordinator`
+# (RFC-0862 §DidWriteCoordinator). Used by the Layer B identity substrate
+# to expose cross-instance write coordination as `Arc<dyn DidWriteCoordinator>`.
+# async-trait for dyn-compatible async trait surface on `DidWriteCoordinator`
+# (RFC-0862 §DidWriteCoordinator) AND `ResolverBackend` (mission
+# 0871b-cross-node-forwarding AC-1). Used by the Layer B identity substrate
+# to expose cross-instance write coordination + per-hop resolution as
+# `Arc<dyn Trait>`. Exact pin to 0.1.92 for matrix-sdk compatibility (the
+# resolver-node Layer C crate pins the same version — matches workspace-wide
+# pin per CL feedback "no parallel async-trait pins").
+async-trait = "=0.1.92"
+
+# Typed algorithm / verification-method / circuit discriminators
+# (RFC-0009 §Dual-format signature algorithms and the ZK-capable key).
+# Layer B years-stable identity substrate. Needed for `to_uuid`/`from_uuid`
+# and `Uuid::new_v5` derivation — NOT for derive: `Uuid` has no borsh impl in
+# this workspace, so the newtypes store `[u8; 16]` directly, which is also
+# what makes RFC-0009 §Domain separation's fixed-16-byte prefix true by
+# construction. `v5` for deterministic derivation: a random id would make a
+# DID document's `algorithm_id` meaningless to any peer that did not learn
+# that same random value.
+uuid = { version = "1", features = ["v5"] }
+
+# Serde for the identifier newtypes (RFC-0009 §Domain separation). Optional
+# and off by default, so the Layer B substrate stays minimal for consumers
+# that never serialise an identifier. NOT needed for `to_uuid`/`from_uuid`.
+#
+# The serde form is deliberately the **textual** UUID, which is what the rest
+# of the workspace already emits (`uuid` with its `serde` feature, as
+# `octo-cli` and `octo-runtime` use it). RFC-0009 §Domain separation makes the
+# distinction normative: the *signable prefix* is the 16 raw bytes, never the
+# 36-character form, because both are in use and picking differently signs a
+# different domain. The prefix therefore never goes through serde — it reads
+# the newtype's own `bytes`, which is why these types store `[u8; 16]`.
+serde = { version = "1", optional = true, default-features = false, features = [
+    "std",
+    "derive",
+] }
+
+# NOTE: NO `octo-protocol = { path = "../octo-protocol" }` dep here — would
+# close a Cargo cycle (`octo-protocol → octo-ident`). Layer B per-hop
+# signature type (`RawHopSignature`) mirrors `octo_protocol::HopSignature`
+# wire form byte-for-byte; the Layer-C handler converts via `From` at the
+# wire boundary (Layer C → A is allowed).
+
+# Layer A canonical encoding — RFC-0126 §Part 3: Deterministic Canonical
+# Serialization, via `dcs::dcs_serialize_bytes`.
+#
+# This is what `canonical_ser` in RFC-0009 §Domain separation resolves to.
+# It is NOT any of the five functions in this repository named
+# `canonical_ser`: one is a hand-rolled encoding with its own domain byte, two
+# are borsh, and two are JSON — which RFC-0126 §JSON Allowed Contexts forbids
+# for cryptographic proofs. Naming `octo-determin` by path rather than
+# reaching for the bare symbol is the point.
+#
+# Layer B depends on Layer A, so this arrow is the correct direction.
+octo-determin = { path = "../../determin", version = "0.1.0" }
+
+[features]
+default = []
+# Enables long-running legacy-form parsing for environments still mid-migration.
+# Per RFC-0010 §Specification §`parse` step 3, this gate flips off at Mission 0010-c.
+allow-legacy-input = []
+# Adds borsh Serialize/Deserialize impls for `WireDid` and `RawDid`. Required by
+# RFC-0871 `NodeEnvelope` (Layer 1 envelope types embed `WireDid`). Off by
+# default so Layer-1 codec stays minimal; `octo-protocol` enables it via its
+# own feature flag.
+borsh = ["dep:borsh"]
+# Adds serde Serialize/Deserialize for `AlgorithmId`, `VerificationMethodId` and
+# `CircuitId`, plus `DidDocument`. Needed by any crate that persists an
+# identifier in a JSON/serde document — a DID document carrying `algorithm_id`,
+# a capability token carrying its holder's algorithm. Off by default for the
+# same reason as `borsh`. Enables `uuid`'s serde impl so the textual form
+# matches what the rest of the workspace already emits.
+serde = ["dep:serde", "uuid/serde"]
+
+[dependencies.borsh]
+version = "=1.5.0"
+features = ["derive"]
+optional = true
+
+[dependencies.parking_lot]
+# InMemoryDidRegistry uses parking_lot::RwLock for thread-safe HashMap.
+# (Production deployments use StoolapDidRegistry in quota-router-storage;
+# parking_lot here is the test/single-process convenience impl.)
+version = "0.12"
+
+[dev-dependencies]
+# serde_json for the identifier serde round-trip tests. The `serde` feature
+# must be enabled for those tests to compile; they are gated the same way the
+# borsh TV suite is.
+serde_json = "1"
+
+# Test runtime for `#[tokio::test]` in write_coordinator module.
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+# Borsh for the rich_did_document_tv round-trip tests. Re-uses the same
+# version pinned in `[dependencies.borsh]` so the dev-dep serializes
+# identically to what production consumers see.
+borsh = { version = "=1.5.0", features = ["derive"] }
+
+# The rich_did_document_tv suite exercises borsh round-trips on
+# `octo_ident::DidDocument` + the rich document field types. Per
+# `octo-identity-resolver-node/src/handlers/registration.rs` design
+# intent ("keep `octo-ident::DidDocument` free of borsh derives" — the
+# storage layer uses its own `RichDidDocument` mirror with borsh, not
+# the canonical identity substrate), the canonical `DidDocument` derives
+# are gated behind the `borsh` feature. The TV suite therefore requires
+# the feature to be enabled at test compile time.
+[[test]]
+name = "rich_did_document_tv"
+path = "tests/rich_did_document_tv.rs"
+required-features = ["borsh"]

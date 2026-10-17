@@ -44,7 +44,7 @@ mod tests {
         // discarded the result and conveyed no information. This
         // asserts that the function either errors OR returns a
         // non-empty string — both are acceptable design contracts
-        // (qrcode's `QrCode::new(&[])` may return a degenerate
+        // (qrcode's `QrCode::new(&&[])` may return a degenerate
         // code, but it must not panic).
         let r = to_terminal(b"");
         assert!(r.is_err() || !r.unwrap().is_empty());

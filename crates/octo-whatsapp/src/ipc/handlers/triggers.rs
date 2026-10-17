@@ -248,11 +248,8 @@ impl RpcHandler for TriggersRun {
         let ev: InboundEvent = p
             .get("event")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_else(|| InboundEvent::Unknown {
-                raw: "trigger.run".into(),
-                ts_unix_ms: now_ms,
-                ts_mono_ns: 0,
-                untrusted: false,
+            .unwrap_or_else(|| {
+                InboundEvent::synthetic_unknown("trigger.run", "trigger.run".to_string())
             });
         let rec = h
             .triggers()

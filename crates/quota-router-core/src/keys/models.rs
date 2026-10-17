@@ -1,4 +1,37 @@
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+/// Errors produced by `SpendEvent` boundary validation.
+///
+/// `CostOverflow` enforces the S4 Round 2 / S6c Round 1 invariant
+/// that `cost_amount: u64` MUST be representable in the i64 column
+/// used by `spend_ledger` and the budget-gate arithmetic. Failure
+/// is closed — silently narrowing via `as i64` would let
+/// `cost_amount > i64::MAX` wrap to negative, defeating the gate
+/// (mission 0862-c7 adjacent-module wrap mitigation).
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
+pub enum SpendEventError {
+    #[error("cost_amount overflow: cost={cost} exceeds i64::MAX ({max})")]
+    CostOverflow { cost: u64, max: i64 },
+}
+
+/// Convert a `u64` cost to its `i64` representation, failing closed
+/// when the value exceeds `i64::MAX`.
+///
+/// Used at every boundary where `cost_amount` is narrowed to `i64`
+/// for `spend_ledger` column storage or budget-gate arithmetic.
+/// Pattern: `let cost_i64 = cost_u64_to_i64(cost)?;` (mission
+/// 0862-c7). Pair with `From<SpendEventError> for KeyError` to
+/// propagate via `?`.
+pub fn cost_u64_to_i64(cost: u64) -> Result<i64, SpendEventError> {
+    if cost > i64::MAX as u64 {
+        return Err(SpendEventError::CostOverflow {
+            cost,
+            max: i64::MAX,
+        });
+    }
+    Ok(cost as i64)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -120,6 +153,20 @@ impl TokenSource {
 /// based on the inputs — the same request on any router produces the same event_id.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpendEvent {
+    /// Deterministic event identifier: `hex::encode(SHA-256(...))`, so
+    /// **exactly 64 lowercase hex characters**.
+    ///
+    /// This is not enforced by the type. `hex_to_blob_32` parses this field
+    /// with `hex::decode(..).expect(..)` at the storage boundary, so any
+    /// value that is not 64 hex characters panics there.
+    ///
+    /// The invariant holds today because `compute_event_id` is the only
+    /// producer and no endpoint deserializes a `SpendEvent` from a request.
+    /// Note that the type *is* `Deserialize`. Anything that starts
+    /// accepting one — a replay ingest, a batch settlement upload, a
+    /// reconciliation feed — inherits an unvalidated caller-supplied string
+    /// that reaches an `expect`. Validate at that boundary before the
+    /// storage layer gets the chance to panic.
     pub event_id: String,
     pub request_id: String,
     pub key_id: uuid::Uuid,
@@ -134,6 +181,18 @@ pub struct SpendEvent {
     pub tokenizer_version: Option<String>,
     pub provider_usage_json: Option<String>,
     pub timestamp: i64,
+}
+
+impl SpendEvent {
+    /// Returns `cost_amount` as `i64`, failing closed when the value
+    /// exceeds `i64::MAX`. Per mission 0862-c7 + S4 Round 2 / S6c
+    /// Round 1 signed-underflow mitigation. Callers that previously
+    /// used `event.cost_amount as i64` MUST switch to this getter
+    /// (or the free function `cost_u64_to_i64`) to avoid silent
+    /// wrap.
+    pub fn cost_amount_i64(&self) -> Result<i64, SpendEventError> {
+        cost_u64_to_i64(self.cost_amount)
+    }
 }
 
 /// Key generation request (LiteLLM compatible) per RFC-0903 §GenerateKeyRequest
@@ -199,7 +258,7 @@ pub struct RevokeKeyRequest {
     pub reason: Option<String>,
 }
 
-/// Pricing model for cost computation per RFC-0909 §PricingModel.
+/// Pricing model for cost computation per RFC-0909 §Deterministic Pricing Tables.
 ///
 /// Contains per-token micro-unit pricing. TOKEN_SCALE = 1000 (micro-units per token).
 /// Truncation error is bounded at <2 micro-units per event.
@@ -224,4 +283,32 @@ pub struct MerkleNode {
     pub left: Option<Box<MerkleNode>>,
     /// Right child (None for leaf nodes).
     pub right: Option<Box<MerkleNode>>,
+}
+
+/// One-hour grace window (in seconds) during which a predecessor API
+/// key remains valid after a rotation event. Per mission 0957-b AC-7
+/// + RFC-0903 §RotationEvents. Operators roll out the fresh key
+///   while in-flight requests using the old key still complete; the
+///   predecessor expires after `KEY_ROTATION_GRACE_SECS`.
+pub const KEY_ROTATION_GRACE_SECS: i64 = 3_600;
+
+/// A `KeyRotationEvent` records a single rotation of an API key,
+/// capturing the predecessor key hash, the rotation epoch, and the
+/// predecessor-expires-at timestamp. Mission 0957-b AC-7 closes when
+/// the validator emits events of this shape on each rotation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyRotationEvent {
+    /// Key id being rotated.
+    pub key_id: String,
+    /// Unix seconds at which the rotation occurred.
+    pub rotated_at_unix: i64,
+    /// Hash of the predecessor key (so the validator can match
+    /// in-flight requests against the predecessor key during the
+    /// grace window).
+    pub predecessor_key_hash: Vec<u8>,
+    /// Hash of the new key (the post-rotation active key).
+    pub successor_key_hash: Vec<u8>,
+    /// Unix seconds at which the predecessor key stops being
+    /// honoured. Equal to `rotated_at_unix + KEY_ROTATION_GRACE_SECS`.
+    pub predecessor_expires_at_unix: i64,
 }

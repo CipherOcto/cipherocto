@@ -1,0 +1,121 @@
+[package]
+name = "zk-circuit"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "CipherOcto ZK circuit: compiles Cairo programs (RFC-0958 capability_zk) to CASM bytecode + BLAKE3 hash. Crypto home extracted from stoolap fork per [[stoolap-general-purpose-db]] (2026-07-22). Stable-rust only."
+
+[lib]
+name = "zk_circuit"
+path = "src/lib.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+blake3.workspace = true
+sha2.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+
+# Deterministic serialization (RFC-0126)
+# NOTE: will be wired once canonical_ser crate exists; for now use serde_json
+# with a stable field order contract (sorted keys) — see hash() doc comment.
+hex = "0.4"
+
+# Tempfile for compile_from_source — `compile_source_inner` shells out to
+# `scarb build` (Cairo 2.x build orchestrator) which writes the Sierra IR
+# JSON inside `target_dir`. No cairo-compile subprocess (Cairo 1.x
+# standalone binary is gone in Cairo 2.x). tempfile is needed for the
+# per-call `--target-dir` directory we hand to scarb to keep parallel
+# calls from clobbering each other's `target/dev/` output.
+tempfile = { workspace = true }
+
+# Cairo executable ABI. This is what produces the *provable* program artifact:
+# `compile_executable` wraps `executable_main` in the Standalone header
+# (`ap += builtins.len(); call rel 4; jmp rel 0`) at offset 0 and delivers the
+# entrypoint's arguments as calldata through hints, instead of leaving them to
+# be hand-built as a stack frame by the consumer.
+#
+# `executable_plugin_suite` is required because only it registers the
+# `executable_raw` attribute; `compile_executable` filters on it and returns an
+# empty list otherwise. `filesystem` provides `Cfg`/`CfgSet` (to turn the
+# circuit's `#[cfg(feature: "executable")]` gate on) and `init_dev_corelib`.
+#
+# See docs/architecture/zk-stwo-cairo-executable-recipe.md.
+cairo-lang-executable = "=2.20.0"
+cairo-lang-executable-plugin = "=2.20.0"
+cairo-lang-filesystem = "=2.20.0"
+
+# Cairo 2.x Sierra→CASM in-process pass (Session 2; mission 0958-a
+# Phase B.2). `cairo_lang_compiler` is pulled in transitively via
+# `cairo_lang_sierra` extensions + `ProgramRegistry` setup, but we
+# list it explicitly here so the dependency graph is auditable from
+# this Cargo.toml alone.
+#
+# Determinism contract: scarb produces Sierra IR JSON from the Cairo
+# source; we parse it via serde, build a `Program`, construct the
+# `ProgramRegistry::<CoreType, CoreLibfunc>`, compute AP-change
+# metadata, lower to CASM via `compile`, and BLAKE3 the assembled
+# bytecode. Same Cairo source → same Sierra IR (modulo salsa UUIDs
+# which DO NOT affect the compiled CASM bytes) → same CASM bytes →
+# same BLAKE3 hash. Class A determinism end-to-end.
+cairo-lang-sierra = "=2.20.0"
+cairo-lang-sierra-to-casm = "=2.20.0"
+cairo-lang-compiler = "=2.20.0"
+# Typed CASM hints. The bundled artifact ships the hint table alongside
+# the bytecode: without it the bytecode is neither runnable nor a faithful
+# trace. `serde` makes `Hint` (de)serializable so the table can cross into
+# the excluded `stwo-sys` crate. Must stay pinned to the same version
+# `stwo-sys` uses — the JSON rendering is the cross-crate contract.
+cairo-lang-casm = { version = "=2.20.0", features = ["serde"] }
+# Required transitively for `ProgramRegistryInfo` which is the input type
+# to `calc_metadata_ap_change_only` and `compile`. Pulled in by
+# `cairo-lang-sierra-to-casm` already; listed explicitly for auditability.
+cairo-lang-sierra-type-size = "=2.20.0"
+
+# BigInt for CASM bytecode serialization (felt252 → 32-byte BE encoding).
+num-bigint = "0.4"
+
+# Canonical proof commitment shape (Gap 3 / RFC-0958). Used by the
+# mock proofer to emit commitment bytes that match the downstream
+# verifier's `zk_verifier::stub_commitment` so the full mint -> verify
+# round-trip exercises the canonical check.
+zk-verifier = { path = "../zk-verifier" }
+
+# Real STWO FFI (RFC-0958 capability ZK + RFC-0962 §9; Gap 3 Task 3.2).
+# Mission 0958-b S2 (2026-08-05): now non-optional — runtime dispatch
+# on `zk_vendor::loaded_library()` selects the real-zk path when
+# `libstwo_sys.so` is reachable, mock path otherwise. No cargo feature
+# gate. See `prove_batch_signature` for the dispatch logic.
+zk-vendor = { path = "../zk-vendor" }
+
+# ZK canonicalization primitives (canonicalize_axes + ZKP_DOMAIN_PREFIX
+# constants). R3 fix-up 2026-08-05: dropped the orphan `canonical_ser`
+# (zero non-test callers; consolidation deferred to mission 0958-b).
+cipherocto-zkp-canonical = { path = "../cipherocto-zkp-canonical" }
+
+[features]
+# **Mission 0958-b S2 (2026-08-05):** the `full` cargo feature was
+# REMOVED. Real-zk STWO selection is now runtime (see
+# `zk_vendor::loaded_library()`), not compile-time. Callers that
+# previously gated on `--features full` should check
+# `zk_vendor::vendor_state() == zk_vendor::VendorState::Ffi` instead.
+# The bench tests in `crates/octo-wallet/tests/bench.rs` no longer
+# need the feature flag — they exercise the dispatch path
+# transparently, asserting 50-500KB proof size when FFI is loaded
+# and structural-smoke when only the mock path is available.
+
+[dev-dependencies]
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

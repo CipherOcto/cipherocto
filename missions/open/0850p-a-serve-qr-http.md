@@ -35,22 +35,23 @@ Add a `serve-qr` subcommand to `octo-whatsapp-onboard` that exposes the QR code 
 - [ ] Integration test: spin up the CLI, fetch the HTML page, simulate scan via adapter mock
 - [ ] Help text documents the security warning for `--bind 0.0.0.0`
 
-
 ### Implementation Guide
 
 Reference: `crates/octo-whatsapp-onboard/src/cli.rs` (existing CLI structure); `crates/octo-whatsapp-onboard-core/src/qr_link.rs` (existing QR generation). No new module tree; this is a new subcommand in the existing binary.
 
-
 ### Type Coverage
 
-| RFC-0850p-a Type | Implemented By |
-|-----------------|----------------|
-| `serve-qr` subcommand | This mission |
-| QR-over-HTTP handler | This mission |
+| RFC-0850p-a Type      | Implemented By |
+| --------------------- | -------------- |
+| `serve-qr` subcommand | This mission   |
+| QR-over-HTTP handler  | This mission   |
 
 ## Dependencies
 
-Depends on the base 0850p-a WhatsApp Auth Onboarding RFC being Accepted (currently Draft). No prerequisite missions; this is a feature addition to the existing `octo-whatsapp-onboard` binary.
+Depends on the base 0850p-a WhatsApp Auth Onboarding RFC, which is Accepted
+(2026-06-16) at `rfcs/accepted/networking/0850p-a-whatsapp-auth-onboarding.md`.
+No prerequisite missions; this is a feature addition to the existing
+`octo-whatsapp-onboard` binary.
 
 ## Claimant
 
@@ -70,7 +71,7 @@ Low (~150 lines; reuses existing QR pipeline; HTTP layer is minimal).
 
 ## Prerequisites
 
-- RFC-0850p-a status: Accepted (currently Draft — promotion to `rfcs/accepted/networking/` required first)
+- RFC-0850p-a status: Accepted (2026-06-16), at `rfcs/accepted/networking/0850p-a-whatsapp-auth-onboarding.md`
 
 ## Notes
 

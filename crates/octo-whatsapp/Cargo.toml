@@ -22,6 +22,13 @@ octo-adapter-whatsapp      = { path = "../octo-adapter-whatsapp" }
 octo-whatsapp-onboard-core = { path = "../octo-whatsapp-onboard-core" }
 octo-network               = { path = "../octo-network" }
 
+# Events first-class overhaul (plan `2026-07-18-whatsapp-events-first-class-overhaul.md`):
+# InboundEvent carries wacore types directly (no Debug-string parser). The
+# adapter already depends on wacore at the same rev; we re-export here so the
+# enum variants can hold `Arc<wacore::types::events::...>` types publicly.
+# Kept in lockstep with `octo-adapter-whatsapp/Cargo.toml` `wacore` entry.
+wacore = { git = "https://github.com/mmacedoeu/whatsapp-rust", rev = "b637129", default-features = false }
+
 # Async + serialization
 # Explicit pin because this crate is excluded from the workspace; workspace.dependencies does not apply.
 tokio       = { version = "1.35", features = ["full"] }
@@ -75,7 +82,7 @@ dirs = "5"
 
 # Phase 5 Part B: observability — Prometheus registry + axum HTTP
 # health/ready/metrics server + HMAC label hashing.
-prometheus = { version = "0.13", default-features = false }
+prometheus = { version = "0.14", default-features = false }
 axum       = { version = "0.7", default-features = false, features = ["http1", "tokio"] }
 hmac       = "0.12"
 # Phase 5 Part F: shared reqwest::Client for the webhook action dispatcher.
@@ -83,12 +90,24 @@ hmac       = "0.12"
 # without OpenSSL.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
+# Layer A storage substrate (mission 0206-001). Query subsystem
+# handlers + daemon Search path use `octo_storage_core::Database`
+# after mission 0206-008.
+octo-storage-core   = { path = "../octo-storage-core" }
+
 # Query layer (Phase 0 of `2026-07-11-whatsapp-query-layer-design.md`).
 # All optional, gated by `query` feature so default builds stay slim.
-# - stoolap: embedded SQL DB (file mode); fork at feat/blockchain-sql
 # - tantivy: FTS sidecar index (BM25 with simple() tokenizer)
 # - candle-*: local embedding model (all-MiniLM-L6-v2 Q4, 384d)
-stoolap             = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql", optional = true }
+#
+# Per RFC-0206 §Substrate Re-export Block, the substrate
+# `pub mod stoolap` re-export covers `Error`, `ResultRow`,
+# `ApiTransaction`, `Rows`, `Value`. Consumers (this crate
+# included) use `octo_storage_core::stoolap::*` instead of taking
+# a direct `stoolap` Cargo.toml dep, preserving the substrate as
+# the abstraction layer (CLAUDE.md §Core Engineering Principles).
+# The underlying fork still pins at feat/blockchain-sql, but the
+# dep is now owned by `octo-storage-core` only.
 tantivy             = { version = "0.24", optional = true }
 candle-core         = { version = "0.9", optional = true }
 candle-nn           = { version = "0.9", optional = true }
@@ -103,10 +122,10 @@ futures-executor    = { version = "0.3", optional = true }
 # `--features otlp`. The library compiles cleanly with the feature
 # DISABLED — `observability/tracing.rs` is a no-op stub when `otlp`
 # is absent.
-opentelemetry         = { version = "0.27", optional = true }
-opentelemetry-otlp    = { version = "0.27", optional = true, features = ["grpc-tonic"] }
-opentelemetry_sdk     = { version = "0.27", optional = true, features = ["rt-tokio"] }
-tracing-opentelemetry = { version = "0.28", optional = true }
+opentelemetry         = { version = "0.32", optional = true }
+opentelemetry-otlp    = { version = "0.32", optional = true, features = ["grpc-tonic"] }
+opentelemetry_sdk     = { version = "0.32", optional = true, features = ["rt-tokio"] }
+tracing-opentelemetry = { version = "0.33", optional = true }
 
 [features]
 default       = []
@@ -174,7 +193,6 @@ otlp = [
 # Off by default in v1 to keep default builds slim; flip to default once
 # Phases 0-4 land (commit 20 in the plan).
 query = [
-  "dep:stoolap",
   "dep:tantivy",
   "dep:candle-core",
   "dep:candle-nn",

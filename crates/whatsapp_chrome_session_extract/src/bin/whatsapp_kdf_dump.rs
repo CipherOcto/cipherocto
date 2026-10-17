@@ -13,7 +13,15 @@
 //! Output: NDJSON of every webpack module whose name matches crypto-related
 //! patterns, plus the function source for matched modules.
 
+// Clippy `[disallowed-methods]` allowlist: these binaries talk to
+// Chrome DevTools Protocol (CDP) at `http://localhost:9222` to extract
+// WhatsApp Web session keys for Phase 7.J work. CDP is an operator
+// diagnostic endpoint (not an LLM model provider). Cipherocto capability
+// tokens never reach CDP.
+#![allow(clippy::disallowed_methods)]
+
 use anyhow::{bail, Context, Result};
+// H-6: session dumps are written 0600 under a 0700 dir, never at umask 0644.
 use chrono::Utc;
 use clap::Parser;
 use futures::{SinkExt, StreamExt};
@@ -22,6 +30,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::time::{sleep, Duration};
 use tracing::{info, warn};
+use whatsapp_chrome_session_extract::write_private_json;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -107,9 +116,12 @@ async fn main() -> Result<()> {
         args.port
     );
 
+    // Chrome's renderer sandbox is deliberately left ON. These binaries drive a
+    // profile holding a live WhatsApp Web session, so a renderer compromise is
+    // full account compromise. If Chrome cannot start in a sandbox-less
+    // container, give the container user namespaces rather than this flag.
     let mut child = tokio::process::Command::new(&chrome)
         .arg(format!("--remote-debugging-port={}", args.port))
-        .arg("--no-sandbox")
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
         .arg("--disable-extensions")
@@ -431,11 +443,7 @@ const probeInterval = setInterval(() => {
         .join("wa-web-crypto-modules.json");
     match result {
         Some(v) => {
-            std::fs::write(
-                &out_path,
-                serde_json::to_string_pretty(&v).unwrap_or_default(),
-            )
-            .context("write dump")?;
+            write_private_json(&out_path, &v).context("write dump")?;
             let mods = v.get("modules").and_then(Value::as_array);
             println!("== whatsapp_kdf_dump ==");
             println!("profile         : {}", profile.display());

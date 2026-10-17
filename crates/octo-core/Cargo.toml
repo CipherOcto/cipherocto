@@ -13,5 +13,11 @@ async-trait = "0.1"
 tracing = "0.1"
 anyhow = "1.0"
 thiserror = "2.0"
+blake3 = "1"
 
-octo-registry = { path = "../octo-registry" }
+# `octo-registry` was declared here but referenced by nothing in this
+# crate's source. octo-cli and octo-runtime both removed the same edge
+# for the same reason; this one was missed. Removing it also drops the
+# `sled` dependency the edge carried in, keeping the graph
+# substrate-faithful per CLAUDE.md §Architectural Principles (Layer B
+# substrate consumes only what it references).

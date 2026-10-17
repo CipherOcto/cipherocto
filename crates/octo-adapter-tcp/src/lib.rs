@@ -218,27 +218,44 @@ impl PlatformAdapter for TcpAdapter {
         &self,
         raw: &RawPlatformMessage,
     ) -> Result<DeterministicEnvelope, PlatformAdapterError> {
-        // Wire format is `[envelope_bytes][payload_bytes]`. Parse only the
-        // first `ENVELOPE_WIRE_LEN` bytes as the envelope; the remaining
-        // bytes are the mesh payload and are extracted separately by
-        // `PlatformAdapterPoller` (or other consumers).
-        use octo_network::dot::envelope::ENVELOPE_WIRE_LEN;
-        if raw.payload.len() < ENVELOPE_WIRE_LEN {
-            return Err(PlatformAdapterError::ApiError {
-                code: 400,
-                message: format!(
-                    "envelope parse error: frame too short ({} bytes, need {})",
-                    raw.payload.len(),
-                    ENVELOPE_WIRE_LEN
-                ),
-            });
-        }
-        DeterministicEnvelope::from_wire_bytes(&raw.payload[..ENVELOPE_WIRE_LEN]).map_err(|e| {
-            PlatformAdapterError::ApiError {
-                code: 400,
-                message: format!("envelope parse error: {}", e),
+        // M-15: `from_wire_bytes` validates STRUCTURE only — a well-formed
+        // frame with a forged signature or a mismatched `envelope_id` parses
+        // fine. Decoding is factored into a closure bound to a name first,
+        // because calling an inline `(|| { .. })()` trips
+        // `clippy::redundant_closure_call`.
+        let decode = || -> Result<DeterministicEnvelope, PlatformAdapterError> {
+            // Wire format is `[envelope_bytes][payload_bytes]`. Parse only the
+            // first `ENVELOPE_WIRE_LEN` bytes as the envelope; the remaining
+            // bytes are the mesh payload and are extracted separately by
+            // `PlatformAdapterPoller` (or other consumers).
+            use octo_network::dot::envelope::ENVELOPE_WIRE_LEN;
+            if raw.payload.len() < ENVELOPE_WIRE_LEN {
+                return Err(PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!(
+                        "envelope parse error: frame too short ({} bytes, need {})",
+                        raw.payload.len(),
+                        ENVELOPE_WIRE_LEN
+                    ),
+                });
             }
-        })
+            DeterministicEnvelope::from_wire_bytes(&raw.payload[..ENVELOPE_WIRE_LEN]).map_err(|e| {
+                PlatformAdapterError::ApiError {
+                    code: 400,
+                    message: format!("envelope parse error: {}", e),
+                }
+            })
+        };
+        let env = decode()?;
+        // Ed25519 named explicitly so this reads as an assumption rather than an
+        // accident. CD-6's peer registry binds the key AND names the algorithm
+        // it speaks, so this constant goes away when that registry lands.
+        env.verify(&octo_algo_ed25519::ed25519_algorithm_id(), &env.source_peer)
+            .map_err(|e| PlatformAdapterError::Unreachable {
+                platform: "tcp".into(),
+                reason: format!("envelope verify failed: {e}"),
+            })?;
+        Ok(env)
     }
 
     fn capabilities(&self) -> CapabilityReport {
@@ -353,12 +370,31 @@ mod tests {
         assert!(adapter.health_check().await.is_err());
     }
 
+    /// A genuinely signed envelope for canonicalization tests.
+    ///
+    /// M-15 makes `canonicalize` verify the envelope, so a `default()` fixture (all
+    /// zeros, no signature) is now correctly rejected. These tests exercise the
+    /// accept path, not the rejection path, so they must hand it a real signature.
+    fn signed_test_envelope() -> DeterministicEnvelope {
+        use ed25519_dalek::Signer as _;
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[3u8; 32]);
+        let mut env = DeterministicEnvelope {
+            source_peer: sk.verifying_key().to_bytes(),
+            ..Default::default()
+        };
+        // `verify` checks envelope_id against its own derivation before the
+        // signature, so the fixture has to set it.
+        env.envelope_id = env.derive_envelope_id();
+        env.signature = sk.sign(&env.to_signing_bytes()).to_bytes();
+        env
+    }
+
     #[tokio::test]
     async fn tcp_canonicalize_valid() {
         let adapter = TcpAdapter::new("127.0.0.1:0".parse().unwrap())
             .await
             .unwrap();
-        let envelope = DeterministicEnvelope::default();
+        let envelope = signed_test_envelope();
         let wire = envelope.to_wire_bytes();
         let raw = RawPlatformMessage {
             platform_id: "test".into(),

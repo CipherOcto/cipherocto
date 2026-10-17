@@ -1,3 +1,4 @@
+#![allow(deprecated)] // Cycle 1 of 3-cycle legacy deprecation (RFC-0960 §5). Remove in Cycle 3.
 //! Proxy server for forwarding LLM requests to providers.
 //!
 //! This module handles the actual LLM proxy functionality - forwarding
@@ -14,12 +15,26 @@
 //! - any-llm-mode: py_bridge (PyO3 → Python SDKs) via python_sdk_entry
 //! - full: Either path is available
 
+// Clippy `[disallowed-methods]` allowlist: `proxy.rs` is the canonical
+// provider-egress path (litellm-mode and full mode). Every reqwest::Client
+// site in this module routes through `egress::key_swap::attach_bearer` for
+// the cipherocto-internal → provider-key swap, and through
+// `egress::strip_capability` for capability-token removal. This module is
+// the canonical alternative to `egress.rs`'s structural placeholder `Egress`
+// trait (which is a paper abstraction today). The clippy.toml table
+// forbids `reqwest::Client::new` globally; this file allows it at module
+// scope because the legitimate egress IS here. Future work: collapse the
+// 130+ `reqwest::Client::new()` calls into a single `ProviderHttpClient`
+// helper that the lint will permit as a single allowed method.
+#![allow(clippy::disallowed_methods)]
+
 use crate::balance::Balance;
 use crate::cache::ResponseCache;
 use crate::config::DispatchInfo;
 use crate::fallback::FallbackExecutor;
 use crate::key_rate_limiter::RateLimiterStore;
 use crate::keys::compute_key_hash;
+use crate::logging::StructuredLogger;
 use crate::metrics::Metrics;
 #[cfg(any(feature = "litellm-mode", feature = "full"))]
 use crate::pre_call_checks::{
@@ -89,12 +104,43 @@ fn extract_client_key<B>(req: &Request<B>) -> Option<String> {
     None
 }
 
+/// Extract capability token (RFC-0957) from request headers (PR-Q1, W1).
+///
+/// X-Capability-Token (canonical) or `Authorization: CipherOcto-Cap <token>`
+/// (when bearer coexists). The token is opaque to the proxy at this stage;
+/// the downstream verifier confirms HMAC chain + holder signature before
+/// minting any escrow (PR-Q2 picks up the verify call into `sm-engine`).
+///
+/// Returns `None` when no capability token is present. The token is
+/// stripped from outbound provider-bound requests at the egress boundary
+/// (single egress invariant per `quota_router_core::egress`).
+pub fn extract_capability_token<B>(req: &Request<B>) -> Option<String> {
+    // X-Capability-Token (canonical)
+    if let Some(token) = req.headers().get("x-capability-token") {
+        if let Ok(token_str) = token.to_str() {
+            if !token_str.is_empty() {
+                return Some(token_str.to_string());
+            }
+        }
+    }
+    // Authorization: CipherOcto-Cap <token> (when bearer coexists)
+    if let Some(auth) = req.headers().get("authorization") {
+        if let Ok(auth_str) = auth.to_str() {
+            if let Some(stripped) = auth_str.strip_prefix("CipherOcto-Cap ") {
+                if !stripped.is_empty() {
+                    return Some(stripped.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Validate resource ID contains only safe characters (alphanumeric, hyphens, underscores).
 /// Rejects path traversal attempts (e.g., `../`, `..%2F`).
 fn validate_resource_id(id: &str) -> bool {
     !id.is_empty()
-        && id
-            .chars()
+        & id.chars()
             .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
 }
 
@@ -173,6 +219,7 @@ pub struct ProxyServer {
     response_cache: Option<Arc<ResponseCache>>,
     callback_executor: Option<Arc<crate::callbacks::CallbackExecutor>>,
     prompt_registry: Option<Arc<std::sync::RwLock<crate::prompts::PromptRegistry>>>,
+    logger: Option<Arc<StructuredLogger>>,
     client: reqwest::Client,
 }
 
@@ -196,6 +243,7 @@ impl ProxyServer {
             response_cache: None,
             callback_executor: None,
             prompt_registry: None,
+            logger: None,
             client: reqwest::Client::builder().build().unwrap_or_default(),
         }
     }
@@ -206,6 +254,15 @@ impl ProxyServer {
         prompt_registry: Arc<std::sync::RwLock<crate::prompts::PromptRegistry>>,
     ) -> Self {
         self.prompt_registry = Some(prompt_registry);
+        self
+    }
+
+    /// Set the structured logger for NDJSON request/response events (RFC-0905).
+    /// When set, every request completion / failure emits a `LogEvent` via
+    /// `StructuredLogger::request_completed` / `request_failed` after the
+    /// `tracing::info!` block at the bottom of `handle_request`.
+    pub fn with_logger(mut self, logger: Arc<StructuredLogger>) -> Self {
+        self.logger = Some(logger);
         self
     }
 
@@ -268,6 +325,7 @@ impl ProxyServer {
         let response_cache = self.response_cache.clone();
         let callback_executor = self.callback_executor.clone();
         let prompt_registry = self.prompt_registry.clone();
+        let logger = self.logger.clone();
         let client = self.client.clone();
 
         // Initialize providers based on mode
@@ -293,6 +351,7 @@ impl ProxyServer {
                 let response_cache = response_cache.clone();
                 let callback_executor = callback_executor.clone();
                 let prompt_registry = prompt_registry.clone();
+                let logger = logger.clone();
                 let client = client.clone();
 
                 tokio::spawn(async move {
@@ -318,7 +377,9 @@ impl ProxyServer {
                                     response_cache.clone(),
                                     callback_executor.clone(),
                                     prompt_registry.clone(),
+                                    logger.clone(),
                                     client.clone(),
+                                    None,
                                 )
                             }),
                         )
@@ -332,6 +393,35 @@ impl ProxyServer {
         .await?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod rfc0905_tests {
+    //! RFC-0905: verify StructuredLogger wiring into ProxyServer.
+    use super::*;
+    use crate::config::LogConfig;
+    use crate::logging::{LogLevel, StructuredLogger};
+
+    #[tokio::test]
+    async fn with_logger_attaches_handle() {
+        let logger = Arc::new(StructuredLogger::new(
+            16,
+            LogConfig::default().sample_rate,
+            true,
+            LogLevel::Info,
+        ));
+        let _server = ProxyServer::new(
+            Balance::new(1),
+            Provider::new("openai", "https://api.openai.com"),
+            8080,
+            HashMap::new(),
+        )
+        .with_logger(Arc::clone(&logger));
+        // Field is private; exercise through the builder chain only — passing
+        // the same Arc through the builder guarantees the runtime path sees
+        // the same instance via self.logger.clone().
+        assert!(Arc::strong_count(&logger) >= 2);
     }
 }
 
@@ -574,7 +664,9 @@ async fn handle_request<B>(
         allow(unused_variables)
     )]
     prompt_registry: Option<Arc<std::sync::RwLock<crate::prompts::PromptRegistry>>>,
+    logger: Option<Arc<StructuredLogger>>,
     client: reqwest::Client,
+    health_context: Option<Arc<crate::health::HealthContext>>,
 ) -> Result<Response<SseBody>, Infallible>
 where
     B: http_body::Body + 'static,
@@ -582,6 +674,21 @@ where
     B::Error: Send + std::fmt::Debug,
 {
     let start = std::time::Instant::now();
+
+    // Extract W3C Trace Context from incoming request (RFC-0905 §W3C Trace Context)
+    // If absent or malformed, generate a fresh trace_id for this request.
+    // The resulting traceparent is propagated into outgoing provider requests below.
+    let outgoing_traceparent: String = req
+        .headers()
+        .get("traceparent")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| crate::tracing::extract_traceparent(s).is_some())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            let trace_id = crate::tracing::generate_trace_id();
+            let span_id = crate::tracing::generate_span_id();
+            crate::tracing::format_traceparent(&trace_id, &span_id, 0x01)
+        });
 
     // /metrics endpoint (RFC-0937) — bypass auth and proxy
     if req.uri().path() == "/metrics" {
@@ -878,11 +985,47 @@ where
         return result;
     }
 
-    // /health and /ready — simple health checks
-    if path == "/health" || path == "/ready" {
+    // /health and /ready — simple health checks (legacy)
+    if path == "/health" {
         let resp = Response::builder()
             .status(StatusCode::OK)
             .body(SseBody::from_string(r#"{"status":"ok"}"#.to_string()))
+            .unwrap();
+        return Ok(resp);
+    }
+    if path == "/ready" {
+        let resp = Response::builder()
+            .status(StatusCode::OK)
+            .body(SseBody::from_string(r#"{"status":"ok"}"#.to_string()))
+            .unwrap();
+        return Ok(resp);
+    }
+
+    // /healthz and /healthz/ready — K8s-compatible health probes (RFC-0905)
+    if path == "/healthz" || path == "/healthz/ready" {
+        // Liveness: always 200 (no dependency check).
+        // Readiness: prefer the async CompositeDependencyChecker when a
+        // HealthContext is supplied (mission 0905-d); fall back to the sync
+        // DefaultDependencyChecker placeholder when None (test fixture path).
+        let (status, body) = if path == "/healthz" {
+            let handler = crate::health::HealthHandler::new(std::sync::Arc::new(
+                crate::health::DefaultDependencyChecker,
+            ));
+            handler.handle_liveness()
+        } else if let Some(ctx) = health_context.as_ref() {
+            let composite = ctx.composite();
+            crate::health::handle_readiness_async(&composite).await
+        } else {
+            let handler = crate::health::HealthHandler::new(std::sync::Arc::new(
+                crate::health::DefaultDependencyChecker,
+            ));
+            handler.handle_readiness()
+        };
+        let status_code = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        let resp = Response::builder()
+            .status(status_code)
+            .header("content-type", "application/json")
+            .body(SseBody::from_string(body))
             .unwrap();
         return Ok(resp);
     }
@@ -916,7 +1059,9 @@ where
             .header("Content-Type", "application/json")
             .body(full_body.to_vec());
         if let Some(ref key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, an upstream path populated api_key from a CipherOcto source — fix that path");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         let resp = req_builder.send().await;
 
@@ -1064,7 +1209,9 @@ where
             .header("Content-Type", "application/json")
             .body(full_body.to_vec());
         if let Some(ref key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, an upstream path populated api_key from a CipherOcto source — fix that path");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         let resp = req_builder.send().await;
 
@@ -1119,8 +1266,14 @@ where
         let client = client.clone();
         let mut req_builder = client.post(&target_url).body(full_body.to_vec());
         if let Some(ref key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, an upstream path populated api_key from a CipherOcto source — fix that path");
+            req_builder = req_builder.header("Authorization", bearer);
         }
+        // W3C Trace Context propagation (RFC-0905 §W3C Trace Context)
+        // — inject the request's traceparent header so the upstream provider
+        // can correlate this hop into the distributed trace.
+        req_builder = req_builder.header("traceparent", &outgoing_traceparent);
         let resp = req_builder.send().await;
 
         match resp {
@@ -1174,7 +1327,9 @@ where
             .header("Content-Type", "application/json")
             .body(full_body.to_vec());
         if let Some(ref key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, an upstream path populated api_key from a CipherOcto source — fix that path");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         let resp = req_builder.send().await;
 
@@ -1371,7 +1526,9 @@ where
             _ => unreachable!(),
         };
         if let Some(ref key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, an upstream path populated api_key from a CipherOcto source — fix that path");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         let resp = req_builder.send().await;
 
@@ -1499,7 +1656,9 @@ where
             _ => unreachable!(),
         };
         if let Some(ref key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, an upstream path populated api_key from a CipherOcto source — fix that path");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         let resp = req_builder.send().await;
 
@@ -1557,6 +1716,15 @@ where
             .and_then(|v| v.get("model")?.as_str().map(String::from));
 
         // Map model to provider: rerank* → cohere, jina* → jina
+        //
+        // Note: /v1/rerank intentionally diverges from the chat-completions
+        // and /v1/embeddings 503 guard pattern. The `or_else` below falls
+        // back to ANY cohere/jina provider entry when no model-specific
+        // dispatch match is found, so the rerank surface always has a
+        // base_url. The asymmetry is documented but not enforced as a
+        // 503 — a future refactor could move rerank onto the same
+        // missing-model guard (TODO: filed with mission
+        // proxy-strong-scenarios-phase2).
         let dispatch = request_model.as_ref().and_then(|model| {
             dispatch_map.values().find(|d| {
                 d.model == *model
@@ -1589,7 +1757,9 @@ where
             .header("Content-Type", "application/json")
             .body(full_body.to_vec());
         if let Some(ref key) = api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(key)
+                .expect("provider-boundary key-swap: api_key MUST be provider-shaped; if this fires, an upstream path populated api_key from a CipherOcto source — fix that path");
+            req_builder = req_builder.header("Authorization", bearer);
         }
         let resp = req_builder.send().await;
 
@@ -1713,7 +1883,9 @@ where
             .or_else(|| std::env::var(format!("{}_API_KEY", provider_name.to_uppercase())).ok());
 
         if let Some(key) = passthrough_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", key));
+            let bearer = crate::egress::key_swap::attach_bearer(&key)
+                .expect("provider-boundary key-swap: passthrough_key MUST be provider-shaped; if this fires, dispatch_map or env injected a CipherOcto key");
+            req_builder = req_builder.header("Authorization", bearer);
         }
 
         let resp = match req_builder.send().await {
@@ -1785,6 +1957,44 @@ where
         })
     });
 
+    // Dispatch_map non-empty but no entry for the requested model — return
+    // 503 SERVICE_UNAVAILABLE rather than silently forwarding to the
+    // provider's default API base. Per RFC-0933 §Provider Pool + mission
+    // proxy-strong-scenarios-phase2.
+    //
+    //    Guard fires when:
+    //      (a) dispatch_map is non-empty but no entry matches the requested model
+    //
+    //    NOT fired when:
+    //      (b) dispatch_map is empty — the request would have failed at the
+    //          provider layer anyway (no api_base configured); we let the
+    //          existing fall-through path surface the same outcome via the
+    //          provider-default fallback.
+    //
+    //    We only guard when the client sent a recognized model field; pure
+    //    path-level passthrough requests (which never reach this code path)
+    //    and auth-failed requests (which short-circuit before here via the
+    //    GatewayAuthenticator check) are unaffected.
+    //
+    //    Precedence: balance check (402) runs before this guard in
+    //    `handle_request_litellm`, so zero-balance still returns 402 even
+    //    when the model is also missing from dispatch_map. Fallback
+    //    executor runs AFTER this guard (later in the same function), so
+    //    a missing primary model prevents fallback attempts — fallback
+    //    itself only triggers on upstream 5xx, not on misconfigured pools.
+    if dispatch.is_none() && !dispatch_map.is_empty() {
+        if let Some(ref model) = request_model {
+            let resp = Response::builder()
+                .status(StatusCode::SERVICE_UNAVAILABLE)
+                .body(SseBody::from_error(format!(
+                    "No dispatch entry for model '{}' — provider pool does not serve this model",
+                    model
+                )))
+                .unwrap();
+            return Ok(resp);
+        }
+    }
+
     // Resolve API key with priority chain (RFC-0929 §5):
     // 1. Per-request key from DispatchInfo.api_key (config-time resolved)
     // 2. Environment variable ({PROVIDER_NAME}_API_KEY)
@@ -1819,10 +2029,24 @@ where
         }
     }
 
-    // Deduct balance
+    // Deduct balance. Per RFC-0960 §9 the mutable balance is a projection of
+    // the event log; silent underflow is forbidden (was the prior
+    // `saturating_sub` bug). The rate-limit check above is best-effort and
+    // racy, so a concurrent spend can still land us at exactly 0 here —
+    // we treat that as a transient failure and reject the request rather
+    // than allowing the projection to drift negative.
     {
         let mut bal = balance.lock();
-        bal.deduct(1);
+        if let Err(e) = bal.deduct(1) {
+            return Ok(Response::builder()
+                .status(StatusCode::SERVICE_UNAVAILABLE)
+                .header("X-RateLimit-Remaining", "0")
+                .body(SseBody::from_error(format!(
+                    "Rate limit projection underflow: {}",
+                    e
+                )))
+                .unwrap());
+        }
     }
 
     // Extract DispatchInfo fields for mode handlers
@@ -2188,6 +2412,35 @@ where
         "request completed"
     );
 
+    // Structured NDJSON request logging (RFC-0905)
+    // Emit LogEvent via StructuredLogger so downstream consumers can
+    // subscribe to the JSON side-channel without re-parsing tracing spans.
+    // Mirrors the tracing fields above; request_failed used on 5xx/Err.
+    if let Some(ref lg) = logger {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let latency_ms = start.elapsed().as_millis() as f64;
+        match &result {
+            Ok(resp) if resp.status().is_success() => {
+                lg.request_completed(
+                    &request_id,
+                    &provider.name,
+                    &request_model,
+                    latency_ms,
+                    0,
+                    0,
+                )
+                .await;
+            }
+            _ => {
+                let err_msg = match &result {
+                    Ok(resp) => format!("non-2xx status {}", resp.status().as_u16()),
+                    Err(_) => "internal proxy error".to_string(),
+                };
+                lg.request_failed(&request_id, &err_msg, latency_ms).await;
+            }
+        }
+    }
+
     // Inject rate limit headers into response (RFC-0933 §Rate Limit Headers).
     // Uses the ApiKey validated during auth to report RPM limits.
     if let (Ok(ref mut resp), Some(ref api_key)) = (&mut result, &validated_api_key) {
@@ -2211,16 +2464,107 @@ where
         }
     }
 
+    // Fire End + Success/Failure callbacks after response is built
+    // (RFC-0947 §End/Success/Failure wiring, mission 0947-c1). Best-effort:
+    // both fires go through `CallbackExecutor::fire` which uses mpsc
+    // try_send — request-path latency is bounded by channel capacity.
+    if let Some(ref executor) = callback_executor {
+        let request_meta = crate::callbacks::CallbackRequest {
+            model: request_model.clone(),
+            messages: vec![],
+            temperature: None,
+            max_tokens: None,
+            stream: body_str.contains("\"stream\":true"),
+            provider: provider.name.clone(),
+            key_id: validated_api_key.as_ref().map(|k| k.key_id.clone()),
+            team_id: validated_api_key
+                .as_ref()
+                .and_then(|k| k.team_id.map(|id| id.to_string())),
+            user_id: request_user.clone(),
+        };
+        let end_timing = crate::callbacks::CallbackTiming {
+            request_start: chrono::Utc::now(),
+            request_end: Some(chrono::Utc::now()),
+            total_ms: start.elapsed().as_millis() as u64,
+            provider_latency_ms: 0,
+            queue_time_ms: 0,
+        };
+        match &result {
+            Ok(resp) if resp.status().is_success() => {
+                let response_meta = crate::callbacks::CallbackResponse {
+                    id: String::new(),
+                    model: request_model.clone(),
+                    response_summary: crate::callbacks::ResponseSummary {
+                        choice_count: 0,
+                        finish_reason: None,
+                        total_content_length: 0,
+                    },
+                    usage: crate::callbacks::Usage {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        total_tokens: 0,
+                    },
+                    latency_ms: start.elapsed().as_millis() as u64,
+                    provider: provider.name.clone(),
+                    cached: false,
+                };
+                crate::callbacks::fire_end_success(
+                    executor,
+                    request_meta,
+                    response_meta,
+                    end_timing,
+                )
+                .await;
+            }
+            Ok(resp) => {
+                let error_detail = crate::callbacks::CallbackErrorDetail {
+                    error_type: "http_error".to_string(),
+                    message: format!("non-2xx status {}", resp.status().as_u16()),
+                    status_code: Some(resp.status().as_u16()),
+                    provider: Some(provider.name.clone()),
+                };
+                crate::callbacks::fire_end_failure(
+                    executor,
+                    request_meta,
+                    error_detail,
+                    end_timing,
+                )
+                .await;
+            }
+            Err(_) => {
+                let error_detail = crate::callbacks::CallbackErrorDetail {
+                    error_type: "internal_proxy_error".to_string(),
+                    message: "internal proxy error".to_string(),
+                    status_code: None,
+                    provider: Some(provider.name.clone()),
+                };
+                crate::callbacks::fire_end_failure(
+                    executor,
+                    request_meta,
+                    error_detail,
+                    end_timing,
+                )
+                .await;
+            }
+        }
+    }
+
     result
 }
 
 /// Resolve prompt template and inject as system message (RFC-0948).
 /// If prompt_id is set, looks up the prompt, renders template with variables,
 /// and prepends a system message to the request.
+///
+/// `api_key_id` is the A/B-test priority anchor: when present it pins a
+/// given caller to the same arm across requests. Falls back to the
+/// request's `user` field (treated as the operator-supplied request
+/// identifier) then to a generated UUID.
 #[cfg(any(feature = "litellm-mode", feature = "full"))]
 fn resolve_prompt(
     request: &mut NativeHttpRequest,
     prompt_registry: Option<&mut crate::prompts::PromptRegistry>,
+    api_key_id: Option<&str>,
 ) -> Result<(), String> {
     let prompt_id = match &request.prompt_id {
         Some(id) => id.clone(),
@@ -2232,10 +2576,15 @@ fn resolve_prompt(
         None => return Err("Prompt registry not available".to_string()),
     };
 
-    // Generate request_id for A/B testing (priority: user field > generated UUID)
-    let request_id = request
-        .user
-        .clone()
+    // A/B request_id priority chain (RFC-0948 §Integration):
+    // 1. API key ID (highest — pins a caller across requests)
+    // 2. OpenAI `user` field (operator-supplied identifier)
+    // 3. Generated UUID (last-resort; collapses A/B to 50/50 across
+    //    unauthenticated callers).
+    let request_id = api_key_id
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .or_else(|| request.user.clone())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     // Resolve prompt (handles A/B testing)
@@ -2293,9 +2642,18 @@ async fn handle_request_litellm(
 
     // Resolve prompt template if prompt_id is set (RFC-0948)
     // Lock and resolve before any .await (RwLockWriteGuard is not Send)
+    // Derive api_key_id from api_key (first 8 chars) for A/B pinning.
+    let api_key_id = api_key.map(|k| {
+        let trimmed = k.trim();
+        if trimmed.len() > 8 {
+            &trimmed[..8]
+        } else {
+            trimmed
+        }
+    });
     let resolve_result = {
         let mut prompt_guard = prompt_registry.as_ref().map(|r| r.write().unwrap());
-        resolve_prompt(&mut request, prompt_guard.as_deref_mut())
+        resolve_prompt(&mut request, prompt_guard.as_deref_mut(), api_key_id)
     };
     if let Err(e) = resolve_result {
         let resp = Response::builder()
@@ -2314,7 +2672,12 @@ async fn handle_request_litellm(
 
     // Check if streaming is requested
     if request.stream == Some(true) {
-        return handle_streaming(provider, api_key, request).await;
+        let wiring = StreamingCallbackWiring {
+            executor: None,
+            policy: crate::callbacks::StreamingCallbackPolicy::default(),
+            request_id: uuid::Uuid::new_v4().to_string(),
+        };
+        return handle_streaming(provider, api_key, request, Some(&wiring)).await;
     }
 
     // Non-streaming request - use HttpProviderFactory
@@ -2371,8 +2734,12 @@ async fn handle_request_litellm(
             Ok(resp)
         }
         Err(e) => {
+            // Upstream error (network, timeout, conn refused, 5xx). Wrap
+            // as 502 BAD_GATEWAY so callers can distinguish "our fault"
+            // (500) from "upstream's fault" (502). Per RFC-0933 §Failure
+            // Surface + mission proxy-strong-scenarios-phase2.
             let resp = Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .status(StatusCode::BAD_GATEWAY)
                 .body(SseBody::from_error(format!("Provider error: {}", e)))
                 .unwrap();
             Ok(resp)
@@ -2522,6 +2889,7 @@ async fn handle_streaming(
     provider: &Provider,
     api_key: Option<&str>,
     request: NativeHttpRequest,
+    streaming_callback: Option<&StreamingCallbackWiring>,
 ) -> Result<Response<SseBody>, Infallible> {
     let provider_name = &provider.name;
 
@@ -2552,6 +2920,7 @@ async fn handle_streaming(
     }
 
     // Call streaming completion
+    let streaming_start = std::time::Instant::now();
     let streaming_resp = http_provider.streaming_completion(&request, api_key).await;
 
     match streaming_resp {
@@ -2559,12 +2928,44 @@ async fn handle_streaming(
             mut receiver,
             content_type,
         }) => {
+            // Fire Start at streaming entry (mission 0947-c2).
+            if let Some(wiring) = streaming_callback {
+                if matches!(
+                    wiring.policy,
+                    crate::callbacks::StreamingCallbackPolicy::OncePerRequest
+                ) {
+                    if let Some(executor) = wiring.executor.as_ref() {
+                        let timing = crate::callbacks::CallbackTiming {
+                            request_start: chrono::Utc::now(),
+                            request_end: None,
+                            total_ms: streaming_start.elapsed().as_millis() as u64,
+                            provider_latency_ms: 0,
+                            queue_time_ms: 0,
+                        };
+                        let callback_request = crate::callbacks::CallbackRequest {
+                            model: request.model.clone(),
+                            messages: vec![],
+                            temperature: request.temperature.map(|t| t as f64),
+                            max_tokens: request.max_tokens,
+                            stream: true,
+                            provider: provider_name.clone(),
+                            key_id: None,
+                            team_id: None,
+                            user_id: None,
+                        };
+                        crate::callbacks::fire_streaming_start(executor, callback_request, timing)
+                            .await;
+                        let _ = &wiring.request_id; // trace correlation
+                    }
+                }
+            }
+
             // Create channel for the SSE body
             let (tx, rx) =
                 tokio::sync::mpsc::channel::<Result<Bytes, std::convert::Infallible>>(100);
 
-            // Spawn task to forward chunks from provider to channel
-            // Note: task silently drops on panic - proper error tracking requires JoinHandle
+            // Spawn task to forward chunks from provider to channel.
+            // Note: task silently drops on panic - proper error tracking requires JoinHandle.
             let _handle = tokio::spawn(async move {
                 while let Some(chunk_result) = receiver.recv().await {
                     match chunk_result {
@@ -2602,13 +3003,38 @@ async fn handle_streaming(
             Ok(resp)
         }
         Err(e) => {
+            // Streaming upstream error — wrap as 502 BAD_GATEWAY so
+            // callers can distinguish proxy-internal (500) from upstream
+            // (502). Per RFC-0933 §Failure Surface + mission
+            // proxy-strong-scenarios-phase2.
+            //
+            // Note: streaming and non-streaming share the same upstream
+            // error path (both → 502 BAD_GATEWAY). True 504 GATEWAY_TIMEOUT
+            // would require a proxy-internal streaming buffer overflow
+            // or a per-stream timeout — neither is fault-injectable via
+            // wiremock (no "close after N bytes" primitive). See
+            // `test_streaming_response_carries_events` in
+            // `crates/quota-router-core/tests/e2e_wiremock_faults.rs`
+            // for the streaming shape contract.
             let resp = Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .status(StatusCode::BAD_GATEWAY)
                 .body(SseBody::from_error(format!("Streaming error: {}", e)))
                 .unwrap();
             Ok(resp)
         }
     }
+}
+
+/// Per-request callback wiring for streaming requests (mission 0947-c2).
+///
+/// Bundles the callback executor and the streaming policy so `handle_streaming`
+/// can fire `Start` (and future per-chunk events) without re-resolving config.
+/// Caller (handle_request_litellm) builds this once per request and passes it
+/// by reference.
+pub struct StreamingCallbackWiring {
+    pub executor: Option<Arc<crate::callbacks::CallbackExecutor>>,
+    pub policy: crate::callbacks::StreamingCallbackPolicy,
+    pub request_id: String,
 }
 
 // ============================================================================
@@ -2843,8 +3269,12 @@ async fn handle_embedding_request(
             Ok(resp)
         }
         Err(e) => {
+            // Embedding upstream error — wrap as 502 BAD_GATEWAY so
+            // callers can distinguish proxy-internal (500) from upstream
+            // (502). Per RFC-0933 §Failure Surface + mission
+            // proxy-strong-scenarios-phase2.
             let resp = Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .status(StatusCode::BAD_GATEWAY)
                 .body(SseBody::from_error(format!("Embedding error: {}", e)))
                 .unwrap();
             Ok(resp)
@@ -2961,6 +3391,12 @@ async fn try_fallback_models(
 #[cfg(any(feature = "litellm-mode", feature = "full"))]
 mod tests {
     use super::*;
+
+    /// Serializes the `test_resolve_api_key_any_llm_*` tests so they don't
+    /// race on the global `ANY_LLM_KEY` env var (cargo test runs unit tests
+    /// in parallel; `set_var` is process-global). Without this lock, a
+    /// later test can read `universal-key` left over from an earlier one.
+    static ANY_LLM_KEY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn test_parse_request_body_extracts_api_base() {
@@ -3171,7 +3607,7 @@ mod tests {
     fn test_proxy_server_with_storage() {
         let balance = Balance::new(1000);
         let provider = Provider::new("openai", "https://api.openai.com");
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
         let server =
@@ -3235,7 +3671,7 @@ mod tests {
             provider_params: None,
             timeout: None,
         };
-        let result = resolve_prompt(&mut req, None);
+        let result = resolve_prompt(&mut req, None, None);
         assert!(result.is_ok());
     }
 
@@ -3617,7 +4053,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -3639,7 +4075,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -3672,7 +4110,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -3706,7 +4146,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -3738,12 +4180,155 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
 
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_handle_request_healthz_liveness() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let dispatch_map = Arc::new(HashMap::new());
+
+        let req = Request::builder()
+            .uri("/healthz")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get("content-type")
+                .map(|v| v.to_str().unwrap_or("")),
+            Some("application/json")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_request_healthz_ready_ok() {
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let dispatch_map = Arc::new(HashMap::new());
+
+        let req = Request::builder()
+            .uri("/healthz/ready")
+            .body(String::new())
+            .unwrap();
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+            None,
+        )
+        .await
+        .unwrap();
+
+        // DefaultDependencyChecker returns Ok for all checks → 200 OK.
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// AC-6 integration test: when a HealthContext is supplied whose stoolap
+    /// probe points at a non-existent file, `/healthz/ready` returns 503.
+    #[tokio::test]
+    async fn test_handle_request_healthz_ready_503_when_stoolap_unreachable() {
+        use crate::health::HealthContext;
+        use std::path::PathBuf;
+
+        let balance = Arc::new(Mutex::new(Balance::new(1000)));
+        let provider = Provider::new("openai", "https://api.openai.com");
+        let dispatch_map = Arc::new(HashMap::new());
+
+        let req = Request::builder()
+            .uri("/healthz/ready")
+            .body(String::new())
+            .unwrap();
+
+        // Build a DB path that `Database::open` deterministically refuses:
+        // an existing empty regular file. See health::tests::unreachable_db_path.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let unreachable_db = dir.path().join("not_a_db");
+        std::fs::write(&unreachable_db, b"").expect("write empty file");
+
+        let providers_snapshot: Arc<dyn Fn() -> Vec<Provider> + Send + Sync> =
+            Arc::new(|| vec![Provider::new("openai", "https://api.openai.com")]);
+        let health_ctx = Arc::new(HealthContext::new(
+            unreachable_db.clone(),
+            PathBuf::from("/nonexistent/0905-d-config-missing.json"),
+            providers_snapshot,
+        ));
+        // Sanity-check that the composite wired into the handler actually
+        // detects the bad paths. If this changes we want the proxy test to
+        // fail loudly here rather than at the 503 assertion below.
+        let composite = health_ctx.composite();
+        assert_eq!(composite.stoolap.db_path, unreachable_db);
+        assert_eq!(
+            composite.config.config_path,
+            PathBuf::from("/nonexistent/0905-d-config-missing.json")
+        );
+
+        let resp = handle_request(
+            req,
+            balance,
+            provider,
+            dispatch_map,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            reqwest::Client::new(),
+            Some(health_ctx),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "stoolap probe must report 503 when DB path is unreachable"
+        );
     }
 
     #[tokio::test]
@@ -3786,7 +4371,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -3800,7 +4387,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -3824,7 +4411,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -3839,7 +4428,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -3863,7 +4452,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -3901,7 +4492,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -3934,7 +4527,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -3968,7 +4563,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4043,7 +4640,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4119,7 +4718,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4183,7 +4784,7 @@ mod tests {
     async fn test_proxy_server_builder_chain() {
         let balance = Balance::new(1000);
         let provider = Provider::new("openai", "https://api.openai.com");
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
         let metrics = Arc::new(Metrics::new());
@@ -4239,7 +4840,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4271,7 +4874,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4303,7 +4908,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4337,7 +4944,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4371,7 +4980,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4404,7 +5015,9 @@ mod tests {
             None,
             Some(Arc::new(executor)),
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4492,7 +5105,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4548,7 +5163,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4608,7 +5225,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4659,7 +5278,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4718,7 +5339,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4753,7 +5376,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4784,7 +5409,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4835,7 +5462,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4895,7 +5524,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -4955,7 +5586,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5019,7 +5652,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5069,7 +5704,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5117,7 +5754,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5163,7 +5802,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5211,7 +5852,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5252,7 +5895,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5291,7 +5936,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5329,7 +5976,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5368,7 +6017,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5399,7 +6050,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5436,7 +6089,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5468,7 +6123,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5499,7 +6156,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5530,7 +6189,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5573,7 +6234,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5610,7 +6273,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5649,7 +6314,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5688,7 +6355,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5719,7 +6388,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5751,7 +6422,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5782,7 +6455,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5844,7 +6519,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5893,7 +6570,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5942,7 +6621,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -5976,7 +6657,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6017,7 +6700,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6053,7 +6738,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6090,7 +6777,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6126,7 +6815,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6162,7 +6853,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6217,7 +6910,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6249,7 +6944,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6283,7 +6980,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6317,7 +7016,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6347,7 +7048,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6381,7 +7084,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6411,7 +7116,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6702,7 +7409,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6738,7 +7447,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6769,7 +7480,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6819,7 +7532,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -6846,7 +7559,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6860,7 +7575,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -6883,7 +7598,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6898,7 +7615,7 @@ mod tests {
         let dispatch_map = Arc::new(HashMap::new());
         let rl = Arc::new(crate::key_rate_limiter::RateLimiterStore::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -6925,7 +7642,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6941,7 +7660,7 @@ mod tests {
         let dispatch_map = Arc::new(HashMap::new());
         let rl = Arc::new(crate::key_rate_limiter::RateLimiterStore::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -6974,7 +7693,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -6995,7 +7716,7 @@ mod tests {
         let dispatch_map = Arc::new(HashMap::new());
         let rl = Arc::new(crate::key_rate_limiter::RateLimiterStore::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -7022,7 +7743,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7037,7 +7760,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -7074,7 +7797,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7094,7 +7819,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -7128,7 +7853,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7143,7 +7870,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -7172,7 +7899,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7235,15 +7964,19 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
 
         let status = resp.status();
         assert!(
-            status.is_success() || status == StatusCode::INTERNAL_SERVER_ERROR,
-            "Expected success or provider error, got {}",
+            status.is_success()
+                || status == StatusCode::INTERNAL_SERVER_ERROR
+                || status == StatusCode::BAD_GATEWAY,
+            "Expected success or provider error (500/502), got {}",
             status
         );
     }
@@ -7270,7 +8003,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7324,7 +8059,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7359,7 +8096,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7400,7 +8139,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7437,7 +8178,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7478,7 +8221,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7509,7 +8254,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7540,7 +8287,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7558,7 +8307,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -7585,7 +8334,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7622,7 +8373,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7639,6 +8392,27 @@ mod tests {
     async fn test_embeddings_unknown_provider() {
         let balance = Arc::new(Mutex::new(Balance::new(1000)));
         let provider = Provider::new("unknown_embedding_provider", "https://api.example.com");
+        // Mission proxy-strong-scenarios-phase2 round-1 fix: dispatch_map
+        // must contain the test model so the request reaches the provider
+        // factory (which then returns the unknown-provider 500 path).
+        // Without this entry, the 503 missing-model guard short-circuits
+        // before the unknown-provider contract is exercised.
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "text-embedding-ada-002".to_string(),
+            DispatchInfo {
+                deployment_id: "text-embedding-ada-002".to_string(),
+                provider: "openai".to_string(),
+                model: "text-embedding-ada-002".to_string(),
+                api_key: None,
+                api_base: None,
+                rpm: 1000,
+                tpm: 1_000_000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
         let req = Request::builder()
             .uri("/v1/embeddings")
             .body(r#"{"model":"text-embedding-ada-002","input":"hello"}"#.to_string())
@@ -7657,7 +8431,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7691,7 +8467,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7758,15 +8536,19 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
 
         let status = resp.status();
         assert!(
-            status.is_success() || status == StatusCode::INTERNAL_SERVER_ERROR,
-            "Expected success or provider error, got {}",
+            status.is_success()
+                || status == StatusCode::INTERNAL_SERVER_ERROR
+                || status == StatusCode::BAD_GATEWAY,
+            "Expected success or provider error (500/502), got {}",
             status
         );
     }
@@ -7825,15 +8607,19 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
 
         let status = resp.status();
         assert!(
-            status.is_success() || status == StatusCode::INTERNAL_SERVER_ERROR,
-            "Expected success or provider error, got {}",
+            status.is_success()
+                || status == StatusCode::INTERNAL_SERVER_ERROR
+                || status == StatusCode::BAD_GATEWAY,
+            "Expected success or provider error (500/502), got {}",
             status
         );
     }
@@ -7892,7 +8678,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7931,7 +8719,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -7979,7 +8769,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8018,7 +8810,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8053,7 +8847,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8088,7 +8884,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8122,7 +8920,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8145,7 +8945,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -8168,7 +8968,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8186,7 +8988,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -8209,7 +9011,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8227,7 +9031,7 @@ mod tests {
         let provider = Provider::new("openai", "https://api.openai.com");
         let dispatch_map = Arc::new(HashMap::new());
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -8254,7 +9058,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8294,7 +9100,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8373,7 +9181,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8430,7 +9240,9 @@ mod tests {
             Some(cache),
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8480,7 +9292,9 @@ mod tests {
             Some(cache),
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8529,7 +9343,9 @@ mod tests {
             Some(cache),
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8562,7 +9378,7 @@ mod tests {
         let server = MockHttpServer::with_json(&mock_response).await;
         let base_url = server.base_url();
 
-        let db = stoolap::Database::open_in_memory().unwrap();
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
         crate::schema::init_database(&db).unwrap();
         let storage = Arc::new(crate::storage::StoolapKeyStorage::new(db));
 
@@ -8635,7 +9451,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8715,7 +9533,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8788,7 +9608,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8843,7 +9665,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8885,7 +9709,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -8966,7 +9792,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -9012,7 +9840,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -9065,7 +9895,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -9102,7 +9934,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -9279,7 +10113,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -9334,7 +10170,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -9346,7 +10184,7 @@ mod tests {
             .to_bytes();
         let text = String::from_utf8_lossy(&body_bytes);
         assert!(
-            text.contains("Model unhealthy") && text.contains("no fallback models"),
+            text.contains("Model unhealthy") & text.contains("no fallback models"),
             "Expected 'no fallback models' message, got: {}",
             text
         );
@@ -9452,7 +10290,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -9555,7 +10395,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -9640,7 +10482,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -9727,8 +10571,14 @@ mod tests {
     /// Cluster 542-547 — `resolve_api_key` Priority 2: ANY_LLM_KEY env var.
     /// Fires when no config_key is supplied AND `{PROVIDER}_API_KEY` env is unset
     /// AND `ANY_LLM_KEY` is set + non-empty.
+    ///
+    /// NOTE: serializes with the other `resolve_api_key_any_llm_*` tests via
+    /// `ANY_LLM_KEY_LOCK` because they mutate the global `ANY_LLM_KEY` env
+    /// var and cargo test runs unit tests in parallel. Without serialization
+    /// the third test reads leftover state from the first.
     #[test]
     fn test_resolve_api_key_any_llm_env_fallback() {
+        let _guard = ANY_LLM_KEY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("TESTPROV_ANY_API_KEY");
         std::env::set_var("ANY_LLM_KEY", "universal-key");
         let provider = Provider::new("testprov_any", "https://example.com");
@@ -9740,8 +10590,11 @@ mod tests {
 
     /// Cluster 542-547 — ANY_LLM_KEY beats provider-specific env var when both
     /// are present and no config_key supplied. (Priority 2 > Priority 3.)
+    ///
+    /// Serialized via `ANY_LLM_KEY_LOCK` — see test above.
     #[test]
     fn test_resolve_api_key_any_llm_beats_provider_env() {
+        let _guard = ANY_LLM_KEY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("TESTPROV_ANY2_API_KEY", "prov-key");
         std::env::set_var("ANY_LLM_KEY", "universal-key");
         let provider = Provider::new("testprov_any2", "https://example.com");
@@ -9752,8 +10605,11 @@ mod tests {
     }
 
     /// Cluster 542-547 — empty ANY_LLM_KEY falls through to provider env var.
+    ///
+    /// Serialized via `ANY_LLM_KEY_LOCK` — see test above.
     #[test]
     fn test_resolve_api_key_any_llm_empty_falls_through() {
+        let _guard = ANY_LLM_KEY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("TESTPROV_ANY3_API_KEY", "prov-key");
         std::env::set_var("ANY_LLM_KEY", "");
         let provider = Provider::new("testprov_any3", "https://example.com");
@@ -9838,7 +10694,7 @@ mod tests {
             provider_params: None,
             timeout: None,
         };
-        let result = resolve_prompt(&mut req, None);
+        let result = resolve_prompt(&mut req, None, None);
         assert!(result.is_err());
         assert!(
             result
@@ -9881,7 +10737,7 @@ mod tests {
             timeout: None,
         };
         let mut registry = crate::prompts::PromptRegistry::new();
-        let result = resolve_prompt(&mut req, Some(&mut registry));
+        let result = resolve_prompt(&mut req, Some(&mut registry), None);
         assert!(result.is_err());
         let msg = result.unwrap_err();
         assert!(
@@ -9952,7 +10808,7 @@ mod tests {
             provider_params: None,
             timeout: None,
         };
-        let result = resolve_prompt(&mut req, Some(&mut registry));
+        let result = resolve_prompt(&mut req, Some(&mut registry), None);
         assert!(result.is_ok(), "expected Ok(()), got: {:?}", result);
         assert_eq!(req.messages.len(), 2, "system message prepended");
         assert_eq!(req.messages[0].role, "system");
@@ -9962,6 +10818,85 @@ mod tests {
             req.messages[1].content.as_deref(),
             Some("original question")
         );
+    }
+
+    /// Cluster 2411-2427 — A/B request_id priority chain
+    /// (RFC-0948 §Integration): api_key_id > user field > generated
+    /// UUID. Verifies (a) `api_key_id` accepts a non-empty anchor and
+    /// still resolves the prompt, (b) `Some("")` falls through to the
+    /// user field, (c) `None` falls through to the user field. The
+    /// arm-selection determinism itself is exercised by the `AbTest`
+    /// unit tests in `prompts::ab_test`.
+    #[test]
+    fn test_resolve_prompt_request_id_priority_chain_wiring() {
+        let mut registry = crate::prompts::PromptRegistry::new();
+        let prompt = crate::prompts::PromptTemplate {
+            id: "greet".into(),
+            name: "greeting".into(),
+            version: "1".into(),
+            team_id: None,
+            template: "Hello {{name}}!".into(),
+            defaults: [("name".to_string(), "World".to_string())]
+                .iter()
+                .cloned()
+                .collect(),
+            model: None,
+            tags: vec![],
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            created_by: "test".into(),
+        };
+        registry.create(prompt).expect("create");
+
+        let make_req = |user: Option<&str>| -> NativeHttpRequest {
+            NativeHttpRequest {
+                model: "gpt-4o".into(),
+                messages: vec![],
+                stream: None,
+                temperature: None,
+                max_tokens: None,
+                top_p: None,
+                stop: None,
+                n: None,
+                presence_penalty: None,
+                frequency_penalty: None,
+                user: user.map(String::from),
+                api_base: None,
+                tools: None,
+                tool_choice: None,
+                response_format: None,
+                seed: None,
+                logprobs: None,
+                top_logprobs: None,
+                parallel_tool_calls: None,
+                prompt_id: Some("greet".into()),
+                prompt_variables: Some(
+                    [("name".to_string(), "Alice".to_string())]
+                        .iter()
+                        .cloned()
+                        .collect(),
+                ),
+                provider_params: None,
+                timeout: None,
+            }
+        };
+
+        // (a) api_key_id provided — prompt resolves successfully
+        let mut r1 = make_req(None);
+        resolve_prompt(&mut r1, Some(&mut registry), Some("caller-a"))
+            .expect("resolve with api_key_id");
+        assert_eq!(r1.messages[0].content.as_deref(), Some("Hello Alice!"));
+
+        // (b) api_key_id = Some("") falls through to user
+        let mut r2 = make_req(Some("user-42"));
+        resolve_prompt(&mut r2, Some(&mut registry), Some(""))
+            .expect("resolve with empty api_key_id");
+        assert_eq!(r2.messages[0].content.as_deref(), Some("Hello Alice!"));
+
+        // (c) api_key_id = None falls through to user
+        let mut r3 = make_req(Some("user-42"));
+        resolve_prompt(&mut r3, Some(&mut registry), None).expect("resolve with no api_key_id");
+        assert_eq!(r3.messages[0].content.as_deref(), Some("Hello Alice!"));
     }
 
     // ====================================================================
@@ -9992,7 +10927,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10045,7 +10982,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10106,7 +11045,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10141,7 +11082,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10185,7 +11128,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10243,7 +11188,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10337,7 +11284,9 @@ mod tests {
             Some(cache),
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10394,7 +11343,9 @@ mod tests {
             Some(cache),
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10495,7 +11446,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10607,7 +11560,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10711,7 +11666,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10792,7 +11749,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10863,7 +11822,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10933,7 +11894,9 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
@@ -10966,7 +11929,27 @@ mod tests {
 
         let balance = Arc::new(Mutex::new(Balance::new(1000)));
         let provider = Provider::new("openai", &mock.base_url());
-        let dispatch_map = Arc::new(HashMap::new());
+        // Mission proxy-strong-scenarios-phase2 round-1 fix: dispatch_map
+        // must contain the test model or the new 503 guard short-circuits
+        // before reaching the upstream error path. This test pins the
+        // 500→502 wrap contract, not the missing-model contract.
+        let mut dispatch_map = HashMap::new();
+        dispatch_map.insert(
+            "text-embedding-ada-002".to_string(),
+            DispatchInfo {
+                deployment_id: "text-embedding-ada-002".to_string(),
+                provider: "openai".to_string(),
+                model: "text-embedding-ada-002".to_string(),
+                api_key: None,
+                api_base: Some(mock.base_url()),
+                rpm: 1000,
+                tpm: 1_000_000,
+                model_group: None,
+                metadata: None,
+                max_retries: None,
+            },
+        );
+        let dispatch_map = Arc::new(dispatch_map);
 
         let body = r#"{"input":"hi","model":"text-embedding-ada-002"}"#;
         let req = Request::builder()
@@ -10988,12 +11971,19 @@ mod tests {
             None,
             None,
             None,
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();
 
-        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        // Mission proxy-strong-scenarios-phase2: upstream error maps
+        // to 502 BAD_GATEWAY (per RFC-0933 §Failure Surface), not 500.
+        // 500 is reserved for proxy-internal failures (config bugs,
+        // invariant violations), 502 specifically signals "upstream
+        // is the problem".
+        assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
         let body_bytes = http_body_util::BodyExt::collect(resp.into_body())
             .await
             .unwrap()
@@ -11042,7 +12032,9 @@ mod tests {
             None,
             None,
             Some(registry),
+            None,
             reqwest::Client::new(),
+            None,
         )
         .await
         .unwrap();

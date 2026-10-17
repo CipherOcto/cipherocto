@@ -1,8 +1,11 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures::future::join_all;
+use tokio::sync::{oneshot, Mutex};
 
 use crate::receiver::{NetworkReceiver, ReceiveContext};
+use crate::request_response::PendingRequests;
 use crate::sender::{NetworkSender, SendContext, TransportError};
 
 /// Declarative transport stack that fans out or fails over to multiple senders,
@@ -14,6 +17,14 @@ use crate::sender::{NetworkSender, SendContext, TransportError};
 pub struct NodeTransport {
     senders: Vec<Arc<dyn NetworkSender>>,
     receivers: std::sync::Mutex<Vec<Arc<dyn NetworkReceiver>>>,
+    /// In-flight request/response registry keyed by RFC-0871
+    /// `envelope_id`. Populated by `register_response_handler`; consumed
+    /// by `dispatch_response` (or swept by `evict_expired_pending`).
+    ///
+    /// Mission 0870k-transport-request-response: generalizes the
+    /// mesh-specific `PendingRequests` at
+    /// `crates/quota-router-core/src/node/quota_router_node.rs:2312+`.
+    pending: Arc<Mutex<PendingRequests>>,
 }
 
 impl NodeTransport {
@@ -21,6 +32,7 @@ impl NodeTransport {
         Self {
             senders,
             receivers: std::sync::Mutex::new(Vec::new()),
+            pending: Arc::new(Mutex::new(PendingRequests::new())),
         }
     }
 
@@ -82,6 +94,153 @@ impl NodeTransport {
         Ok(())
     }
 
+    /// Send a request via the first sender that does NOT return
+    /// `TransportError::Unsupported`. Await the response until `timeout`
+    /// elapses, matching it by RFC-0871 `envelope_id` via the
+    /// `register_response_handler` / `dispatch_response` pair.
+    ///
+    /// Mission 0870k-transport-request-response: high-level API.
+    /// Caller MUST compute `envelope_id` per RFC-0871 §Algorithms step 2
+    /// BEFORE calling this method (the substrate only correlates; it
+    /// does not interpret envelope semantics).
+    ///
+    /// Returns the reply payload bytes (caller decodes per the reply
+    /// envelope's `payload_kind`). On timeout returns
+    /// `Err(TransportError::AllTransportsFailed)`.
+    pub async fn request_response(
+        &self,
+        payload: &[u8],
+        envelope_id: [u8; 32],
+        context: &SendContext,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, TransportError> {
+        // Register the response handler BEFORE sending so the reply
+        // dispatch path can find it (avoid race where reply arrives
+        // before handler is registered).
+        let rx = {
+            let mut pending = self.pending.lock().await;
+            pending
+                .register(envelope_id)
+                .map_err(|_| TransportError::AllTransportsFailed)?
+        };
+
+        // Try senders in order; skip Unsupported. The returned `Vec<u8>`
+        // from a successful `send_request` is the synchronous response
+        // (substrate auto-delivers it to the registered handler).
+        // Async senders return `Ok(())` (empty payload) and rely on
+        // `dispatch_response` to deliver the reply later.
+        let mut last_err: Option<TransportError> = None;
+        let mut sent = false;
+        for sender in &self.senders {
+            if !sender.is_healthy() {
+                continue;
+            }
+            match sender
+                .send_request(payload, envelope_id, context, timeout)
+                .await
+            {
+                Ok(payload) => {
+                    sent = true;
+                    // Sync reply: deliver via complete() so the
+                    // awaiting caller gets the bytes without waiting
+                    // for the full timeout. Empty payload means "async;
+                    // will deliver via dispatch_response".
+                    if !payload.is_empty() {
+                        let mut pending = self.pending.lock().await;
+                        // Best-effort: if cancel races us, ignore.
+                        let _ = pending.complete(envelope_id, payload);
+                    }
+                    break;
+                }
+                Err(TransportError::Unsupported(_)) => continue,
+                Err(e) => {
+                    last_err = Some(e);
+                }
+            }
+        }
+
+        if !sent {
+            // Remove the handler we registered — nobody will reply.
+            // Use `cancel` (not `complete(empty)`) so the receiver
+            // gets cancelled cleanly without seeing a fake payload.
+            let mut pending = self.pending.lock().await;
+            pending.cancel(envelope_id);
+            return Err(last_err.unwrap_or(TransportError::Unsupported(
+                "no sender implements send_request".to_owned(),
+            )));
+        }
+
+        // Await the reply or the timeout.
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(payload)) => Ok(payload),
+            Ok(Err(_)) => Err(TransportError::AllTransportsFailed),
+            Err(_elapsed) => {
+                // Sweep the stale entry via cancel — receiver is
+                // already cancelled by the timeout.
+                let mut pending = self.pending.lock().await;
+                pending.cancel(envelope_id);
+                Err(TransportError::AllTransportsFailed)
+            }
+        }
+    }
+
+    /// Register an expectation for a response with the given RFC-0871
+    /// `envelope_id`. Returns a `oneshot::Receiver<Vec<u8>>` that
+    /// resolves when `dispatch_response` is called with the matching
+    /// id, or the receiver is dropped (timeout / cancellation).
+    ///
+    /// Use this when the caller wants to register a handler without
+    /// going through `request_response` (e.g. intermediate nodes
+    /// forwarding a request and binding both the forward and the
+    /// return path).
+    pub async fn register_response_handler(
+        &self,
+        envelope_id: [u8; 32],
+    ) -> Result<oneshot::Receiver<Vec<u8>>, TransportError> {
+        let mut pending = self.pending.lock().await;
+        pending
+            .register(envelope_id)
+            .map_err(|_| TransportError::AllTransportsFailed)
+    }
+
+    /// Called by the inbound dispatch path when a reply envelope
+    /// arrives with `envelope_id` matching a registered handler.
+    /// Delivers the payload to the awaiting caller.
+    ///
+    /// Public so test infrastructure can inject responses directly; in
+    /// production the receive loop calls it after extracting
+    /// `envelope.envelope_id` from the inbound envelope.
+    ///
+    /// If no handler is registered for the given id, the reply falls
+    /// through to `NetworkReceiver::on_receive` (existing path) —
+    /// fail-closed for unknown replies.
+    pub async fn dispatch_response(
+        &self,
+        envelope_id: [u8; 32],
+        payload: Vec<u8>,
+    ) -> Result<(), TransportError> {
+        let mut pending = self.pending.lock().await;
+        pending
+            .complete(envelope_id, payload)
+            .map_err(|_| TransportError::AllTransportsFailed)
+    }
+
+    /// Sweep stale pending entries older than `timeout`. Returns count
+    /// of entries evicted. Called by background sweeper tasks or on
+    /// shutdown.
+    pub async fn evict_expired_pending(&self, timeout: Duration) -> usize {
+        use std::time::Instant;
+
+        let mut pending = self.pending.lock().await;
+        pending.evict_expired(Instant::now(), timeout)
+    }
+
+    /// Number of in-flight pending entries. For diagnostics/tests.
+    pub async fn pending_count(&self) -> usize {
+        let pending = self.pending.lock().await;
+        pending.len()
+    }
+
     /// Return list of healthy transport names.
     pub fn healthy_transports(&self) -> Vec<String> {
         self.senders
@@ -100,6 +259,7 @@ impl NodeTransport {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::time::Duration;
 
     use async_trait::async_trait;
 
@@ -468,5 +628,108 @@ mod tests {
         let payload = b"exact payload bytes";
         t.dispatch(payload, &recv_ctx()).await.unwrap();
         assert_eq!(rx_clone.captured(), vec![payload.to_vec()]);
+    }
+
+    // === Request/response tests (mission 0870k AC-7..AC-10) ===
+
+    /// Mock sender that records `send_request` calls + returns a
+    /// canned response.
+    struct MockRequestSender {
+        name: String,
+        canned_response: Vec<u8>,
+    }
+
+    impl MockRequestSender {
+        fn new(name: &str, response: &[u8]) -> Self {
+            Self {
+                name: name.to_string(),
+                canned_response: response.to_vec(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl NetworkSender for MockRequestSender {
+        async fn send(&self, _payload: &[u8], _ctx: &SendContext) -> Result<(), TransportError> {
+            Ok(())
+        }
+
+        async fn send_request(
+            &self,
+            _payload: &[u8],
+            _envelope_id: [u8; 32],
+            _context: &SendContext,
+            _timeout: Duration,
+        ) -> Result<Vec<u8>, TransportError> {
+            Ok(self.canned_response.clone())
+        }
+
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn is_healthy(&self) -> bool {
+            true
+        }
+    }
+
+    #[tokio::test]
+    async fn request_response_unsupported_sender_returns_error() {
+        // MockSender has the default `send_request = Err(Unsupported)` body.
+        let t = NodeTransport::new(senders(vec![MockSender::new("unsupported-a")]));
+        let result = t
+            .request_response(b"req", [1u8; 32], &ctx(), Duration::from_millis(50))
+            .await;
+        assert!(matches!(result, Err(TransportError::Unsupported(_))));
+        // Pending entry should be cleaned up after the cancel.
+        assert_eq!(t.pending_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn request_response_round_trip_via_mock_sender() {
+        // Sender returns canned reply synchronously. Reply echoes the
+        // request envelope_id (caller verifies by registering their
+        // own handler bound to that id and confirming dispatch_response
+        // matched).
+        let envelope_id = [42u8; 32];
+        let reply_payload = b"reply bytes";
+        let t = NodeTransport::new(vec![Arc::new(MockRequestSender::new(
+            "mocksendreq",
+            reply_payload,
+        ))]);
+
+        let result = t
+            .request_response(b"req", envelope_id, &ctx(), Duration::from_secs(1))
+            .await
+            .expect("request_response succeeds");
+        assert_eq!(result, reply_payload);
+        // Pending registry is empty after round-trip.
+        assert_eq!(t.pending_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn dispatch_response_unknown_envelope_id_returns_err() {
+        let t = NodeTransport::new(vec![]);
+        let result = t.dispatch_response([99u8; 32], b"orphan".to_vec()).await;
+        assert!(matches!(result, Err(TransportError::AllTransportsFailed)));
+        // No panic; pending registry stays empty.
+        assert_eq!(t.pending_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn register_response_handler_drop_on_caller_cancel() {
+        let t = NodeTransport::new(vec![]);
+        let envelope_id = [7u8; 32];
+        let rx = t
+            .register_response_handler(envelope_id)
+            .await
+            .expect("register");
+        assert_eq!(t.pending_count().await, 1);
+        drop(rx); // caller cancels
+                  // dispatch_response now fails (ReceiverDropped) but entry is
+                  // removed.
+        let result = t.dispatch_response(envelope_id, b"too-late".to_vec()).await;
+        assert!(matches!(result, Err(TransportError::AllTransportsFailed)));
+        assert_eq!(t.pending_count().await, 0);
     }
 }

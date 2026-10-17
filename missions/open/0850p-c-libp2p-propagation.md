@@ -21,6 +21,7 @@ let topic = format!("/dot/bind/{}", domain_id.to_base58());
 ```
 
 Nodes that are not yet in the physical group can subscribe to this topic and receive the BIND envelope as a "pre-admission notification". On receipt, the node:
+
 1. Validates the BIND envelope signature (DomainCoordinator's key)
 2. Checks that the `domain_id` is one the node wants to join
 3. Optionally initiates platform-group join (if the platform is configured)
@@ -37,19 +38,17 @@ The libp2p-delivered BIND is informational; the authoritative BIND is the one de
 - [ ] Integration test: non-member pre-fetches mission config from libp2p-delivered BIND
 - [ ] Documentation: how to enable libp2p BIND gossip (off by default for privacy)
 
-
 ### Implementation Guide
 
 Reference: RFC-0852 (gossip protocol); `crates/octo-network/src/gossip/bind.rs` (new).
 
-
 ### Type Coverage
 
-| RFC-0850p-c Type | Implemented By |
-|-----------------|----------------|
-| `BindEnvelope` gossipable on libp2p mesh | This mission |
-| `/dot/bind/{domain_id}` gossip topic | This mission |
-| Pre-admission notification handler | This mission |
+| RFC-0850p-c Type                         | Implemented By |
+| ---------------------------------------- | -------------- |
+| `BindEnvelope` gossipable on libp2p mesh | This mission   |
+| `/dot/bind/{domain_id}` gossip topic     | This mission   |
+| Pre-admission notification handler       | This mission   |
 
 ## Dependencies
 

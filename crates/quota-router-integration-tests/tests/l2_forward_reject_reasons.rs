@@ -175,6 +175,7 @@ async fn l2_announce_valid_adds_peer() {
     let peer_id = RouterNodeId([0xCCu8; 32]);
     let mut announce = RouterAnnouncePayload {
         node_id: peer_id,
+        pricing_policy: None,
         network_id: NetworkId([1u8; 32]),
         supported_models: vec!["gpt-4o".into()],
         capacities: vec![],
@@ -211,6 +212,7 @@ async fn l2_announce_invalid_hmac_rejected() {
         capacities: vec![],
         timestamp: monotonic_now(),
         hmac: [0u8; 32], // wrong
+        pricing_policy: None,
     };
     let framed = envelope(DISC_ROUTER_ANNOUNCE, &announce).unwrap();
 
@@ -237,6 +239,7 @@ async fn l2_withdraw_removes_peer() {
     let peer_id = RouterNodeId([0xEEu8; 32]);
     let mut announce = RouterAnnouncePayload {
         node_id: peer_id,
+        pricing_policy: None,
         network_id: NetworkId([1u8; 32]),
         supported_models: vec!["gpt-4o".into()],
         capacities: vec![],

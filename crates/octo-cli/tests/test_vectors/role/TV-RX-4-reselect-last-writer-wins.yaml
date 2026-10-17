@@ -1,0 +1,10 @@
+# TV-RX-4 — RFC-0011-d §11 Test Vectors.
+vector: TV-RX-4
+description: re-select same role overwrites silently (last-writer-wins)
+schema_version: octo.role.test.v1
+invocation:
+  - args: [role, select, builder, --confirm]
+  - args: [role, select, builder, --confirm]
+expect:
+  exit_code: 0
+  behavior: last-writer-wins; no RoleBindingConflict variant

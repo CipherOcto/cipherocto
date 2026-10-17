@@ -14,3 +14,10 @@ blake3 = "1.5"
 base64 = "0.22"
 async-trait = "0.1"
 octo-network = { path = "../octo-network" }
+# The envelope carries no algorithm, so a verifying adapter supplies it
+# (RFC-0009 AC#11). DOT envelopes are signed with ed25519-dalek, so Ed25519
+# is the algorithm this call site verifies under. Stranded by the
+# `0009-c7` signature change, which moved the algorithm to first position;
+# the AC-11 gate was edited to tolerate the bare form instead of
+# requiring this argument, so nothing caught the fourteen of these.
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }

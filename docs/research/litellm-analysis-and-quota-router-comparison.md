@@ -21,7 +21,7 @@ This research analyzes LiteLLM (a production-grade Python AI gateway and SDK) as
 
 ## Problem Statement
 
-The current quota-router-cli (MVE) provides basic proxy functionality with mock OCTO-W balance checking. To reach the vision defined in RFC-0900 (AI Quota Marketplace) and RFC-0901 (Quota Router Agent), significant feature development is required. LiteLLM serves as an existing implementation reference for many of these features.
+The current quota-router-cli (MVE) provides basic proxy functionality with mock OCTO-W balance checking. To reach the vision defined in RFC-0900 and RFC-0901, significant feature development is required. LiteLLM serves as an existing implementation reference for many of these features.
 
 ## Research Scope
 

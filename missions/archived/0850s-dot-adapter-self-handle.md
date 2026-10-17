@@ -61,7 +61,7 @@ Telegram and Discord already implement `self_handle()` — this mission brings t
 
 ## Design Reference
 
-- **ZeroClaw pattern**: `zeroclaw/crates/zeroclaw-channels/src/telegram.rs` line 3764 — `fn self_handle(&self) -> Option<String>`
+- **ZeroClaw pattern**: `zeroclaw/crates/zeroclaw-channels/src/telegram.rs` — `fn self_handle(&self) -> Option<String>`
 - **ZeroClaw pattern**: `zeroclaw/crates/zeroclaw-channels/src/discord.rs` — decodes bot ID from token
 - **CipherOcto Telegram**: `crates/octo-adapter-telegram/src/lib.rs` — already implements self_handle
 - **CipherOcto Discord**: `crates/octo-adapter-discord/src/lib.rs` — already implements self_handle

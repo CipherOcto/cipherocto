@@ -25,7 +25,7 @@ const _: [(); 282] = [(); crate::envelope::ENVELOPE_WIRE_LENGTH];
 pub const ENVELOPE_WIRE_LENGTH: usize = 282;
 
 /// Encode an envelope as base64 with DOT prefix.
-/// 0850f lib.rs:225 — `pub fn encode_envelope(envelope_bytes: &[u8]) -> String`
+/// 0850f lib.rs:225 — `pub fn encode_envelope(envelope_bytes: &&[u8]) -> String`
 pub fn encode_envelope(envelope_bytes: &[u8]) -> String {
     URL_SAFE_NO_PAD.encode(envelope_bytes)
 }
@@ -41,7 +41,7 @@ pub fn encode_envelope(envelope_bytes: &[u8]) -> String {
 /// `PlatformAdapterError::ApiError` (not `Unreachable`) so the gateway
 /// treats garbled payloads as API errors rather than transport failures.
 ///
-/// 0850f lib.rs:233 — `pub fn decode_envelope(text: &str) -> Result<Vec<u8>, String>`
+/// 0850f lib.rs:233 — `pub fn decode_envelope(text: &&str) -> Result<Vec<u8>, String>`
 pub fn decode_envelope(text: &str) -> Result<Vec<u8>> {
     let bytes = URL_SAFE_NO_PAD.decode(text).map_err(|e| {
         let snippet = if text.len() > 80 { &text[..80] } else { text };

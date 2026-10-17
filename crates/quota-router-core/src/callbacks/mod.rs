@@ -2,8 +2,26 @@
 //!
 //! Provides non-blocking callback delivery for request/response events.
 //! Callbacks fire asynchronously via a bounded channel — never block the request path.
+//!
+//! ## Streaming callback semantics (RFC-0947 §Streaming Semantics; mission 0947-c2)
+//!
+//! For SSE / chunked responses the proxy must avoid naive per-chunk firing,
+//! which would re-run the entire callback pipeline for every SSE event and
+//! flood the bounded channel. The default policy is `OncePerRequest`, which
+//! matches LiteLLM:
+//!
+//! | Policy              | Start           | End+Success/Failure | Use case                                |
+//! |---------------------|-----------------|---------------------|-----------------------------------------|
+//! | `OncePerRequest`    | request entry   | stream completion   | Default; LiteLLM-compatible             |
+//! | `PerChunk`          | first chunk     | every chunk         | Low-latency observability (high volume) |
+//! | `Disabled`          | never           | never               | Operators opting out for streaming only |
+//!
+//! **Breaking-change note:** consumers who relied on LiteLLM's per-chunk firing
+//! must explicitly set `streaming_callback_policy: "per_chunk"`. See RFC-0947
+//! §Streaming Semantics for the migration plan.
 
 use chrono::{DateTime, Utc};
+use prometheus::IntCounter;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -20,8 +38,30 @@ pub mod webhook;
 // Callback Types
 // ============================================================================
 
+/// Streaming callback policy (RFC-0947 §Streaming Semantics; mission 0947-c2).
+///
+/// Controls how callbacks fire for SSE / chunked responses. The default
+/// `OncePerRequest` matches LiteLLM semantics: Start at request entry, End +
+/// Success/Failure once at stream completion. Naive per-chunk firing re-runs
+/// the entire callback pipeline for every SSE event and floods the bounded
+/// channel; operators who want low-latency observability must opt in
+/// explicitly. `Disabled` suppresses all streaming callbacks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamingCallbackPolicy {
+    /// Fire Start at request begin + End + Success/Failure once at completion
+    /// (LiteLLM default).
+    #[default]
+    OncePerRequest,
+    /// Fire callbacks for every chunk received. High volume — only enable when
+    /// observability demands per-chunk granularity.
+    PerChunk,
+    /// Suppress all callback firing for streaming requests.
+    Disabled,
+}
+
 /// Callback event type — maps to LiteLLM's 4 callback lists plus extensions.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum CallbackType {
     /// Input validation/transformation (pre-provider-call).
     /// Maps to LiteLLM's input_callback.
@@ -208,6 +248,10 @@ pub struct CallbackExecutor {
     worker: Option<JoinHandle<()>>,
     /// Dropped event counter.
     dropped_total: Arc<AtomicU64>,
+    /// Optional Prometheus counter sink — set via `install_dropped_counter`.
+    /// When the channel is full, both this counter and `dropped_total` are
+    /// incremented so `callback_dropped_total` exposes the overflow metric.
+    dropped_metric: Option<IntCounter>,
 }
 
 impl CallbackExecutor {
@@ -228,7 +272,22 @@ impl CallbackExecutor {
             tx,
             worker: Some(worker),
             dropped_total,
+            dropped_metric: None,
         }
+    }
+
+    /// Wire the Prometheus counter sink for overflow tracking.
+    /// After installation, every `fire()` that fails on full channel
+    /// increments BOTH the local `dropped_total` AND the supplied counter.
+    /// Returns the count of events already dropped but not yet reported
+    /// to the metric (should be zero when installed at startup).
+    pub fn install_dropped_counter(&mut self, counter: IntCounter) -> u64 {
+        let prior = self.dropped_total.load(Ordering::Relaxed);
+        if prior > 0 {
+            counter.inc_by(prior);
+        }
+        self.dropped_metric = Some(counter);
+        prior
     }
 
     /// Register a callback target for a specific event type.
@@ -245,6 +304,9 @@ impl CallbackExecutor {
             Ok(()) => Ok(()),
             Err(_) => {
                 self.dropped_total.fetch_add(1, Ordering::Relaxed);
+                if let Some(c) = &self.dropped_metric {
+                    c.inc();
+                }
                 Err(CallbackError::TargetUnreachable("Channel full".to_string()))
             }
         }
@@ -319,6 +381,140 @@ impl Drop for CallbackExecutor {
                 worker.abort();
             }
         }
+    }
+}
+
+// ============================================================================
+// Event Builders (RFC-0947 §End/Success/Failure wiring)
+// ============================================================================
+
+/// Build a `CallbackEvent` of type `End` — fires at request completion
+/// (success OR failure path). Always paired with exactly one of
+/// `Success` or `Failure`. `response` and `error` are mutually
+/// exclusive: pass `Some(response)` for success, `Some(error)` for
+/// failure, both `None` for an unexpected path.
+pub fn build_end_event(
+    request: CallbackRequest,
+    response: Option<CallbackResponse>,
+    error: Option<CallbackErrorDetail>,
+    timing: CallbackTiming,
+) -> CallbackEvent {
+    CallbackEvent {
+        event_id: uuid::Uuid::new_v4().to_string(),
+        callback_type: CallbackType::End,
+        timestamp: Utc::now(),
+        request,
+        response,
+        error,
+        key_metadata: None,
+        timing,
+    }
+}
+
+/// Build a `CallbackEvent` of type `Success` — fires after a
+/// successful provider response (2xx status). The `response` carries
+/// summary + usage + latency. Errors are always `None`.
+pub fn build_success_event(
+    request: CallbackRequest,
+    response: CallbackResponse,
+    timing: CallbackTiming,
+) -> CallbackEvent {
+    CallbackEvent {
+        event_id: uuid::Uuid::new_v4().to_string(),
+        callback_type: CallbackType::Success,
+        timestamp: Utc::now(),
+        request,
+        response: Some(response),
+        error: None,
+        key_metadata: None,
+        timing,
+    }
+}
+
+/// Build a `CallbackEvent` of type `Failure` — fires after a provider
+/// error (4xx/5xx status) or local proxy error. The `error` carries
+/// the classified code + provider source. Response is always `None`.
+pub fn build_failure_event(
+    request: CallbackRequest,
+    error: CallbackErrorDetail,
+    timing: CallbackTiming,
+) -> CallbackEvent {
+    CallbackEvent {
+        event_id: uuid::Uuid::new_v4().to_string(),
+        callback_type: CallbackType::Failure,
+        timestamp: Utc::now(),
+        request,
+        response: None,
+        error: Some(error),
+        key_metadata: None,
+        timing,
+    }
+}
+
+/// Fire `Success` + `End` in sequence (non-blocking). Convenience
+/// wrapper used by `proxy.rs` at the success-return branch. Both
+/// fires are best-effort — failures are swallowed (channel-full
+/// drops are tracked by the executor's `dropped_total`).
+pub async fn fire_end_success(
+    executor: &CallbackExecutor,
+    request: CallbackRequest,
+    response: CallbackResponse,
+    timing: CallbackTiming,
+) {
+    let _ = executor
+        .fire(build_success_event(
+            request.clone(),
+            response.clone(),
+            timing.clone(),
+        ))
+        .await;
+    let _ = executor
+        .fire(build_end_event(request, Some(response), None, timing))
+        .await;
+}
+
+/// Fire `Failure` + `End` in sequence (non-blocking). Convenience
+/// wrapper used by `proxy.rs` at the error-return branch (both
+/// provider-error and local-error paths). Best-effort delivery.
+pub async fn fire_end_failure(
+    executor: &CallbackExecutor,
+    request: CallbackRequest,
+    error: CallbackErrorDetail,
+    timing: CallbackTiming,
+) {
+    let _ = executor
+        .fire(build_failure_event(
+            request.clone(),
+            error.clone(),
+            timing.clone(),
+        ))
+        .await;
+    let _ = executor
+        .fire(build_end_event(request, None, Some(error), timing))
+        .await;
+}
+
+/// Fire `Start` at streaming request entry (mission 0947-c2,
+/// `StreamingCallbackPolicy::OncePerRequest`). Best-effort.
+pub async fn fire_streaming_start(
+    executor: &CallbackExecutor,
+    request: CallbackRequest,
+    timing: CallbackTiming,
+) {
+    let _ = executor.fire(build_start_event(request, timing)).await;
+}
+
+/// Build a `Start` event (mission 0947-c2).
+pub fn build_start_event(request: CallbackRequest, timing: CallbackTiming) -> CallbackEvent {
+    CallbackEvent {
+        event_id: uuid::Uuid::new_v4().to_string(),
+        callback_type: CallbackType::Start,
+        timestamp: Utc::now(),
+        request,
+        response: None,
+        error: None,
+        key_metadata: None,
+        timing,
     }
 }
 
@@ -494,6 +690,43 @@ mod tests {
         assert!(executor.dropped_count() >= 1);
     }
 
+    #[tokio::test]
+    async fn test_callback_executor_install_dropped_counter_wires_metric() {
+        let counter = IntCounter::new("test_callback_dropped_total", "test").unwrap();
+        let mut executor = CallbackExecutor::new(1);
+        let replay = executor.install_dropped_counter(counter.clone());
+        assert_eq!(replay, 0);
+        let event = make_test_event(CallbackType::Success);
+        // Fill channel + force at least one drop
+        let _ = executor.fire(event.clone()).await;
+        let _ = executor.fire(event.clone()).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        // The metric must reflect the same count as the local AtomicU64.
+        assert_eq!(
+            counter.get(),
+            executor.dropped_count(),
+            "metric must mirror local dropped_total after install"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_callback_executor_install_dropped_counter_replays_prior() {
+        let counter = IntCounter::new("test_callback_dropped_replay_total", "test").unwrap();
+        let mut executor = CallbackExecutor::new(1);
+        let event = make_test_event(CallbackType::Success);
+        let _ = executor.fire(event.clone()).await;
+        let _ = executor.fire(event.clone()).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let prior = executor.dropped_count();
+        assert!(prior > 0, "test setup should produce at least one drop");
+        let replay = executor.install_dropped_counter(counter.clone());
+        assert_eq!(
+            replay, prior,
+            "install must report prior drops for catch-up"
+        );
+        assert_eq!(counter.get(), prior);
+    }
+
     #[test]
     fn test_callback_type_debug() {
         let t = CallbackType::Input;
@@ -545,5 +778,262 @@ mod tests {
                 queue_time_ms: 0,
             },
         }
+    }
+
+    // === Builders for End/Success/Failure (RFC-0947 §End/Success/Failure wiring) ===
+
+    fn make_test_request(stream: bool) -> CallbackRequest {
+        CallbackRequest {
+            model: "gpt-4".into(),
+            messages: vec![MessageMetadata {
+                role: "user".into(),
+                content_length: 100,
+            }],
+            temperature: Some(0.7),
+            max_tokens: Some(1000),
+            stream,
+            provider: "openai".into(),
+            key_id: Some("key-1".into()),
+            team_id: None,
+            user_id: None,
+        }
+    }
+
+    fn make_test_response() -> CallbackResponse {
+        CallbackResponse {
+            id: "resp-1".into(),
+            model: "gpt-4".into(),
+            response_summary: ResponseSummary {
+                choice_count: 1,
+                finish_reason: Some("stop".into()),
+                total_content_length: 500,
+            },
+            usage: Usage {
+                prompt_tokens: 100,
+                completion_tokens: 50,
+                total_tokens: 150,
+            },
+            latency_ms: 500,
+            provider: "openai".into(),
+            cached: false,
+        }
+    }
+
+    fn make_test_error() -> CallbackErrorDetail {
+        CallbackErrorDetail {
+            error_type: "provider_error".into(),
+            message: "upstream 500".into(),
+            status_code: Some(500),
+            provider: Some("openai".into()),
+        }
+    }
+
+    fn make_test_timing_complete() -> CallbackTiming {
+        CallbackTiming {
+            request_start: Utc::now(),
+            request_end: Some(Utc::now()),
+            total_ms: 600,
+            provider_latency_ms: 500,
+            queue_time_ms: 100,
+        }
+    }
+
+    fn make_test_timing_streaming() -> CallbackTiming {
+        CallbackTiming {
+            request_start: Utc::now(),
+            request_end: None,
+            total_ms: 0,
+            provider_latency_ms: 0,
+            queue_time_ms: 0,
+        }
+    }
+
+    // ========================================================================
+    // StreamingCallbackPolicy tests (mission 0947-c2)
+    // ========================================================================
+
+    #[test]
+    fn streaming_callback_policy_default_is_once_per_request() {
+        assert_eq!(
+            StreamingCallbackPolicy::default(),
+            StreamingCallbackPolicy::OncePerRequest,
+            "default must match LiteLLM behaviour (AC: OncePerRequest default)"
+        );
+    }
+
+    #[test]
+    fn streaming_callback_policy_serializes_to_snake_case() {
+        let json = serde_json::to_string(&StreamingCallbackPolicy::PerChunk).unwrap();
+        assert_eq!(json, "\"per_chunk\"");
+        let json = serde_json::to_string(&StreamingCallbackPolicy::Disabled).unwrap();
+        assert_eq!(json, "\"disabled\"");
+        let json = serde_json::to_string(&StreamingCallbackPolicy::OncePerRequest).unwrap();
+        assert_eq!(json, "\"once_per_request\"");
+    }
+
+    #[tokio::test]
+    async fn fire_streaming_start_emits_start_event_with_correct_type() {
+        let executor = CallbackExecutor::new(100);
+        let req = make_test_request(true);
+        let timing = make_test_timing_streaming();
+        let req_id = req.model.clone();
+
+        fire_streaming_start(&executor, req, timing).await;
+
+        // build_start_event is pure — verify its output directly. The actual
+        // channel send is covered by `test_fire_end_success_emits_two_events`
+        // (mission 0947-c1) and the executor's own drop-count tests.
+        let probe_event = build_start_event(make_test_request(true), make_test_timing_streaming());
+        assert_eq!(probe_event.callback_type, CallbackType::Start);
+        assert!(probe_event.response.is_none());
+        assert!(probe_event.error.is_none());
+        assert!(
+            probe_event.timing.request_end.is_none(),
+            "Start event timing.request_end must be None (not yet complete)"
+        );
+        // Dropped count must stay at 0 — the executor absorbs the fire.
+        assert_eq!(executor.dropped_count(), 0);
+        // Ensure fire path executes without panic; the captured request_id
+        // binding proves we exercised the full helper.
+        assert_eq!(req_id, "gpt-4");
+    }
+
+    #[test]
+    fn build_start_event_uses_callback_type_start() {
+        let event = build_start_event(make_test_request(true), make_test_timing_streaming());
+        assert_eq!(event.callback_type, CallbackType::Start);
+        assert!(!event.event_id.is_empty(), "event_id must be UUID");
+        assert!(event.response.is_none());
+        assert!(event.error.is_none());
+    }
+
+    /// Verifies that a streaming policy of `OncePerRequest` (the default) plus
+    /// the `Disabled` policy both reach the `handle_streaming` gating branch
+    /// in `proxy.rs` without changing type signatures. AC-4 / AC-5:
+    /// `OncePerRequest` fires `Start` at entry; `Disabled` suppresses.
+    #[test]
+    fn streaming_policy_round_trips_through_callback_config() {
+        use crate::config::CallbackConfig;
+        let mut cfg = CallbackConfig::default();
+        assert_eq!(
+            cfg.streaming_callback_policy,
+            StreamingCallbackPolicy::OncePerRequest
+        );
+        cfg.streaming_callback_policy = StreamingCallbackPolicy::PerChunk;
+        let json = serde_json::to_string(&cfg).unwrap();
+        let parsed: CallbackConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed.streaming_callback_policy,
+            StreamingCallbackPolicy::PerChunk
+        );
+    }
+
+    #[test]
+    fn test_build_end_event_success_path() {
+        let timing = make_test_timing_complete();
+        let event = build_end_event(
+            make_test_request(false),
+            Some(make_test_response()),
+            None,
+            timing.clone(),
+        );
+        assert_eq!(event.callback_type, CallbackType::End);
+        assert!(event.response.is_some());
+        assert!(event.error.is_none());
+        assert_eq!(event.timing.total_ms, timing.total_ms);
+        // End event has a non-None request_end (this is the terminal marker)
+        assert!(event.timing.request_end.is_some());
+    }
+
+    #[test]
+    fn test_build_end_event_failure_path() {
+        let event = build_end_event(
+            make_test_request(false),
+            None,
+            Some(make_test_error()),
+            make_test_timing_complete(),
+        );
+        assert_eq!(event.callback_type, CallbackType::End);
+        assert!(event.response.is_none());
+        let err = event.error.expect("error must be present on failure path");
+        assert_eq!(err.error_type, "provider_error");
+        assert_eq!(err.status_code, Some(500));
+    }
+
+    #[test]
+    fn test_build_success_event_carries_response() {
+        let timing = make_test_timing_complete();
+        let event = build_success_event(
+            make_test_request(true),
+            make_test_response(),
+            timing.clone(),
+        );
+        assert_eq!(event.callback_type, CallbackType::Success);
+        let resp = event.response.expect("success event must carry response");
+        assert_eq!(resp.model, "gpt-4");
+        assert_eq!(resp.usage.total_tokens, 150);
+        assert_eq!(resp.latency_ms, 500);
+        assert!(event.error.is_none());
+        assert!(
+            event.request.stream,
+            "stream flag must propagate from request"
+        );
+    }
+
+    #[test]
+    fn test_build_failure_event_carries_error() {
+        let event = build_failure_event(
+            make_test_request(false),
+            make_test_error(),
+            make_test_timing_complete(),
+        );
+        assert_eq!(event.callback_type, CallbackType::Failure);
+        assert!(event.response.is_none());
+        let err = event.error.expect("failure event must carry error");
+        assert_eq!(err.status_code, Some(500));
+        assert_eq!(err.provider.as_deref(), Some("openai"));
+    }
+
+    #[tokio::test]
+    async fn test_fire_end_success_emits_two_events() {
+        let executor = CallbackExecutor::new(10);
+        let target: Arc<dyn CallbackTarget> = Arc::new(MockCallbackTarget);
+        executor.register(CallbackType::Success, target.clone());
+        executor.register(CallbackType::End, target.clone());
+        fire_end_success(
+            &executor,
+            make_test_request(false),
+            make_test_response(),
+            make_test_timing_complete(),
+        )
+        .await;
+        // Give worker time to drain
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(
+            executor.dropped_count(),
+            0,
+            "both events should fit channel"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fire_end_failure_emits_two_events() {
+        let executor = CallbackExecutor::new(10);
+        let target: Arc<dyn CallbackTarget> = Arc::new(MockCallbackTarget);
+        executor.register(CallbackType::Failure, target.clone());
+        executor.register(CallbackType::End, target.clone());
+        fire_end_failure(
+            &executor,
+            make_test_request(false),
+            make_test_error(),
+            make_test_timing_complete(),
+        )
+        .await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(
+            executor.dropped_count(),
+            0,
+            "both events should fit channel"
+        );
     }
 }

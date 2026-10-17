@@ -1,0 +1,554 @@
+//! Stoolap-backed implementation of the settlement store.
+//!
+//! RFC-0206 §Migration Order: `Migration`/`apply_pending` legacy
+//! aliases; deprecation noise silenced at module level.
+//!
+//! Cipherocto wraps stoolap as an embedded SQL engine. Schema lives in
+//! cipherocto (`schema.rs` + migrations); stoolap is the storage layer
+//! per `docs/architecture/stoolap-integration.md` Path B.
+#![allow(deprecated)]
+
+use std::sync::{Arc, Mutex};
+
+use crate::schema::apply_migrations;
+use crate::{Ask, AskState, CanonicalReceipt, Receipt, SettlementError, SettlementHashOpaque};
+use octo_settlement::{scrub_adapter_error, scrub_adapter_error_with};
+use octo_settlement_core::{
+    receipt_id_for, AppendOnlyReceiptSink, SettlementError as CanonicalSettlementError,
+};
+
+/// Adapter-type registry for Pattern 6 redaction (RFC-0014-v3 §S5.1
+/// per-façade scrubber).
+const ADAPTER_TYPES: &[&str] = &["StoolapStore", "StoolapReceiptSink"];
+
+/// Pattern 6 redaction closure: collapse every error string into the
+/// adapter-type-scrubbed form so internal type names never leak
+/// through `Display`. Per RFC-0014-v3 §S5.1.
+fn scrub(e: &dyn std::fmt::Display) -> String {
+    scrub_adapter_error_with(&e.to_string(), ADAPTER_TYPES)
+}
+
+/// Errors from the storage layer (distinct from settlement logic errors).
+#[derive(Debug, thiserror::Error)]
+pub enum StorageError {
+    #[error("stoolap error: {0}")]
+    Stoolap(String),
+    #[error("migration error: {0}")]
+    Migration(#[from] octo_storage_core::_legacy_StorageError),
+    #[error("row decode error: {0}")]
+    Decode(String),
+}
+
+/// Settlement store trait.
+///
+/// Cipherocto's quota-router-core and Python SDK consume this trait.
+/// `StoolapStore` is the production impl; tests can use an in-memory mock.
+pub trait SettlementStore {
+    fn mint(&self, ask: &Ask) -> Result<(), SettlementError>;
+    fn settle(&self, ask_id: &[u8; 32], receipt: &Receipt) -> Result<[u8; 32], SettlementError>;
+    fn consume(&self, receipt_id: &[u8; 32]) -> Result<(), SettlementError>;
+    fn get(&self, ask_id: &[u8; 32]) -> Result<(Ask, AskState), SettlementError>;
+}
+
+/// Re-export the CipherOcto fork of stoolap's Database so the rest of
+/// cipherocto depends on this crate, not stoolap directly. Path B.
+pub use octo_storage_core::Database as StoolapDatabase;
+
+/// CipherOcto-side wrapper around an embedded stoolap database.
+#[derive(Clone)]
+pub struct StoolapStore {
+    db: Arc<Mutex<StoolapDatabase>>,
+}
+
+impl std::fmt::Debug for StoolapStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StoolapStore").finish_non_exhaustive()
+    }
+}
+
+impl StoolapStore {
+    /// Open an in-memory stoolap database + apply migrations.
+    pub fn open_in_memory() -> Result<Self, StorageError> {
+        let db = StoolapDatabase::open_in_memory().map_err(|e| StorageError::Stoolap(scrub(&e)))?;
+        apply_migrations(&db)?;
+        Ok(Self {
+            db: Arc::new(Mutex::new(db)),
+        })
+    }
+
+    /// Open a persistent stoolap database at the given path + apply migrations.
+    pub fn open(path: &str) -> Result<Self, StorageError> {
+        let db = StoolapDatabase::open(path).map_err(|e| StorageError::Stoolap(scrub(&e)))?;
+        apply_migrations(&db)?;
+        Ok(Self {
+            db: Arc::new(Mutex::new(db)),
+        })
+    }
+}
+
+impl SettlementStore for StoolapStore {
+    fn mint(&self, ask: &Ask) -> Result<(), SettlementError> {
+        let db = self.db.lock().expect("stoolap mutex poisoned");
+        let axes_bytes =
+            serde_json::to_vec(&ask.axes_consumed).map_err(|e| StorageError::Decode(scrub(&e)))?;
+        let output_hash_param: Option<Vec<u8>> = ask.output_hash.map(|h| h.to_vec());
+        let sql = "INSERT INTO asks (
+                ask_id, holder_did, axes_consumed, cap_root_hash, invocation_hash,
+                current_unix_time, output_hash, settlement_hash, state, created_at
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, 'Minted', ?
+            )";
+        // `id` (PRIMARY KEY INTEGER rowid) auto-assigned by stoolap; do NOT include.
+        let _ = sql;
+        db.execute(
+            sql,
+            (
+                ask.ask_id.to_vec(),
+                ask.holder_did.clone(),
+                axes_bytes,
+                ask.cap_root_hash.to_vec(),
+                ask.invocation_hash.to_vec(),
+                ask.current_unix_time as i64,
+                output_hash_param,
+                vec![0u8; 32], // settlement_hash placeholder; locked at settle
+                ask.current_unix_time as i64,
+            ),
+        )
+        .map(|_| ())
+        .map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub(&e))))?;
+        Ok(())
+    }
+
+    fn settle(&self, ask_id: &[u8; 32], receipt: &Receipt) -> Result<[u8; 32], SettlementError> {
+        // Compute settlement_hash = blake3(canonical_ser(ask || receipt)).
+        let stored = self.get(ask_id)?;
+        let mut canonical = Vec::new();
+        canonical.extend_from_slice(
+            &serde_json::to_vec(&stored.0)
+                .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub(&e))))?,
+        );
+        canonical.extend_from_slice(
+            &serde_json::to_vec(receipt)
+                .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub(&e))))?,
+        );
+        let settlement_hash: [u8; 32] = *blake3::hash(&canonical).as_bytes();
+
+        if receipt.ask_id != *ask_id {
+            return Err(SettlementError::SettlementHashMismatch {
+                expected: SettlementHashOpaque::new(*ask_id),
+                got: SettlementHashOpaque::new(receipt.ask_id),
+            });
+        }
+        if stored.1 != AskState::Minted {
+            return Err(SettlementError::InvalidTransition {
+                from: stored.1,
+                to: AskState::Settled,
+            });
+        }
+
+        let db = self.db.lock().expect("stoolap mutex poisoned");
+        let sql = "UPDATE asks
+             SET state = 'Settled', settlement_hash = ?, settled_at = ?
+             WHERE ask_id = ?";
+        db.execute(
+            sql,
+            (
+                settlement_hash.to_vec(),
+                receipt.timestamp_unix as i64,
+                ask_id.to_vec(),
+            ),
+        )
+        .map(|_| ())
+        .map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub(&e))))?;
+
+        Ok(settlement_hash)
+    }
+
+    fn consume(&self, receipt_id: &[u8; 32]) -> Result<(), SettlementError> {
+        let db = self.db.lock().expect("stoolap mutex poisoned");
+
+        // Atomicity model (R3 security review note):
+        //
+        // The early SELECT below is an OPTIMISTIC pre-check only;
+        // it is NOT the atomicity gate. The actual atomicity gate is
+        // the `consumed_receipt_index` PK INSERT (the receipt_id PK
+        // constraint enforces single-writer semantics). A concurrent
+        // caller racing through the SELECT-then-INSERT window will
+        // collide on the PK INSERT and receive `AlreadyConsumed`,
+        // never the inconsistent intermediate state the reviewer
+        // described.
+        //
+        // Within a single Stoolap-backed process, the `self.db.lock()`
+        // mutex above serializes the whole consume() flow, so the
+        // SELECT-then-INSERT window cannot be observed by a second
+        // caller at all. Cross-process Stoolap usage would need a
+        // different atomicity story (DB-level transaction or row
+        // lock); the current architecture is in-process Arc<Mutex<...>>
+        // and that is load-bearing for this guarantee.
+
+        // First: is this receipt already consumed? (PK lookup)
+        let dup_rows = db
+            .query(
+                "SELECT ask_id FROM consumed_receipt_index WHERE receipt_id = ?",
+                (receipt_id.to_vec(),),
+            )
+            .map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub(&e))))?;
+        if dup_rows.count() > 0 {
+            return Err(SettlementError::AlreadyConsumed(SettlementHashOpaque::new(
+                *receipt_id,
+            )));
+        }
+
+        // Find ask_id by settlement_hash (= receipt_id for our schema; in a
+        // richer impl the receipt carries explicit ask_id).
+        let ask_rows = db
+            .query(
+                "SELECT ask_id FROM asks WHERE settlement_hash = ?",
+                (receipt_id.to_vec(),),
+            )
+            .map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub(&e))))?;
+        let Some(row_result) = ask_rows.into_iter().next() else {
+            return Err(SettlementError::AskNotFound(SettlementHashOpaque::new(
+                *receipt_id,
+            )));
+        };
+        let row =
+            row_result.map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub(&e))))?;
+        let ask_id_bytes: Vec<u8> = row
+            .get(0)
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub(&e))))?;
+        if ask_id_bytes.len() != 32 {
+            return Err(SettlementError::Storage(StorageError::Decode(
+                scrub_adapter_error(&format!("ask_id wrong length: {}", ask_id_bytes.len())),
+            )));
+        }
+        let mut ask_id = [0u8; 32];
+        ask_id.copy_from_slice(&ask_id_bytes);
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        // Insert into receipt index; on PK collision → AlreadyConsumed.
+        let insert_sql = "INSERT INTO consumed_receipt_index (receipt_id, ask_id, consumed_at)
+             VALUES (?, ?, ?)";
+        match db.execute(
+            insert_sql,
+            (receipt_id.to_vec(), ask_id.to_vec(), now as i64),
+        ) {
+            Ok(_) => {}
+            Err(e) => {
+                let msg = scrub(&e).to_lowercase();
+                if msg.contains("unique")
+                    || msg.contains("constraint")
+                    || msg.contains("duplicate")
+                    || msg.contains("primary")
+                {
+                    return Err(SettlementError::AlreadyConsumed(SettlementHashOpaque::new(
+                        *receipt_id,
+                    )));
+                }
+                return Err(SettlementError::Storage(StorageError::Stoolap(scrub(&e))));
+            }
+        }
+
+        // Move ask state to Consumed (only if currently Settled).
+        let update_sql = "UPDATE asks
+             SET state = 'Consumed', consumed_at = ?
+             WHERE ask_id = ? AND state = 'Settled'";
+        db.execute(update_sql, (now as i64, ask_id.to_vec()))
+            .map(|_| ())
+            .map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub(&e))))?;
+
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn get(&self, ask_id: &[u8; 32]) -> Result<(Ask, AskState), SettlementError> {
+        let db = self.db.lock().expect("stoolap mutex poisoned");
+        let sql = "SELECT holder_did, axes_consumed, cap_root_hash, invocation_hash,
+                    current_unix_time, output_hash, state
+             FROM asks WHERE ask_id = ?";
+        let rows = db
+            .query(sql, (ask_id.to_vec(),))
+            .map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub(&e))))?;
+
+        let Some(row_result) = rows.into_iter().next() else {
+            return Err(SettlementError::AskNotFound(SettlementHashOpaque::new(
+                *ask_id,
+            )));
+        };
+        let row =
+            row_result.map_err(|e| SettlementError::Storage(StorageError::Stoolap(scrub(&e))))?;
+
+        let holder_did: String = row
+            .get(0)
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub(&e))))?;
+        let axes_bytes: Vec<u8> = row
+            .get(1)
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub(&e))))?;
+        let axes_consumed: Vec<(String, u64)> = serde_json::from_slice(&axes_bytes)
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub(&e))))?;
+        let cap_root_hash_vec: Vec<u8> = row
+            .get(2)
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub(&e))))?;
+        let invocation_hash_vec: Vec<u8> = row
+            .get(3)
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub(&e))))?;
+        let current_unix_time: i64 = row
+            .get(4)
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub(&e))))?;
+        let output_hash: Option<Vec<u8>> = row
+            .get(5)
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub(&e))))?;
+        let state_sql: String = row
+            .get(6)
+            .map_err(|e| SettlementError::Storage(StorageError::Decode(scrub(&e))))?;
+
+        if cap_root_hash_vec.len() != 32 || invocation_hash_vec.len() != 32 {
+            return Err(SettlementError::Storage(StorageError::Decode(
+                scrub_adapter_error(&format!(
+                    "hash field wrong length: cap={}, inv={}",
+                    cap_root_hash_vec.len(),
+                    invocation_hash_vec.len()
+                )),
+            )));
+        }
+        let mut cap_root_hash = [0u8; 32];
+        cap_root_hash.copy_from_slice(&cap_root_hash_vec);
+        let mut invocation_hash = [0u8; 32];
+        invocation_hash.copy_from_slice(&invocation_hash_vec);
+        let output_hash_arr = match output_hash {
+            Some(v) if v.len() == 32 => {
+                let mut o = [0u8; 32];
+                o.copy_from_slice(&v);
+                Some(o)
+            }
+            Some(_) => {
+                return Err(SettlementError::Storage(StorageError::Decode(
+                    scrub_adapter_error("output_hash wrong length"),
+                )))
+            }
+            None => None,
+        };
+        let state = AskState::from_sql(&state_sql).ok_or_else(|| {
+            SettlementError::Storage(StorageError::Decode(scrub_adapter_error(&format!(
+                "unknown ask state: {state_sql}"
+            ))))
+        })?;
+
+        Ok((
+            Ask {
+                ask_id: *ask_id,
+                holder_did,
+                axes_consumed,
+                cap_root_hash,
+                invocation_hash,
+                current_unix_time: current_unix_time as u64,
+                output_hash: output_hash_arr,
+            },
+            state,
+        ))
+    }
+}
+
+/// `AppendOnlyReceiptSink` impl for `StoolapStore` (RFC-0014 §Trait G3).
+///
+/// Persists the substrate-canonical `Receipt` (distinct from the
+/// domain `Receipt`: `receipt_id: u64` vs `receipt_id: [u8;32]` per
+/// RFC-0014 §Module Layout) into the `canonical_receipts` table
+/// (migration 007). The table is SEPARATE from the domain `asks` +
+/// `consumed_receipt_index` tables so the substrate-faithful canonical
+/// chain (used by `verify_receipt_chain`) is independent of the
+/// domain's settlement flow.
+///
+/// # Atomicity model
+///
+/// `self.db.lock()` serializes the whole `append` flow against
+/// concurrent calls in the same process; the `receipt_id INTEGER
+/// PRIMARY KEY` constraint enforces single-writer semantics across
+/// processes. A concurrent caller racing through the
+/// SELECT-MAX-then-INSERT window collides on the PK INSERT and
+/// surfaces `SettlementError::AlreadyExists` per RFC-0014 §Trait G3.
+impl AppendOnlyReceiptSink for StoolapStore {
+    fn append(&mut self, receipt: &CanonicalReceipt) -> Result<(), CanonicalSettlementError> {
+        let db = self.db.lock().expect("stoolap mutex poisoned");
+
+        // Monotonicity check: last persisted receipt_id.
+        let last_rows = db
+            .query("SELECT MAX(receipt_id) FROM canonical_receipts", ())
+            .map_err(|e| CanonicalSettlementError::SinkSpecific(scrub(&e)))?;
+        let last_id: Option<i64> = match last_rows.into_iter().next() {
+            None => None,
+            Some(Err(e)) => {
+                return Err(CanonicalSettlementError::SinkSpecific(scrub(&e)));
+            }
+            Some(Ok(row)) => row
+                .get(0)
+                .map_err(|e| CanonicalSettlementError::SinkSpecific(scrub(&e)))?,
+        };
+        // Empty table (last_id == None): no predecessor, accept any
+        // first receipt_id. Non-empty: enforce strict successor +
+        // flag duplicates distinctly from gaps (RFC-0014 §Trait G3).
+        if let Some(prev) = last_id {
+            let prev_u64 = prev.max(0) as u64;
+            if receipt.receipt_id == prev_u64 {
+                return Err(CanonicalSettlementError::AlreadyExists(receipt.receipt_id));
+            }
+            if receipt.receipt_id != prev_u64 + 1 {
+                return Err(CanonicalSettlementError::SequenceGap {
+                    receipt_id: receipt.receipt_id,
+                    prev: prev_u64,
+                });
+            }
+        }
+
+        // Compute canonical settlement_hash; reject mismatches. The
+        // domain separator (`cipherocto/reservation/v1/`) is part of
+        // the substrate `receipt_id_for` per RFC-0014 §Chain Helpers
+        // §Domain Separator (byte-pinned test vector).
+        let expected_hash = receipt_id_for(receipt);
+        if receipt.settlement_hash != expected_hash {
+            return Err(CanonicalSettlementError::ChainIntegrity {
+                receipt_id: receipt.receipt_id,
+            });
+        }
+
+        let insert_sql = "INSERT INTO canonical_receipts
+            (receipt_id, ask_id, settlement_hash, router_id, router_sig, timestamp_unix)
+            VALUES (?, ?, ?, ?, ?, ?)";
+        match db.execute(
+            insert_sql,
+            (
+                receipt.receipt_id as i64,
+                receipt.ask_id.to_vec(),
+                receipt.settlement_hash.to_vec(),
+                receipt.router_id.clone(),
+                receipt.router_sig.clone(),
+                receipt.timestamp_unix as i64,
+            ),
+        ) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                let msg = scrub(&e).to_lowercase();
+                if msg.contains("unique") || msg.contains("duplicate") || msg.contains("primary") {
+                    Err(CanonicalSettlementError::AlreadyExists(receipt.receipt_id))
+                } else {
+                    Err(CanonicalSettlementError::SinkSpecific(scrub(&e)))
+                }
+            }
+        }
+    }
+
+    fn last_receipt_id(&self) -> Result<Option<u64>, CanonicalSettlementError> {
+        let db = self.db.lock().expect("stoolap mutex poisoned");
+        let rows = db
+            .query("SELECT MAX(receipt_id) FROM canonical_receipts", ())
+            .map_err(|e| CanonicalSettlementError::SinkSpecific(scrub(&e)))?;
+        let Some(row_result) = rows.into_iter().next() else {
+            return Ok(None);
+        };
+        let row = row_result.map_err(|e| CanonicalSettlementError::SinkSpecific(scrub(&e)))?;
+        let last_id: Option<i64> = row
+            .get(0)
+            .map_err(|e| CanonicalSettlementError::SinkSpecific(scrub(&e)))?;
+        Ok(last_id.map(|n| n as u64))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Ask, Receipt, SettlementStore};
+
+    fn sample_ask(ask_id: [u8; 32]) -> Ask {
+        Ask {
+            ask_id,
+            holder_did: "did:octo:holder-001".to_owned(),
+            axes_consumed: vec![("input_tokens_per_1k".to_owned(), 100)],
+            cap_root_hash: [0x11; 32],
+            invocation_hash: [0x22; 32],
+            current_unix_time: 1_700_000_000,
+            output_hash: None,
+        }
+    }
+
+    fn sample_receipt(ask_id: [u8; 32]) -> Receipt {
+        Receipt {
+            receipt_id: [0u8; 32], // overridden per test
+            ask_id,
+            settlement_hash: [0u8; 32],
+            router_id: "router-alpha".to_owned(),
+            router_sig: vec![0xab; 64],
+            timestamp_unix: 1_700_000_010,
+        }
+    }
+
+    #[test]
+    fn open_in_memory_succeeds() {
+        let store = StoolapStore::open_in_memory();
+        assert!(store.is_ok(), "open_in_memory: {:?}", store.err());
+    }
+
+    #[test]
+    fn mint_then_get_returns_ask() {
+        let store = StoolapStore::open_in_memory().unwrap();
+        let ask = sample_ask([0x01; 32]);
+        store.mint(&ask).unwrap();
+        let (got, state) = store.get(&ask.ask_id).unwrap();
+        assert_eq!(got.holder_did, ask.holder_did);
+        assert_eq!(state, AskState::Minted);
+    }
+
+    #[test]
+    fn full_flow_mint_settle_consume() {
+        let store = StoolapStore::open_in_memory().unwrap();
+        let ask = sample_ask([0x02; 32]);
+        store.mint(&ask).unwrap();
+
+        // Settle.
+        let mut receipt = sample_receipt(ask.ask_id);
+        // receipt_id will be the settlement_hash returned by settle(); we
+        // use a fixed id so consume() can find the ask via settlement_hash.
+        receipt.receipt_id = [0u8; 32]; // placeholder; settle returns real hash
+        let settlement_hash = store.settle(&ask.ask_id, &receipt).unwrap();
+        assert_eq!(settlement_hash.len(), 32);
+
+        // State must be Settled.
+        let (_, state) = store.get(&ask.ask_id).unwrap();
+        assert_eq!(state, AskState::Settled);
+
+        // Consume using the settlement_hash as receipt_id (per current
+        // schema mapping; richer impl uses explicit receipt_id).
+        store.consume(&settlement_hash).unwrap();
+
+        // State must be Consumed.
+        let (_, state) = store.get(&ask.ask_id).unwrap();
+        assert_eq!(state, AskState::Consumed);
+    }
+
+    #[test]
+    fn consume_replay_returns_already_consumed() {
+        let store = StoolapStore::open_in_memory().unwrap();
+        let ask = sample_ask([0x03; 32]);
+        store.mint(&ask).unwrap();
+        let receipt = sample_receipt(ask.ask_id);
+        let settlement_hash = store.settle(&ask.ask_id, &receipt).unwrap();
+
+        store.consume(&settlement_hash).unwrap();
+        let err = store.consume(&settlement_hash).unwrap_err();
+        assert!(matches!(err, SettlementError::AlreadyConsumed(_)));
+    }
+
+    #[test]
+    fn settle_rejects_already_settled() {
+        let store = StoolapStore::open_in_memory().unwrap();
+        let ask = sample_ask([0x04; 32]);
+        store.mint(&ask).unwrap();
+        let receipt = sample_receipt(ask.ask_id);
+        store.settle(&ask.ask_id, &receipt).unwrap();
+        let err = store.settle(&ask.ask_id, &receipt).unwrap_err();
+        assert!(matches!(err, SettlementError::InvalidTransition { .. }));
+    }
+}

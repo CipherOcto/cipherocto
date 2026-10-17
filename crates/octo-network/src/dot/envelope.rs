@@ -3,7 +3,6 @@
 //! RFC-0850 §3.3: Deterministic Envelope (DEN)
 
 use blake3;
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
 use super::error::DotError;
 
@@ -237,7 +236,11 @@ impl DeterministicEnvelope {
     }
 
     /// Verify envelope integrity.
-    pub fn verify(&self, public_key: &[u8; 32]) -> Result<(), DotError> {
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        public_key: &[u8],
+    ) -> Result<(), DotError> {
         // 1. Verify envelope_id derivation
         let expected_id = self.derive_envelope_id();
         if self.envelope_id != expected_id {
@@ -247,13 +250,10 @@ impl DeterministicEnvelope {
             });
         }
 
-        // 2. Verify signature (Ed25519)
+        // 2. Verify signature, dispatching on the caller's declared algorithm
+        // (RFC-0009 AC#11). An unregistered algorithm fails closed.
         let signing_bytes = self.to_signing_bytes();
-        let signature = Signature::from_bytes(&self.signature);
-        let verifying_key = VerifyingKey::from_bytes(public_key)
-            .map_err(|e| DotError::Serialization(e.to_string()))?;
-        verifying_key
-            .verify(&signing_bytes, &signature)
+        octo_algo_ed25519::verify_dispatch(algorithm, public_key, &signing_bytes, &self.signature)
             .map_err(|_| DotError::InvalidSignature {
                 envelope_id: self.envelope_id,
             })
@@ -307,7 +307,9 @@ mod tests {
     fn test_envelope_verify_valid() {
         let (envelope, signing_key) = create_test_envelope();
         let public_key = signing_key.verifying_key().to_bytes();
-        assert!(envelope.verify(&public_key).is_ok());
+        assert!(envelope
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &public_key)
+            .is_ok());
     }
 
     #[test]
@@ -315,14 +317,18 @@ mod tests {
         let (mut envelope, signing_key) = create_test_envelope();
         envelope.signature[0] ^= 0xFF;
         let public_key = signing_key.verifying_key().to_bytes();
-        assert!(envelope.verify(&public_key).is_err());
+        assert!(envelope
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &public_key)
+            .is_err());
     }
 
     #[test]
     fn test_envelope_verify_wrong_key() {
         let (envelope, _) = create_test_envelope();
         let wrong_key = [99u8; 32];
-        assert!(envelope.verify(&wrong_key).is_err());
+        assert!(envelope
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &wrong_key)
+            .is_err());
     }
 
     #[test]
@@ -330,7 +336,9 @@ mod tests {
         let (mut envelope, signing_key) = create_test_envelope();
         envelope.envelope_id[0] ^= 0xFF;
         let public_key = signing_key.verifying_key().to_bytes();
-        assert!(envelope.verify(&public_key).is_err());
+        assert!(envelope
+            .verify(&octo_algo_ed25519::ed25519_algorithm_id(), &public_key)
+            .is_err());
     }
 }
 

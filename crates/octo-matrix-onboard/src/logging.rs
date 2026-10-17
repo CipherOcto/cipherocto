@@ -154,7 +154,7 @@ fn is_sensitive_key(name: &str) -> bool {
 /// together.
 fn redact_value(v: &str) -> String {
     if v.len() > 8 {
-        // R2-H2 follow-on: `&v[..8]` slices by BYTES, which would
+        // R2-H2 follow-on: `&&v[..8]` slices by BYTES, which would
         // panic if byte 8 falls inside a multi-byte UTF-8 codepoint.
         // Walk back from byte 8 to the nearest char boundary so the
         // slice is safe even on non-ASCII input. The result is at
@@ -215,7 +215,7 @@ where
         values: &tracing::span::Record<'_>,
         ctx: tracing_subscriber::layer::Context<'_, S>,
     ) {
-        // Late-recorded fields (via `Span::record("k", &v)`) need
+        // Late-recorded fields (via `Span::record("k", &&v)`) need
         // to be merged into the extension. The SDK uses this for
         // refresh-token rotation; if a span was created with
         // `access_token = ""` and later updated via `record`, we
@@ -475,7 +475,7 @@ struct Match {
 /// the FIRST byte of that char. If the matching char is
 /// multi-byte UTF-8 (e.g. the comma `，` is 3 bytes), `n + 1` is
 /// in the middle of that char's bytes and the subsequent
-/// `&s[word_start..eq_rel]` slice panics with "byte index N is
+/// `&&s[word_start..eq_rel]` slice panics with "byte index N is
 /// not a char boundary".
 ///
 /// The fix is to walk back by `char_indices().rev()` and take the
@@ -666,7 +666,7 @@ mod tests {
         // sensitive `=` must not panic. `，` (FULLWIDTH COMMA, U+FF0C)
         // is 3 bytes in UTF-8; the old `rfind(...).map(|n| n + 1)`
         // returned byte 1 (mid-codepoint), which panicked on
-        // `&s[word_start..eq_rel]`. The char_indices-based walk
+        // `&&s[word_start..eq_rel]`. The char_indices-based walk
         // returns the char boundary instead.
         let out = redact_message("homeserver：，access_token=syt_abcdefgh_long done");
         assert!(!out.contains("syt_abcdefgh_long"), "leak: {out}");

@@ -49,13 +49,13 @@
 ### Topological Layers (build order)
 
 ```
-Layer 0 (Foundation):    RFC-0850 (DOT), RFC-0904, RFC-0104 (DFP), RFC-0105 (DQA), RFC-0126 (DCS)
-Layer 1 (Discovery):     RFC-0851 (GDP), RFC-0902
-Layer 2 (Propagation):   RFC-0852 (DGP)
-Layer 3 (Crypto):        RFC-0853 (OCrypt)
-Layer 4 (Proof/Mission): RFC-0854 (DPS), RFC-0855 (MON)
-Layer 5 (Routing/Proof): RFC-0856 (DRS), RFC-0859 (PCE), RFC-0860 (PoRelay)
-Layer 6 (Application):   RFC-0857 (DOM), RFC-0858 (ORR)
+Layer 0 (Foundation):    RFC-0850, RFC-0904, RFC-0104, RFC-0105, RFC-0126
+Layer 1 (Discovery):     RFC-0851, RFC-0902
+Layer 2 (Propagation):   RFC-0852
+Layer 3 (Crypto):        RFC-0853
+Layer 4 (Proof/Mission): RFC-0854, RFC-0855
+Layer 5 (Routing/Proof): RFC-0856, RFC-0859, RFC-0860
+Layer 6 (Application):   RFC-0857, RFC-0858
 ```
 
 ### Fan-In Analysis (most depended-upon)
@@ -97,7 +97,7 @@ The networking RFCs depend on **3 external categories**:
 
 ## 3. Core Claims and Assertions
 
-### RFC-0850 (DOT) — Foundation Layer
+### RFC-0850 — Foundation Layer
 
 | Claim | Evidence | Significance |
 |-------|----------|-------------|
@@ -109,7 +109,7 @@ The networking RFCs depend on **3 external categories**:
 | Replay protection via route_trace_root Merkle + HashMap cache | Novel combination; Merkle route trace enables verification without storing full trace | Unproven at scale |
 | Fragment reassembly timeout of 10s for 10-fragment envelope | Arbitrary constant | Needs benchmarking |
 
-### RFC-0851 (GDP) — Discovery Layer
+### RFC-0851 — Discovery Layer
 
 | Claim | Evidence | Significance |
 |-------|----------|-------------|
@@ -117,7 +117,7 @@ The networking RFCs depend on **3 external categories**:
 | mDNS for local, gossip for global discovery | Standard patterns | Low risk |
 | Stake-gated global propagation | Economic Sybil resistance | Ties to PoRelay |
 
-### RFC-0852 (DGP) — Gossip Layer
+### RFC-0852 — Gossip Layer
 
 | Claim | Evidence | Significance |
 |-------|----------|-------------|
@@ -125,7 +125,7 @@ The networking RFCs depend on **3 external categories**:
 | GossipStateSummary exchange for reconciliation | Standard anti-entropy pattern with Merkle twist | Well-grounded |
 | Bloom filter compression for bandwidth reduction | Standard technique | Low risk |
 
-### RFC-0853 (OCrypt) — Cryptography Layer
+### RFC-0853 — Cryptography Layer
 
 | Claim | Evidence | Significance |
 |-------|----------|-------------|
@@ -134,7 +134,7 @@ The networking RFCs depend on **3 external categories**:
 | Session key establishment via X25519 ECDH | Standard | Low risk |
 | EncryptedEnvelope as extension of DeterministicEnvelope | Composition pattern | Clean design |
 
-### RFC-0854 (DPS) — Proof Substrate
+### RFC-0854 — Proof Substrate
 
 | Claim | Evidence | Significance |
 |-------|----------|-------------|
@@ -142,7 +142,7 @@ The networking RFCs depend on **3 external categories**:
 | Proof verification is Class A (deterministic); proof generation is Class C (non-deterministic) | Correct determinism boundary classification | Critical invariant |
 | BLAKE3-256 for proof_commitment | Consistent with OCrypt rationale | Fixed after SHA-256 inconsistency |
 
-### RFC-0855 (MON) — Mission Networks
+### RFC-0855 — Mission Networks
 
 | Claim | Evidence | Significance |
 |-------|----------|-------------|
@@ -150,7 +150,7 @@ The networking RFCs depend on **3 external categories**:
 | Mission-scoped encryption and key hierarchy | Isolation between missions | Clean security boundary |
 | Members, roles, voting within mission overlays | Full governance stack | Large scope |
 
-### RFC-0856 (DRS) — Route Selection
+### RFC-0856 — Route Selection
 
 | Claim | Evidence | Significance |
 |-------|----------|-------------|
@@ -159,7 +159,7 @@ The networking RFCs depend on **3 external categories**:
 | Route commitment via BLAKE3 hash of relay_sequence + transport_vectors + diversity_scores + epoch | Deterministic route attestation | Novel for overlay networks |
 | 5 diversity dimensions (transport, geo, trust, org, temporal) | Rich diversity model | Complex to compute |
 
-### RFC-0857 (DOM) — Overlay Mempool
+### RFC-0857 — Overlay Mempool
 
 | Claim | Evidence | Significance |
 |-------|----------|-------------|
@@ -168,7 +168,7 @@ The networking RFCs depend on **3 external categories**:
 | Deterministic eviction cycle (<10ms) | Performance target | Needs benchmarking |
 | Economic prioritization via fee/priority fields | Standard mempool economics | Low risk |
 
-### RFC-0858 (ORR) — Onion Routing
+### RFC-0858 — Onion Routing
 
 | Claim | Evidence | Significance |
 |-------|----------|-------------|
@@ -178,7 +178,7 @@ The networking RFCs depend on **3 external categories**:
 | Mission-scoped onion domains resist intersection attacks | Smaller anonymity sets vs global | Privacy/security tradeoff |
 | Route commitment = BLAKE3(relay_hash || transport_hash || diversity_hash || epoch) | Deterministic route attestation | Consistent with DRS |
 
-### RFC-0859 (PCE) — Proof-Carrying Envelopes
+### RFC-0859 — Proof-Carrying Envelopes
 
 | Claim | Evidence | Significance |
 |-------|----------|-------------|
@@ -188,7 +188,7 @@ The networking RFCs depend on **3 external categories**:
 | 8 proof system backends with uniform interface | Ambitious abstraction | High complexity |
 | Token economics: OCTO-A for generation, OCTO-N for verification, OCTO-B for relay, OCTO-O for orchestration, OCTO-S for archival | Full economic model | Rich |
 
-### RFC-0860 (PoRelay) — Relay Proofs
+### RFC-0860 — Relay Proofs
 
 | Claim | Evidence | Significance |
 |-------|----------|-------------|
@@ -330,23 +330,23 @@ The earlier versions of several RFCs used SHA-256 in test vectors while the cryp
 RFC-0850 lists RFC-0851 as **optional** dependency (gateway discovery), but RFC-0851 requires RFC-0850. More subtly, RFC-0851 lists in RFC-0850's "optional" dependencies:
 
 ```
-RFC-0850 (DOT) --optional--> RFC-0851 (GDP)
-RFC-0851 (GDP) --requires--> RFC-0850 (DOT)
+RFC-0850 --optional--> RFC-0851
+RFC-0851 --requires--> RFC-0850
 ```
 
 This is not a true circular dependency (optional vs required), but it creates a design tension: DOT cannot use GDP features during initialization, but GDP needs DOT types. This is correctly handled by the topological sort (DOT in Layer 0, GDP in Layer 1).
 
-### 6.3 RFC-0853 Depends on RFC-0852 (Potentially Premature)
+### 6.3 RFC-0853 Depends on RFC-0852
 
-RFC-0853 (OCrypt) lists RFC-0852 (DGP) as a **required** dependency. This means cryptographic primitives depend on the gossip protocol, which seems backwards. The rationale is likely that OCrypt needs gossip propagation for key distribution, but this coupling is unusual. Most systems define crypto primitives independently of their distribution mechanism.
+RFC-0853 lists RFC-0852 as a **required** dependency. This means cryptographic primitives depend on the gossip protocol, which seems backwards. The rationale is likely that OCrypt needs gossip propagation for key distribution, but this coupling is unusual. Most systems define crypto primitives independently of their distribution mechanism.
 
 **Recommendation:** Consider making RFC-0852 optional for RFC-0853, with key distribution as a separate concern.
 
 ### 6.4 RFC-0855/0856 Mutual Dependency
 
 ```
-RFC-0855 (MON) --optional--> RFC-0856 (DRS)
-RFC-0856 (DRS) --requires--> RFC-0855 (MON)
+RFC-0855 --optional--> RFC-0856
+RFC-0856 --requires--> RFC-0855
 ```
 
 DRS requires MON (mission-scoped routing), but MON only optionally uses DRS. This means route selection cannot exist without mission networks, but missions can exist without deterministic route selection. The topological sort resolves this (MON in Layer 4, DRS in Layer 5), but the tight coupling suggests these could be a single RFC.
@@ -377,13 +377,13 @@ Several networking RFCs reference external RFCs that are not in the accepted set
 
 | Referenced RFC | Status | Referenced By |
 |---------------|--------|---------------|
-| RFC-0008 (Determinism Boundary) | Not in this analysis | 0855, 0856, 0859 |
-| RFC-0009 (Identity Management) | Not in this analysis | 0851, 0853, 0855 |
-| RFC-0102 (Wallet Crypto) | Not in this analysis | 0853, 0856 |
-| RFC-0630 (Proof-of-Inference) | Not in this analysis | 0859, 0860 |
-| RFC-0631 (Proof-of-Dataset Integrity) | Not in this analysis | 0859 |
-| RFC-0650 (Proof Aggregation) | Not in this analysis | 0854, 0859, 0860 |
-| RFC-0843 (OCTO-Network Protocol) | In networking dir | 0850, 0851 |
+| RFC-0008 | Not in this analysis | 0855, 0856, 0859 |
+| RFC-0009 | Not in this analysis | 0851, 0853, 0855 |
+| RFC-0102 | Not in this analysis | 0853, 0856 |
+| RFC-0630 | Not in this analysis | 0859, 0860 |
+| RFC-0631 | Not in this analysis | 0859 |
+| RFC-0650 | Not in this analysis | 0854, 0859, 0860 |
+| RFC-0843 | In networking dir | 0850, 0851 |
 
 These are likely in `rfcs/accepted/process/` or `rfcs/accepted/proof-systems/` but were not included in this analysis scope.
 
@@ -431,22 +431,22 @@ These are likely in `rfcs/accepted/process/` or `rfcs/accepted/proof-systems/` b
 
 ### Short-Term (Months 2-4)
 
-4. **Implement RFC-0851 (GDP)** — Gateway discovery is prerequisite for everything
-5. **Implement RFC-0852 (DGP)** — Gossip propagation enables distributed operation
-6. **Start RFC-0853 (OCrypt)** — Crypto primitives (can overlap with GDP/DGP)
+4. **Implement RFC-0851** — Gateway discovery is prerequisite for everything
+5. **Implement RFC-0852** — Gossip propagation enables distributed operation
+6. **Start RFC-0853** — Crypto primitives (can overlap with GDP/DGP)
 
 ### Medium-Term (Months 4-8)
 
-7. **Implement RFC-0855 (MON)** — Mission networks (core application model)
-8. **Implement RFC-0856 (DRS)** — Route selection (enables multi-hop)
-9. **Start RFC-0854 (DPS)** — Proof substrate (single backend: STWO)
+7. **Implement RFC-0855** — Mission networks (core application model)
+8. **Implement RFC-0856** — Route selection (enables multi-hop)
+9. **Start RFC-0854** — Proof substrate (single backend: STWO)
 
 ### Long-Term (Months 8-16)
 
-10. **Implement RFC-0858 (ORR)** — Onion routing (highest novelty, highest risk)
-11. **Implement RFC-0859 (PCE)** — Proof-carrying envelopes
-12. **Implement RFC-0860 (PoRelay)** — Relay proofs
-13. **Implement RFC-0857 (DOM)** — Overlay mempool
+10. **Implement RFC-0858** — Onion routing (highest novelty, highest risk)
+11. **Implement RFC-0859** — Proof-carrying envelopes
+12. **Implement RFC-0860** — Relay proofs
+13. **Implement RFC-0857** — Overlay mempool
 
 ---
 
@@ -506,7 +506,7 @@ R = Required, o = Optional
 5. **Tight coupling** — RFC-0855/0856 mutual dependency, RFC-0853 depending on RFC-0852
 6. **All Draft status** — None of the 11 networking RFCs have been accepted yet
 
-### Key Risk: RFC-0858 (ORR)
+### Key Risk: RFC-0858
 
 Onion relay routing over heterogeneous social transports is the most novel and highest-risk claim. No existing system combines:
 - Multi-hop onion routing (Tor does this, but TCP-only)

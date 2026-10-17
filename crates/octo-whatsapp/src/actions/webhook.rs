@@ -212,19 +212,19 @@ fn event_summary(ev: &crate::events::InboundEvent) -> serde_json::Value {
                 "receipt_kind": kind,
             })
         }
-        InboundEvent::GroupChange {
+        InboundEvent::GroupUpdate {
             group_jid,
-            actor,
+            participant,
             ts_unix_ms,
-            kind,
+            action_kind,
             ..
         } => {
             json!({
                 "kind": "group_change",
                 "group_jid": group_jid,
-                "actor": actor,
+                "actor": participant,
                 "ts_unix_ms": ts_unix_ms,
-                "change_kind": kind,
+                "change_kind": action_kind,
             })
         }
         InboundEvent::Presence { jid, kind, .. } => {
@@ -234,27 +234,88 @@ fn event_summary(ev: &crate::events::InboundEvent) -> serde_json::Value {
                 "presence_kind": kind,
             })
         }
-        InboundEvent::Connection {
-            kind, ts_unix_ms, ..
-        } => {
+        InboundEvent::Connected { ts_unix_ms, .. }
+        | InboundEvent::Disconnected { ts_unix_ms, .. }
+        | InboundEvent::StreamReplaced { ts_unix_ms, .. } => {
+            let kind = match ev {
+                InboundEvent::Connected { .. } => "connected",
+                InboundEvent::Disconnected { .. } => "disconnected",
+                InboundEvent::StreamReplaced { .. } => "replaced",
+                _ => unreachable!(),
+            };
             json!({
                 "kind": "connection",
                 "connection_kind": kind,
                 "ts_unix_ms": ts_unix_ms,
             })
         }
-        InboundEvent::Call {
-            id,
-            peer,
-            kind,
+        InboundEvent::LoggedOut {
+            cause,
+            on_connect,
             ts_unix_ms,
             ..
         } => {
             json!({
+                "kind": "connection",
+                "connection_kind": "logged_out",
+                "cause": cause,
+                "on_connect": on_connect,
+                "ts_unix_ms": ts_unix_ms,
+            })
+        }
+        InboundEvent::TemporaryBan {
+            reason, ts_unix_ms, ..
+        } => {
+            json!({
+                "kind": "connection",
+                "connection_kind": "temporary_ban",
+                "reason": reason,
+                "ts_unix_ms": ts_unix_ms,
+            })
+        }
+        InboundEvent::ConnectFailure {
+            reason, ts_unix_ms, ..
+        } => {
+            json!({
+                "kind": "connection",
+                "connection_kind": "connect_failure",
+                "reason": reason,
+                "ts_unix_ms": ts_unix_ms,
+            })
+        }
+        InboundEvent::IncomingCall {
+            peer, ts_unix_ms, ..
+        } => {
+            json!({
                 "kind": "call",
-                "id": id,
+                "id": peer,
                 "peer": peer,
-                "call_kind": kind,
+                "call_kind": "voice",
+                "state": "offered",
+                "ts_unix_ms": ts_unix_ms,
+            })
+        }
+        InboundEvent::MissedCall {
+            peer, ts_unix_ms, ..
+        } => {
+            json!({
+                "kind": "call",
+                "id": peer,
+                "peer": peer,
+                "call_kind": "voice",
+                "state": "missed",
+                "ts_unix_ms": ts_unix_ms,
+            })
+        }
+        InboundEvent::CallEndedElsewhere {
+            peer, ts_unix_ms, ..
+        } => {
+            json!({
+                "kind": "call",
+                "id": peer,
+                "peer": peer,
+                "call_kind": "voice",
+                "state": "terminated",
                 "ts_unix_ms": ts_unix_ms,
             })
         }
@@ -274,12 +335,20 @@ fn event_summary(ev: &crate::events::InboundEvent) -> serde_json::Value {
             })
         }
         InboundEvent::Unknown {
-            raw, ts_unix_ms, ..
+            wacore_event,
+            variant_label,
+            ts_unix_ms,
+            ..
         } => {
+            let raw_sha256 = match &wacore_event {
+                serde_json::Value::String(s) => hex::encode(Sha256::digest(s.as_bytes())),
+                other => hex::encode(Sha256::digest(other.to_string().as_bytes())),
+            };
             json!({
                 "kind": "unknown",
                 "ts_unix_ms": ts_unix_ms,
-                "raw_sha256": hex::encode(Sha256::digest(raw.as_bytes())),
+                "variant_label": variant_label,
+                "raw_sha256": raw_sha256,
             })
         }
         InboundEvent::CommunityUpdate {
@@ -333,6 +402,10 @@ fn event_summary(ev: &crate::events::InboundEvent) -> serde_json::Value {
             "jid": jid,
             "duration_seconds": duration_seconds,
             "ts_unix_ms": ts_unix_ms,
+        }),
+        _ => json!({
+            "kind": ev.event_kind(),
+            "ts_unix_ms": ev.ts_unix_ms(),
         }),
     }
 }

@@ -13,11 +13,13 @@ RFC-0951 (Economics): Extended API Endpoints
 **BLOCKED by:** RFC-0846 (Networking): WebSocket Infrastructure — in `rfcs/planned/networking/0846-websocket-infrastructure.md`
 
 **Requires:**
+
 - RFC-0920 (Economics): Unified Python SDK Dual-Mode Compatibility
 - RFC-0930 (Economics): Provider Inference from Model String
 - RFC-0846 (Networking): WebSocket Infrastructure — must be accepted first
 
 **Optional:**
+
 - RFC-0933 (Economics): Rate Limiting Integration
 - RFC-0934 (Economics): Real-Time Cost Tracking
 - RFC-0940 (Economics): any-llm-Mode HTTP Proxy Parity
@@ -60,16 +62,17 @@ Before implementation can begin, RFC-0846 must be created and accepted covering:
 
 **CRITICAL per RFC-0917 invariant:** Mode gate controls HOW, not WHETHER
 
-| Mode | WebSocket Behavior | Verification Required |
-|------|-------------------|----------------------|
-| litellm-mode | tokio-tungstenite → OpenAI WS endpoint | Need WS client implementation |
-| any-llm-mode | py_bridge → Python SDK | Python SDK WS support unconfirmed (see Phase 0) |
+| Mode         | WebSocket Behavior                     | Verification Required                           |
+| ------------ | -------------------------------------- | ----------------------------------------------- |
+| litellm-mode | tokio-tungstenite → OpenAI WS endpoint | Need WS client implementation                   |
+| any-llm-mode | py_bridge → Python SDK                 | Python SDK WS support unconfirmed (see Phase 0) |
 
 ### 3. OpenAI Realtime Protocol Analysis
 
 The OpenAI Realtime API is a stateful, bidirectional protocol requiring:
 
 **Session Lifecycle:**
+
 - Client sends `session.update` to configure (model, voice, tools)
 - Server sends `session.created` with session_id
 - Client sends `conversation.item.create` to add messages
@@ -78,6 +81,7 @@ The OpenAI Realtime API is a stateful, bidirectional protocol requiring:
 - Client sends `session.update` to modify, `session.delete` to close
 
 **Event Taxonomy:**
+
 ```
 Client → Server:
   session.update, session.delete
@@ -99,6 +103,7 @@ Server → Client:
 ## Acceptance Criteria
 
 ### Phase 1: Infrastructure (Pre-requisite)
+
 - [ ] RFC-0846 accepted
 - [ ] `tokio-tungstenite` integrated into Cargo.toml
 - [ ] Hyper WebSocket upgrade implemented in proxy.rs
@@ -108,6 +113,7 @@ Server → Client:
 - [ ] Mode compatibility verified (litellm + any-llm)
 
 ### Phase 2: Core Implementation
+
 - [ ] WebSocket endpoint accepts WS /v1/realtime connections
 - [ ] Authenticates via `?api_key=` query param
 - [ ] Establishes upstream connection to OpenAI wss://api.openai.com/v1/realtime
@@ -116,6 +122,7 @@ Server → Client:
 - [ ] Audio streaming support (input + output via base64-encoded JSON)
 
 ### Phase 3: Quality
+
 - [ ] Error handling follows RFC-0920 taxonomy where applicable
 - [ ] WebSocket-specific errors mapped appropriately
 - [ ] Message size limits enforced (4096 bytes for text frames)
@@ -124,6 +131,7 @@ Server → Client:
 - [ ] Integration tests pass (end-to-end with mock or test provider)
 
 ### Phase 4: Verification
+
 - [ ] Works in litellm-mode (tokio-tungstenite WS client)
 - [ ] Works in any-llm-mode (py_bridge WS relay) — VERIFIED NOT BLOCKED in Phase 0
 - [ ] Clippy passes with zero warnings
@@ -131,29 +139,29 @@ Server → Client:
 
 ## Security Considerations
 
-| Item | Requirement |
-|------|-------------|
-| Authentication | API key validation before upgrade; reject unauthenticated WS connections |
-| Frame size limits | Max 4096 bytes per text frame |
-| Connection limits | Max 10 concurrent WS connections per API key |
-| Rate limiting | Per-message rate limiting (100 msg/s per connection) |
-| Input validation | Validate all incoming event JSON schema |
-| Timeout | Connection idle timeout: 5 minutes |
-| Cleanup | Proper WS close handshake on logout/expiry |
+| Item              | Requirement                                                              |
+| ----------------- | ------------------------------------------------------------------------ |
+| Authentication    | API key validation before upgrade; reject unauthenticated WS connections |
+| Frame size limits | Max 4096 bytes per text frame                                            |
+| Connection limits | Max 10 concurrent WS connections per API key                             |
+| Rate limiting     | Per-message rate limiting (100 msg/s per connection)                     |
+| Input validation  | Validate all incoming event JSON schema                                  |
+| Timeout           | Connection idle timeout: 5 minutes                                       |
+| Cleanup           | Proper WS close handshake on logout/expiry                               |
 
 ## Error Handling
 
 ### WebSocket-Specific Error Mapping
 
-| Scenario | Response | RFC-0920 Equivalent |
-|----------|----------|----------------------|
-| No API key | WS close 4001 | AuthenticationError |
-| Invalid API key | WS close 4002 | AuthenticationError |
-| Rate limited | WS close 4003 | RateLimitError |
+| Scenario           | Response      | RFC-0920 Equivalent |
+| ------------------ | ------------- | ------------------- |
+| No API key         | WS close 4001 | AuthenticationError |
+| Invalid API key    | WS close 4002 | AuthenticationError |
+| Rate limited       | WS close 4003 | RateLimitError      |
 | Invalid event JSON | WS close 4004 | InvalidRequestError |
-| Frame too large | WS close 4005 | InvalidRequestError |
-| Upstream WS error | WS close 4006 | ProviderError |
-| Timeout/idle | WS close 4007 | TimeoutError |
+| Frame too large    | WS close 4005 | InvalidRequestError |
+| Upstream WS error  | WS close 4006 | ProviderError       |
+| Timeout/idle       | WS close 4007 | TimeoutError        |
 
 ## OpenAI Realtime Protocol Notes
 
@@ -162,6 +170,7 @@ Server → Client:
 **Not a passthrough proxy** — requires active session state management.
 
 **Key differences from HTTP proxying:**
+
 - Stateful bidirectional communication
 - Event-driven, not request/response
 - Audio data is base64-encoded JSON (not binary frames)
@@ -169,6 +178,7 @@ Server → Client:
 - quota-router MUST capture `session_id` for internal tracking
 
 **Key architectural requirements:**
+
 1. Capture `session.created` event to extract OpenAI's `session_id`
 2. Store `session_id` for budget/rate limiting association
 3. Relay all events bidirectionally without modification
@@ -177,33 +187,33 @@ Server → Client:
 
 ### Files to Create
 
-| File | Purpose |
-|------|---------|
-| `crates/quota-router-core/src/ws/mod.rs` | WS infrastructure module |
-| `crates/quota-router-core/src/ws/client.rs` | WebSocket client for OpenAI |
-| `crates/quota-router-core/src/handlers/realtime.rs` | WebSocket handler |
-| `crates/quota-router-core/src/handlers/realtime/events.rs` | Event type definitions |
-| `crates/quota-router-core/src/handlers/realtime/session.rs` | Session state management |
+| File                                                        | Purpose                     |
+| ----------------------------------------------------------- | --------------------------- |
+| `crates/quota-router-core/src/ws/mod.rs`                    | WS infrastructure module    |
+| `crates/quota-router-core/src/ws/client.rs`                 | WebSocket client for OpenAI |
+| `crates/quota-router-core/src/handlers/realtime.rs`         | WebSocket handler           |
+| `crates/quota-router-core/src/handlers/realtime/events.rs`  | Event type definitions      |
+| `crates/quota-router-core/src/handlers/realtime/session.rs` | Session state management    |
 
 ### Files to Modify
 
-| File | Change |
-|------|--------|
-| `crates/quota-router-core/src/proxy.rs` | Add WS upgrade handler |
-| `crates/quota-router-core/Cargo.toml` | Add `tokio-tungstenite`, `tokio-native-tls` |
-| `crates/quota-router-core/src/auth/sso/mod.rs` | Add WS auth if using SSO |
-| `crates/quota-router-pyo3/src/completion.rs` | Add WS relay for any-llm-mode |
+| File                                           | Change                                      |
+| ---------------------------------------------- | ------------------------------------------- |
+| `crates/quota-router-core/src/proxy.rs`        | Add WS upgrade handler                      |
+| `crates/quota-router-core/Cargo.toml`          | Add `tokio-tungstenite`, `tokio-native-tls` |
+| `crates/quota-router-core/src/auth/sso/mod.rs` | Add WS auth if using SSO                    |
+| `crates/quota-router-pyo3/src/completion.rs`   | Add WS relay for any-llm-mode               |
 
 ## Performance Targets
 
 Per RFC-0951:
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| Connection establishment | <100ms | Proxy processing only, excludes upstream WS connect |
-| Event relay latency | <50ms | Proxy processing time |
-| Concurrent connections | 100 per instance | Per API key: 10 |
-| Message throughput | 1000 msg/s total | Per connection: 100 msg/s |
+| Metric                   | Target           | Notes                                               |
+| ------------------------ | ---------------- | --------------------------------------------------- |
+| Connection establishment | <100ms           | Proxy processing only, excludes upstream WS connect |
+| Event relay latency      | <50ms            | Proxy processing time                               |
+| Concurrent connections   | 100 per instance | Per API key: 10                                     |
+| Message throughput       | 1000 msg/s total | Per connection: 100 msg/s                           |
 
 ## Claimant
 

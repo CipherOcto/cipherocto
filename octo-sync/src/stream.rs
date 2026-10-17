@@ -3,7 +3,7 @@
 //! The `WalTailStreamer` captures LSN ranges on every commit, packages them
 //! as `WalTailChunk` envelopes, and ships them to subscribed readers.
 //!
-//! Per RFC-0862 v1.1.0 §Migration path step v1.1.0.d, all WAL reads go through
+//! Per RFC-0862 §Migration path step v1.1.0.d, all WAL reads go through
 //! the `DatabaseSyncAdapter` trait — the cipherocto sync engine never calls
 //! `MVCCEngine::replay_two_phase` directly. The underlying `StoolapAdapter`
 //! impl handles that internally.
@@ -160,7 +160,7 @@ pub struct CommitError {
 /// The writer-side WAL-tail streamer.
 ///
 /// Holds:
-/// - `adapter`: the `DatabaseSyncAdapter` trait object (per RFC-0862 v1.1.0)
+/// - `adapter`: the `DatabaseSyncAdapter` trait object (per RFC-0862)
 /// - `subscribers`: per-peer subscription channels
 /// - `rate_limiter`: per-peer rate limiters
 /// - `current_lsn`: monotonic, persisted in WAL (wrapped in a Mutex for
@@ -247,7 +247,7 @@ impl WalTailStreamer {
         *self.current_lsn.lock()
     }
 
-    /// Set the pause flag. Propagates to the adapter (per RFC-0862 v1.1.0).
+    /// Set the pause flag. Propagates to the adapter (per RFC-0862).
     pub fn set_paused(&self, paused: bool) {
         *self.paused.lock() = paused;
         let _ = self.adapter.set_paused(paused);
@@ -292,7 +292,7 @@ impl WalTailStreamer {
         if *self.paused.lock() {
             return Ok(());
         }
-        // 4. Read WAL entries via the trait. Per RFC-0862 v1.1.0
+        // 4. Read WAL entries via the trait. Per RFC-0862
         //    §Migration path step v1.1.0.d, the cipherocto sync engine reads
         //    WAL through `adapter.read_wal_range(from, to)` — NOT via direct
         //    `self.engine.wal_manager().replay_two_phase(...)`.

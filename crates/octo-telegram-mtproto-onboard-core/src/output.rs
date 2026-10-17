@@ -153,7 +153,7 @@ pub fn validate_username(raw: Option<String>) -> Option<String> {
     // spaces, RTL marks, etc.).
     let cleaned: String = s
         .chars()
-        .filter(|c| !c.is_control() && !is_invisible_unicode(*c))
+        .filter(|c| !c.is_control() & !is_invisible_unicode(*c))
         .collect();
     if cleaned.is_empty() {
         None

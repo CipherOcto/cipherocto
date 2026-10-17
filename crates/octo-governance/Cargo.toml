@@ -1,0 +1,40 @@
+[package]
+name = "octo-governance"
+version = "0.1.0"
+edition = "2021"
+description = "Layer B governance facade — re-exports octo-governance-core (RFC-0013 §Module Layout)"
+license = "Apache-2.0"
+authors = ["CipherOcto"]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# Layer B facade → Layer A substrate (RFC-0013 §Module Layout).
+octo-governance-core = { path = "../octo-governance-core" }
+# BLAKE3-256 for SnapshotRef content addressing (RFC-0011-g §Snapshot Ref).
+# Routed through the same crate as octo-cap-macaroon (RFC-0957 §Algorithms)
+# — no direct `blake3` re-dep in octo-cli to honor the parallel-abstraction
+# ban. The CLI consumes via the façade re-export.
+blake3 = { version = "1.5", default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+# Bounded LRU cache per RFC-0011-g §Snapshot Cache (600 s TTL, capacity 64).
+# Reuses the same `lru` crate that quota-router-core pulls in for
+# crates/quota-router-core/src/cache.rs — honors the
+# no-parallel-abstractions principle (one LRU primitive, one crate).
+# The previous HashMap-based implementation in this file relied on
+# HashMap insertion-order iteration, which is unspecified and
+# randomized per-build in Rust's std (RandomState), so the LRU
+# eviction test `capacity_triggers_lru_eviction` failed non-
+# deterministically. The `lru` crate uses an internal doubly-
+# linked list to maintain true LRU order independent of hash
+# iteration order.
+lru = "0.16"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+empty_line_after_doc_comments = "allow"
+doc_lazy_continuation = "allow"

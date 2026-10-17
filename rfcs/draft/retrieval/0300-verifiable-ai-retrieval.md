@@ -21,7 +21,7 @@ The result is a database where clients can verify: **"These are provably the rea
 
 This is a capability no current vector database (Faiss, Milvus, Pinecone, Weaviate) provides.
 
-> ⚠️ **Prerequisites**: This RFC builds on RFC-0106 (Numeric Tower) and RFC-0107 (Vector-SQL Storage v2)
+> ⚠️ **Prerequisites**: This RFC builds on RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric Tower) and RFC-0107 (Vector-SQL Storage v2)
 
 ## Design Goals
 
@@ -104,7 +104,7 @@ Clients can verify:
                        │
 ┌──────────────────────▼──────────────────────────────────┐
 │            Deterministic Numeric Tower                  │
-│           (RFC-0106 - DFP/DQA/DVEC)                   │
+│           (RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) - DFP/DQA/DVEC)                   │
 └──────────────────────┬──────────────────────────────────┘
                        │
 ┌──────────────────────▼──────────────────────────────────┐
@@ -547,7 +547,7 @@ impl RetrievalBond {
 
 ## Integration Points
 
-### With RFC-0106 (Numeric Tower)
+### With RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric Tower)
 
 | Numeric Tower | Use in Verifiable Retrieval        |
 | ------------- | ---------------------------------- |
@@ -718,20 +718,20 @@ A new primitive for verifiable AI infrastructure.
 
 **Prerequisites**:
 
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower
 - RFC-0107 (Storage): Production Vector-SQL Storage v2
 
 ## Research Integration
 
 This RFC connects to the CipherOcto proof system:
 
-| Layer                | Document                      | Purpose                  |
-| -------------------- | ----------------------------- | ------------------------ |
-| Verifiable Retrieval | RFC-0108 (this)               | Retrieval proofs         |
-| Numeric Tower        | RFC-0106                      | Deterministic arithmetic |
-| AIR                  | `luminair-air-deep-dive.md`   | Constraint generation    |
-| STWO                 | `stwo-gpu-acceleration.md`    | GPU-accelerated proving  |
-| Orion                | `cairo-ai-research-report.md` | Provable ML inference    |
+| Layer                | Document                                                                 | Purpose                  |
+| -------------------- | ------------------------------------------------------------------------ | ------------------------ |
+| Verifiable Retrieval | RFC-0108 (this)                                                          | Retrieval proofs         |
+| Numeric Tower        | RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) | Deterministic arithmetic |
+| AIR                  | `luminair-air-deep-dive.md`                                              | Constraint generation    |
+| STWO                 | `stwo-gpu-acceleration.md`                                               | GPU-accelerated proving  |
+| Orion                | `cairo-ai-research-report.md`                                            | Provable ML inference    |
 
 ## Transcript Proofs
 
@@ -873,7 +873,7 @@ System Prompt + User Query + Retrieved Context → Final Prompt
 **Guarantees:**
 
 - Prompt = deterministic function(inputs)
-- Integrates with RFC-0106 deterministic compute
+- Integrates with RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) deterministic compute
 
 #### Stage 4 — Inference Verification
 
@@ -976,7 +976,7 @@ This enables **Proof-Carrying AI** — every AI output includes:
 - RFC-0103 (Numeric/Math): Unified Vector-SQL Storage (superseded by 0107)
 - RFC-0104 (Numeric/Math): Deterministic Floating-Point
 - RFC-0105 (Numeric/Math): Deterministic Quant Arithmetic
-- RFC-0106 (Numeric/Math): Deterministic Numeric Tower (numeric determinism)
+- RFC-0104 (DFP) + RFC-0105 (DQA) + RFC-0110 (BigInt) + RFC-0111 (Decimal) (Numeric/Math): Deterministic Numeric Tower (numeric determinism)
 - RFC-0110 (Agents): Verifiable Agent Memory
 
 ## Related Use Cases

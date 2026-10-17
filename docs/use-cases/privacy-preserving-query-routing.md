@@ -367,6 +367,6 @@ sequenceDiagram
 
 ## Related RFCs
 
-- [RFC-0108 (Numeric/Math): Deterministic Training Circuits](../rfcs/0108-deterministic-training-circuits.md)
-- [RFC-0109 (Numeric/Math): Linear Algebra Engine](../rfcs/0109-linear-algebra-engine.md)
-- [RFC-0302 (Retrieval): Retrieval Gateway & Query Routing](../rfcs/0302-retrieval-gateway-query-routing.md)
+- RFC-0108
+- RFC-0109
+- RFC-0302

@@ -1,7 +1,7 @@
 ---
 title: "RFC-0850: Deterministic Overlay Transport (DOT)"
 status: Accepted
-version: 1.1.0
+version: 1.3.0
 created: 2026-05-25
 updated: 2026-06-05
 authors:
@@ -18,7 +18,7 @@ related:
 
 ## Status
 
-Accepted (v1.1.0)
+Accepted (v1.3.0)
 
 ## Authors
 

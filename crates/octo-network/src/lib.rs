@@ -40,10 +40,36 @@ pub mod dom;
 pub mod drs;
 /// Mission Overlay Networks (MON) — RFC-0855.
 pub mod mon;
+/// Federation reputation (mission 0855p-b / 0968 Phase 4).
+pub mod reputation;
+/// Network sender substrate (RFC-0863) — mission 0011-h-s-a-network-sender.
+pub mod sender;
+// Re-export the reputation gossip substrate so callers can
+// `octo_network::gossip::start_reputation_gossip` without
+// descending into the inner module.
+//
+// `start_reputation_gossip` and `start_reputation_gossip_with_rate_limit`
+// are #[deprecated] (Round 2 review C5 — RFC-0968 §12 MUST); re-exports
+// pass the deprecation through to callers. `#[allow(deprecated)]` here
+// is INTENTIONAL: the re-export site itself is not a use site; the
+// deprecation should fire at the actual caller, not the re-export.
+#[allow(deprecated)]
+pub use crate::gossip::reputation::{
+    gossip_catch_up, start_reputation_gossip, start_reputation_gossip_with_rate_limit,
+    IngressOutcome, RawIngress, ReputationGossipHandle, ReputationGossipJoin,
+};
+pub use crate::reputation::{
+    DcRootedSlashReputationStoreCompat, SlashReputationStoreCompat,
+    HARD_THRESHOLD as SLASH_HARD_THRESHOLD,
+};
 /// Onion Relay Routing (ORR) — RFC-0858.
 pub mod orr;
 /// Proof-of-Relay (PoRelay) — RFC-0860.
 pub mod porelay;
 
+/// Quota Router Network substrate — RFC-0870 (mission 0011-h-s-a-quota-router-node).
+pub mod quota;
+/// Specialized Node Record substrate — RFC-0871 (mission 0011-h-s-a-specialized-node-record).
+pub mod specialized;
 /// Data sync transport bridge — RFC-0862 carrier integration.
 pub mod sync;

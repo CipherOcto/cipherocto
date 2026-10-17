@@ -1,0 +1,651 @@
+//! Cairo 2.x capability circuit smoke test (mission 0958-a Sessions 1 + 2).
+//!
+//! Replaces the prior Cairo 1.x `cairo-compile` snapshot test (which
+//! assumed a binary that does not exist on Cairo 2.x toolchains). The
+//! new path uses scarb (Cairo 2.x build orchestrator) which IS installed
+//! and produces real Sierra IR from `cairo/src/lib.cairo`; the in-process
+//! `cairo-lang-sierra-to-casm` pass (Session 2) lowers that IR to CASM
+//! bytecode whose BLAKE3 hash is the canonical `compiled_casm_hash`.
+//!
+//! **Session 1 scope:** prove the Cairo source compiles via the real
+//! scarb toolchain, produces valid Sierra IR, and the IR is semantically
+//! deterministic across builds.
+//!
+//! **Session 2 scope:** prove the Sierra→CASM in-process pass emits real
+//! bytecode (not a stub), the bytecode is byte-deterministic across
+//! builds (salsa UUIDs in the IR are absorbed by the canonical
+//! `Program` AST), and `compile_from_source` round-trips through the
+//! full pipeline end-to-end.
+//!
+//! **Hard-fail policy:** this test does NOT skip silently. If `scarb` is
+//! missing, the test panics with an actionable message. Local dev and CI
+//! must both have scarb installed (CI workflow
+//! `.github/workflows/zk-capability-circuit.yml` installs scarb 2.20.0).
+//!
+//! **Reference:** RFC-0958 §CASM Hash Drift Detection.
+
+#![allow(clippy::map_unwrap_or)] // intentional: temp-dir naming needs the map-unwrap-or chain
+#![allow(clippy::similar_names)] // intentional: sierra_a_bytes / sierra_b_bytes naming
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use zk_circuit::BUNDLED_CAIRO_SOURCE;
+
+/// Workspace-relative path to the Cairo 2.x project root.
+fn cairo_project_root() -> PathBuf {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    crate_dir
+        .parent()
+        .and_then(Path::parent)
+        .map(|ws| ws.join("cairo"))
+        .expect("zk-circuit must live at crates/zk-circuit/ inside the workspace")
+}
+
+/// Run `scarb build` in the Cairo project directory, isolating the
+/// target dir per test invocation so parallel test runs do not race on
+/// the shared `cairo/target/dev/` output.
+///
+/// # Panics
+/// Panics (with actionable message) if scarb is missing or the build fails.
+/// Session 1 mandates hard-fail — no silent skip.
+fn run_scarb_build(project: &Path) -> PathBuf {
+    let scarb_check = Command::new("scarb").arg("--version").output();
+    match scarb_check {
+        Ok(out) if out.status.success() => {
+            // scarb is available — proceed.
+        }
+        Ok(_) => panic!(
+            "scarb --version exited non-zero. Install scarb 2.20.0 (https://docs.swmansion.com/scarb/). \
+             Mission 0958-a Session 1 requires scarb to produce Sierra IR."
+        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => panic!(
+            "scarb not in PATH. Install scarb 2.20.0 (https://docs.swmansion.com/scarb/). \
+             Mission 0958-a Session 1 requires scarb to produce Sierra IR."
+        ),
+        Err(e) => panic!("failed to spawn scarb: {e}"),
+    }
+
+    // Per-test isolated target dir — lets parallel tests run without
+    // stomping on each other's output.
+    let target_dir = std::env::temp_dir().join(format!(
+        "cipherocto-scarb-target-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&target_dir).expect("create temp target dir");
+
+    let output = Command::new("scarb")
+        .arg("--target-dir")
+        .arg(&target_dir)
+        .arg("build")
+        .current_dir(project)
+        .output()
+        .expect("spawn scarb build");
+    assert!(
+        output.status.success(),
+        "scarb build failed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let sierra_path = target_dir.join("dev").join("capability_zk.sierra.json");
+    assert!(
+        sierra_path.exists(),
+        "scarb build did not produce {}",
+        sierra_path.display()
+    );
+    sierra_path
+}
+
+/// Run `scarb build` with an explicit target dir (used by the
+/// determinism test which needs two independent builds).
+fn run_scarb_build_into(project: &Path, target_dir: &Path) -> PathBuf {
+    let output = Command::new("scarb")
+        .arg("--target-dir")
+        .arg(target_dir)
+        .arg("build")
+        .current_dir(project)
+        .output()
+        .expect("spawn scarb build");
+    assert!(
+        output.status.success(),
+        "scarb build failed: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let sierra = target_dir.join("dev").join("capability_zk.sierra.json");
+    assert!(
+        sierra.exists(),
+        "scarb build did not produce {}",
+        sierra.display()
+    );
+    sierra
+}
+
+fn unique_target_dir(label: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "cipherocto-scarb-{}-{}-{}",
+        label,
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&dir).expect("create temp target dir");
+    dir
+}
+
+/// Read the Sierra JSON file produced by scarb and parse it.
+fn read_sierra_json(path: &Path) -> serde_json::Value {
+    let bytes =
+        std::fs::read(path).unwrap_or_else(|e| panic!("read sierra.json {}: {e}", path.display()));
+    serde_json::from_slice(&bytes)
+        .unwrap_or_else(|e| panic!("parse sierra.json {}: {e}", path.display()))
+}
+
+/// Extract the set of `debug_name` values from the Sierra IR. This is the
+/// semantic-content fingerprint: it ignores salsa UUIDs (which change per
+/// compile session) and only tracks the types + functions the compiler
+/// actually emitted.
+fn debug_name_set(sierra: &serde_json::Value) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    let Some(arr) = sierra.get("type_declarations").and_then(|v| v.as_array()) else {
+        panic!("sierra.json missing 'type_declarations' array");
+    };
+    for entry in arr {
+        if let Some(name) = entry
+            .get("id")
+            .and_then(|id| id.get("debug_name"))
+            .and_then(|n| n.as_str())
+        {
+            out.insert(name.to_owned());
+        }
+    }
+    let Some(funcs) = sierra.get("funcs").and_then(|v| v.as_array()) else {
+        return out;
+    };
+    for func in funcs {
+        if let Some(name) = func
+            .get("id")
+            .and_then(|id| id.get("debug_name"))
+            .and_then(|n| n.as_str())
+        {
+            out.insert(format!("fn:{name}"));
+        }
+    }
+    out
+}
+
+#[test]
+fn scarb_build_produces_valid_sierra_json() {
+    let project = cairo_project_root();
+    let sierra_path = run_scarb_build(&project);
+    assert!(
+        sierra_path.exists(),
+        "scarb build did not produce {}",
+        sierra_path.display()
+    );
+    let sierra = read_sierra_json(&sierra_path);
+    assert_eq!(
+        sierra.get("version").and_then(serde_json::Value::as_i64),
+        Some(1),
+        "Sierra version must be 1"
+    );
+    assert!(
+        sierra
+            .get("type_declarations")
+            .and_then(|v| v.as_array())
+            .is_some(),
+        "Sierra IR must contain type_declarations array"
+    );
+}
+
+#[test]
+fn sierra_ir_is_semantically_deterministic_across_builds() {
+    // salsa (scarb's incremental compiler DB) generates fresh UUIDs per
+    // session, so the raw JSON bytes are NOT byte-identical across
+    // builds. The semantic content IS identical — we compare the
+    // debug_name set, which captures types + function names without
+    // the salsa UUID noise. The downstream Sierra→CASM pass (Session 2)
+    // absorbs the salsa UUIDs entirely (it canonicalizes through the
+    // `Program` AST), so the CASM bytes ARE byte-identical — see
+    // `casm_is_byte_identical_across_builds` below.
+    let project = cairo_project_root();
+
+    let dir_a = unique_target_dir("det-a");
+    let dir_b = unique_target_dir("det-b");
+    let sierra_a = read_sierra_json(&run_scarb_build_into(&project, &dir_a));
+    let sierra_b = read_sierra_json(&run_scarb_build_into(&project, &dir_b));
+
+    let names_a = debug_name_set(&sierra_a);
+    let names_b = debug_name_set(&sierra_b);
+
+    assert_eq!(
+        names_a,
+        names_b,
+        "Sierra IR must be semantically deterministic (same type_declarations \
+         + function set across builds). diff: {:#?}",
+        names_a.symmetric_difference(&names_b).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn scarb_build_includes_main_function() {
+    // The Sierra IR carries a `funcs` array of function entries. The
+    // `capability_zk::main` function must be present (it is the STARK
+    // entry point that the prover invokes). Struct types like
+    // PublicInputs / PrivateWitness may be inlined by scarb's optimizer
+    // — they are tracked at the source level (see bundled_cairo_source_*
+    // tests) rather than in the IR debug_name set.
+    let project = cairo_project_root();
+    let sierra = read_sierra_json(&run_scarb_build(&project));
+    let names = debug_name_set(&sierra);
+    assert!(
+        names.iter().any(|n| n.contains("capability_zk::main")),
+        "Sierra IR must include `capability_zk::main` function entry. \
+         Found types: {names:#?}"
+    );
+}
+
+#[test]
+fn bundled_cairo_source_defines_public_inputs_struct() {
+    // Source-level contract: PublicInputs struct must be declared in the
+    // bundled Cairo source. scarb may inline or rewrite the struct in
+    // Sierra IR, so the IR debug_name set is not a reliable check.
+    assert!(
+        BUNDLED_CAIRO_SOURCE.contains("pub struct PublicInputs"),
+        "BUNDLED_CAIRO_SOURCE must declare PublicInputs struct"
+    );
+    assert!(
+        BUNDLED_CAIRO_SOURCE.contains("pub struct PrivateWitness"),
+        "BUNDLED_CAIRO_SOURCE must declare PrivateWitness struct"
+    );
+    assert!(
+        BUNDLED_CAIRO_SOURCE.contains("pub fn main"),
+        "BUNDLED_CAIRO_SOURCE must declare a `main` function"
+    );
+}
+
+#[test]
+fn bundled_cairo_source_matches_cairo_src_lib_cairo() {
+    // The BUNDLED_CAIRO_SOURCE constant in zk-circuit is sourced from
+    // `cairo/src/lib.cairo` via `include_str!`. This test pins that
+    // contract: any drift between the on-disk file and the compiled-in
+    // constant is a build-system bug.
+    let project = cairo_project_root();
+    let on_disk = std::fs::read_to_string(project.join("src").join("lib.cairo"))
+        .expect("read cairo/src/lib.cairo");
+    assert_eq!(
+        on_disk, BUNDLED_CAIRO_SOURCE,
+        "BUNDLED_CAIRO_SOURCE (include_str!) must match cairo/src/lib.cairo on disk"
+    );
+}
+
+// =========================================================================
+// Session 2 tests — Sierra→CASM in-process pass via cairo-lang-sierra-to-casm.
+// =========================================================================
+
+#[test]
+fn compile_from_source_returns_non_empty_casm() {
+    // Session 2 contract: the production `compile_from_source` path
+    // emits REAL CASM bytecode via the in-process Sierra→CASM pass,
+    // not a JSON stub. Verifies:
+    // - bytecode is non-empty (real instructions emitted),
+    // - bytecode length is a multiple of 32 (felt252 wire format),
+    // - hash is 64 hex chars (BLAKE3-256 shape),
+    // - hash is stable across two calls (OnceLock memoization).
+    let a = zk_circuit::compile_bundled()
+        .expect("compile_bundled must succeed; scarb + cairo-lang crates must be installed");
+    assert!(
+        !a.casm_bytecode.is_empty(),
+        "CASM bytecode must be non-empty (real CASM, not a stub)"
+    );
+    assert_eq!(
+        a.casm_bytecode.len() % 32,
+        0,
+        "CASM bytecode must be multiple of 32 bytes (felt252 wire format); got {} bytes",
+        a.casm_bytecode.len()
+    );
+    assert_eq!(
+        a.compiled_casm_hash.len(),
+        64,
+        "BLAKE3-256 hex must be 64 chars"
+    );
+    assert!(
+        a.compiled_casm_hash.chars().all(|c| c.is_ascii_hexdigit()),
+        "compiled_casm_hash must be hex; got {}",
+        a.compiled_casm_hash
+    );
+
+    // Memoization: second call returns the same circuit (OnceLock caches).
+    let b = zk_circuit::compile_bundled().expect("second call must also succeed");
+    assert_eq!(
+        a.compiled_casm_hash, b.compiled_casm_hash,
+        "compile_from_source must be deterministic (OnceLock memoization)"
+    );
+}
+
+#[test]
+fn casm_is_byte_identical_across_builds() {
+    // Session 2 strong determinism contract: the in-process Sierra→CASM
+    // pass absorbs salsa UUIDs entirely (the `Program` AST is canonical,
+    // so two Sierra JSON files that differ only in salsa UUIDs produce
+    // byte-identical CASM). This is the property that makes
+    // `bundled_casm_hash()` meaningful across processes / platforms.
+    //
+    // Two independent scarb builds → two Sierra JSONs (different
+    // salsa UUIDs) → two CASM byte streams that MUST be byte-identical.
+    let project = cairo_project_root();
+    let dir_a = unique_target_dir("casm-det-a");
+    let dir_b = unique_target_dir("casm-det-b");
+    let sierra_a_bytes =
+        std::fs::read(run_scarb_build_into(&project, &dir_a)).expect("read sierra A");
+    let sierra_b_bytes =
+        std::fs::read(run_scarb_build_into(&project, &dir_b)).expect("read sierra B");
+
+    // Sanity: the two Sierra JSONs are NOT byte-identical (salsa UUIDs).
+    assert_ne!(
+        sierra_a_bytes, sierra_b_bytes,
+        "sanity: two independent scarb builds MUST produce different Sierra \
+         JSON bytes (salsa UUIDs differ); if they are byte-identical, the \
+         determinism check below is trivially true and provides no signal"
+    );
+
+    let casm_a = compile_sierra_to_casm(&sierra_a_bytes);
+    let casm_b = compile_sierra_to_casm(&sierra_b_bytes);
+    assert_eq!(
+        casm_a, casm_b,
+        "CASM bytes MUST be byte-identical across builds (salsa UUIDs absorbed \
+         by the Sierra→CASM pass); diverging implies a non-deterministic \
+         compiler pass and breaks RFC-0958 §compiled_casm_hash contract"
+    );
+}
+
+#[test]
+fn bundled_casm_hash_is_stable_across_compile_from_source_calls() {
+    // OnceLock + the byte-identical-across-builds property together
+    // imply `bundled_casm_hash()` is process-stable: the first call
+    // computes the CASM via the scarb+Sierra→CASM pipeline; every
+    // subsequent call returns the same bytes without invoking scarb
+    // again.
+    let hex_a = zk_circuit::bundled_casm_hash_hex()
+        .expect("bundled_casm_hash_hex must succeed once scarb + crates installed");
+    let hex_b = zk_circuit::bundled_casm_hash_hex()
+        .expect("bundled_casm_hash_hex must succeed on subsequent calls");
+    assert_eq!(hex_a, hex_b);
+    assert_eq!(hex_a.len(), 64);
+    assert!(hex_a.chars().all(|c| c.is_ascii_hexdigit()));
+}
+
+/// In-process Sierra→CASM pass via the same library code `compile_from_source`
+/// uses internally. Re-implemented here against the `cairo_lang_*` crates
+/// so the test exercises the lower-level pipeline independently of
+/// `compile_from_source`'s scarb-subprocess wrapper.
+fn compile_sierra_to_casm(sierra_bytes: &[u8]) -> Vec<u8> {
+    use cairo_lang_sierra::program::Program as SierraProgram;
+    use cairo_lang_sierra_to_casm::compiler::{compile as sierra_compile, SierraToCasmConfig};
+    use cairo_lang_sierra_to_casm::metadata::calc_metadata_ap_change_only;
+    use cairo_lang_sierra_type_size::ProgramRegistryInfo;
+
+    let program: SierraProgram = serde_json::from_slice(sierra_bytes).expect("parse Sierra IR");
+    let registry_info = ProgramRegistryInfo::new(&program).expect("ProgramRegistryInfo::new");
+    let metadata = calc_metadata_ap_change_only(&program, &registry_info)
+        .expect("calc_metadata_ap_change_only");
+    let casm = sierra_compile(
+        &program,
+        &registry_info,
+        &metadata,
+        SierraToCasmConfig {
+            gas_usage_check: false,
+            max_bytecode_size: usize::MAX,
+        },
+    )
+    .expect("Sierra→CASM compile");
+    let assembled = casm.assemble();
+    // Reuse the same wire-format encoding as the production code.
+    zk_circuit_test_helpers::felt_vec_to_casm_bytes(&assembled.bytecode)
+}
+
+#[test]
+fn measure_current_casm_size() {
+    // Pre-AC-4 baseline measurement.
+    let bytes = zk_circuit::bundled_casm_bytes().expect("compile");
+    let bytes_len = bytes.len();
+    let kb = bytes_to_kb(bytes_len);
+    let words = bytes_len / 32;
+    println!("AC-4 baseline: CASM bytes={bytes_len} ({kb:.2} KB), words={words}");
+    println!("AC-4 hard ceilings: 110 KB serialized / 3300 words (raised three times, as the vacuous chain assertion became a real MAC chain, that chain began binding prev_id, and it adopted the host's nonce-seeded chain[0])");
+}
+
+/// AC-4 hard gate: serialized CASM bytes ≤ 110 KB after Stage-2 split.
+///
+/// Raised from 50 KB, then 75 KB, then 80 KB, alongside the word ceiling and on the
+/// same evidence: the program verifies a relation it previously did not.
+///
+/// **Status (mission 0958-c AC-4, 2026-08-06):** GREEN as of R19 closure.
+/// The R19 swap put production `verify_chain` on corelib Poseidon over
+/// felt252 (replacing the R18 SHA-256 stopgap), dropping `corelib::sha256` +
+/// `ByteArray` assembly + `u128` `pow256` loop from the compiled CASM. The
+/// figure has moved on since; the current measurement is in
+/// `blake3_circuit_cost_is_recorded_and_rejected`.
+#[test]
+fn casm_bytes_under_110kb_after_stage2_split() {
+    let bytes = zk_circuit::bundled_casm_bytes().expect("compile");
+    let bytes_len = bytes.len();
+    let kb = bytes_to_kb(bytes_len);
+    assert!(
+        bytes_len <= 110 * 1024,
+        "AC-4 size regression: serialized CASM = {bytes_len} bytes ({kb:.2} KB) > 110 KB ceiling.",
+    );
+}
+
+/// AC-4 hard gate: CASM word count ≤ 2,400 after Stage-2 split
+/// (Round 18 fix F-122 — `max_bytecode_size` measures CASM words,
+/// NOT Sierra statements or serialized bytes).
+///
+/// The ceiling has moved three times, from 1,600 to 2,200 to 2,400 to 3,300.
+/// The first move was `verify_chain_against_tip` replacing a vacuous assertion
+/// with a real MAC chain bound to a verifier-supplied tip. The second made that
+/// chain MAC `prev_id` per step, so the circuit enforces the same
+/// `name ‖ caveat ‖ id` construction the host does. The third gave the chain the
+/// host's `chain[0]` — carrying the unrecoverable mint nonce as witness, and
+/// spanning variable-length caveat messages. See
+/// `blake3_circuit_cost_is_recorded_and_rejected` for the full rationale, the
+/// rejected BLAKE3 alternative at 17,628 words, and the current 3,004-word
+/// measurement.
+///
+/// Budget changes must amend the ceiling explicitly, not be absorbed by
+/// trimming elsewhere.
+#[test]
+fn casm_words_under_3300_after_stage2() {
+    let bytes = zk_circuit::bundled_casm_bytes().expect("compile");
+    let words = bytes.len() / 32;
+    assert!(
+        words <= 3300,
+        "AC-4 size regression: CASM word count = {words} > 3300 ceiling.",
+    );
+}
+
+/// RFC-0973 §Root-Secret Binding: the BLAKE3 circuit-cost measurement that
+/// keeps `root_secret_knowledge` unregistered.
+///
+/// The relation needs an **unkeyed BLAKE3 computed by constrained program
+/// logic**. `unkeyed_hash_one_chunk` exists in `cairo/src/blake3.cairo` and is
+/// parity-anchored to host BLAKE3 by four vectors. What it is not is affordable:
+/// un-gating the module and compiling it puts the program at **17,628 CASM
+/// words / 550.88 KB**, against a ceiling of 3,300 words / 110 KB. That is a 5x
+/// overrun on a ceiling with 296 words of headroom.
+///
+/// Slimming the module to the unkeyed path — gating the keyed and HMAC surface
+/// behind `#[cfg(test)]` — does not bring it under. The compression function
+/// and its `u32` state machine dominate the cost, and those are exactly what the
+/// relation needs.
+///
+/// **This test pins the decision rather than re-running the expensive
+/// measurement.** It recompiles the whole program with BLAKE3 compiled in, which
+/// means un-gating the module, running scarb, and lowering Sierra to CASM — too
+/// slow for the ordinary suite, and it would fail the AC-4 gates above on the way
+/// past. The figure is asserted here so a future change to the module cannot
+/// quietly make the recorded number wrong, and the reason is recorded in
+/// `cairo/src/lib.cairo` beside the `#[cfg(test)] mod blake3;` gate it explains.
+///
+/// RFC-0973 §Performance Targets names this case: a budget must not be raised to
+/// fit a primitive whose cost was never justified. Here the primitive was
+/// measured and rejected, so the ceiling stands and the strategy stays
+/// unregistered.
+#[test]
+fn blake3_circuit_cost_is_recorded_and_rejected() {
+    // The R19 baseline this mission measured against, and the ceiling.
+    const BASELINE_WORDS: usize = 1_522;
+
+    // The ceiling moved twice, deliberately, and both reasons are on record.
+    //
+    // It was 1_600 words, set against a circuit that asserted only that a
+    // prover-supplied commitment was non-zero. That assertion could not fail,
+    // so it verified no relation to the macaroon at all — the budget was
+    // measuring an empty program.
+    //
+    // `verify_chain_against_tip` replaces it with a real domain-separated
+    // Poseidon MAC chain whose derived tip must equal the verifier-supplied
+    // `chain_tip_lo`. That is RFC-0958 step 2, and it cost 2_182 words.
+    //
+    // It then moved again when the chain began MACing `prev_id` alongside each
+    // caveat, so that the circuit enforces the same `name ‖ caveat ‖ id`
+    // construction the host does. Without that per-step id binding the circuit
+    // would prove a strictly weaker relation than the host chain — a swapped
+    // `capability_id` would leave the proof intact — and aligning them by
+    // dropping the id from the host was rejected. The extra MAC input costs
+    // 15 words, which is the whole of the second increase.
+    //
+    // It moved a third time when the chain was taught to match the host's
+    // `chain[0]`. The mint nonce is not stored on the token — `root_id` is a
+    // one-way summary of it — so it has to cross into the circuit as witness,
+    // which added a seed array; and a caveat is now a variable-length byte
+    // message spanning several felts, which added a width array. Two extra
+    // spans and their loops cost 807 words (2_197 → 3_004).
+    //
+    // Parsing those widths out of the data in-circuit, by reading each caveat's
+    // length prefix and dividing by 31, was implemented and measured first: it
+    // costs **127 words more** (3_131) and buys nothing. The derived tip must
+    // equal the verifier-supplied one, so a prover claiming the wrong widths
+    // lands on a different tip regardless of whether the circuit parsed the
+    // structure itself.
+    //
+    // Each increase is justified by what the program now proves, and the result
+    // is still an order of magnitude below the alternative: re-deriving the
+    // RFC-0957 HMAC-BLAKE3 chain in-circuit measured 17_628 words, so the
+    // honest ceiling is the cheaper primitive plus a measured allowance, not
+    // the native one. The allowance is ~200 words; at 3 words it was not an
+    // allowance, only the next change's failure waiting to happen.
+    const CEILING_WORDS: usize = 3_300;
+    const CEILING_BYTES: usize = 110 * 1024;
+
+    const {
+        // The STARK-native chain re-derivation, measured.
+        const MEASURED_CHAIN_WORDS: usize = 3_004;
+        const MEASURED_CHAIN_BYTES: usize = 96_128;
+        // The RFC-0957 native chain, measured and rejected.
+        const MEASURED_WITH_BLAKE3_WORDS: usize = 17_628;
+        const MEASURED_WITH_BLAKE3_BYTES: usize = 564_096;
+
+        assert!(
+            MEASURED_CHAIN_WORDS <= CEILING_WORDS,
+            "the measured chain re-derivation must fit its own ceiling, or the \
+             ceiling is not tracking reality"
+        );
+        assert!(
+            MEASURED_CHAIN_BYTES <= CEILING_BYTES,
+            "the serialized ceiling must accommodate the measured program too"
+        );
+        // These two are the same program measured two ways. They were once
+        // recorded as 2_182 words and 69_792 bytes, which is one 32-byte slot
+        // apart, so a reader taking either figure as authoritative got a wrong
+        // number from the other. They are now tied together.
+        assert!(
+            MEASURED_CHAIN_WORDS * 32 == MEASURED_CHAIN_BYTES,
+            "the recorded word and byte figures must describe the same program"
+        );
+        // The reason this primitive was chosen: a large saving over BLAKE3.
+        //
+        // This threshold was 8x when the measurement was 2_182 words. Teaching
+        // the chain the host's `chain[0]` and spanning variable-length caveat
+        // messages moved the program to 3_004 words, and the real margin is now
+        // 5.9x. The assertion is deliberately NOT deleted at that point: it
+        // fired, the number was checked against the alternative, and the
+        // primitive swap is still overwhelmingly worth a token-format change.
+        // It stays at 5x so a future change that drifts the circuit back toward
+        // the BLAKE3 cost still fails here rather than quietly erasing the
+        // reason the primitive was swapped in the first place.
+        assert!(
+            MEASURED_CHAIN_WORDS * 5 < MEASURED_WITH_BLAKE3_WORDS,
+            "the STARK-native chain must stay far cheaper than the native one, \
+             or swapping primitives was not worth a token-format change"
+        );
+
+        assert!(
+            MEASURED_WITH_BLAKE3_WORDS > CEILING_WORDS,
+            "if BLAKE3 ever fits under the ceiling, this decision must be revisited \
+             rather than left standing"
+        );
+        assert!(
+            MEASURED_WITH_BLAKE3_BYTES > CEILING_BYTES,
+            "the serialized ceiling must be breached too, or the word count alone is not decisive"
+        );
+        assert!(
+            BASELINE_WORDS < CEILING_WORDS,
+            "the baseline must have been under the ceiling, or the comparison is not meaningful"
+        );
+        assert!(
+            MEASURED_CHAIN_WORDS < MEASURED_WITH_BLAKE3_WORDS,
+            "BLAKE3 must remain the rejected option"
+        );
+    }
+
+    // The current program must stay within the ceiling AND the measured figure
+    // above must still describe it. If the circuit grows, this test fails until
+    // the recorded number is re-measured rather than silently drifting.
+    let bytes = zk_circuit::bundled_casm_bytes().expect("compile");
+    let words = bytes.len() / 32;
+    assert!(
+        words <= CEILING_WORDS,
+        "the compiled program must stay under its ceiling, got {words} words"
+    );
+    assert!(
+        words <= 3_004,
+        "the circuit grew past its recorded measurement of 3004 words (now {words}); \
+         re-measure and record the new figure"
+    );
+}
+
+/// Convert a byte count to KB (f64). CASM sizes are bounded well below
+/// 2^53 bytes so the precision loss is irrelevant for the AC-4 size
+/// reporting at lines above.
+#[allow(clippy::cast_precision_loss)]
+fn bytes_to_kb(n: usize) -> f64 {
+    n as f64 / 1024.0
+}
+
+/// Test-local helper module mirroring `zk_circuit::felt_vec_to_casm_bytes`
+/// so the test does not depend on the private helper. Kept here (not in
+/// the lib crate) because exposing it as `pub` would expand the
+/// crate's surface area for no consumer benefit.
+mod zk_circuit_test_helpers {
+    pub fn felt_vec_to_casm_bytes(words: &[num_bigint::BigInt]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(words.len() * 32);
+        for w in words {
+            let raw = w.to_signed_bytes_be();
+            let mut word = [0u8; 32];
+            let len = raw.len();
+            if len <= 32 {
+                word[32 - len..].copy_from_slice(&raw);
+            } else {
+                word.copy_from_slice(&raw[len - 32..]);
+            }
+            out.extend_from_slice(&word);
+        }
+        out
+    }
+}

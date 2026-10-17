@@ -1,0 +1,1070 @@
+//! `CapabilityToken` — holder-bound + caveat-chained bearer token
+//! (RFC-0957 §3.1). The verifier checks:
+//! 1. Holder signature (Ed25519 over `canonical_ser(root_id || caveats_wire)`).
+//! 2. HMAC chain re-derivation against the issuer's root secret.
+//! 3. Caveat evaluation against the request context.
+//!
+//! Layer 4 extension crate per RFC-0965. This module owns the holder-
+//! bound envelope around a `Macaroon` + `holder_sig` + `discharges`.
+//! It depends on `crate::macaroon` + `crate::caveat` + `crate::signer`
+//! (the `CapabilitySigner` trait abstraction for the holder key — the
+//! `IdentityKey` blanket impl lives in `octo-wallet`).
+
+use serde::{Deserialize, Serialize};
+
+use crate::caveat::Caveat;
+use crate::macaroon::{CapabilityCatalog, Macaroon, MacaroonError, MacaroonId};
+use crate::signer::CapabilitySigner;
+
+/// Discharge macaroon body. Channel-tagged (escrow / revocation /
+/// rate-limit). Per RFC-0957 §3.4, discharges satisfy third-party
+/// caveats attached to the parent capability.
+///
+/// Migration note (mission 0957 Phase 2b-3): `DischargeMacaroon` moved
+/// into the extension crate alongside `CapabilityToken` because the
+/// parent token references discharges by value (`Vec<DischargeMacaroon>`).
+/// The other `discharge.rs` types (ChannelProvider, EscrowDischargeProvider,
+/// RateLimitDischargeProvider, RevocationDischargeProvider, etc.) remain
+/// in `octo-wallet::capability::discharge` for now — Phase 2b follow-on
+/// migrates them too.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DischargeMacaroon {
+    /// Channel identifier (`"escrow"`, `"revocation"`, etc.).
+    pub channel: String,
+    /// Discharge macaroon body (32-byte root secret hash + caveats).
+    pub root_secret_hash: [u8; 32],
+    /// Chain HMACs (same format as `Macaroon.chain`).
+    pub chain: Vec<[u8; 32]>,
+    /// Caveats on the discharge (e.g., time bounds).
+    pub caveats: Vec<Caveat>,
+}
+
+/// Manual redacting `Debug` impl (octo-wallet §Security). `chain` is the
+/// HMAC chain (redacted) and `root_secret_hash` is the discharge root
+/// secret hash (redacted).
+impl std::fmt::Debug for DischargeMacaroon {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DischargeMacaroon")
+            .field("channel", &self.channel)
+            .field("root_secret_hash", &"[REDACTED 32 bytes]")
+            .field("chain_len", &self.chain.len())
+            .field("caveats", &self.caveats)
+            .finish()
+    }
+}
+
+/// Holder-bound capability token (RFC-0957 §3.1).
+///
+/// Holder signature is Ed25519 over `canonical_ser(root_id || caveats_wire)`;
+/// the holder DID is the audience (per RFC-0009 §Identity).
+///
+/// **Debug redaction (octo-wallet §Security):** `holder_sig` is the bearer
+/// Ed25519 signature over the macaroon; `macaroon.chain` is the HMAC chain
+/// (redacted by `Macaroon::Debug`); `discharges[*].chain` is the discharge
+/// HMAC chain (redacted by `DischargeMacaroon::Debug`). Manual `Debug` impl
+/// prints only the public `holder_pub` + `holder_did` + `holder_sig_stale`
+/// flag + a count of attached discharges. Never log `holder_sig` bytes.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityToken {
+    /// Macaroon body (chain + caveats).
+    pub macaroon: Macaroon,
+    /// Holder public key. Width is the algorithm's, not this crate's —
+    /// 32 bytes for Ed25519, something else for the next algorithm.
+    pub holder_pub: Vec<u8>,
+    /// Holder DID string (`did:octo:...`).
+    pub holder_did: String,
+    /// Holder signature over `canonical_ser(macaroon.root_id || caveats_wire)`,
+    /// with the algorithm it is verified under.
+    #[serde(with = "holder_signature_serde")]
+    pub holder_sig: HolderSignature,
+    /// Discharge macaroons (escrow / revocation / rate-limit channels).
+    pub discharges: Vec<DischargeMacaroon>,
+    /// True iff the holder signature was invalidated by a subsequent
+    /// `attenuate()` without re-signing. `verify_holder_sig` rejects
+    /// tokens with `holder_sig_stale = true` regardless of the embedded
+    /// signature bytes. Mission 0957-a R6 fix: the previous design
+    /// returned Ok-with-stale-sig silently, which downstream code could
+    /// forget to re-validate; the explicit flag forces the verifier to
+    /// notice. Set to `false` on `mint` and `attenuate_with_signer`;
+    /// set to `true` on `attenuate` (without signer).
+    #[serde(default)]
+    pub holder_sig_stale: bool,
+}
+
+impl std::fmt::Debug for CapabilityToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CapabilityToken")
+            .field("macaroon", &self.macaroon)
+            .field("holder_pub", &hex::encode(&self.holder_pub))
+            .field("holder_did", &self.holder_did)
+            .field("holder_sig", &"[REDACTED]")
+            .field("discharges_count", &self.discharges.len())
+            .field("holder_sig_stale", &self.holder_sig_stale)
+            .finish()
+    }
+}
+
+/// Serialize a `CapabilityToken` with Ed25519 signature as raw bytes.
+/// Holder signature over a capability token, paired with the algorithm it
+/// is verified under.
+///
+/// Replaces a bare `ed25519_dalek::Signature` in [`CapabilityToken`]'s
+/// public API. The point is not tidiness: with the dalek type in the
+/// signature, the type itself asserts Ed25519 and no amount of dispatch
+/// elsewhere can make a non-Ed25519 holder signature expressible
+/// (RFC-0009 AC#11).
+///
+/// The wire form is unchanged. [`HolderSignature::to_bytes`] returns the
+/// same 64 bytes the encoder already wrote, so `serialize_wire` produces
+/// byte-identical output. The **algorithm is not serialised with the
+/// token** — `deserialize_wire` already takes the holder public key out of
+/// band from the caller's DID resolution, and RFC-0009 BC#13 puts
+/// `algorithm_id` on the `VerificationMethod` beside the key it
+/// describes. The verifier is handed the algorithm; duplicating it in
+/// every message that references a document is how the two drift apart.
+///
+/// **Signature length is a property of the algorithm, not of this crate.**
+/// It used to be pinned to 64 by the type; it is now read from
+/// `SignatureAlgorithm::signature_len()` at construction, so an algorithm with a
+/// different signature width is representable without touching this type. That
+/// is the same constraint `GovernanceSignatureBytes` already carries.
+#[derive(Clone, PartialEq, Eq)]
+pub struct HolderSignature {
+    algorithm_id: octo_ident::AlgorithmId,
+    bytes: Vec<u8>,
+}
+
+impl HolderSignature {
+    /// Wrap `bytes` as a signature made under `algorithm_id`.
+    ///
+    /// The length is checked against the algorithm this signature claims to be
+    /// under, not against a literal. A signature of the wrong width is
+    /// *malformed* and must be refused here — accepting it and letting the
+    /// verify step fail is what turns a truncated signature into an ordinary
+    /// "bad signature", which is indistinguishable from forgery.
+    ///
+    /// An algorithm this deployment has not registered cannot state its
+    /// width, so no length is enforced for it. That is not a hole: an
+    /// unregistered `AlgorithmId` cannot verify either, because
+    /// `verify_dispatch` fails closed on an unknown id. Refusing to *construct*
+    /// such a signature would not add safety, and it would make the verifier's
+    /// own fail-closed arm unreachable — `0009-e5` pins exactly that
+    /// behaviour with vectors that name a deliberately unregistered algorithm,
+    /// and they have to stay buildable for it to be worth anything.
+    ///
+    /// # Errors
+    /// [`MintError::HolderSig`] if the algorithm is registered and `bytes` is
+    /// not exactly its `signature_len()`.
+    pub fn new(algorithm_id: octo_ident::AlgorithmId, bytes: &[u8]) -> Result<Self, MintError> {
+        // `shared_registry()` failing and `get()` missing are the same
+        // outcome for this decision: no algorithm to ask for a width.
+        if let Ok(registry) = octo_algo_ed25519::shared_registry() {
+            if let Ok(algorithm) = registry.get(algorithm_id) {
+                let expected = algorithm.signature_len();
+                if bytes.len() != expected {
+                    return Err(MintError::HolderSig(format!(
+                        "holder signature must be {expected} bytes for {algorithm_id:?}, got {}",
+                        bytes.len()
+                    )));
+                }
+            }
+        }
+        Ok(Self {
+            algorithm_id,
+            bytes: bytes.to_vec(),
+        })
+    }
+
+    /// The algorithm this signature is verified under.
+    #[must_use]
+    pub fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+        self.algorithm_id
+    }
+
+    /// Raw signature bytes. The encoder's view, and the only place the
+    /// bytes leave this type.
+    #[must_use]
+    pub fn to_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+/// **Redacted on purpose.** A holder signature is a bearer credential over
+/// the token; printing it into a log, a panic message or a `dbg!` leaks
+/// it. The existing token `Debug` already redacts the equivalent bytes, and
+/// deriving `Debug` here would quietly undo that.
+impl std::fmt::Debug for HolderSignature {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "HolderSignature({:?}, [REDACTED 64 bytes])",
+            self.algorithm_id
+        )
+    }
+}
+
+/// Wire form for [`HolderSignature`]: the same 64 raw bytes the previous
+/// `ed25519_sig_serde` wrote. The algorithm travels out of band, so this
+/// stays byte-identical and an existing token parses unchanged.
+mod holder_signature_serde {
+    use super::HolderSignature;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    /// Layout: `algorithm_id (16 raw bytes) || signature`, matching the wire
+    /// segment 2 form so both transports carry the same claim.
+    pub fn serialize<S: Serializer>(sig: &HolderSignature, ser: S) -> Result<S::Ok, S::Error> {
+        let mut out = Vec::with_capacity(16 + sig.to_bytes().len());
+        out.extend_from_slice(sig.algorithm_id().as_bytes());
+        out.extend_from_slice(sig.to_bytes());
+        ser.serialize_bytes(&out)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<HolderSignature, D::Error> {
+        let bytes: Vec<u8> = Deserialize::deserialize(de)?;
+        // The algorithm travels with the signature. This used to re-stamp
+        // Ed25519 on the way in, with a comment claiming the algorithm was
+        // "resolved out of band by the caller" — which, as the wire-form fix
+        // in the same mission established, names a source that does not
+        // exist. A serde round-trip silently rewrote the claim, so this was a
+        // third transport inventing an algorithm the signer never named.
+        //
+        // A value written before this change carries signature bytes alone and
+        // is now rejected rather than guessed at, which is the right failure
+        // for a record whose algorithm is load-bearing.
+        const ALGORITHM_ID_LEN: usize = 16;
+        if bytes.len() < ALGORITHM_ID_LEN {
+            return Err(serde::de::Error::custom(format!(
+                "holder signature must carry a {ALGORITHM_ID_LEN}-byte algorithm prefix, got {}",
+                bytes.len()
+            )));
+        }
+        let mut algorithm_bytes = [0u8; ALGORITHM_ID_LEN];
+        algorithm_bytes.copy_from_slice(&bytes[..ALGORITHM_ID_LEN]);
+        HolderSignature::new(
+            octo_ident::AlgorithmId::from_bytes(algorithm_bytes),
+            &bytes[ALGORITHM_ID_LEN..],
+        )
+        .map_err(serde::de::Error::custom)
+    }
+}
+
+impl CapabilityToken {
+    /// Mint a capability token: generate macaroon + holder signature.
+    ///
+    /// **0957-e amendment (mission 0957-e; RFC-0957-A1 §Persistence-Free Mint):**
+    /// 4-arg persistence-free signature per RFC-0957-A1 G3. The `catalog`
+    /// and `Option<&mut Transaction>` parameters are REMOVED; mint is pure
+    /// crypto (R6-C3 fix). Persistence is handled by the caller via
+    /// `TransactionExt::insert_holder_record` (single) or
+    /// `TransactionExt::insert_dual` (atomic pair insert per RFC-0969).
+    ///
+    /// Initial caveats are appended via `Macaroon::extend_chain` (pub)
+    /// helper WITHOUT the catalog-based `WrappedOnly` chain guard. The
+    /// guard is enforced at `attenuate` / `attenuate_with_signer` time
+    /// (caller responsibility) and at `verify_full` time (verifier
+    /// responsibility) — NOT at mint. This breaks the double-insert
+    /// contradiction between prior 5-arg `mint` (post-write hook auto-
+    /// inserted into `HolderRegistry`) and RFC-0969 `mint_dual` (atomic
+    /// pair insert).
+    ///
+    /// # Errors
+    /// Returns `MintError::Macaroon` on RNG failure. Initial caveat
+    /// append via `extend_chain` cannot fail (no catalog check). Returns
+    /// `MintError::Signer` if the `CapabilitySigner` rejects the operation.
+    pub fn mint(
+        root_secret: &[u8; 32],
+        holder: &dyn CapabilitySigner,
+        holder_did: &str,
+        initial_caveats: &[Caveat],
+    ) -> Result<Self, MintError> {
+        let mut macaroon = Macaroon::mint(root_secret)?;
+        for caveat in initial_caveats {
+            macaroon = macaroon.extend_chain(caveat.clone());
+        }
+        let holder_pub = holder.public_key_bytes();
+        let holder_did = holder_did.to_owned();
+
+        let msg = Self::holder_msg(holder.algorithm_id(), &macaroon.root_id, &macaroon.caveats);
+        let sig_bytes = holder.sign(&msg)?;
+        // The signer names its own algorithm. Stamping a constant here is
+        // how a non-Ed25519 holder ends up recorded as Ed25519 and then
+        // failing verification as though it were forged (mission `0009-e5`).
+        let holder_sig = HolderSignature::new(holder.algorithm_id(), &sig_bytes)?;
+
+        Ok(Self {
+            macaroon,
+            holder_pub,
+            holder_did,
+            holder_sig,
+            discharges: Vec::new(),
+            holder_sig_stale: false,
+        })
+    }
+
+    /// Append a caveat (attenuation). Returns a new token with
+    /// `holder_sig_stale = true` — the embedded signature does NOT cover
+    /// the new caveat list. Callers MUST either:
+    /// 1. Re-sign by calling `attenuate_with_signer(caveat, holder, ...)`
+    ///    instead (preferred), or
+    /// 2. Recognize the stale flag and re-validate downstream.
+    ///
+    /// `verify_holder_sig` rejects tokens with `holder_sig_stale = true`
+    /// unconditionally; this surfaces the broken state at the verify
+    /// boundary rather than letting it propagate silently.
+    ///
+    /// # Errors
+    /// Returns `MacaroonError` (cycle / depth / parent-not-found /
+    /// `UnknownRawName`) if the catalog rejects the assembled chain.
+    pub fn attenuate(
+        &self,
+        caveat: Caveat,
+        catalog: &dyn CapabilityCatalog,
+    ) -> Result<Self, MintError> {
+        let mut next = self.clone();
+        next.macaroon = next.macaroon.attenuate(caveat, catalog)?;
+        next.holder_sig_stale = true;
+        Ok(next)
+    }
+
+    /// Attenuate and re-sign with the given holder key.
+    ///
+    /// # Errors
+    /// Returns `MacaroonError::OsRng` on RNG failure, or any `WrappedOnly`
+    /// chain guard error from the catalog. Returns `MintError::Signer` on
+    /// holder key rejection.
+    pub fn attenuate_with_signer(
+        &self,
+        caveat: Caveat,
+        holder: &dyn CapabilitySigner,
+        catalog: &dyn CapabilityCatalog,
+    ) -> Result<Self, MintError> {
+        let mut next = self.clone();
+        next.macaroon = next.macaroon.attenuate(caveat, catalog)?;
+        let msg = Self::holder_msg(
+            holder.algorithm_id(),
+            &next.macaroon.root_id,
+            &next.macaroon.caveats,
+        );
+        let sig_bytes = holder.sign(&msg)?;
+        // Same rule as `mint`: the algorithm comes from the signer.
+        next.holder_sig = HolderSignature::new(holder.algorithm_id(), &sig_bytes)?;
+        next.holder_sig_stale = false;
+        Ok(next)
+    }
+
+    /// The ask this capability is bound to (RFC-0969 §Algorithms).
+    ///
+    /// RFC-0969's verifier algorithm is written as
+    /// `ask_id: cap_token.ask_binding()`. This is that accessor. Ask binding is
+    /// **not** a field on `CapabilityToken` — it is `Caveat::AskBinding` on the
+    /// macaroon — so this reads the caveat list rather than a struct field.
+    ///
+    /// # Returns
+    /// - `Ok(Some(id))` — the capability is bound to exactly one ask.
+    /// - `Ok(None)` — no `AskBinding` caveat. This is the normal state for
+    ///   non-market tokens and for HopCapability, so it is a value, not an error.
+    /// - `Err(MacaroonError::AmbiguousAskBinding)` — two or more **distinct**
+    ///   ask ids are present.
+    ///
+    /// # Why the ambiguous case refuses rather than picking
+    ///
+    /// Attenuation is monotonic and `attenuate` rejects neither a repeated
+    /// caveat nor a contradictory one, so a second ask binding is reachable. A
+    /// capability asserting two different asks has no single answer, and
+    /// returning the first would silently let one side of the contradiction win
+    /// — with the result depending on caveat order rather than on anything the
+    /// verifier chose.
+    ///
+    /// Repeated *identical* bindings are not ambiguous: they agree, so the
+    /// value is unambiguous and is returned.
+    ///
+    /// This matters beyond tidiness. `CapabilityVerification.ask_id` in
+    /// RFC-0969 is a bare `[u8; 32]` with no representation for "unbound", and
+    /// `evaluate_linkage` compares those bytes directly. A caller that needs to
+    /// represent absence has to handle `Ok(None)` itself — the type will not do
+    /// it. Mission `0969-c`.
+    pub fn ask_binding(&self) -> Result<Option<crate::caveat::AskId>, MacaroonError> {
+        let mut found: Option<crate::caveat::AskId> = None;
+        for caveat in &self.macaroon.caveats {
+            let Caveat::AskBinding(id) = caveat else {
+                continue;
+            };
+            match found {
+                None => found = Some(*id),
+                Some(existing) if existing == *id => {}
+                Some(_) => {
+                    // Count how many distinct bindings are present so the error
+                    // reports the ambiguity rather than just flagging it.
+                    let distinct = self
+                        .macaroon
+                        .caveats
+                        .iter()
+                        .filter_map(|c| match c {
+                            Caveat::AskBinding(id) => Some(*id),
+                            _ => None,
+                        })
+                        .fold(Vec::new(), |mut acc: Vec<crate::caveat::AskId>, id| {
+                            if !acc.contains(&id) {
+                                acc.push(id);
+                            }
+                            acc
+                        });
+                    return Err(MacaroonError::AmbiguousAskBinding {
+                        count: distinct.len(),
+                    });
+                }
+            }
+        }
+        Ok(found)
+    }
+
+    /// Verify the holder signature.
+    ///
+    /// # Errors
+    /// Returns `MintError::HolderSig` on signature failure OR when the
+    /// token has `holder_sig_stale = true` (set by `attenuate` without
+    /// re-signing — mission 0957-a R6 fix surfaces stale state at the
+    /// verify boundary rather than letting it propagate).
+    pub fn verify_holder_sig(&self) -> Result<(), MintError> {
+        if self.holder_sig_stale {
+            return Err(MintError::HolderSig(
+                "holder_sig_stale: token was attenuated without re-signing; \
+                 call attenuate_with_signer or re-mint"
+                    .to_owned(),
+            ));
+        }
+        let msg = Self::holder_msg(
+            self.holder_sig.algorithm_id(),
+            &self.macaroon.root_id,
+            &self.macaroon.caveats,
+        );
+        // Dispatch, not a locally constructed key (RFC-0009 AC#11). The
+        // algorithm comes from the signature itself, so a token naming an
+        // algorithm this deployment does not implement fails closed instead
+        // of being checked as though it were Ed25519.
+        octo_algo_ed25519::verify_dispatch(
+            &self.holder_sig.algorithm_id(),
+            &self.holder_pub,
+            &msg,
+            self.holder_sig.to_bytes(),
+        )
+        .map_err(|e| MintError::HolderSig(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Compose the holder signature message:
+    /// `u32(16) || root_id || u32(|caveats_wire|) || caveats_wire`.
+    ///
+    /// Length-prefixed per field (matching `Macaroon::canonical_ser_unsigned`)
+    /// to prevent concatenation-collision attacks: without prefixes,
+    /// `canonical_ser(caveat_A) || canonical_ser(caveat_B)` can collide
+    /// with `canonical_ser(caveat_A') || canonical_ser(caveat_B')` when
+    /// byte boundaries align. The Ed25519 signature would then be signing
+    /// ambiguity — distinct caveat lists would produce identical
+    /// signatures.
+    ///
+    /// `caveats_wire` itself is a single length-prefixed concatenation of
+    /// the per-caveat canonical JSON (the inner field is the
+    /// caveat-variant-tagged serialization). The outer `u32(|caveats_wire|)`
+    /// removes the outer ambiguity; inner per-caveat boundaries remain
+    /// length-prefixed by each caveat's own `canonical_ser`.
+    fn holder_msg(
+        algorithm_id: octo_ident::AlgorithmId,
+        root_id: &MacaroonId,
+        caveats: &[Caveat],
+    ) -> Vec<u8> {
+        let mut inner = Vec::with_capacity(caveats.len() * 64);
+        for caveat in caveats {
+            inner.extend_from_slice(&caveat.canonical_ser());
+        }
+        // The algorithm is part of what gets signed, not a label attached to
+        // the signature afterwards. `HolderSignature` is a pair of
+        // `(algorithm_id, signature)`; while the signature covered only
+        // `root_id || caveats`, that first element was unauthenticated
+        // metadata — it travelled in the token and was read back to pick a
+        // verifier, but nothing in the signed bytes committed to it.
+        //
+        // Dispatch on the claimed algorithm is how the claim is *used*; this
+        // is how it is *authenticated*. They are different properties, and
+        // having only the first is what left the gap (mission `0009-e10`).
+        //
+        // Prefixed rather than suffixed so it cannot be confused with a
+        // `root_id` field, and fixed width because `AlgorithmId` is.
+        let mut msg = Vec::with_capacity(16 + 4 + root_id.len() + 4 + inner.len());
+        msg.extend_from_slice(algorithm_id.as_bytes());
+        msg.extend_from_slice(&u32_len_field(root_id.len()));
+        msg.extend_from_slice(root_id);
+        msg.extend_from_slice(&u32_len_field(inner.len()));
+        msg.extend_from_slice(&inner);
+        msg
+    }
+}
+
+/// Big-endian `u32` length prefix used by `holder_msg` (mirrors
+/// `Macaroon::canonical_ser_unsigned` field-prefixing).
+/// Holder signature path is bounded by `caveats.len() < 2^16` and
+/// per-caveat `canonical_ser() < 2^16` in practice; `u32` is the
+/// safe upper bound.
+fn u32_len_field(n: usize) -> [u8; 4] {
+    u32::try_from(n)
+        .expect("holder_msg field length fits in u32")
+        .to_be_bytes()
+}
+
+/// Errors during capability token mint/attenuate.
+#[derive(Debug, thiserror::Error)]
+pub enum MintError {
+    #[error("macaroon error: {0}")]
+    Macaroon(#[from] MacaroonError),
+
+    #[error("holder signature error: {0}")]
+    HolderSig(String),
+
+    /// Signer backend rejection (mission 0957 Phase 2b-2 `CapabilitySigner`
+    /// trait). Propagates from `holder.sign(&msg)` when the signer rejects
+    /// the operation (HSM transport failure, user denied on-device, etc.).
+    #[error("signer error: {0}")]
+    Signer(#[from] crate::signer::CapabilitySignerError),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::macaroon::InMemoryCatalog;
+
+    fn empty_catalog() -> InMemoryCatalog {
+        InMemoryCatalog::default()
+    }
+
+    /// A minted token plus the signer that made it, for the vectors below.
+    fn minted_token() -> (CapabilityToken, TestSigner) {
+        let signer = sample_signer();
+        let token = CapabilityToken::mint(
+            &[9u8; 32],
+            &signer,
+            "did:octo:z-test",
+            &[Caveat::Audience("aud".to_owned())],
+        )
+        .expect("mint");
+        (token, signer)
+    }
+
+    /// A token with no ask caveat reports absence, which is the normal
+    /// state for non-market tokens and HopCapability.
+    #[test]
+    fn an_unbound_capability_reports_no_ask() {
+        let (token, _) = minted_token();
+        assert_eq!(
+            token.ask_binding().expect("unambiguous"),
+            None,
+            "no AskBinding caveat must read as unbound, not as an error"
+        );
+    }
+
+    /// The control for every refusal below: returning `None` unconditionally
+    /// would also pass the ambiguous test.
+    #[test]
+    fn a_bound_capability_reports_its_ask() {
+        let signer = sample_signer();
+        let ask: crate::caveat::AskId = [0x5Au8; 32];
+        let token = CapabilityToken::mint(
+            &[9u8; 32],
+            &signer,
+            "did:octo:z-test",
+            &[Caveat::AskBinding(ask)],
+        )
+        .expect("mint");
+        assert_eq!(token.ask_binding().expect("unambiguous"), Some(ask));
+    }
+
+    /// Attenuation is monotonic and does not reject a repeated caveat, so a
+    /// second *identical* binding is reachable. It agrees with the first, so the
+    /// answer is unambiguous and must be returned rather than refused.
+    #[test]
+    fn a_repeated_identical_binding_is_not_ambiguous() {
+        let signer = sample_signer();
+        let ask: crate::caveat::AskId = [0x5Au8; 32];
+        let token = CapabilityToken::mint(
+            &[9u8; 32],
+            &signer,
+            "did:octo:z-test",
+            &[Caveat::AskBinding(ask)],
+        )
+        .expect("mint");
+        let doubled = token
+            .attenuate(Caveat::AskBinding(ask), &empty_catalog())
+            .expect("attenuate");
+        assert_eq!(
+            doubled.ask_binding().expect("two identical bindings agree"),
+            Some(ask)
+        );
+    }
+
+    /// The property that matters. Two different bindings mean the capability
+    /// names two asks, and returning the first would let caveat order decide
+    /// which one the verifier believes.
+    #[test]
+    fn contradictory_bindings_are_refused_rather_than_resolved() {
+        let signer = sample_signer();
+        let token = CapabilityToken::mint(
+            &[9u8; 32],
+            &signer,
+            "did:octo:z-test",
+            &[Caveat::AskBinding([0x5Au8; 32])],
+        )
+        .expect("mint");
+        let contradicted = token
+            .attenuate(Caveat::AskBinding([0xA5u8; 32]), &empty_catalog())
+            .expect("attenuate");
+
+        let err = contradicted
+            .ask_binding()
+            .expect_err("two distinct bindings must not resolve to either one");
+        match err {
+            MacaroonError::AmbiguousAskBinding { count } => {
+                assert_eq!(count, 2, "the error must report the ambiguity");
+            }
+            other => panic!("expected AmbiguousAskBinding, got {other:?}"),
+        }
+    }
+
+    /// Order must not decide the answer. The same contradictory capability
+    /// attenuates the other way round, and must still refuse.
+    #[test]
+    fn the_ambiguity_does_not_depend_on_caveat_order() {
+        let signer = sample_signer();
+        let token = CapabilityToken::mint(
+            &[9u8; 32],
+            &signer,
+            "did:octo:z-test",
+            &[Caveat::AskBinding([0xA5u8; 32])],
+        )
+        .expect("mint");
+        let contradicted = token
+            .attenuate(Caveat::AskBinding([0x5Au8; 32]), &empty_catalog())
+            .expect("attenuate");
+        assert!(
+            contradicted.ask_binding().is_err(),
+            "reversing the caveats must not make the capability resolvable"
+        );
+    }
+
+    #[test]
+    fn holder_sig_dispatches_on_its_own_algorithm() {
+        // The happy path, and the control on every refusal test below:
+        // refusing everything would also pass those.
+        let (token, _) = minted_token();
+        token
+            .verify_holder_sig()
+            .expect("a genuine holder signature must verify through dispatch");
+    }
+
+    /// The holder signature binds the **key**, not just the message.
+    ///
+    /// A token carries `holder_pub` and a signature. If verification used the
+    /// token's own `holder_pub` without the signature actually being bound to
+    /// it, a holder could re-point a capability at a key they control and the
+    /// check would still pass. This is the property that makes `holder_pub`
+    /// safe to carry in-band at all.
+    ///
+    /// Named for mission `0009-e4`'s vector of this name, which the mission
+    /// claimed existed under its exact name and did not. Nothing in the
+    /// workspace reassigned `holder_pub` at all, so the binding had no direct
+    /// coverage: the adjacent `a_tampered_holder_signature_is_still_rejected`
+    /// flips a byte under the same key, which leaves the key-binding question
+    /// untouched because the signature there is garbage either way.
+    ///
+    /// **What it is and is not proven to catch.** Removing the signature
+    /// verification outright turns this red — but so does the adjacent test, so
+    /// that mutant does not distinguish them and is not claimed as if it did.
+    /// What is new here is the *shape*: an otherwise valid signature paired
+    /// with the wrong key, which no other test in the crate constructs.
+    #[test]
+    fn a_token_minted_under_one_key_never_verifies_for_another() {
+        let (mut token, signer) = minted_token();
+        token
+            .verify_holder_sig()
+            .expect("control: the genuine token verifies");
+
+        // A different key, with its own valid public key.
+        let other_key = [0x24u8; 32];
+        let other_vk = ed25519_dalek::SigningKey::from_bytes(&other_key)
+            .verifying_key()
+            .to_bytes();
+
+        // Same signature, re-pointed at the other key.
+        token.holder_pub = other_vk.to_vec();
+        assert!(
+            token.verify_holder_sig().is_err(),
+            "a signature minted under one key must not verify against another key"
+        );
+
+        // And the genuine binding still holds after restoring it, so the
+        // refusal above is about the key and not a broken token.
+        token.holder_pub = signer.pub_bytes.to_vec();
+        token
+            .verify_holder_sig()
+            .expect("restoring the real holder key must verify again");
+    }
+
+    #[test]
+    fn a_token_naming_an_unregistered_algorithm_is_refused() {
+        // The property that matters. Before this, `verify_holder_sig`
+        // built an Ed25519 key unconditionally, so a token naming any
+        // other algorithm was checked as though it were Ed25519 and
+        // reported the result as authoritative.
+        let (mut token, _) = minted_token();
+        let stranger = octo_ident::AlgorithmId::derive("not-a-registered-algorithm");
+        token.holder_sig =
+            HolderSignature::new(stranger, token.holder_sig.to_bytes()).expect("wrap");
+        let err = token
+            .verify_holder_sig()
+            .expect_err("an unregistered algorithm must not verify");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("no registered algorithm"),
+            "expected an unknown-algorithm refusal, got: {msg}"
+        );
+    }
+
+    /// Mission `0009-e10`: the algorithm must be in the *signed bytes*, not just
+    /// carried alongside the signature.
+    ///
+    /// Deliberately a white-box assertion on the composed message. The
+    /// tempting end-to-end vector — take a valid token, rewrite its
+    /// `algorithm_id`, assert verification fails — is **vacuous**: it is green
+    /// before this change and green after, because verification already
+    /// dispatches on the claimed algorithm and so already refused the rewrite
+    /// for the wrong reason. Only the message itself distinguishes "carried"
+    /// from "committed".
+    #[test]
+    fn holder_msg_commits_to_the_algorithm() {
+        let root = [0xA7; 16];
+        let caveats = [Caveat::Audience("aud".to_owned())];
+
+        let ed = CapabilityToken::holder_msg(
+            crate::governance_signature::governance_algorithm_id(),
+            &root,
+            &caveats,
+        );
+        let other = CapabilityToken::holder_msg(
+            octo_ident::AlgorithmId::derive("some-other-algorithm"),
+            &root,
+            &caveats,
+        );
+
+        assert_ne!(
+            ed, other,
+            "the signed message must differ by algorithm, or the algorithm_id \
+             in HolderSignature is unauthenticated metadata — carried in the \
+             token and read back to pick a verifier, but committed to by \
+             nothing"
+        );
+        // And it is a prefix, not a field buried in the body, so it cannot be
+        // confused with the root_id that follows it.
+        assert_eq!(
+            ed[..16],
+            crate::governance_signature::governance_algorithm_id().as_bytes()[..],
+            "the algorithm must lead the message"
+        );
+    }
+
+    #[test]
+    fn a_tampered_holder_signature_is_still_rejected() {
+        // Dispatch must not have turned the check into a lookup-only
+        // operation. Same algorithm, same key, one flipped byte.
+        let (mut token, _) = minted_token();
+        let mut bytes = token.holder_sig.to_bytes().to_vec();
+        bytes[0] ^= 0x01;
+        token.holder_sig =
+            HolderSignature::new(token.holder_sig.algorithm_id(), &bytes).expect("wrap");
+        assert!(
+            token.verify_holder_sig().is_err(),
+            "a tampered signature must not verify"
+        );
+    }
+
+    #[test]
+    fn holder_signature_debug_redacts_the_bytes() {
+        // A newtype is exactly where a derived Debug would leak a bearer
+        // credential into a log line or a panic message.
+        let (token, _) = minted_token();
+        let rendered = format!("{:?}", token.holder_sig);
+        assert!(
+            rendered.contains("REDACTED"),
+            "holder signature Debug must redact, got: {rendered}"
+        );
+        assert!(
+            !rendered.contains(&hex::encode(token.holder_sig.to_bytes())),
+            "holder signature Debug must not print the signature bytes"
+        );
+    }
+
+    #[test]
+    fn holder_signature_round_trips_through_its_wire_form() {
+        // The wire form is unchanged by this change — same 64 bytes — so a
+        // token encoded before still parses. If this regresses, the
+        // newtype quietly became a wire-format change.
+        let (token, _) = minted_token();
+        let original = token.holder_sig.to_bytes();
+        // Through the token, not the newtype directly: the newtype has no
+        // serde impl of its own, so this is the path a real document takes.
+        let encoded = serde_json::to_vec(&token).expect("serialize");
+        let decoded: CapabilityToken = serde_json::from_slice(&encoded).expect("deserialize");
+        assert_eq!(decoded.holder_sig.to_bytes(), original);
+        let decoded = decoded.holder_sig;
+        assert_eq!(
+            decoded.algorithm_id(),
+            token.holder_sig.algorithm_id(),
+            "the historical wire form carries no algorithm, so parsing stamps \
+             the Ed25519 default; a caller holding another algorithm \
+             re-stamps after parsing"
+        );
+    }
+
+    #[test]
+    fn holder_signature_rejects_a_wrong_length() {
+        assert!(
+            HolderSignature::new(octo_ident::AlgorithmId::derive("ed25519"), &[0u8; 63]).is_err(),
+            "a 63-byte signature must be refused, not truncated"
+        );
+    }
+
+    /// Test signer backing a fixed seed (no HSM, no failure modes).
+    struct TestSigner {
+        key: [u8; 32],
+        pub_bytes: [u8; 32],
+    }
+
+    impl CapabilitySigner for TestSigner {
+        fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, crate::signer::CapabilitySignerError> {
+            use ed25519_dalek::{Signer, SigningKey};
+            let sk = SigningKey::from_bytes(&self.key);
+            let sig = sk.sign(msg);
+            Ok(sig.to_bytes().to_vec())
+        }
+        fn algorithm_id(&self) -> octo_ident::AlgorithmId {
+            octo_algo_ed25519::ed25519_algorithm_id()
+        }
+
+        fn public_key_bytes(&self) -> Vec<u8> {
+            self.pub_bytes.to_vec()
+        }
+    }
+
+    fn sample_signer() -> TestSigner {
+        let key = [0x42u8; 32];
+        use ed25519_dalek::SigningKey;
+        let sk = SigningKey::from_bytes(&key);
+        let vk = sk.verifying_key();
+        TestSigner {
+            key,
+            pub_bytes: vk.to_bytes(),
+        }
+    }
+
+    #[test]
+    fn mint_and_verify_holder_sig() {
+        let holder = sample_signer();
+        let root_secret = [0x42; 32];
+        let caveats = [Caveat::Model("gpt-4".to_owned())];
+        let token =
+            CapabilityToken::mint(&root_secret, &holder, "did:octo:zTestHolder", &caveats).unwrap();
+        token.verify_holder_sig().unwrap();
+    }
+
+    #[test]
+    fn attenuate_preserves_holder_pub() {
+        let holder = sample_signer();
+        let root_secret = [0x42; 32];
+        let catalog = empty_catalog();
+        let token =
+            CapabilityToken::mint(&root_secret, &holder, "did:octo:zTestHolder", &[]).unwrap();
+        let attenuated = token
+            .attenuate_with_signer(Caveat::Model("gpt-4".to_owned()), &holder, &catalog)
+            .unwrap();
+        assert_eq!(attenuated.holder_pub, token.holder_pub);
+        attenuated.verify_holder_sig().unwrap();
+    }
+
+    #[test]
+    fn attenuate_without_signer_breaks_holder_sig() {
+        let holder = sample_signer();
+        let root_secret = [0x42; 32];
+        let catalog = empty_catalog();
+        let token =
+            CapabilityToken::mint(&root_secret, &holder, "did:octo:zTestHolder", &[]).unwrap();
+        let broken = token
+            .attenuate(Caveat::Model("gpt-4".to_owned()), &catalog)
+            .unwrap();
+        // Without re-signing, holder sig is stale.
+        assert!(broken.verify_holder_sig().is_err());
+    }
+
+    /// R6 finding: `CapabilityToken` derives `Serialize/Deserialize`. The
+    /// `wire_roundtrip` test in `wire.rs` exercises the full token through
+    /// the base64-wrapped wire format, but a direct `serde_json` roundtrip
+    /// pins JSON-specific concerns (field tag preservation, signature
+    /// byte-array encoding via `holder_signature_serde`).
+    #[test]
+    fn capability_token_serde_json_roundtrip() {
+        let holder = sample_signer();
+        let root_secret = [0x42; 32];
+        let _catalog = empty_catalog();
+        let token = CapabilityToken::mint(
+            &root_secret,
+            &holder,
+            "did:octo:zSerdeTest",
+            &[Caveat::Model("gpt-4".to_owned())],
+        )
+        .unwrap();
+
+        let json = serde_json::to_string(&token).expect("serialize");
+        let restored: CapabilityToken = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored, token, "serde_json roundtrip must be exact");
+
+        // Holder signature must still verify after round-trip.
+        restored
+            .verify_holder_sig()
+            .expect("holder sig still verifies");
+    }
+
+    /// R6 finding: `DischargeMacaroon` derives `Serialize/Deserialize`.
+    /// Direct `serde_json` roundtrip pins the wire encoding (channel
+    /// string, fixed-size byte arrays, caveat enum tags).
+    #[test]
+    fn discharge_macaroon_serde_json_roundtrip() {
+        let discharge = DischargeMacaroon {
+            channel: "escrow".to_owned(),
+            root_secret_hash: [0xaau8; 32],
+            chain: vec![[0x01; 32], [0x02; 32]],
+            caveats: vec![
+                Caveat::Before(2_000_000_000),
+                Caveat::Model("gpt-4".to_owned()),
+            ],
+        };
+        let json = serde_json::to_string(&discharge).expect("serialize");
+        let restored: DischargeMacaroon = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored, discharge, "serde_json roundtrip must be exact");
+    }
+
+    /// R7 finding: `holder_sig_stale` is set to `false` on `mint` and on
+    /// `attenuate_with_signer`, and to `true` on `attenuate` (without
+    /// signer). The `false → true` direction is tested
+    /// (`attenuate_without_signer_breaks_holder_sig`); the reverse
+    /// `true → false` after `attenuate_with_signer` was not directly
+    /// asserted (only indirectly via `verify_holder_sig` passing).
+    #[test]
+    fn attenuate_with_signer_clears_holder_sig_stale_flag() {
+        let holder = sample_signer();
+        let root_secret = [0x42; 32];
+        let catalog = empty_catalog();
+        let token =
+            CapabilityToken::mint(&root_secret, &holder, "did:octo:zStaleTest", &[]).unwrap();
+
+        // First: attenuate WITHOUT signer → flag goes true.
+        let stale = token
+            .attenuate(Caveat::Model("gpt-4".to_owned()), &catalog)
+            .unwrap();
+        assert!(
+            stale.holder_sig_stale,
+            "attenuate-without-signer must set holder_sig_stale=true"
+        );
+
+        // Second: attenuate WITH signer → flag must go back to false.
+        let fresh = stale
+            .attenuate_with_signer(Caveat::Before(2_000_000_000), &holder, &catalog)
+            .unwrap();
+        assert!(
+            !fresh.holder_sig_stale,
+            "attenuate_with_signer must clear holder_sig_stale flag (got true)"
+        );
+        fresh
+            .verify_holder_sig()
+            .expect("signature verifies after re-sign");
+    }
+
+    /// The serde path must carry the same algorithm claim the wire path does.
+    ///
+    /// `holder_signature_serde::deserialize` used to re-stamp Ed25519 on the
+    /// way in, for the same reason and with the same false justification the
+    /// wire parser had: a comment claiming the algorithm was "resolved out of
+    /// band by the caller", which is not a source that exists. Two transports,
+    /// one silent downgrade each, and a persisted token could round-trip
+    /// through serde and come back claiming an algorithm it was never made
+    /// under.
+    #[test]
+    fn a_serde_round_trip_preserves_the_algorithm_claim() {
+        use super::holder_signature_serde;
+
+        let exotic = octo_ident::AlgorithmId::derive("stark-schnorr");
+        let sig = HolderSignature::new(exotic, &[0x5a; 64]).expect("wrap");
+
+        // Exercised through the same `#[serde(with = ...)]` path the
+        // `CapabilityToken` field uses, since `HolderSignature` itself is not
+        // Serialize — the module attributes it.
+        #[derive(serde::Serialize, serde::Deserialize)]
+        struct Wrapper(#[serde(with = "holder_signature_serde")] HolderSignature);
+
+        let json = serde_json::to_string(&Wrapper(sig)).expect("serialize");
+        let Wrapper(back) = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(
+            back.algorithm_id(),
+            exotic,
+            "serde must not invent an algorithm for a signature it was handed"
+        );
+        assert_ne!(
+            back.algorithm_id(),
+            crate::governance_signature::governance_algorithm_id(),
+            "explicitly: this must not have been rewritten as Ed25519"
+        );
+
+        // And a pre-fix value — bare signature bytes, no algorithm — must not
+        // acquire an algorithm claim nobody made.
+        //
+        // It now *parses*, and that is a real consequence of variable-width
+        // framing rather than a regression to paper over: the first 16 bytes
+        // are read as the algorithm and the remainder as the signature, so a
+        // bare pre-fix blob is indistinguishable from a legitimately framed
+        // value naming an algorithm this deployment has not registered.
+        // Special-casing the old 64-byte length would not restore the old
+        // guarantee, it would just relocate the ambiguity onto whatever the
+        // next algorithm's signature width happens to be.
+        //
+        // So the property moves to where it still holds: the value must never
+        // become an Ed25519 claim, and it must never verify.
+        let legacy = serde_json::to_string(&serde_bytes::ByteArray::new([0x5a; 64]))
+            .expect("legacy serialize");
+        let parsed: Wrapper =
+            serde_json::from_str(&legacy).expect("frames as algorithm-prefix || signature");
+
+        assert_ne!(
+            parsed.0.algorithm_id(),
+            crate::governance_signature::governance_algorithm_id(),
+            "a bare pre-fix blob must not be read as an Ed25519 claim nobody made"
+        );
+        assert_ne!(
+            parsed.0.to_bytes().len(),
+            64,
+            "16 bytes were consumed as the algorithm prefix; this must not be the \
+             bare form reinterpreted whole"
+        );
+        // The fabricated algorithm is not in the registry, so verification
+        // fails closed. This is the guarantee the old parse-level refusal used
+        // to stand in for, and it is the one that actually matters;
+        // `a_token_naming_an_unregistered_algorithm_is_refused` covers the same
+        // ground end to end through a full token.
+        assert!(
+            octo_algo_ed25519::verify_dispatch(
+                &parsed.0.algorithm_id(),
+                &[0u8; 32],
+                b"probe",
+                parsed.0.to_bytes(),
+            )
+            .is_err(),
+            "a signature whose algorithm was fabricated from arbitrary bytes must \
+             never verify"
+        );
+    }
+}

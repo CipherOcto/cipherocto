@@ -51,14 +51,14 @@ The DomainCoordinator is a specialization of the generic Mission Coordinator. It
 
 ## Success Metrics
 
-| Metric | Target | Measurement |
-| ------ | ------ | ----------- |
-| Mission formation time | < 5 minutes | From genesis BIND to mission `Active` state |
-| Coordinator election time | < 2 minutes | From election trigger to `Elected` state |
-| Handover time | < 60 seconds | From Handover trigger to successor `Active` |
-| Slash finalization time | < 5 minutes | From slash vote to coordinator `Demoting` |
-| Liveness false-positive rate | < 1% | Heartbeat checks that incorrectly trigger `Suspect` |
-| Slash false-positive rate | < 0.1% | Slash votes that are rejected on appeal |
+| Metric                       | Target       | Measurement                                         |
+| ---------------------------- | ------------ | --------------------------------------------------- |
+| Mission formation time       | < 5 minutes  | From genesis BIND to mission `Active` state         |
+| Coordinator election time    | < 2 minutes  | From election trigger to `Elected` state            |
+| Handover time                | < 60 seconds | From Handover trigger to successor `Active`         |
+| Slash finalization time      | < 5 minutes  | From slash vote to coordinator `Demoting`           |
+| Liveness false-positive rate | < 1%         | Heartbeat checks that incorrectly trigger `Suspect` |
+| Slash false-positive rate    | < 0.1%       | Slash votes that are rejected on appeal             |
 
 ## Constraints
 
@@ -85,11 +85,11 @@ If this use case is implemented:
 
 ## Related RFCs
 
-- RFC-0855 (Networking): Mission Overlay Networks — primary; §3 "Mission Lifecycle", §11 "Governance Models", §16.3 "Coordinator State" (forward-reference; filled by 0855p-b)
+- RFC-0855: Mission Overlay Networks — primary; §3 "Mission Lifecycle", §11 "Governance Models", §16.3 "Coordinator State" (forward-reference; filled by 0855p-b)
 - RFC-0855p-b (Networking): Mission Coordinator Lifecycle — `CoordinatorLifecycle` state machine, election, handover, slashing
 - RFC-0855p-c (Networking): DomainCoordinator Role — specialization for physical platforms
 - RFC-0850p-c (Networking): Transport Group Binding Ceremony — `domain_id` and BIND/REBIND/UNBIND envelope types
-- RFC-0850 (Networking): Deterministic Overlay Transport — base protocol
+- RFC-0850: Deterministic Overlay Transport — base protocol
 
 ## Related Use Cases
 
@@ -102,7 +102,7 @@ If this use case is implemented:
 Use Case (Mission Coordinator Lifecycle — this document)
    │
    ▼
-RFC-0855 (Networking): Mission Overlay Networks
+RFC-0855: Mission Overlay Networks
    │
    ▼
 RFC-0855p-b (Networking): Mission Coordinator Lifecycle (general state machine)
@@ -118,19 +118,21 @@ Missions: 0855p-c-{cross-platform-consensus, admin-attestation, cross-domain-sla
 ## Related Missions
 
 Under RFC-0855p-b:
-- `missions/open/0855p-b-cross-mission-reputation.md` — Cross-mission coordinator reputation
+
+- `missions/archived/0855p-b-cross-mission-reputation.md` — Cross-mission coordinator reputation
 - `missions/open/0855p-b-vdf-election.md` — VDF-based election (random beacon)
 - `missions/open/0855p-b-stake-weighted-quadratic.md` — Anti-plutocracy voting weight
 - `missions/open/0855p-b-governance-rfc.md` — Governance key rotation RFC (0855p-d)
 
 Under RFC-0855p-c:
-- `missions/open/0855p-c-cross-platform-consensus.md` — 2-phase commit for cross-platform REBIND
-- `missions/open/0855p-c-admin-attestation.md` — Platform admin verification via API attestations
-- `missions/open/0855p-c-cross-domain-slash.md` — Cross-domain slash via mission-level coordinator
-- `missions/open/0855p-c-slash-small-groups.md` — Slash instead of UNBIND for small groups
-- `missions/open/0855p-c-sub-admins.md` — Sub-admin designations for redundancy
-- `missions/open/0855p-c-reputation.md` — DC reputation (slash history across domains)
-- `missions/open/0855p-c-auto-rejoin.md` — Auto-rejoin for accidentally kicked members
+
+- `missions/archived/completed/0855p-c-cross-platform-consensus.md` — 2-phase commit for cross-platform REBIND
+- `missions/archived/completed/0855p-c-admin-attestation.md` — Platform admin verification via API attestations
+- `missions/archived/completed/0855p-c-cross-domain-slash.md` — Cross-domain slash via mission-level coordinator
+- `missions/archived/completed/0855p-c-slash-small-groups.md` — Slash instead of UNBIND for small groups
+- `missions/archived/completed/0855p-c-sub-admins.md` — Sub-admin designations for redundancy
+- `missions/archived/completed/0855p-c-reputation.md` — DC reputation (slash history across domains)
+- `missions/archived/completed/0855p-c-auto-rejoin.md` — Auto-rejoin for accidentally kicked members
 
 ---
 

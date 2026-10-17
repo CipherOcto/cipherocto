@@ -28,7 +28,15 @@
 //! Run:
 //!   cargo run -p whatsapp_chrome_session_extract --bin whatsapp_idb_cryptokey_diff_gen --release
 
+// Clippy `[disallowed-methods]` allowlist: these binaries talk to
+// Chrome DevTools Protocol (CDP) at `http://localhost:9222` to extract
+// WhatsApp Web session keys for Phase 7.J work. CDP is an operator
+// diagnostic endpoint (not an LLM model provider). Cipherocto capability
+// tokens never reach CDP.
+#![allow(clippy::disallowed_methods)]
+
 use anyhow::{Context, Result};
+// H-6: session dumps are written 0600 under a 0700 dir, never at umask 0644.
 use chrono::Utc;
 use clap::Parser;
 use futures::{SinkExt, StreamExt};
@@ -37,6 +45,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::time::{sleep, Duration};
 use tracing::info;
+use whatsapp_chrome_session_extract::{write_private_file, write_private_json};
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -165,12 +174,15 @@ async fn drive_one(chrome: &PathBuf, port: u16, profile_dir: PathBuf, html: &str
     // modern Chrome get an opaque origin with restricted crypto.subtle + IDB
     // persistence semantics).
     let page_path = profile_user_dir.join("page.html");
-    std::fs::write(&page_path, html).context("write page.html")?;
+    write_private_file(&page_path, html.as_bytes()).context("write page.html")?;
     let page_url = format!("file://{}", page_path.display());
 
+    // Chrome's renderer sandbox is deliberately left ON. These binaries drive a
+    // profile holding a live WhatsApp Web session, so a renderer compromise is
+    // full account compromise. If Chrome cannot start in a sandbox-less
+    // container, give the container user namespaces rather than this flag.
     let mut child = tokio::process::Command::new(chrome)
         .arg(format!("--remote-debugging-port={port}"))
-        .arg("--no-sandbox")
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
         .arg("--disable-extensions")
@@ -314,10 +326,7 @@ async fn drive_one(chrome: &PathBuf, port: u16, profile_dir: PathBuf, html: &str
 
     // Save diag to disk so we can confirm after Chrome is dead.
     let diag_path = profile_dir.join("diag.json");
-    std::fs::write(
-        &diag_path,
-        serde_json::to_string_pretty(&diag.clone().unwrap_or(Value::Null))?,
-    )?;
+    write_private_json(&diag_path, &diag.clone().unwrap_or(Value::Null))?;
     info!("diag saved to {}", diag_path.display());
 
     let _ = ws.close(None).await;
@@ -405,7 +414,7 @@ async fn main() -> Result<()> {
 
         // Save the key bytes alongside the profile so the diff binary knows
         // what to grep for.
-        std::fs::write(profile_dir.join("expected-key.hex"), key_hex.as_bytes())?;
+        write_private_file(&profile_dir.join("expected-key.hex"), key_hex.as_bytes())?;
     }
 
     let final_manifest = json!({
@@ -414,7 +423,7 @@ async fn main() -> Result<()> {
         "rows": manifest_arr,
     });
     let final_path = manifest_path.clone();
-    std::fs::write(final_path, serde_json::to_string_pretty(&final_manifest)?)?;
+    write_private_json(&final_path, &final_manifest)?;
     println!("manifest written to {}", manifest_path.display());
     println!("run `whatsapp_idb_leveldb_diff` next");
     Ok(())

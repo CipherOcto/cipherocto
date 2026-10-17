@@ -229,7 +229,7 @@ async fn live_session_self_handle_returns_phone() {
 /// `BroadcastDomainId::new` is a pure function, and the assertions are
 /// property tests on the output, not a send/receive cycle. The live
 /// `WhatsAppWebAdapter` is required only because the method takes
-/// `&self`; the assertions themselves don't depend on the WS connection.
+/// `&&self`; the assertions themselves don't depend on the WS connection.
 #[tokio::test]
 #[ignore = "requires live WhatsApp Web session"]
 async fn live_session_domain_id_is_deterministic_and_injective() {

@@ -1,6 +1,6 @@
 //! Internal [`SyncError`] enum and wire-level [`WireError`] enum.
 //!
-//! Per RFC-0862 v1.1.0 §DatabaseSyncAdapter Trait §Error Model. The internal
+//! Per RFC-0862 §DatabaseSyncAdapter Trait §Error Model. The internal
 //! `SyncError` variants collapse into a subset of the wire-level codes
 //! (RFC-0862 §Error Handling) because the wire codes also cover errors that
 //! originate outside the database adapter (envelope validation, DDL, schema

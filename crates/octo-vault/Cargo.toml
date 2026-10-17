@@ -1,0 +1,76 @@
+[package]
+name = "octo-vault"
+version = "0.1.0"
+edition = "2021"
+description = "Layer B vault substrate — Vault/VaultId/VaultPolicy/VaultState + vault_id BLAKE3 derivation (RFC-0960 chain-aware bump v3.0, Model B per docs/reviews/2026-08-15-storage-layer-restructuring-analysis.md §20.3)"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["rlib"]
+
+[features]
+# Test fixtures for downstream consumers — gates `pub mod testing` +
+# `pub use testing::{StubEmitter, StubTransferEventLog, StubVaultAssetResolver}`.
+# Default off; opt-in via `[dev-dependencies] octo-vault = { features = ["testing"] }`
+# (per R1 layer-direction/api-surface fix; per-binary wire-up deferred).
+testing = []
+
+[dependencies]
+# Serde derives for substrate types (mission 0011-e-vault-substrate-additions
+# `VaultSummary` + `TransferHandle` are `#[derive(Serialize, Deserialize)]`
+# per RFC-0011-e §Substrate Additions).
+serde.workspace = true
+# Layer B → Layer A storage substrate. Per S2, owner crates depend on the
+# substrate (not the Stoolap fork directly) so the migration runner stays
+# centralized and bounded by the substrate's audit trail (per
+# `feedback_stoolap_persistence` memory card + plan §B.2).
+octo-storage-core = { path = "../octo-storage-core" }
+# Layer B → vault_id canonical derivation (§8.10 TV-V1). Pure-Rust hash.
+blake3 = "1.5"
+# Layer B → substrate error type. Display operator-facing, Debug substrate-internal.
+thiserror = "2.0"
+# Mission B (RFC-0960 §2.4): cache_channel_name uses hex encoding.
+hex = "0.4"
+# `octo-determin` (Layer A frozen substrate, RFC-frozen per
+# `cipherocto-design-principles.md`). `asset_id_for` is the canonical
+# §20.3.1 derivation rule (RFC-0105, mission 0105-v); the TV
+# fixtures in `tests/test_vectors.rs::tv_d9_asset_id` reference it
+# directly. Version bump + Cargo.lock update owed on `octo-determin`
+# v0.1.0 → v0.2.0 when this mission pushes. Local path via root
+# `[patch."https://github.com/CipherOcto/cipherocto"]` so the new
+# module is visible WITHOUT a remote push (per
+# `feedback_initiation_user_only`).
+octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
+# Mission D substrate: `octo-cap-macaroon` owns the trait declarations
+# (`AssetRegistry`, `NonceRegistry`) + newtypes (`Nonce`, `Epoch`,
+# `AssetId`, `ChainId`, `VaultId`, `GovernanceSignature`) + primitives
+# (`blake3_hash`, `verify_governance_signature`) per RFC-0105
+# §3.1/§3.11/§3.12 canonical home rule. octo-vault re-exports + adds
+# the live-registry impls + storage-coupled substrate handle.
+octo-cap-macaroon = { path = "../octo-cap-macaroon" }
+# Mission cache-bus-auth (RFC-0853 §1): ed25519-dalek substrate for
+# envelope signing/verification on the cache invalidation bus. Same
+# crate that octo-policy uses (Cargo.toml L36).
+ed25519-dalek = { version = "2.2", features = ["serde"] }
+# RFC-0009 AC#11: the cache-bus trust list verifies under a named algorithm
+# rather than a hardcoded Ed25519. Layer E per-algorithm extension depending
+# on Layer B — the arrow never points back, which is why `octo-ident` itself
+# has no ed25519-dalek dependency. Same edge `octo-wallet` and
+# `octo-reputation` take.
+octo-algo-ed25519 = { path = "../octo-algo-ed25519" }
+# RFC-0009 AC#11: the trust list records the algorithm each producer's key
+# verifies under, so the name travels with the key instead of being assumed.
+# Layer B identity substrate, reached directly for `AlgorithmId` — the same
+# edge `octo-wallet` and `octo-role` take.
+octo-ident = { path = "../octo-ident" }
+# DashMap for per-producer last-seen-sequence tracking in the
+# cache-subscriber. Lightweight concurrent map; no async runtime.
+dashmap = "6"
+
+[dev-dependencies]
+# Test fixtures only — production hex is in [dependencies] (Mission B).
+# Hex encoding for byte-exact test vector fixtures (TV-V1) +
+# capture_tv_v1.rs example. Dev-only — keeps the production dep tree
+# minimal.
+# TV-CB fixtures: random ed25519 signing keys (sample_signing_key).
+rand = "0.8"

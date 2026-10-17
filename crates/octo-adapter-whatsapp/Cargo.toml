@@ -86,8 +86,17 @@ prost = "0.14"
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 
-# SQL storage (CipherOcto stoolap fork)
-stoolap = { git = "https://github.com/CipherOcto/stoolap", branch = "feat/blockchain-sql" }
+# Layer A storage substrate (mission 0206-001). The adapter uses
+# `octo_storage_core::Database` for session store + message store;
+# direct `stoolap::Database` is no longer named in src/ after mission
+# 0206-008.
+octo-storage-core = { path = "../octo-storage-core" }
+
+# Stoolap direct dep REMOVED 2026-08-20 by mission 0206-008b. Substrate
+# `pub mod stoolap` re-export block (DataType, Error, ApiTransaction,
+# ResultRow, Rows, Value) covers all consumer types. Substrate remains
+# sole owner of direct stoolap dep per RFC-0206 §Cargo.toml Templates
+# Layer A invariant.
 
 # DOT types from sibling crate
 octo-network = { path = "../octo-network" }

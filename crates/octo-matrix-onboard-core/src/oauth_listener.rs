@@ -27,14 +27,14 @@ pub enum CallbackResult {
     /// IdP returned a valid `code` (and matching `state`).
     ///
     /// `raw_query` is the **entire, unparsed query string** the IdP
-    /// redirected with — e.g. `code=abc&state=xyz`. The CLI passes it
+    /// redirected with — e.g. `code=abc&&state=xyz`. The CLI passes it
     /// unchanged to `OAuth::finish_login(UrlOrQuery::Query(raw_query))`
     /// so the SDK's state validation can run. We do NOT decode and
     /// re-encode the values: that round-trip would mangle any
-    /// non-trivial encoding (e.g. `+` ↔ `%2B`, `%` ↔ `%25`, `&` ↔
+    /// non-trivial encoding (e.g. `+` ↔ `%2B`, `%` ↔ `%25`, `&&` ↔
     /// `%26`) and break codes the IdP returns with such characters.
     Code { raw_query: String },
-    /// IdP returned an error (`error=...&error_description=...`).
+    /// IdP returned an error (`error=...&&error_description=...`).
     IdpError { code: String, description: String },
 }
 

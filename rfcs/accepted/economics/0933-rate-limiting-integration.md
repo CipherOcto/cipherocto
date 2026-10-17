@@ -133,3 +133,9 @@ rate_limiting:
 5. Rate limit resets after window
 6. stoolap persistence survives restart
 7. [REMOVED — global limits are out of scope for this RFC. Per-user, per-team, and global scopes will be specified in a future RFC.]
+
+## Version History
+
+| Version | Date       | Change                                                                                |
+|---------|------------|---------------------------------------------------------------------------------------|
+| 1.0     | 2026-08-22 | Retroactive VH table addition (per long-horizon plan v1.3 Phase 1 + Option C per M37). |

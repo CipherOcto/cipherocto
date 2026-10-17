@@ -1,0 +1,343 @@
+//! CipherOcto quota-router settlement matching engine.
+//!
+//! Owns the `asks` + `consumed_receipt_index` schema + state machine
+//! (Mint → Settled → Consumed). Stoolap (CipherOcto fork) is the embedded
+//! SQL substrate per `docs/architecture/stoolap-integration.md` Path B — cipherocto
+//! hosts the schema and orchestrates settlement; stoolap is just a
+//! general-purpose DB engine.
+//!
+//! **Layer C specialized node** (per `docs/architecture/design-principles.md`):
+//! this crate implements ONE node role (the settlement matching
+//! engine). It depends on the Layer A substrate (`octo_storage_core`)
+//! for the migration runner + DB constructors, and is consumed by
+//! other Layer C crates (e.g. `octo-quota-router`).
+//!
+//! ## Mode gate (RFC-0917 invariant)
+//!
+//! Settlement operations are accessible via both the HTTP proxy and the
+//! Python SDK in ALL modes. The mode gate controls HOW data is stored
+//! (in-process embedded stoolap vs remote stub for tests), not whether
+//! the surface is available.
+
+#![warn(missing_debug_implementations)]
+#![allow(clippy::doc_markdown)]
+
+use serde::{Deserialize, Serialize};
+
+pub mod envelope;
+pub mod event_log_producer;
+pub mod schema;
+pub mod settlement_event;
+pub mod shard;
+pub mod state_machine;
+pub mod store;
+
+// Re-exported for downstream compatibility with pre-S2 callers. The
+// `apply_migrations` function lives in `schema`; the substrate
+// migration runner is `octo_storage_core::apply_pending`.
+//
+// The pre-S2 `MigrationError` re-export was dropped (see mission
+// `0871b-cross-node-forwarding` review): the underlying type is the
+// substrate's `StorageError`, and re-exporting a deprecated alias at
+// the crate root couples the crate's public surface to a deprecation
+// lifecycle that lives in `schema::MigrationError`. Downstream
+// callers should import `octo_storage_core::StorageError` directly
+// (or use `crate::store::StorageError::Migration` for the
+// per-store wrapper).
+#[allow(deprecated)]
+pub use schema::apply_migrations;
+pub use state_machine::{
+    transition, transition_reservation, ReservationTransitionError, StateTransitionError,
+};
+pub use store::{SettlementStore, StoolapStore, StorageError};
+
+// Substrate re-exports (mission 0014-settlement-sm-engine-migration).
+//
+// Per RFC-0014 §Module Layout, the canonical `Receipt` + `Reservation`
+// + `Ask` + `AskState` + `ReservationState` + `SettlementError` +
+// `SettlementStore` + `AppendOnlyReceiptSink` + chain-integrity
+// helpers live in `octo-settlement-core` (Layer A frozen). The local
+// Ask / Receipt / Reservation structs below are DOMAIN EXTENSIONS
+// carrying fields (axes_consumed, cap_root_hash, invocation_hash,
+// current_unix_time, output_hash, audit_window_secs, settlement_ref)
+// the substrate intentionally does NOT model — those fields are
+// quota-router-specific business data, not canonical settlement
+// primitives.
+//
+// Re-export with the `Canonical` prefix so downstream code that wants
+// the substrate types can opt in without colliding with the local
+// names.
+pub use octo_settlement_core::AppendOnlyReceiptSink;
+pub use octo_settlement_core::Ask as CanonicalAsk;
+pub use octo_settlement_core::AskState as CanonicalAskState;
+pub use octo_settlement_core::Receipt as CanonicalReceipt;
+pub use octo_settlement_core::Reservation as CanonicalReservation;
+pub use octo_settlement_core::ReservationState as CanonicalReservationState;
+pub use octo_settlement_core::SettlementError as CanonicalSettlementError;
+pub use octo_settlement_core::SettlementHashOpaque;
+pub use octo_settlement_core::SettlementStore as CanonicalSettlementStore;
+pub use octo_settlement_core::{receipt_id_for, verify_receipt_chain, CHAIN_DOMAIN_SEPARATOR};
+
+/// Ask state (RFC-0959 §State Machine).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AskState {
+    /// Initial state after mint_with_zk() succeeds. ask_id, holder, axes recorded.
+    Minted,
+    /// Receipt settled; settlement_hash locked; ready for consumption.
+    Settled,
+    /// Terminal; receipt_index row written; settlement complete.
+    Consumed,
+}
+
+impl AskState {
+    /// SQL representation (matches migrations/001_create_asks.sql CHECK constraint).
+    #[must_use]
+    pub const fn as_sql(&self) -> &'static str {
+        match self {
+            Self::Minted => "Minted",
+            Self::Settled => "Settled",
+            Self::Consumed => "Consumed",
+        }
+    }
+
+    /// Parse from SQL string.
+    #[must_use]
+    pub fn from_sql(s: &str) -> Option<Self> {
+        match s {
+            "Minted" => Some(Self::Minted),
+            "Settled" => Some(Self::Settled),
+            "Consumed" => Some(Self::Consumed),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for AskState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_sql())
+    }
+}
+
+/// Ask record (RFC-0959 §Data Structures).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Ask {
+    pub ask_id: [u8; 32],
+    pub holder_did: String,
+    pub axes_consumed: Vec<(String, u64)>,
+    pub cap_root_hash: [u8; 32],
+    pub invocation_hash: [u8; 32],
+    pub current_unix_time: u64,
+    pub output_hash: Option<[u8; 32]>,
+}
+
+/// Receipt record (RFC-0959 §Data Structures).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Receipt {
+    pub receipt_id: [u8; 32],
+    pub ask_id: [u8; 32],
+    pub settlement_hash: [u8; 32],
+    pub router_id: String,
+    pub router_sig: Vec<u8>,
+    pub timestamp_unix: u64,
+}
+
+/// Reservation state (RFC-0960 §2.3).
+///
+/// Distinct from `AskState` (RFC-0959 receipt lifecycle) and from
+/// `SettlementReceipt`'s state machine (RFC-0959 Minted→Settled→
+/// Consumed). A Reservation is the pre-auth escrow that binds a capability
+/// to an intended operation; it carries the audit-window state machine
+/// Reserved→Executing→Settled→Auditable→Released and the dispute branch
+/// Frozen→Dispute→Rollback/Uphold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReservationState {
+    /// Pre-auth holds the amount; capability bound.
+    Reserved,
+    /// Provider is executing the requested operation.
+    Executing,
+    /// Proof attached; awaiting audit window.
+    Settled,
+    /// Inside dispute window.
+    Auditable,
+    /// Terminal; transfers applied; reservation closed.
+    Released,
+    /// Deadline passed before settlement arrived.
+    Expired,
+    /// Explicit cancel by capability holder.
+    Cancelled,
+    /// Dispute filed; transfers not applied.
+    Frozen,
+}
+
+impl ReservationState {
+    /// SQL representation.
+    #[must_use]
+    pub const fn as_sql(&self) -> &'static str {
+        match self {
+            Self::Reserved => "Reserved",
+            Self::Executing => "Executing",
+            Self::Settled => "Settled",
+            Self::Auditable => "Auditable",
+            Self::Released => "Released",
+            Self::Expired => "Expired",
+            Self::Cancelled => "Cancelled",
+            Self::Frozen => "Frozen",
+        }
+    }
+}
+
+impl std::fmt::Display for ReservationState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_sql())
+    }
+}
+
+/// Reservation record (RFC-0960 §2.3).
+///
+/// Step 6 of the 11-step exercise instantiates one of these. Replaces the
+/// prior `blake3::hash(ask_id || b"escrow/v1")` placeholder, which was the
+/// R1-F1 defect flagged in RFC-0960's R1 self-review.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Reservation {
+    /// BLAKE3(canonical_ser(reservation_unsigned)) — content-addressed.
+    pub reservation_id: [u8; 32],
+    /// Vault that authorizes this reservation (RFC-0960 §2.1).
+    pub vault_id: [u8; 32],
+    /// Capability bound to this reservation (RFC-0957 macaroon).
+    pub capability_id: [u8; 32],
+    /// Ask being pre-authed against (RFC-0959 ask_id).
+    pub ask_id: [u8; 32],
+    /// Resource axis being reserved (e.g. "input_tokens_per_1k").
+    pub resource_axis: String,
+    /// Amount in micro-units (OCTO_W micro-precision per RFC-0959).
+    pub amount_micro: u128,
+    /// Hard deadline for settlement to arrive.
+    pub expires_at_unix: u64,
+    /// Audit window duration (RFC-0960 §6); 0 = instant release.
+    pub audit_window_secs: u64,
+    /// Current state in the audit-window state machine.
+    pub state: ReservationState,
+    /// Optional link to a SettlementReceipt once settlement lands.
+    pub settlement_ref: Option<[u8; 32]>,
+    /// Unix timestamp at which the reservation was minted.
+    pub created_at_unix: u64,
+}
+
+impl Reservation {
+    /// Mint a new reservation in `Reserved` state.
+    ///
+    /// `reservation_id` is derived from the canonical inputs so two nodes
+    /// constructing the same reservation independently produce the same id
+    /// (RFC-0126 deterministic encoding).
+    ///
+    /// **Domain separator (mission 0862-c5 + S6c Round 1 review
+    /// finding #6):** uses the canonical `"cipherocto/reservation/v1/"`
+    /// prefix per RFC-0105 DqaEncoding-prefix cross-reference pattern.
+    /// Replaces the prior short `b"reservation/v1"` prefix (which
+    /// occupied an unnamespaced second hash space adjacent to the
+    /// canonical `b"cipherocto/vault/v1/"` derivation in `octo-vault`).
+    /// The new prefix is `cipherocto/`-namespaced to prevent future
+    /// collisions with derivations that adopt the canonical vault
+    /// schema. The change is a clean rename — `reservation_id` is an
+    /// in-memory content-addressed handle consumed only by
+    /// `quota-router-core::settle::build_reservation_id` (no SQL
+    /// migration, no wire form, no cross-network lookup keyed on the
+    /// raw bytes), so the new derivation produces byte-different
+    /// `reservation_id` values without breaking any persisted state.
+    /// Pin via `crates/quota-router-sm-engine/tests/tv_0862_c5_reservation_id.rs`
+    /// (TV-0862-19 — new derivation for canonical inputs).
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub fn mint(
+        vault_id: [u8; 32],
+        capability_id: [u8; 32],
+        ask_id: [u8; 32],
+        resource_axis: String,
+        amount_micro: u128,
+        expires_at_unix: u64,
+        audit_window_secs: u64,
+        created_at_unix: u64,
+    ) -> Self {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"cipherocto/reservation/v1/");
+        hasher.update(&vault_id);
+        hasher.update(&capability_id);
+        hasher.update(&ask_id);
+        hasher.update(resource_axis.as_bytes());
+        hasher.update(&amount_micro.to_le_bytes());
+        hasher.update(&expires_at_unix.to_le_bytes());
+        hasher.update(&audit_window_secs.to_le_bytes());
+        hasher.update(&created_at_unix.to_le_bytes());
+        let reservation_id = *hasher.finalize().as_bytes();
+
+        Self {
+            reservation_id,
+            vault_id,
+            capability_id,
+            ask_id,
+            resource_axis,
+            amount_micro,
+            expires_at_unix,
+            audit_window_secs,
+            state: ReservationState::Reserved,
+            settlement_ref: None,
+            created_at_unix,
+        }
+    }
+}
+
+/// Settlement engine error (RPC-level; covers all settlement operations).
+#[derive(Debug, thiserror::Error)]
+pub enum SettlementError {
+    #[error("ask not found: <redacted-hash>")]
+    AskNotFound(#[source] SettlementHashOpaque),
+    #[error("receipt already consumed: <redacted-hash>")]
+    AlreadyConsumed(#[source] SettlementHashOpaque),
+    #[error("invalid state transition: {from} → {to}")]
+    InvalidTransition { from: AskState, to: AskState },
+    #[error("reservation not found: {0}")]
+    ReservationNotFound(String),
+    #[error("reservation expired: {0}")]
+    ReservationExpired(String),
+    #[error("invalid reservation transition: {from} → {to}")]
+    InvalidReservationTransition {
+        from: ReservationState,
+        to: ReservationState,
+    },
+    /// Receipt's ask_id does not match the ask being settled (RFC-0014-v3
+    /// §S5.2 — paired substrate amendment; defect 2 oracle).
+    ///
+    /// Hash fields use the `SettlementHashOpaque` newtype so `Display`
+    /// emits `<redacted-hash>`; raw 32-byte bytes are kept at the
+    /// `source()` chain for programmatic callers (e.g. log
+    /// post-processing) but NEVER leak through `to_string()` / log
+    /// formatting / anyhow chains.
+    #[error("settlement hash mismatch: <redacted-hash>")]
+    SettlementHashMismatch {
+        /// Expected settlement_hash (the one stored on the ask). Bytes
+        /// retained at source for programmatic inspection; Display redacted.
+        expected: SettlementHashOpaque,
+        /// Got settlement_hash (the one on the receipt). Same
+        /// source-retain / Display-redact contract.
+        got: SettlementHashOpaque,
+    },
+    #[error("storage error: {0}")]
+    Storage(#[from] StorageError),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ask_state_sql_roundtrip() {
+        for state in [AskState::Minted, AskState::Settled, AskState::Consumed] {
+            assert_eq!(AskState::from_sql(state.as_sql()), Some(state));
+        }
+    }
+
+    #[test]
+    fn ask_state_unknown_sql_is_none() {
+        assert_eq!(AskState::from_sql("Unknown"), None);
+    }
+}

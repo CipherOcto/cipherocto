@@ -1,0 +1,1121 @@
+//! `AskRepository` — DAO over the cipherocto `asks` table (Phase C).
+#![allow(clippy::doc_lazy_continuation)]
+//!
+//! Per `docs/architecture/stoolap-integration.md` principle: cipherocto owns consumer schema;
+//! the fork is a general-purpose DB. Migrations live in `crates/octo-core/migrations/`
+//! and are run at startup via `migrations::apply_pending`.
+//!
+//! **Trait boundary** (mission `marketplace-repo-trait-decouple`):
+//! the public API is split into [`AskRead`] (cheapest / list_by_asker / get)
+//! + [`AskWrite`] (put / delete) and combined as [`AskRepository`]. The
+//! concrete [`StoolapAskRepository`] is the production implementation;
+//! consumers (notably `quota-router-core::Marketplace`) hold
+//! `Arc<dyn CombinedAskRepository + Send + Sync>` so test mocks and alternate
+//! backends plug in without a concrete-type dependency. Interface
+//! Segregation: callers that only read or only write may depend on
+//! the narrowest trait that fits (Stable Abstractions Principle).
+
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use crate::ask::{settlement_cost, Ask, AxisConsumption, ModelRateTable, ModelRef, PricingAxis};
+use crate::migrations;
+
+/// Maximum candidates to fetch for `cheapest()` query before sorting in Rust.
+/// Keeps memory bounded + index-friendly (no full table scan).
+const CHEAPEST_CANDIDATE_LIMIT: i64 = 1000;
+
+/// DAO errors.
+#[derive(Debug, Error)]
+pub enum RepoError {
+    #[error("database error: {0}")]
+    Db(String),
+    #[error("serialization error: {0}")]
+    Serde(String),
+    #[error("migration error: {0}")]
+    Migration(#[from] migrations::MigrationError),
+    /// The settlement cost computed for an Ask cannot be represented as an
+    /// order-book price, which is a non-negative integer number of
+    /// micro-OCTO-W.
+    ///
+    /// Two independent ways to reach this, both from a well-typed `Ask`:
+    ///
+    /// - `scale != 0` — the rate carries a fractional scale, so the summed
+    ///   cost is not an integer micro-OCTO-W amount.
+    /// - `value < 0` — the rate is negative, which would silently wrap if
+    ///   cast to the book's `u128` price.
+    ///
+    /// Previously both were unrepresentable at the marketplace write path:
+    /// the non-zero-scale case hit an `assert_eq!` and panicked, and the
+    /// negative case wrapped to ~2^128. See mission
+    /// `marketplace-put-panics-or-wraps-on-unrepresentable-settlement-cost`.
+    #[error("settlement cost not representable as a book price: scale={scale}, value={value} (expected scale=0 and value >= 0)")]
+    InvalidSettlementCost { scale: u8, value: i64 },
+    /// `Ask::expires_at_unix` cannot be represented in the `asks` table,
+    /// whose `expires_at_unix` column is `i64`.
+    ///
+    /// The row was previously written via a bare `as i64` cast, which
+    /// wrapped silently: `u64::MAX` became `-1`. Every read filters on
+    /// `expires_at_unix > now_unix`, so the row was written successfully
+    /// and then invisible to every query — while the in-memory order
+    /// book, which keeps the `u64`, held the listing as live and
+    /// selectable.
+    ///
+    /// Refused at the storage boundary rather than in the facade so every
+    /// writer is covered. See deferred mission
+    /// `an-unrepresentable-expiry-is-written-then-invisible-to-every-read`.
+    #[error(
+        "expires_at_unix not representable as i64: {expires_at_unix} (max {max_representable})"
+    )]
+    UnrepresentableExpiry {
+        /// The rejected value, verbatim.
+        expires_at_unix: u64,
+        /// The largest value the column can hold.
+        max_representable: u64,
+    },
+    /// An Ask was read back with a negative per-axis rate. A negative rate
+    /// credits the buyer rather than charging them and wins every
+    /// cheapest-comparison by construction, so it is refused at the
+    /// storage boundary rather than propagated into the pricing path.
+    ///
+    /// See mission `the-marketplace-facade-has-no-production-caller`.
+    #[error("ask rate must be non-negative: axis={axis}, rate_per_1k={value}")]
+    InvalidAskRate { axis: String, value: i64 },
+}
+
+/// Persisted row mirror of the `asks` table.
+///
+/// Kept separate from `Ask` so future schema additions (e.g., audit columns)
+/// don't bleed into the public type. Conversion is via `From` impls below.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AskRow {
+    pub ask_id: Vec<u8>,
+    pub asker_did: String,
+    pub model: String,
+    pub rates_json: Vec<u8>,
+    pub nonce: Vec<u8>,
+    pub expires_at_unix: i64,
+    pub created_at_unix: i64,
+}
+
+impl TryFrom<&Ask> for AskRow {
+    type Error = RepoError;
+    fn try_from(ask: &Ask) -> Result<Self, Self::Error> {
+        let rates_json =
+            serde_json::to_vec(&ask.rates).map_err(|e| RepoError::Serde(format!("rates: {e}")))?;
+        // `expires_at_unix` is `u64` on `Ask` but `i64` in the row, and
+        // every read filters on `expires_at_unix > now_unix as i64`. A
+        // bare `as i64` cast wrapped silently: `u64::MAX` became `-1`, so
+        // the row was written successfully and then excluded by every
+        // query, while the in-memory book — which keeps the `u64` — held
+        // it as live and selectable.
+        //
+        // Measured: one `put` with `expires_at_unix = u64::MAX` returned
+        // `Ok`, `cheapest` returned the ask, and `list_by_asker` returned
+        // zero rows. It would also have vanished on restart, since
+        // hydration reads through the same filter.
+        //
+        // Refused here, at the representation boundary, so every writer
+        // is covered rather than only the marketplace facade.
+        let expires_at_unix =
+            i64::try_from(ask.expires_at_unix).map_err(|_| RepoError::UnrepresentableExpiry {
+                expires_at_unix: ask.expires_at_unix,
+                max_representable: i64::MAX as u64,
+            })?;
+        Ok(Self {
+            ask_id: ask.id().to_vec(),
+            asker_did: ask.asker_did.clone(),
+            model: ask.model.to_wire(),
+            rates_json,
+            nonce: ask.nonce.to_vec(),
+            expires_at_unix,
+            created_at_unix: now_unix() as i64,
+        })
+    }
+}
+
+impl TryFrom<AskRow> for Ask {
+    type Error = RepoError;
+    #[allow(dead_code)]
+    fn try_from(row: AskRow) -> Result<Self, Self::Error> {
+        if row.ask_id.len() != 32 {
+            return Err(RepoError::Serde(format!(
+                "ask_id must be 32 bytes, got {}",
+                row.ask_id.len()
+            )));
+        }
+        if row.nonce.len() != 16 {
+            return Err(RepoError::Serde(format!(
+                "nonce must be 16 bytes, got {}",
+                row.nonce.len()
+            )));
+        }
+        let rates: ModelRateTable = serde_json::from_slice(&row.rates_json)
+            .map_err(|e| RepoError::Serde(format!("rates: {e}")))?;
+        // Fail closed on a negative rate, alongside the existing ask_id /
+        // nonce length checks. Nothing downstream rejects one.
+        if let Some(bad) = rates.first_negative_rate() {
+            return Err(RepoError::InvalidAskRate {
+                axis: bad.axis.clone(),
+                value: bad.rate_per_1k.value,
+            });
+        }
+        let mut ask_id = [0u8; 32];
+        ask_id.copy_from_slice(&row.ask_id);
+        let mut nonce = [0u8; 16];
+        nonce.copy_from_slice(&row.nonce);
+        Ok(Self {
+            asker_did: row.asker_did,
+            model: ModelRef::from(row.model),
+            rates,
+            nonce,
+            expires_at_unix: row.expires_at_unix as u64,
+        })
+    }
+}
+
+/// Current Unix timestamp in seconds (clock-best-effort).
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Read-side trait for the `asks` table (mission
+/// `marketplace-repo-trait-decouple`).
+///
+/// Interface Segregation: read-only consumers (e.g., the marketplace
+/// `cheapest` hot path) can depend on `AskRead` without pulling in the
+/// write-side surface.
+pub trait AskRead: Send + Sync {
+    /// Fetch an Ask by its content-addressable id.
+    /// # Errors
+    /// Returns `RepoError::Db` on query failure.
+    fn get(&self, ask_id: &[u8; 32]) -> Result<Option<Ask>, RepoError>;
+
+    /// Cheapest non-expired Ask for `model`, **approximate**: only the
+    /// candidates the implementation chose to fetch are compared.
+    /// `axes` supplies the standard pricing axes for cost computation.
+    ///
+    /// This doc previously read "List all non-expired Asks for `model`,
+    /// sorted by computed cost ascending", which the implementation does
+    /// not do. `StoolapAskRepository` fetches at most
+    /// `CHEAPEST_CANDIDATE_LIMIT` rows **ordered by `expires_at_unix
+    /// DESC`**, then sorts those locally by computed cost. Cost cannot be
+    /// ordered in SQL because it lives in the per-axis `rates_json`.
+    ///
+    /// Measured with 1001 asks for one model, where the genuinely
+    /// cheapest (rate 1) also expires soonest and therefore sorts *last*
+    /// under that ordering: `cheapest` returned a rate-50_000 ask and
+    /// never considered the rate-1 one — a 50_000x miss, returned as
+    /// `Ok` with no indication that it was approximate.
+    ///
+    /// Callers must not treat this as exact. Whether the cap stays, and
+    /// whether the method should be renamed to say so, is recorded in
+    /// deferred mission
+    /// `ask-repo-cheapest-silently-ignores-asks-outside-its-candidate-limit`.
+    /// # Errors
+    /// Returns `RepoError::Db` on query failure, `RepoError::Serde` on
+    /// row decode failure.
+    fn cheapest(
+        &self,
+        model: &str,
+        now_unix: u64,
+        axes: &[PricingAxis],
+    ) -> Result<Option<Ask>, RepoError>;
+
+    /// List all non-expired Asks published by `asker_did`.
+    /// # Errors
+    /// Returns `RepoError::Db` on query failure.
+    fn list_by_asker(&self, asker_did: &str, now_unix: u64) -> Result<Vec<Ask>, RepoError>;
+
+    /// List all non-expired Asks across all askers (used by
+    /// `Marketplace::open_path` to hydrate the in-memory order book on
+    /// restart, mission `marketplace-book-load-on-open`).
+    /// # Errors
+    /// Returns `RepoError::Db` on query failure.
+    fn list_all_active_asks(&self, now_unix: u64) -> Result<Vec<Ask>, RepoError>;
+}
+
+/// Write-side trait for the `asks` table (mission
+/// `marketplace-repo-trait-decouple`).
+pub trait AskWrite: Send + Sync {
+    /// Insert or replace an Ask.
+    ///
+    /// **This boundary carries no signature.** It takes a bare [`Ask`], which
+    /// has no signature field, and the `asks` table has no signature column
+    /// (migration v001, with no later `ALTER TABLE asks` adding one). The
+    /// `AskSigned` envelope the wallet produces never reaches storage, and
+    /// `AskSigned::verify` has no production caller — so an Ask is stored,
+    /// indexed, priced and selected on the strength of an unsigned
+    /// `asker_did` string.
+    ///
+    /// This is deliberate elsewhere in the same migration family:
+    /// `settlement_events.router_signature` and the policy registry's
+    /// `operator_signature` / `registrant_signature` are `NOT NULL` with
+    /// length checks. Asks are the outlier.
+    ///
+    /// Recorded as deferred mission
+    /// `the-ask-signature-gates-nothing`; carrying a signature here is a
+    /// schema and API change, not a local edit.
+    /// # Errors
+    /// Returns `RepoError` on stoolap / serialization failure.
+    fn put(&self, ask: &Ask) -> Result<(), RepoError>;
+
+    /// Delete an Ask by id (used by settlement engine for one-shot
+    /// consumption).
+    /// # Errors
+    /// Returns `RepoError::Db` on delete failure.
+    fn delete(&self, ask_id: &[u8; 32]) -> Result<(), RepoError>;
+}
+
+/// Combined read+write marker trait. Most consumers should depend on
+/// the narrower [`AskRead`] + [`AskWrite`] pair via the
+/// [`CombinedAskRepository`] supertrait (which is the
+/// `(dyn ... + Send + Sync)`-able surface); `AskRepository` is
+/// retained as a documentation handle for the historical "read+write
+/// DAO" concept (mission `marketplace-repo-trait-decouple`).
+pub trait AskRepository: AskRead + AskWrite {}
+
+/// Blanket impl: any type that is both `AskRead` + `AskWrite` is an
+/// `AskRepository`. The marketplace holds
+/// `Arc<dyn AskRead + AskWrite + Send + Sync>` (alias
+/// [`DynAskRepository`]) and every concrete impl is automatically
+/// usable. This is the Stable Abstractions Principle: the consumer
+/// depends on the narrowest surface (`AskRead + AskWrite`), not on
+/// the production struct.
+impl<T> AskRepository for T where T: AskRead + AskWrite {}
+
+/// Combined marker trait: any concrete `AskRead + AskWrite` impl is
+/// automatically `CombinedAskRepository`. Used to name the
+/// `(dyn CombinedAskRepository + Send + Sync)` trait object
+/// unambiguously (Rust forbids non-auto traits in `dyn` sums without
+/// parens; a named supertrait sidesteps the syntax).
+pub trait CombinedAskRepository: AskRead + AskWrite {}
+
+impl<T> CombinedAskRepository for T where T: AskRead + AskWrite {}
+
+/// Convenience alias for the trait object the marketplace stores.
+#[allow(dead_code)]
+pub type DynAskRepository = dyn CombinedAskRepository + Send + Sync;
+
+/// Cipherocto-side DAO for the `asks` table.
+///
+/// Owns its embedded stoolap connection. All methods run queries via
+/// the embedded DB; no caching layer at MVP.
+#[derive(Clone)]
+pub struct StoolapAskRepository {
+    db: octo_storage_core::Database,
+}
+
+impl StoolapAskRepository {
+    /// Open an in-memory DB, apply migrations, return the repository.
+    /// Test-only convenience.
+    /// # Errors
+    /// Returns `RepoError::Db` on DB open failure, `RepoError::Migration` if migrations fail.
+    pub fn open_in_memory() -> Result<Self, RepoError> {
+        let db = octo_storage_core::Database::open_in_memory()
+            .map_err(|e| RepoError::Db(format!("open_in_memory: {e}")))?;
+        migrations::apply_pending(&db)?;
+        Ok(Self { db })
+    }
+
+    /// Open a file-backed DB at `path`, apply migrations, return the repository.
+    /// # Errors
+    /// Returns `RepoError::Db` on DB open failure, `RepoError::Migration` if migrations fail.
+    pub fn open_path(path: &str) -> Result<Self, RepoError> {
+        let db = octo_storage_core::Database::open(path)
+            .map_err(|e| RepoError::Db(format!("open({path}): {e}")))?;
+        migrations::apply_pending(&db)?;
+        Ok(Self { db })
+    }
+
+    /// Wrap an existing stoolap connection (caller-owned). Caller is responsible
+    /// for invoking `migrations::apply_pending(db)` at startup.
+    #[must_use]
+    pub fn from_db(db: octo_storage_core::Database) -> Self {
+        Self { db }
+    }
+
+    /// Insert or replace an Ask.
+    ///
+    /// Uses a stoolap transaction (ReadCommitted isolation) so the check-then-update-or-insert
+    /// sequence is serialized correctly under concurrent writers — without
+    /// transactions, two writers computing `MAX(row_id)+1` in parallel could
+    /// both pick the same `row_id` and the second INSERT would fail with a
+    /// PK violation. The transaction holds the executor lock for the duration
+    /// of the put, eliminating the race.
+    /// # Errors
+    /// Returns `RepoError::Db` on stoolap failure (begin, query, execute, commit).
+    pub fn put(&self, ask: &Ask) -> Result<(), RepoError> {
+        // Reject on write as well as on read: the read-side check protects
+        // against rows written by another writer or an older build, this
+        // one stops bad data entering storage in the first place.
+        if let Some(bad) = ask.rates.first_negative_rate() {
+            return Err(RepoError::InvalidAskRate {
+                axis: bad.axis.clone(),
+                value: bad.rate_per_1k.value,
+            });
+        }
+        let row = AskRow::try_from(ask)?;
+        let mut tx = self
+            .db
+            .begin()
+            .map_err(|e| RepoError::Db(format!("begin tx: {e}")))?;
+        let result = self.put_in_tx(&mut tx, &row);
+        match result {
+            Ok(()) => tx
+                .commit()
+                .map_err(|e| RepoError::Db(format!("commit: {e}"))),
+            Err(e) => {
+                let _ = tx.rollback();
+                Err(e)
+            }
+        }
+    }
+
+    /// put() body executed inside a transaction (private helper).
+    fn put_in_tx(
+        &self,
+        tx: &mut octo_storage_core::stoolap::ApiTransaction,
+        row: &AskRow,
+    ) -> Result<(), RepoError> {
+        // Check if row already exists by ask_id.
+        let mut existing = tx
+            .query(
+                "SELECT row_id FROM asks WHERE ask_id = $1",
+                (row.ask_id.clone(),),
+            )
+            .map_err(|e| RepoError::Db(format!("check exists: {e}")))?;
+        if let Some(row_result) = existing.next() {
+            let existing_row = row_result.map_err(|e| RepoError::Db(format!("row: {e}")))?;
+            let row_id: i64 = existing_row
+                .get::<i64>(0)
+                .map_err(|e| RepoError::Db(format!("row_id: {e}")))?;
+            tx.execute(
+                "UPDATE asks SET asker_did = $1, model = $2, rates_json = $3, nonce = $4, \
+                 expires_at_unix = $5, created_at_unix = $6 WHERE row_id = $7",
+                (
+                    row.asker_did.clone(),
+                    row.model.clone(),
+                    row.rates_json.clone(),
+                    row.nonce.clone(),
+                    row.expires_at_unix,
+                    row.created_at_unix,
+                    row_id,
+                ),
+            )
+            .map_err(|e| RepoError::Db(format!("update: {e}")))?;
+        } else {
+            // Need a row_id; use a max-or-zero placeholder. stoolap PRIMARY KEY = INTEGER
+            // without AUTO_INCREMENT, so we must pick a row_id ourselves. Use MAX+1.
+            let max_q = tx
+                .query("SELECT COALESCE(MAX(row_id), 0) FROM asks", ())
+                .map_err(|e| RepoError::Db(format!("max row_id: {e}")))?;
+            let next_id: i64 = if let Some(r) = max_q.into_iter().next() {
+                let row = r.map_err(|e| RepoError::Db(format!("row: {e}")))?;
+                row.get::<i64>(0)
+                    .map_err(|e| RepoError::Db(format!("get max: {e}")))?
+            } else {
+                1
+            };
+            let next_id = next_id + 1;
+            tx.execute(
+                "INSERT INTO asks \
+                 (row_id, ask_id, asker_did, model, rates_json, nonce, expires_at_unix, created_at_unix) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                (next_id, row.ask_id.clone(), row.asker_did.clone(), row.model.clone(),
+                 row.rates_json.clone(), row.nonce.clone(), row.expires_at_unix, row.created_at_unix),
+            )
+            .map_err(|e| RepoError::Db(format!("insert: {e}")))?;
+        }
+        Ok(())
+    }
+
+    /// Fetch an Ask by its content-addressable id.
+    /// # Errors
+    /// Returns `RepoError::Db` on query failure.
+    pub fn get(&self, ask_id: &[u8; 32]) -> Result<Option<Ask>, RepoError> {
+        let rows = self
+            .db
+            .query(
+                "SELECT ask_id, asker_did, model, rates_json, nonce, expires_at_unix, created_at_unix \
+                 FROM asks WHERE ask_id = $1",
+                (ask_id.to_vec(),),
+            )
+            .map_err(|e| RepoError::Db(format!("select by id: {e}")))?;
+        match rows.into_iter().next() {
+            Some(Ok(row)) => Ok(Some(row_to_ask(row)?)),
+            Some(Err(e)) => Err(RepoError::Db(format!("row: {e}"))),
+            None => Ok(None),
+        }
+    }
+
+    /// Cheapest non-expired Ask for `model`, **approximate** — see
+    /// [`AskRead::cheapest`].
+    ///
+    /// Cost computation happens in Rust (the rates_json contains per-axis
+    /// rates; the SQL query can't easily compute them), so this fetches a
+    /// bounded number of candidates ordered by `expires_at_unix DESC` and
+    /// sorts those locally by computed cost. An Ask outside that window is
+    /// never considered, however cheap it is.
+    ///
+    /// `now_unix` is the cutoff for `expires_at_unix > now_unix`.
+    /// `axes` supplies the standard pricing axes for cost computation.
+    /// # Errors
+    /// Returns `RepoError::Db` on query failure, `RepoError::Serde` on row decode failure.
+    pub fn cheapest(
+        &self,
+        model: &str,
+        now_unix: u64,
+        axes: &[PricingAxis],
+    ) -> Result<Option<Ask>, RepoError> {
+        let rows = self
+            .db
+            .query(
+                "SELECT ask_id, asker_did, model, rates_json, nonce, expires_at_unix, created_at_unix \
+                 FROM asks WHERE model = $1 AND expires_at_unix > $2 \
+                 ORDER BY expires_at_unix DESC LIMIT $3",
+                (model.to_string(), now_unix as i64, CHEAPEST_CANDIDATE_LIMIT),
+            )
+            .map_err(|e| RepoError::Db(format!("cheapest query: {e}")))?;
+        let mut best: Option<(crate::ask::Dqa, Ask)> = None;
+        for row_result in rows {
+            let row = row_result.map_err(|e| RepoError::Db(format!("row: {e}")))?;
+            let ask = row_to_ask(row)?;
+            // Use a 1-unit-per-axis cost proxy (cheapest = lowest total rate).
+            let consumed: Vec<AxisConsumption> = ask
+                .rates
+                .rates
+                .iter()
+                .map(|r| (r.axis.clone(), 1000))
+                .collect();
+            let cost = settlement_cost(&ask, &consumed, axes);
+            let replace = match &best {
+                None => true,
+                Some((best_cost, _)) => octo_determin::dqa_cmp(cost, *best_cost) < 0,
+            };
+            if replace {
+                best = Some((cost, ask));
+            }
+        }
+        Ok(best.map(|(_, a)| a))
+    }
+
+    /// List all non-expired Asks published by `asker_did`.
+    /// # Errors
+    /// Returns `RepoError::Db` on query failure.
+    pub fn list_by_asker(&self, asker_did: &str, now_unix: u64) -> Result<Vec<Ask>, RepoError> {
+        let rows = self
+            .db
+            .query(
+                "SELECT ask_id, asker_did, model, rates_json, nonce, expires_at_unix, created_at_unix \
+                 FROM asks WHERE asker_did = $1 AND expires_at_unix > $2 \
+                 ORDER BY created_at_unix DESC",
+                (asker_did.to_string(), now_unix as i64),
+            )
+            .map_err(|e| RepoError::Db(format!("list_by_asker: {e}")))?;
+        let mut out = Vec::new();
+        for row_result in rows {
+            let row = row_result.map_err(|e| RepoError::Db(format!("row: {e}")))?;
+            out.push(row_to_ask(row)?);
+        }
+        Ok(out)
+    }
+
+    /// List all non-expired Asks across all askers. Used by
+    /// `Marketplace::open_path` to hydrate the in-memory order book on
+    /// restart (mission `marketplace-book-load-on-open`).
+    /// # Errors
+    /// Returns `RepoError::Db` on query failure.
+    pub fn list_all_active_asks(&self, now_unix: u64) -> Result<Vec<Ask>, RepoError> {
+        let rows = self
+            .db
+            .query(
+                "SELECT ask_id, asker_did, model, rates_json, nonce, expires_at_unix, created_at_unix \
+                 FROM asks WHERE expires_at_unix > $1",
+                (now_unix as i64,),
+            )
+            .map_err(|e| RepoError::Db(format!("list_all_active_asks: {e}")))?;
+        let mut out = Vec::new();
+        for row_result in rows {
+            let row = row_result.map_err(|e| RepoError::Db(format!("row: {e}")))?;
+            out.push(row_to_ask(row)?);
+        }
+        Ok(out)
+    }
+
+    /// Delete an Ask by id (used by settlement engine for one-shot consumption).
+    /// # Errors
+    /// Returns `RepoError::Db` on delete failure.
+    pub fn delete(&self, ask_id: &[u8; 32]) -> Result<(), RepoError> {
+        self.db
+            .execute("DELETE FROM asks WHERE ask_id = $1", (ask_id.to_vec(),))
+            .map_err(|e| RepoError::Db(format!("delete: {e}")))?;
+        Ok(())
+    }
+}
+
+// ========================================================================
+// Trait impls (mission marketplace-repo-trait-decouple)
+// ========================================================================
+//
+// `StoolapAskRepository` is the production read+write impl. The trait
+// methods below delegate to the inherent methods above so callers may
+// hold the narrowest possible surface (e.g., a write-only consumer
+// imports only `AskWrite`).
+
+impl AskRead for StoolapAskRepository {
+    fn get(&self, ask_id: &[u8; 32]) -> Result<Option<Ask>, RepoError> {
+        StoolapAskRepository::get(self, ask_id)
+    }
+    fn cheapest(
+        &self,
+        model: &str,
+        now_unix: u64,
+        axes: &[PricingAxis],
+    ) -> Result<Option<Ask>, RepoError> {
+        StoolapAskRepository::cheapest(self, model, now_unix, axes)
+    }
+    fn list_by_asker(&self, asker_did: &str, now_unix: u64) -> Result<Vec<Ask>, RepoError> {
+        StoolapAskRepository::list_by_asker(self, asker_did, now_unix)
+    }
+    fn list_all_active_asks(&self, now_unix: u64) -> Result<Vec<Ask>, RepoError> {
+        StoolapAskRepository::list_all_active_asks(self, now_unix)
+    }
+}
+
+impl AskWrite for StoolapAskRepository {
+    fn put(&self, ask: &Ask) -> Result<(), RepoError> {
+        StoolapAskRepository::put(self, ask)
+    }
+    fn delete(&self, ask_id: &[u8; 32]) -> Result<(), RepoError> {
+        StoolapAskRepository::delete(self, ask_id)
+    }
+}
+
+/// Convert a stoolap `ResultRow` into an `Ask` (read typed columns via `FromValue`).
+fn row_to_ask(row: octo_storage_core::stoolap::ResultRow) -> Result<Ask, RepoError> {
+    let ask_id: Vec<u8> = row
+        .get::<Vec<u8>>(0)
+        .map_err(|e| RepoError::Db(format!("ask_id: {e}")))?;
+    let asker_did: String = row
+        .get::<String>(1)
+        .map_err(|e| RepoError::Db(format!("asker_did: {e}")))?;
+    let model: String = row
+        .get::<String>(2)
+        .map_err(|e| RepoError::Db(format!("model: {e}")))?;
+    let rates_json: Vec<u8> = row
+        .get::<Vec<u8>>(3)
+        .map_err(|e| RepoError::Db(format!("rates_json: {e}")))?;
+    let nonce: Vec<u8> = row
+        .get::<Vec<u8>>(4)
+        .map_err(|e| RepoError::Db(format!("nonce: {e}")))?;
+    let expires_at_unix: i64 = row
+        .get::<i64>(5)
+        .map_err(|e| RepoError::Db(format!("expires_at_unix: {e}")))?;
+    let _created_at_unix: i64 = row
+        .get::<i64>(6)
+        .map_err(|e| RepoError::Db(format!("created_at_unix: {e}")))?;
+
+    if ask_id.len() != 32 {
+        return Err(RepoError::Serde(format!(
+            "ask_id must be 32 bytes, got {}",
+            ask_id.len()
+        )));
+    }
+    if nonce.len() != 16 {
+        return Err(RepoError::Serde(format!(
+            "nonce must be 16 bytes, got {}",
+            nonce.len()
+        )));
+    }
+    let rates: ModelRateTable = serde_json::from_slice(&rates_json)
+        .map_err(|e| RepoError::Serde(format!("rates_json: {e}")))?;
+    let mut id_arr = [0u8; 32];
+    id_arr.copy_from_slice(&ask_id);
+    let mut nonce_arr = [0u8; 16];
+    nonce_arr.copy_from_slice(&nonce);
+    Ok(Ask {
+        asker_did,
+        model: ModelRef::from(model),
+        rates,
+        nonce: nonce_arr,
+        expires_at_unix: expires_at_unix as u64,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ask::{Ask, AxisRate, ModelRateTable, ModelRef};
+
+    fn sample_ask(asker: &str, model: &str, rate: u128, expires: u64) -> Ask {
+        Ask {
+            asker_did: asker.to_owned(),
+            model: ModelRef::from(model),
+            rates: ModelRateTable {
+                model: ModelRef::from(model),
+                rates: vec![AxisRate {
+                    axis: "input_tokens_per_1k".to_owned(),
+                    rate_per_1k: octo_determin::Dqa::new(
+                        i64::try_from(rate).expect("rate fits in i64"),
+                        0,
+                    )
+                    .expect("non-overflow"),
+                }],
+            },
+            nonce: [0x42; 16],
+            expires_at_unix: expires,
+        }
+    }
+
+    #[test]
+    fn open_in_memory_applies_migrations() {
+        let _repo = StoolapAskRepository::open_in_memory().expect("open");
+    }
+
+    #[test]
+    fn put_and_get_roundtrip() {
+        let repo = StoolapAskRepository::open_in_memory().unwrap();
+        let ask = sample_ask(
+            &octo_ident::test_helpers::sample_did(94),
+            "openai/gpt-4",
+            30_000,
+            1_900_000_000,
+        );
+        let id = ask.id();
+        repo.put(&ask).unwrap();
+        let got = repo.get(&id).unwrap().expect("get");
+        assert_eq!(got.asker_did, ask.asker_did);
+        assert_eq!(got.model, ask.model);
+        assert_eq!(got.expires_at_unix, ask.expires_at_unix);
+        assert_eq!(got.id(), id);
+    }
+
+    #[test]
+    fn put_overwrites_existing() {
+        let repo = StoolapAskRepository::open_in_memory().unwrap();
+        let mut ask = sample_ask(
+            &octo_ident::test_helpers::sample_did(94),
+            "openai/gpt-4",
+            30_000,
+            1_900_000_000,
+        );
+        repo.put(&ask).unwrap();
+        // Update rate, keep same id (since nonce + asker + model + rates are identical).
+        ask.rates.rates[0].rate_per_1k = octo_determin::Dqa::new(25_000, 0).expect("non-overflow");
+        repo.put(&ask).unwrap();
+        let got = repo.get(&ask.id()).unwrap().unwrap();
+        assert_eq!(
+            got.rates.rates[0].rate_per_1k,
+            octo_determin::Dqa::new(25_000, 0).expect("non-overflow")
+        );
+    }
+
+    #[test]
+    fn get_missing_returns_none() {
+        let repo = StoolapAskRepository::open_in_memory().unwrap();
+        let missing = [0x99; 32];
+        assert!(repo.get(&missing).unwrap().is_none());
+    }
+
+    #[test]
+    fn cheapest_returns_lowest_rate() {
+        let repo = StoolapAskRepository::open_in_memory().unwrap();
+        let axes = PricingAxis::standard_axes();
+        let now = 1_700_000_000;
+        let cheap = sample_ask(
+            &octo_ident::test_helpers::sample_did(94),
+            "openai/gpt-4",
+            20_000,
+            now + 1000,
+        );
+        let mid = sample_ask("did:octo:b", "openai/gpt-4", 30_000, now + 1000);
+        let exp = sample_ask(
+            &octo_ident::test_helpers::sample_did(50),
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+        );
+        repo.put(&mid).unwrap();
+        repo.put(&cheap).unwrap();
+        repo.put(&exp).unwrap();
+        let winner = repo
+            .cheapest("openai/gpt-4", now, &axes)
+            .unwrap()
+            .expect("cheapest");
+        assert_eq!(winner.asker_did, exp.asker_did);
+        assert_eq!(
+            winner.rates.rates[0].rate_per_1k,
+            octo_determin::Dqa::new(10_000, 0).expect("non-overflow")
+        );
+    }
+
+    #[test]
+    fn cheapest_excludes_expired() {
+        let repo = StoolapAskRepository::open_in_memory().unwrap();
+        let axes = PricingAxis::standard_axes();
+        let now = 1_700_000_000;
+        let active = sample_ask(
+            &octo_ident::test_helpers::sample_did(94),
+            "openai/gpt-4",
+            50_000,
+            now + 1000,
+        );
+        let expired = sample_ask("did:octo:b", "openai/gpt-4", 1_000, now - 100);
+        repo.put(&active).unwrap();
+        repo.put(&expired).unwrap();
+        let winner = repo
+            .cheapest("openai/gpt-4", now, &axes)
+            .unwrap()
+            .expect("cheapest");
+        // The expired (cheaper) Ask MUST NOT be returned.
+        assert_eq!(winner.asker_did, active.asker_did);
+        assert_eq!(
+            winner.rates.rates[0].rate_per_1k,
+            octo_determin::Dqa::new(50_000, 0).expect("non-overflow")
+        );
+    }
+
+    #[test]
+    fn cheapest_unknown_model_returns_none() {
+        let repo = StoolapAskRepository::open_in_memory().unwrap();
+        let axes = PricingAxis::standard_axes();
+        assert!(repo
+            .cheapest("nonexistent", 1_700_000_000, &axes)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn cheapest_returns_zero_rate_ask_as_winner() {
+        // A zero-rate Ask wins cheapest() over a non-zero-rate Ask (free vs paid
+        // for the same model). Documents that rate=0 doesn't crash division
+        // and that the cost calculation handles edge values gracefully.
+        let repo = StoolapAskRepository::open_in_memory().unwrap();
+        let axes = PricingAxis::standard_axes();
+        let now = 1_700_000_000;
+        let free = sample_ask(
+            &octo_ident::test_helpers::sample_did(22),
+            "openai/gpt-4",
+            0,
+            now + 1000,
+        );
+        let paid = sample_ask(
+            &octo_ident::test_helpers::sample_did(142),
+            "openai/gpt-4",
+            30_000,
+            now + 1000,
+        );
+        repo.put(&paid).unwrap();
+        repo.put(&free).unwrap();
+        let winner = repo
+            .cheapest("openai/gpt-4", now, &axes)
+            .unwrap()
+            .expect("cheapest");
+        // Free Ask wins cheapest (lowest cost among candidates).
+        assert_eq!(winner.asker_did, octo_ident::test_helpers::sample_did(22));
+        // Cost for free Ask is non-negative (using default rates for axes not in the
+        // Ask's rates table; rate=0 only for the axis explicitly listed in rates).
+        let consumed: Vec<_> = axes.iter().map(|a| (a.id.clone(), 1000u64)).collect();
+        let cost = crate::ask::settlement_cost(&winner, &consumed, &axes);
+        assert!(
+            octo_determin::dqa_cmp(cost, crate::ask::settlement_cost(&paid, &consumed, &axes),) < 0
+        );
+    }
+
+    #[test]
+    fn put_under_transaction_serializes_writers() {
+        // Smoke test: put() opens + commits a transaction. Run two puts serially
+        // (the executor lock serializes; full concurrent test needs a thread pool
+        // which is out of scope for the unit test).
+        let repo = StoolapAskRepository::open_in_memory().unwrap();
+        let now = 1_700_000_000;
+        for i in 0..5 {
+            let ask = sample_ask(
+                &format!("did:octo:a{i}"),
+                "openai/gpt-4",
+                10_000 + i as u128 * 1000,
+                now + 1000,
+            );
+            repo.put(&ask).unwrap();
+        }
+        // All 5 Asks present.
+        for i in 0..5 {
+            let ask = sample_ask(
+                &format!("did:octo:a{i}"),
+                "openai/gpt-4",
+                10_000 + i as u128 * 1000,
+                now + 1000,
+            );
+            let got = repo.get(&ask.id()).unwrap().expect("get");
+            assert_eq!(got.asker_did, format!("did:octo:a{i}"));
+        }
+    }
+
+    #[test]
+    fn list_by_asker_filters() {
+        let repo = StoolapAskRepository::open_in_memory().unwrap();
+        let now = 1_700_000_000;
+        let a1 = sample_ask(
+            &octo_ident::test_helpers::sample_did(94),
+            "openai/gpt-4",
+            10_000,
+            now + 1000,
+        );
+        let a2 = sample_ask(
+            &octo_ident::test_helpers::sample_did(94),
+            "anthropic/claude",
+            20_000,
+            now + 1000,
+        );
+        let b1 = sample_ask("did:octo:b", "openai/gpt-4", 30_000, now + 1000);
+        for a in [&a1, &a2, &b1] {
+            repo.put(a).unwrap();
+        }
+        let alice_asks = repo
+            .list_by_asker(&octo_ident::test_helpers::sample_did(94), now)
+            .unwrap();
+        assert_eq!(alice_asks.len(), 2);
+        for ask in &alice_asks {
+            assert_eq!(ask.asker_did, octo_ident::test_helpers::sample_did(94));
+        }
+        let bob_asks = repo.list_by_asker("did:octo:b", now).unwrap();
+        assert_eq!(bob_asks.len(), 1);
+        let empty = repo
+            .list_by_asker(&octo_ident::test_helpers::sample_did(100), now)
+            .unwrap();
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn delete_removes_ask() {
+        let repo = StoolapAskRepository::open_in_memory().unwrap();
+        let ask = sample_ask(
+            &octo_ident::test_helpers::sample_did(94),
+            "openai/gpt-4",
+            30_000,
+            1_900_000_000,
+        );
+        let id = ask.id();
+        repo.put(&ask).unwrap();
+        assert!(repo.get(&id).unwrap().is_some());
+        repo.delete(&id).unwrap();
+        assert!(repo.get(&id).unwrap().is_none());
+    }
+
+    #[test]
+    fn apply_pending_is_idempotent() {
+        // Run apply_pending twice on the same DB; second call MUST be no-op.
+        let db = octo_storage_core::Database::open_in_memory().unwrap();
+        migrations::apply_pending(&db).unwrap();
+        migrations::apply_pending(&db).unwrap(); // must not error
+    }
+
+    // ========================================================================
+    // Trait-boundary mock tests (mission marketplace-repo-trait-decouple)
+    // ========================================================================
+    //
+    // Demonstrate that `AskRead` + `AskWrite` are dispatchable as
+    // `dyn CombinedAskRepository`, so test mocks + alternate backends
+    // can plug in without depending on `StoolapAskRepository`.
+
+    use std::sync::Mutex;
+
+    /// In-memory mock impl backed by a `Vec<Ask>`. Exists solely to
+    /// prove the trait boundary is not over-fitted to the stoolap
+    /// concrete struct.
+    struct InMemoryMockRepo {
+        rows: Mutex<Vec<Ask>>,
+    }
+
+    impl InMemoryMockRepo {
+        fn new() -> Self {
+            Self {
+                rows: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl AskRead for InMemoryMockRepo {
+        fn get(&self, ask_id: &[u8; 32]) -> Result<Option<Ask>, RepoError> {
+            Ok(self
+                .rows
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|a| a.id() == *ask_id)
+                .cloned())
+        }
+        fn cheapest(
+            &self,
+            model: &str,
+            _now_unix: u64,
+            _axes: &[PricingAxis],
+        ) -> Result<Option<Ask>, RepoError> {
+            Ok(self
+                .rows
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|a| a.model.to_wire() == model)
+                .cloned())
+        }
+        fn list_by_asker(&self, asker_did: &str, _now_unix: u64) -> Result<Vec<Ask>, RepoError> {
+            Ok(self
+                .rows
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|a| a.asker_did == asker_did)
+                .cloned()
+                .collect())
+        }
+        fn list_all_active_asks(&self, _now_unix: u64) -> Result<Vec<Ask>, RepoError> {
+            Ok(self.rows.lock().unwrap().clone())
+        }
+    }
+
+    impl AskWrite for InMemoryMockRepo {
+        fn put(&self, ask: &Ask) -> Result<(), RepoError> {
+            let id = ask.id();
+            let mut rows = self.rows.lock().unwrap();
+            if let Some(existing) = rows.iter_mut().find(|a| a.id() == id) {
+                *existing = ask.clone();
+            } else {
+                rows.push(ask.clone());
+            }
+            Ok(())
+        }
+        fn delete(&self, ask_id: &[u8; 32]) -> Result<(), RepoError> {
+            self.rows.lock().unwrap().retain(|a| a.id() != *ask_id);
+            Ok(())
+        }
+    }
+
+    fn mock_ask(asker: &str, model: &str, rate: u128, nonce_byte: u8) -> Ask {
+        use crate::ask::{AxisRate, ModelRateTable};
+        Ask {
+            asker_did: asker.to_owned(),
+            model: ModelRef::from(model),
+            rates: ModelRateTable {
+                model: ModelRef::from(model),
+                rates: vec![AxisRate {
+                    axis: "input_tokens_per_1k".to_owned(),
+                    rate_per_1k: octo_determin::Dqa::new(
+                        i64::try_from(rate).expect("rate fits in i64"),
+                        0,
+                    )
+                    .expect("non-overflow"),
+                }],
+            },
+            nonce: [nonce_byte; 16],
+            expires_at_unix: 1_900_000_000,
+        }
+    }
+
+    #[test]
+    fn cheapest_via_in_memory_mock() {
+        // A non-stoolap `Arc<dyn ...>` impl answers cheapest.
+        let repo: std::sync::Arc<DynAskRepository> = std::sync::Arc::new(InMemoryMockRepo::new());
+        repo.put(&mock_ask("did:octo:a", "openai/gpt-4", 10_000, 0x11))
+            .expect("put a");
+        repo.put(&mock_ask("did:octo:b", "openai/gpt-4", 20_000, 0x22))
+            .expect("put b");
+        let cheapest = repo
+            .cheapest("openai/gpt-4", 1_700_000_000, &PricingAxis::standard_axes())
+            .expect("cheapest")
+            .expect("some");
+        assert_eq!(cheapest.asker_did, "did:octo:a");
+        assert_eq!(
+            cheapest.rates.rates[0].rate_per_1k,
+            octo_determin::Dqa::new(10_000, 0).expect("non-overflow")
+        );
+    }
+
+    #[test]
+    fn list_by_asker_via_in_memory_mock() {
+        let repo: std::sync::Arc<DynAskRepository> = std::sync::Arc::new(InMemoryMockRepo::new());
+        repo.put(&mock_ask("did:octo:a", "openai/gpt-4", 10_000, 0x11))
+            .expect("put a1");
+        repo.put(&mock_ask("did:octo:a", "anthropic/claude", 20_000, 0x12))
+            .expect("put a2");
+        repo.put(&mock_ask("did:octo:b", "openai/gpt-4", 30_000, 0x21))
+            .expect("put b");
+        let alice = repo
+            .list_by_asker("did:octo:a", 1_700_000_000)
+            .expect("list_by_asker");
+        assert_eq!(alice.len(), 2);
+        for ask in &alice {
+            assert_eq!(ask.asker_did, "did:octo:a");
+        }
+    }
+
+    #[test]
+    fn get_on_missing_id_via_in_memory_mock() {
+        let repo: std::sync::Arc<DynAskRepository> = std::sync::Arc::new(InMemoryMockRepo::new());
+        let missing = [0xee; 32];
+        assert!(repo.get(&missing).expect("get").is_none());
+    }
+}
+
+#[cfg(test)]
+mod negative_rate_tests {
+    use super::*;
+    use crate::ask::AxisRate;
+
+    fn ask_with_rate(rate: i64) -> Ask {
+        Ask {
+            asker_did: octo_ident::test_helpers::sample_did(41),
+            model: ModelRef::from("openai/gpt-4"),
+            rates: ModelRateTable {
+                model: ModelRef::from("openai/gpt-4"),
+                rates: vec![AxisRate {
+                    axis: "input_tokens_per_1k".to_owned(),
+                    rate_per_1k: octo_determin::Dqa::new(rate, 0).expect("non-overflow"),
+                }],
+            },
+            nonce: [0x42; 16],
+            expires_at_unix: 1_900_000_000,
+        }
+    }
+
+    #[test]
+    fn put_rejects_negative_rate_on_write() {
+        let repo = StoolapAskRepository::open_in_memory().expect("open");
+        let err = repo
+            .put(&ask_with_rate(-5_000))
+            .expect_err("negative rate must be refused at write");
+        assert!(
+            matches!(err, RepoError::InvalidAskRate { .. }),
+            "expected InvalidAskRate, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn get_rejects_negative_rate_written_by_another_writer() {
+        // The write-side check only protects rows this process wrote. A row
+        // inserted directly — by an older build or a different writer — must
+        // still be refused on read.
+        let bad = ask_with_rate(-5_000);
+        // Serialisation bypasses the write-side check, which is the point:
+        // a row can reach storage from another writer or an older build.
+        let row = AskRow::try_from(&bad).expect("serialise");
+        let err = Ask::try_from(row).expect_err("negative rate must be refused on read");
+        assert!(
+            matches!(err, RepoError::InvalidAskRate { .. }),
+            "expected InvalidAskRate, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn zero_rate_is_still_accepted() {
+        // A free Ask is legitimate (there is an existing test asserting it
+        // wins cheapest). The check must not reject zero.
+        let repo = StoolapAskRepository::open_in_memory().expect("open");
+        repo.put(&ask_with_rate(0))
+            .expect("zero rate must be accepted");
+    }
+}

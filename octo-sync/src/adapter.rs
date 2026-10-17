@@ -1,7 +1,7 @@
 //! The [`DatabaseSyncAdapter`] trait — the integration boundary between the cipherocto
 //! sync engine and the underlying database.
 //!
-//! Per RFC-0862 v1.1.0 §DatabaseSyncAdapter Trait. The cipherocto sync engine does NOT
+//! Per RFC-0862 §DatabaseSyncAdapter Trait. The cipherocto sync engine does NOT
 //! call Stoolap DB functions directly; it consumes this trait. The Stoolap fork
 //! provides a `StoolapAdapter` impl (mission 0862-base §Stoolap fork changes); the
 //! cipherocto sync engine is generic over `A: DatabaseSyncAdapter`.

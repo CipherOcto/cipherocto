@@ -10,7 +10,7 @@
 //! 6. State machine coverage
 //!
 //! These tests run against `MockAdapter` (per mission 0862-base Phase 0); no
-//! real Stoolap DB is required (per RFC-0862 v1.1.0).
+//! real Stoolap DB is required (per RFC-0862).
 
 #![allow(clippy::redundant_clone)]
 

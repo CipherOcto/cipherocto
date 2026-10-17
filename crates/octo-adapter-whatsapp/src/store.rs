@@ -29,24 +29,24 @@ fn to_store_err<E: std::error::Error + Send + Sync + 'static>(
 
 /// Helper to execute a statement and map to ()
 fn exec(
-    db: &stoolap::Database,
+    db: &octo_storage_core::Database,
     sql: &str,
-    params: Vec<stoolap::Value>,
+    params: Vec<octo_storage_core::stoolap::Value>,
 ) -> wacore::store::error::Result<()> {
     db.execute(sql, params).map(|_| ()).map_err(to_store_err)
 }
 
 /// Helper to query and return rows iterator
 fn query(
-    db: &stoolap::Database,
+    db: &octo_storage_core::Database,
     sql: &str,
-    params: Vec<stoolap::Value>,
-) -> wacore::store::error::Result<stoolap::Rows> {
+    params: Vec<octo_storage_core::stoolap::Value>,
+) -> wacore::store::error::Result<octo_storage_core::stoolap::Rows> {
     db.query(sql, params).map_err(to_store_err)
 }
 
 /// R13-M1 fix: transaction-aware variants of `exec` / `query` that
-/// operate on `&mut Transaction` so the DELETE+INSERT pattern used
+/// operate on `&&mut Transaction` so the DELETE+INSERT pattern used
 /// by every mutating store op can be wrapped atomically. Without
 /// this, a panic (or process crash, or power loss) between the
 /// `DELETE` and the `INSERT` left the row gone with no replacement —
@@ -54,26 +54,26 @@ fn query(
 /// (noise keys, identity, signed pre-key, registration ID) was
 /// lost and the bot had to re-pair from scratch.
 ///
-/// `Transaction::execute` / `Transaction::query` take `&mut self`
-/// (not `&self` like `Database::execute`), so we cannot share the
+/// `Transaction::execute` / `Transaction::query` take `&&mut self`
+/// (not `&&self` like `Database::execute`), so we cannot share the
 /// existing `exec` / `query` helpers — they need a different
 /// receiver. `Database::begin()` returns `api::Transaction`, which
-/// is re-exported at the crate root as `stoolap::ApiTransaction`
-/// (the plain `stoolap::Transaction` name resolves to the
-/// `storage::Transaction` trait, which is not what `begin()` returns).
+/// is re-exported at the crate root as `octo_storage_core::stoolap::ApiTransaction`
+/// (the plain `stoolap::Transaction` name resolves to `octo_storage_core::stoolap::ApiTransaction`,
+/// which is the `storage::Transaction` trait and not what `begin()` returns).
 fn exec_tx(
-    tx: &mut stoolap::ApiTransaction,
+    tx: &mut octo_storage_core::stoolap::ApiTransaction,
     sql: &str,
-    params: Vec<stoolap::Value>,
+    params: Vec<octo_storage_core::stoolap::Value>,
 ) -> wacore::store::error::Result<()> {
     tx.execute(sql, params).map(|_| ()).map_err(to_store_err)
 }
 
 fn query_tx(
-    tx: &mut stoolap::ApiTransaction,
+    tx: &mut octo_storage_core::stoolap::ApiTransaction,
     sql: &str,
-    params: Vec<stoolap::Value>,
-) -> wacore::store::error::Result<stoolap::Rows> {
+    params: Vec<octo_storage_core::stoolap::Value>,
+) -> wacore::store::error::Result<octo_storage_core::stoolap::Rows> {
     tx.query(sql, params).map_err(to_store_err)
 }
 
@@ -85,7 +85,7 @@ fn query_tx(
 /// "database operation error" because stoolap only allows one
 /// active transaction per executor.
 pub struct StoolapStore {
-    db: tokio::sync::Mutex<stoolap::Database>,
+    db: tokio::sync::Mutex<octo_storage_core::Database>,
     device_id: i32,
 }
 
@@ -115,14 +115,12 @@ impl StoolapStore {
         let path = db_path.as_ref().to_string_lossy().to_string();
         // R9 / zeroclaw parity: stoolap requires a DSN
         // (`file://path` or `memory://`), not a bare file path.
-        // Wrap the bare path in a `file://` DSN before opening.
-        // zeroclaw's `RusqliteStore::new` (whatsapp_storage.rs:88)
-        // takes a bare path because rusqlite's `Connection::open`
-        // accepts either; stoolap's `Database::open` requires the
-        // DSN form. Without this, `start_bot` panics with
-        // "Invalid DSN format: expected scheme://path".
-        let dsn = format!("file://{path}");
-        let db = stoolap::Database::open(&dsn)?;
+        // substrate's `Database::open` accepts the bare filesystem path
+        // directly and prepends `file://` internally. zeroclaw's
+        // `RusqliteStore::new` (whatsapp_storage.rs:88) takes a bare
+        // path because rusqlite's `Connection::open` accepts either;
+        // substrate's `Database::open` is the stoolap analog.
+        let db = octo_storage_core::Database::open(&path)?;
         let store = Self {
             db: tokio::sync::Mutex::new(db),
             device_id: 1,
@@ -135,7 +133,7 @@ impl StoolapStore {
     }
 
     pub fn new_in_memory() -> anyhow::Result<Self> {
-        let db = stoolap::Database::open_in_memory()?;
+        let db = octo_storage_core::Database::open_in_memory()?;
         let store = Self {
             db: tokio::sync::Mutex::new(db),
             device_id: 1,
@@ -206,7 +204,7 @@ impl StoolapStore {
         )))
     }
 
-    fn init_schema_with(&self, db: &stoolap::Database) -> anyhow::Result<()> {
+    fn init_schema_with(&self, db: &octo_storage_core::Database) -> anyhow::Result<()> {
         // R9 / stoolap parser: stoolap's strict SQL parser
         // doesn't accept `PRIMARY KEY (col1, col2)` (the `KEY`
         // token is rejected as a reserved keyword). The fix
@@ -364,7 +362,7 @@ impl SignalStore for StoolapStore {
             "INSERT INTO identities (address, \"key\", device_id) VALUES ($1, $2, $3)",
             vec![
                 address.to_string().into(),
-                stoolap::core::Value::blob(key.to_vec()),
+                octo_storage_core::stoolap::Value::blob(key.to_vec()),
                 (self.device_id as i64).into(),
             ],
         )?;
@@ -436,7 +434,7 @@ impl SignalStore for StoolapStore {
             "INSERT INTO sessions (address, record, device_id) VALUES ($1, $2, $3)",
             vec![
                 address.to_string().into(),
-                stoolap::core::Value::blob(session.to_vec()),
+                octo_storage_core::stoolap::Value::blob(session.to_vec()),
                 (self.device_id as i64).into(),
             ],
         )?;
@@ -473,7 +471,7 @@ impl SignalStore for StoolapStore {
             "INSERT INTO prekeys (id, \"key\", uploaded, device_id) VALUES ($1, $2, $3, $4)",
             vec![
                 (id as i64).into(),
-                stoolap::core::Value::blob(record.to_vec()),
+                octo_storage_core::stoolap::Value::blob(record.to_vec()),
                 (uploaded as i64).into(),
                 (self.device_id as i64).into(),
             ],
@@ -542,7 +540,7 @@ impl SignalStore for StoolapStore {
             "INSERT INTO signed_prekeys (id, record, device_id) VALUES ($1, $2, $3)",
             vec![
                 (id as i64).into(),
-                stoolap::core::Value::blob(record.to_vec()),
+                octo_storage_core::stoolap::Value::blob(record.to_vec()),
                 (self.device_id as i64).into(),
             ],
         )?;
@@ -604,7 +602,7 @@ impl SignalStore for StoolapStore {
             "INSERT INTO sender_keys (address, record, device_id) VALUES ($1, $2, $3)",
             vec![
                 address.to_string().into(),
-                stoolap::core::Value::blob(record.to_vec()),
+                octo_storage_core::stoolap::Value::blob(record.to_vec()),
                 (self.device_id as i64).into(),
             ],
         )
@@ -655,7 +653,7 @@ impl AppSyncStore for StoolapStore {
             &*self.db.lock().await,
             "SELECT key_data FROM app_state_keys WHERE key_id = $1 AND device_id = $2",
             vec![
-                stoolap::core::Value::blob(key_id.to_vec()),
+                octo_storage_core::stoolap::Value::blob(key_id.to_vec()),
                 (self.device_id as i64).into(),
             ],
         )?;
@@ -694,7 +692,7 @@ impl AppSyncStore for StoolapStore {
             &mut tx,
             "DELETE FROM app_state_keys WHERE key_id = $1 AND device_id = $2",
             vec![
-                stoolap::core::Value::blob(key_id.to_vec()),
+                octo_storage_core::stoolap::Value::blob(key_id.to_vec()),
                 (self.device_id as i64).into(),
             ],
         )?;
@@ -702,8 +700,8 @@ impl AppSyncStore for StoolapStore {
             &mut tx,
             "INSERT INTO app_state_keys (key_id, key_data, device_id) VALUES ($1, $2, $3)",
             vec![
-                stoolap::core::Value::blob(key_id.to_vec()),
-                stoolap::core::Value::blob(data),
+                octo_storage_core::stoolap::Value::blob(key_id.to_vec()),
+                octo_storage_core::stoolap::Value::blob(data),
                 (self.device_id as i64).into(),
             ],
         )?;
@@ -759,7 +757,7 @@ impl AppSyncStore for StoolapStore {
             "INSERT INTO app_state_versions (name, state_data, device_id) VALUES ($1, $2, $3)",
             vec![
                 name.to_string().into(),
-                stoolap::core::Value::blob(data),
+                octo_storage_core::stoolap::Value::blob(data),
                 (self.device_id as i64).into(),
             ],
         )?;
@@ -862,8 +860,8 @@ impl AppSyncStore for StoolapStore {
                 vec![
                     name.to_string().into(),
                     (version as i64).into(),
-                    stoolap::core::Value::blob(m.index_mac.clone()),
-                    stoolap::core::Value::blob(m.value_mac.clone()),
+                    octo_storage_core::stoolap::Value::blob(m.index_mac.clone()),
+                    octo_storage_core::stoolap::Value::blob(m.value_mac.clone()),
                     (self.device_id as i64).into(),
                 ],
             )?;
@@ -879,7 +877,7 @@ impl AppSyncStore for StoolapStore {
         // R12 fix: lookup and return the value_mac as raw bytes (see
         // put_mutation_macs above for the rationale).
         let mut rows = query(&*self.db.lock().await, "SELECT value_mac FROM app_state_mutation_macs WHERE name = $1 AND index_mac = $2 AND device_id = $3",
-            vec![name.to_string().into(), stoolap::core::Value::blob(index_mac.to_vec()), (self.device_id as i64).into()])?;
+            vec![name.to_string().into(), octo_storage_core::stoolap::Value::blob(index_mac.to_vec()), (self.device_id as i64).into()])?;
         match rows.next() {
             Some(Ok(row)) => {
                 let mac: Vec<u8> = row.get(0).map_err(to_store_err)?;
@@ -920,7 +918,7 @@ impl AppSyncStore for StoolapStore {
         let mut tx = self.db.lock().await.begin().map_err(to_store_err)?;
         for idx in index_macs {
             exec_tx(&mut tx, "DELETE FROM app_state_mutation_macs WHERE name = $1 AND index_mac = $2 AND device_id = $3",
-                vec![name.to_string().into(), stoolap::core::Value::blob(idx.clone()), (self.device_id as i64).into()])?;
+                vec![name.to_string().into(), octo_storage_core::stoolap::Value::blob(idx.clone()), (self.device_id as i64).into()])?;
         }
         tx.commit().map_err(to_store_err)
     }
@@ -1131,7 +1129,7 @@ impl ProtocolStore for StoolapStore {
             ],
         )?;
         exec_tx(&mut tx, "INSERT INTO base_keys (address, message_id, base_key, device_id, created_at) VALUES ($1, $2, $3, $4, $5)",
-            vec![address.to_string().into(), message_id.to_string().into(), stoolap::core::Value::blob(base_key.to_vec()), (self.device_id as i64).into(), now.into()])?;
+            vec![address.to_string().into(), message_id.to_string().into(), octo_storage_core::stoolap::Value::blob(base_key.to_vec()), (self.device_id as i64).into(), now.into()])?;
         tx.commit().map_err(to_store_err)
     }
 
@@ -1187,7 +1185,7 @@ impl ProtocolStore for StoolapStore {
             vec![record.user.clone().into(), (self.device_id as i64).into()],
         )?;
         exec_tx(&mut tx, "INSERT INTO device_registry (user_id, devices_json, timestamp, phash, raw_id, device_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-            vec![record.user.into(), devices_json.into(), record.timestamp.into(), record.phash.unwrap_or_default().into(), record.raw_id.map(|r| (r as i64).into()).unwrap_or(stoolap::Value::Null(stoolap::DataType::Null)), (self.device_id as i64).into(), now.into()])?;
+            vec![record.user.into(), devices_json.into(), record.timestamp.into(), record.phash.unwrap_or_default().into(), record.raw_id.map(|r| (r as i64).into()).unwrap_or(octo_storage_core::stoolap::Value::Null(octo_storage_core::stoolap::DataType::Null)), (self.device_id as i64).into(), now.into()])?;
         tx.commit().map_err(to_store_err)
     }
 
@@ -1258,7 +1256,7 @@ impl ProtocolStore for StoolapStore {
             vec![jid.to_string().into(), (self.device_id as i64).into()],
         )?;
         exec_tx(&mut tx, "INSERT INTO tc_tokens (jid, token, token_timestamp, sender_timestamp, device_id, updated_at) VALUES ($1, $2, $3, $4, $5, $6)",
-            vec![jid.to_string().into(), stoolap::core::Value::blob(entry.token.clone()), entry.token_timestamp.into(), entry.sender_timestamp.unwrap_or(0).into(), (self.device_id as i64).into(), now.into()])?;
+            vec![jid.to_string().into(), octo_storage_core::stoolap::Value::blob(entry.token.clone()), entry.token_timestamp.into(), entry.sender_timestamp.unwrap_or(0).into(), (self.device_id as i64).into(), now.into()])?;
         tx.commit().map_err(to_store_err)
     }
 
@@ -1296,7 +1294,7 @@ impl ProtocolStore for StoolapStore {
         // R14-M5 fix: replace the SELECT COUNT + DELETE pattern with
         // a single DELETE that returns the rows-affected count from
         // `Database::execute` (`stoolap/src/api/database.rs:483`,
-        // `pub fn execute<P: Params>(&self, sql: &str, params: P) -> Result<i64>`).
+        // `pub fn execute<P: Params>(&&self, sql: &&str, params: P) -> Result<i64>`).
         // The previous SELECT-COUNT + DELETE was "not perfectly atomic
         // but acceptable for cleanup" (per the old comment) — but
         // there was no reason not to make it atomic: a single
@@ -1352,7 +1350,7 @@ impl ProtocolStore for StoolapStore {
             ],
         )?;
         exec_tx(&mut tx, "INSERT INTO sent_messages (chat_jid, message_id, payload, device_id, created_at) VALUES ($1, $2, $3, $4, $5)",
-            vec![chat_jid.to_string().into(), message_id.to_string().into(), stoolap::core::Value::blob(payload.to_vec()), (self.device_id as i64).into(), now.into()])?;
+            vec![chat_jid.to_string().into(), message_id.to_string().into(), octo_storage_core::stoolap::Value::blob(payload.to_vec()), (self.device_id as i64).into(), now.into()])?;
         tx.commit().map_err(to_store_err)
     }
 
@@ -1492,7 +1490,7 @@ impl MsgSecretStore for StoolapStore {
                     entry.chat.into(),
                     entry.sender.into(),
                     entry.msg_id.into(),
-                    stoolap::core::Value::blob(entry.secret),
+                    octo_storage_core::stoolap::Value::blob(entry.secret),
                     merged_expires.into(),
                     merged_msg_ts.into(),
                     device_id.into(),
@@ -1611,18 +1609,18 @@ impl DeviceStore for StoolapStore {
                 device.lid.as_ref().map(|j| j.to_string()).unwrap_or_default().into(),
                 device.pn.as_ref().map(|j| j.to_string()).unwrap_or_default().into(),
                 (device.registration_id as i64).into(),
-                stoolap::core::Value::blob(noise_key), stoolap::core::Value::blob(identity_key), stoolap::core::Value::blob(signed_pre_key),
+                octo_storage_core::stoolap::Value::blob(noise_key), octo_storage_core::stoolap::Value::blob(identity_key), octo_storage_core::stoolap::Value::blob(signed_pre_key),
                 (device.signed_pre_key_id as i64).into(),
-                stoolap::core::Value::blob(device.signed_pre_key_signature.to_vec()),
-                stoolap::core::Value::blob(device.adv_secret_key.to_vec()),
-                account.map(stoolap::core::Value::blob).unwrap_or(stoolap::Value::Null(stoolap::DataType::Null)),
+                octo_storage_core::stoolap::Value::blob(device.signed_pre_key_signature.to_vec()),
+                octo_storage_core::stoolap::Value::blob(device.adv_secret_key.to_vec()),
+                account.map(octo_storage_core::stoolap::Value::blob).unwrap_or(octo_storage_core::stoolap::Value::Null(octo_storage_core::stoolap::DataType::Null)),
                 device.push_name.clone().into(),
                 (device.app_version_primary as i64).into(), (device.app_version_secondary as i64).into(), (device.app_version_tertiary as i64).into(), device.app_version_last_fetched_ms.into(),
-                device.edge_routing_info.clone().map(stoolap::core::Value::blob).unwrap_or(stoolap::Value::Null(stoolap::DataType::Null)),
+                device.edge_routing_info.clone().map(octo_storage_core::stoolap::Value::blob).unwrap_or(octo_storage_core::stoolap::Value::Null(octo_storage_core::stoolap::DataType::Null)),
                 device.props_hash.clone().unwrap_or_default().into(),
                 (device.next_pre_key_id as i64).into(), (device.server_has_prekeys as i64).into(),
-                device.nct_salt.clone().map(stoolap::core::Value::blob).unwrap_or(stoolap::Value::Null(stoolap::DataType::Null)),
-                cert_chain.map(stoolap::core::Value::blob).unwrap_or(stoolap::Value::Null(stoolap::DataType::Null)),
+                device.nct_salt.clone().map(octo_storage_core::stoolap::Value::blob).unwrap_or(octo_storage_core::stoolap::Value::Null(octo_storage_core::stoolap::DataType::Null)),
+                cert_chain.map(octo_storage_core::stoolap::Value::blob).unwrap_or(octo_storage_core::stoolap::Value::Null(octo_storage_core::stoolap::DataType::Null)),
                 (device.login_counter as i64).into(),
             ]) {
             // Log the FULL error chain, not just the wrapper.
@@ -1733,7 +1731,7 @@ impl DeviceStore for StoolapStore {
                     app_version_last_fetched_ms: row.get::<i64>(15).map_err(to_store_err)?,
                     // R13-H1 fix: `edge_routing_info` is declared as
                     // `BLOB` in the schema (line 137) and saved as
-                    // `stoolap::core::Value::blob(...)` (line 1046), but
+                    // `octo_storage_core::stoolap::Value::blob(...)` (line 1046), but
                     // was being read back as `String`. Stoolap's
                     // `FromValue for String` impl returns `String::new()`
                     // for `Value::Blob`, so every non-empty BLOB silently
@@ -1807,7 +1805,7 @@ mod tests {
     #[tokio::test]
     async fn sync_key_roundtrip_preserves_bytes() {
         // The critical-app-state-sync path computes HMAC-SHA256 keys via
-        // `expand_app_state_keys(&key_data)`. If the bytes that come out
+        // `expand_app_state_keys(&&key_data)`. If the bytes that come out
         // of get_sync_key differ from the bytes that went in via
         // set_sync_key, all derived keys are wrong and every snapshot/patch
         // MAC mismatches (this is exactly the "patch snapshot MAC
@@ -2186,7 +2184,7 @@ mod tests {
                 vec![
                     chat.to_string().into(),
                     msg_id.to_string().into(),
-                    stoolap::core::Value::blob(vec![0xAB; 32]),
+                    octo_storage_core::stoolap::Value::blob(vec![0xAB; 32]),
                     (store.device_id as i64).into(),
                     created_at.into(),
                 ],

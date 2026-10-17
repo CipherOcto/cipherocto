@@ -19,6 +19,7 @@ related:
 ## Status
 
 Accepted (2026-06-17)
+
 ## Authors
 
 - Author: @cipherocto
@@ -31,7 +32,7 @@ Accepted (2026-06-17)
 
 Mission Overlay Networks (MON) define temporary or persistent sovereign overlay topologies constructed dynamically for coordinated distributed activity within the CipherOcto ecosystem.
 
-> **Terminology Disambiguation:** This RFC uses "Mission" to mean a runtime overlay network coordination construct, distinct from BLUEPRINT "Missions" which are implementation work items (e.g., `missions/open/0909-d-replay-events.md`) with lifecycle `Open → Claimed → With-PR → Archived`. MON missions are runtime coordination events; BLUEPRINT missions are governance/development tasks. They are orthogonal — a BLUEPRINT mission MAY trigger creation of a MON mission, and a MON mission MAY reference a BLUEPRINT mission, but they share no lifecycle or infrastructure.
+> **Terminology Disambiguation:** This RFC uses "Mission" to mean a runtime overlay network coordination construct, distinct from BLUEPRINT "Missions" which are implementation work items (e.g., `missions/archived/0909-d-replay-events.md`) with lifecycle `Open → Claimed → With-PR → Archived`. MON missions are runtime coordination events; BLUEPRINT missions are governance/development tasks. They are orthogonal — a BLUEPRINT mission MAY trigger creation of a MON mission, and a MON mission MAY reference a BLUEPRINT mission, but they share no lifecycle or infrastructure.
 
 A MON represents:
 
@@ -64,16 +65,16 @@ MONs build on DOT (RFC-0850) for transport, GDP (RFC-0851) for gateway discovery
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| G1: Mission Isolation | Zero cross-mission leakage | Mission A traffic never visible to Mission B |
-| G2: Deterministic Coordination | 100% replay consistency | Identical mission state from identical inputs |
-| G3: Dynamic Federation | <30s formation time | From mission creation to active overlay |
-| G4: Elastic Membership | 2-10,000 nodes per mission | Sublinear overhead scaling |
-| G5: Multi-Transport Operation | 3+ simultaneous carriers | Transparent carrier migration |
-| G6: Partition Survival | Autonomous recovery | Mission continues during network splits |
-| G7: Byzantine Resilience | Tolerate f < n/3 malicious nodes | Mission continues with honest majority |
-| G8: AI-Native Coordination | <100ms inference dispatch | Swarm task distribution latency |
+| Goal                           | Target                           | Metric                                        |
+| ------------------------------ | -------------------------------- | --------------------------------------------- |
+| G1: Mission Isolation          | Zero cross-mission leakage       | Mission A traffic never visible to Mission B  |
+| G2: Deterministic Coordination | 100% replay consistency          | Identical mission state from identical inputs |
+| G3: Dynamic Federation         | <30s formation time              | From mission creation to active overlay       |
+| G4: Elastic Membership         | 2-10,000 nodes per mission       | Sublinear overhead scaling                    |
+| G5: Multi-Transport Operation  | 3+ simultaneous carriers         | Transparent carrier migration                 |
+| G6: Partition Survival         | Autonomous recovery              | Mission continues during network splits       |
+| G7: Byzantine Resilience       | Tolerate f < n/3 malicious nodes | Mission continues with honest majority        |
+| G8: AI-Native Coordination     | <100ms inference dispatch        | Swarm task distribution latency               |
 
 ## Motivation
 
@@ -109,14 +110,14 @@ RFC-0850 defines the transport layer (envelopes, gateways, platform adapters). M
 
 CipherOcto has two distinct "mission" concepts:
 
-| Aspect | BLUEPRINT Mission | MON Mission |
-|--------|-------------------|-------------|
-| Definition | Implementation work item | Runtime overlay network |
-| Lifecycle | Open → Claimed → With-PR → Archived | Created → Discovering → Forming → Active → ... |
-| Duration | Days to weeks | Minutes to months |
-| Participants | Developer + reviewer | 2-10,000 nodes |
-| Purpose | Ship code/fixes | Coordinate distributed activity |
-| Location | `missions/open/`, `missions/archived/` | Runtime state (no static files) |
+| Aspect       | BLUEPRINT Mission                      | MON Mission                                    |
+| ------------ | -------------------------------------- | ---------------------------------------------- |
+| Definition   | Implementation work item               | Runtime overlay network                        |
+| Lifecycle    | Open → Claimed → With-PR → Archived    | Created → Discovering → Forming → Active → ... |
+| Duration     | Days to weeks                          | Minutes to months                              |
+| Participants | Developer + reviewer                   | 2-10,000 nodes                                 |
+| Purpose      | Ship code/fixes                        | Coordinate distributed activity                |
+| Location     | `missions/open/`, `missions/archived/` | Runtime state (no static files)                |
 
 **Interaction:** A BLUEPRINT mission MAY trigger creation of a MON mission (e.g., "test the new networking code across 10 nodes"). A MON mission MAY reference a BLUEPRINT mission in its descriptor metadata. They share no lifecycle, no state, and no infrastructure.
 
@@ -308,18 +309,18 @@ enum MissionState {
 
 #### 3.2 State Transitions
 
-| From | To | Trigger | Deterministic? |
-|------|----|---------|----------------|
-| Created | Discovering | Gateway broadcasts mission advertisement | Yes |
-| Discovering | Forming | `active_participants >= min_participants` | Yes |
-| Forming | Active | Topology Merkle root committed | Yes |
-| Active | Degraded | `failed_participants > tolerance_threshold` | Yes |
-| Degraded | Recovering | Reconciliation protocol initiated | Yes |
-| Recovering | Active | State convergence verified | Yes |
-| Active | Terminated | Mission completion or governance decision | Yes |
-| Active | Terminated | TTL expiry (`current_epoch >= creation_epoch + ttl_epochs`) | Yes (automatic) |
-| Degraded | Terminated | Unrecoverable failure or TTL expiry | Yes |
-| Terminated | Archived | State snapshot committed | Yes |
+| From        | To          | Trigger                                                     | Deterministic?  |
+| ----------- | ----------- | ----------------------------------------------------------- | --------------- |
+| Created     | Discovering | Gateway broadcasts mission advertisement                    | Yes             |
+| Discovering | Forming     | `active_participants >= min_participants`                   | Yes             |
+| Forming     | Active      | Topology Merkle root committed                              | Yes             |
+| Active      | Degraded    | `failed_participants > tolerance_threshold`                 | Yes             |
+| Degraded    | Recovering  | Reconciliation protocol initiated                           | Yes             |
+| Recovering  | Active      | State convergence verified                                  | Yes             |
+| Active      | Terminated  | Mission completion or governance decision                   | Yes             |
+| Active      | Terminated  | TTL expiry (`current_epoch >= creation_epoch + ttl_epochs`) | Yes (automatic) |
+| Degraded    | Terminated  | Unrecoverable failure or TTL expiry                         | Yes             |
+| Terminated  | Archived    | State snapshot committed                                    | Yes             |
 
 **Determinism Requirement:** All state transitions MUST be deterministic given identical mission state. Transition triggers MUST NOT depend on wall-clock timing, local heuristics, or non-deterministic inputs.
 
@@ -329,13 +330,13 @@ enum MissionState {
 
 State transitions require participant consensus to prevent split-brain scenarios:
 
-| Transition | Trigger | Consensus Requirement |
-|-----------|---------|----------------------|
-| Active → Degraded | `failed_participants > tolerance_threshold` where `tolerance_threshold = floor(active_participants / 3)` | Automatic (deterministic heartbeat check) |
-| Degraded → Recovering | Coordinator proposes reconciliation | Coordinator approval (no vote needed) |
-| Recovering → Active | State convergence verified via Merkle roots | 2/3 majority vote on convergence proof |
-| Forming → Active | Topology Merkle root committed | Automatic (deterministic topology verification) |
-| Any → Terminated | Mission completion or TTL expiry | Coordinator proposal + 2/3 majority vote |
+| Transition            | Trigger                                                                                                  | Consensus Requirement                           |
+| --------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| Active → Degraded     | `failed_participants > tolerance_threshold` where `tolerance_threshold = floor(active_participants / 3)` | Automatic (deterministic heartbeat check)       |
+| Degraded → Recovering | Coordinator proposes reconciliation                                                                      | Coordinator approval (no vote needed)           |
+| Recovering → Active   | State convergence verified via Merkle roots                                                              | 2/3 majority vote on convergence proof          |
+| Forming → Active      | Topology Merkle root committed                                                                           | Automatic (deterministic topology verification) |
+| Any → Terminated      | Mission completion or TTL expiry                                                                         | Coordinator proposal + 2/3 majority vote        |
 
 **Heartbeat Protocol:**
 
@@ -348,13 +349,13 @@ State transitions require participant consensus to prevent split-brain scenarios
 
 Mission creation MAY originate from:
 
-| Source | Example | Genesis Material |
-|--------|---------|-----------------|
-| Human operator | User-created overlay | `creator_peer_id + epoch + nonce` |
-| Smart contract | Autonomous deployment | `contract_address + deployment_tx + epoch` |
-| AI coordinator | Self-organizing swarm | `coordinator_id + epoch + swarm_seed` |
-| Governance proposal | DAO mission | `proposal_id + approval_epoch + nonce` |
-| External trigger | Sensor/event response | `trigger_hash + epoch + nonce` |
+| Source              | Example               | Genesis Material                           |
+| ------------------- | --------------------- | ------------------------------------------ |
+| Human operator      | User-created overlay  | `creator_peer_id + epoch + nonce`          |
+| Smart contract      | Autonomous deployment | `contract_address + deployment_tx + epoch` |
+| AI coordinator      | Self-organizing swarm | `coordinator_id + epoch + swarm_seed`      |
+| Governance proposal | DAO mission           | `proposal_id + approval_epoch + nonce`     |
+| External trigger    | Sensor/event response | `trigger_hash + epoch + nonce`             |
 
 ### 4. Mission Membership
 
@@ -394,16 +395,16 @@ membership_commitment = BLAKE3-256(
 
 #### 4.2 Membership Roles
 
-| Role | Flag Bit | Function | Token Incentive |
-|------|----------|----------|-----------------|
-| Coordinator | `0x0001` | Mission orchestration | OCTO-O |
-| Executor | `0x0002` | Performs tasks | OCTO-A (compute) |
-| Relay | `0x0004` | Envelope propagation | OCTO-B (bandwidth) |
-| Validator | `0x0008` | Verification | OCTO-N (node ops) |
-| Observer | `0x0010` | Read-only participation | None |
-| Archivist | `0x0020` | Historical persistence | OCTO-S (storage) |
-| Prover | `0x0040` | Generates ZK proofs | OCTO-A (compute) |
-| Aggregator | `0x0080` | Recursive proof composition | OCTO-O |
+| Role        | Flag Bit | Function                    | Token Incentive    |
+| ----------- | -------- | --------------------------- | ------------------ |
+| Coordinator | `0x0001` | Mission orchestration       | OCTO-O             |
+| Executor    | `0x0002` | Performs tasks              | OCTO-A (compute)   |
+| Relay       | `0x0004` | Envelope propagation        | OCTO-B (bandwidth) |
+| Validator   | `0x0008` | Verification                | OCTO-N (node ops)  |
+| Observer    | `0x0010` | Read-only participation     | None               |
+| Archivist   | `0x0020` | Historical persistence      | OCTO-S (storage)   |
+| Prover      | `0x0040` | Generates ZK proofs         | OCTO-A (compute)   |
+| Aggregator  | `0x0080` | Recursive proof composition | OCTO-O             |
 
 **Role Constraints:**
 
@@ -414,13 +415,13 @@ membership_commitment = BLAKE3-256(
 
 **Role Compatibility Constraints (MON-H2 fix):**
 
-| Constraint | Rule | Rationale |
-|-----------|------|-----------|
-| Coordinator + Prover | FORBIDDEN | Prevents centralized proof authority |
-| Coordinator + Aggregator | FORBIDDEN | Prevents centralized aggregation authority |
-| Observer + Coordinator | FORBIDDEN | Observers cannot control mission |
-| Max roles per node | 4 | Prevents role concentration. Any 4-role combination not explicitly forbidden by the constraints above is valid. |
-| Role escalation | Requires Coordinator approval or 2/3 vote | Prevents unauthorized privilege gain |
+| Constraint               | Rule                                      | Rationale                                                                                                       |
+| ------------------------ | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Coordinator + Prover     | FORBIDDEN                                 | Prevents centralized proof authority                                                                            |
+| Coordinator + Aggregator | FORBIDDEN                                 | Prevents centralized aggregation authority                                                                      |
+| Observer + Coordinator   | FORBIDDEN                                 | Observers cannot control mission                                                                                |
+| Max roles per node       | 4                                         | Prevents role concentration. Any 4-role combination not explicitly forbidden by the constraints above is valid. |
+| Role escalation          | Requires Coordinator approval or 2/3 vote | Prevents unauthorized privilege gain                                                                            |
 
 **Role Transition Rules:**
 
@@ -432,16 +433,16 @@ membership_commitment = BLAKE3-256(
 
 All mission participants MUST satisfy dual-stake requirements per the token design:
 
-| Role | Global Stake (OCTO) | Role Stake | Min Total |
-|------|-------------------|------------|-----------|
-| Coordinator | 1,000 OCTO | OCTO-O | 1,000 OCTO + OCTO-O minimum |
-| Executor | 1,000 OCTO | OCTO-A | 1,000 OCTO + OCTO-A minimum |
-| Relay | 1,000 OCTO | OCTO-B | 1,000 OCTO + OCTO-B minimum |
-| Validator | 1,000 OCTO | OCTO-N | 1,000 OCTO + OCTO-N minimum |
-| Observer | 1,000 OCTO | None | 1,000 OCTO |
-| Archivist | 1,000 OCTO | OCTO-S | 1,000 OCTO + OCTO-S minimum |
-| Prover | 1,000 OCTO | OCTO-A | 1,000 OCTO + OCTO-A minimum |
-| Aggregator | 1,000 OCTO | OCTO-O | 1,000 OCTO + OCTO-O minimum |
+| Role        | Global Stake (OCTO) | Role Stake | Min Total                   |
+| ----------- | ------------------- | ---------- | --------------------------- |
+| Coordinator | 1,000 OCTO          | OCTO-O     | 1,000 OCTO + OCTO-O minimum |
+| Executor    | 1,000 OCTO          | OCTO-A     | 1,000 OCTO + OCTO-A minimum |
+| Relay       | 1,000 OCTO          | OCTO-B     | 1,000 OCTO + OCTO-B minimum |
+| Validator   | 1,000 OCTO          | OCTO-N     | 1,000 OCTO + OCTO-N minimum |
+| Observer    | 1,000 OCTO          | None       | 1,000 OCTO                  |
+| Archivist   | 1,000 OCTO          | OCTO-S     | 1,000 OCTO + OCTO-S minimum |
+| Prover      | 1,000 OCTO          | OCTO-A     | 1,000 OCTO + OCTO-A minimum |
+| Aggregator  | 1,000 OCTO          | OCTO-O     | 1,000 OCTO + OCTO-O minimum |
 
 The 1,000 OCTO global stake minimum comes from the blockchain integration's `Global_Stake` configuration.
 
@@ -471,14 +472,14 @@ enum AdmissionPolicy {
 
 #### 5.1 Topology Models
 
-| Model | Structure | Use Case | Resilience | Min Participants |
-|-------|-----------|----------|------------|-----------------|
-| Mesh | Full connectivity | High resilience | Excellent | 2 |
-| Hierarchical | Tree with coordinators | Enterprise | Good | 3 (1 coordinator + 2 workers) |
-| Star | Central coordinator | Lightweight | Poor | 2 (1 coordinator + 1 worker) |
-| Swarm | Fluid, task-oriented | AI collectives | Good | 5 (for quorum diversity) |
-| Ring | Circular sequencing | Distributed sequencing | Moderate | 3 (minimum ring) |
-| Hybrid | Adaptive combination | General purpose | Variable | 2 |
+| Model        | Structure              | Use Case               | Resilience | Min Participants              |
+| ------------ | ---------------------- | ---------------------- | ---------- | ----------------------------- |
+| Mesh         | Full connectivity      | High resilience        | Excellent  | 2                             |
+| Hierarchical | Tree with coordinators | Enterprise             | Good       | 3 (1 coordinator + 2 workers) |
+| Star         | Central coordinator    | Lightweight            | Poor       | 2 (1 coordinator + 1 worker)  |
+| Swarm        | Fluid, task-oriented   | AI collectives         | Good       | 5 (for quorum diversity)      |
+| Ring         | Circular sequencing    | Distributed sequencing | Moderate   | 3 (minimum ring)              |
+| Hybrid       | Adaptive combination   | General purpose        | Variable   | 2                             |
 
 **Note:** When `min_participants` in MissionDescriptor differs from the TopologyModel default, the descriptor value takes precedence.
 
@@ -659,13 +660,13 @@ Built on GDP (RFC-0851).
 
 #### 8.1 Discovery Scopes
 
-| Scope | Visibility | Use Case |
-|-------|-----------|----------|
-| Public | Open discovery | Public swarms, open governance |
-| Invite-only | Restricted | Enterprise, private coordination |
-| Stealth | Hidden existence | Tactical, privacy-critical |
-| Federated | Trusted domains | Cross-organization |
-| Ephemeral | Temporary | Short-lived tasks |
+| Scope       | Visibility       | Use Case                         |
+| ----------- | ---------------- | -------------------------------- |
+| Public      | Open discovery   | Public swarms, open governance   |
+| Invite-only | Restricted       | Enterprise, private coordination |
+| Stealth     | Hidden existence | Tactical, privacy-critical       |
+| Federated   | Trusted domains  | Cross-organization               |
+| Ephemeral   | Temporary        | Short-lived tasks                |
 
 ```rust
 #[repr(u16)]
@@ -730,13 +731,13 @@ struct MissionAdvertisement {
 
 **GDP Scope Mapping (MON-M5 fix):**
 
-| MON Discovery Scope | GDP Scope Equivalent | Notes |
-|--------------------|---------------------|-------|
-| Public | GLOBAL | Discoverable across entire overlay |
-| Invite-only | PRIVATE | Restricted to invited peers |
-| Stealth | PRIVATE + stealth flag | Hidden existence, encrypted advertisements |
-| Federated | REGIONAL | Limited to trusted domain set |
-| Ephemeral | MISSION | Temporary, scoped to mission lifetime |
+| MON Discovery Scope | GDP Scope Equivalent   | Notes                                      |
+| ------------------- | ---------------------- | ------------------------------------------ |
+| Public              | GLOBAL                 | Discoverable across entire overlay         |
+| Invite-only         | PRIVATE                | Restricted to invited peers                |
+| Stealth             | PRIVATE + stealth flag | Hidden existence, encrypted advertisements |
+| Federated           | REGIONAL               | Limited to trusted domain set              |
+| Ephemeral           | MISSION                | Temporary, scoped to mission lifetime      |
 
 ### 9. Mission Gossip
 
@@ -759,15 +760,15 @@ struct MissionGossipScope {
 
 #### 9.2 Propagation Classes
 
-| Class | Priority | Use Case |
-|-------|----------|----------|
-| Emergency | Highest | Critical alerts, compromise detection |
-| Consensus | High | Validator data, attestations |
-| Coordination | Medium-High | Commands, state updates |
-| Execution | Medium | Compute payloads, inference requests |
-| AI | Medium | Model exchange, swarm coordination |
-| Standard | Normal | General mission communication |
-| Archive | Low | Historical replication |
+| Class        | Priority    | Use Case                              |
+| ------------ | ----------- | ------------------------------------- |
+| Emergency    | Highest     | Critical alerts, compromise detection |
+| Consensus    | High        | Validator data, attestations          |
+| Coordination | Medium-High | Commands, state updates               |
+| Execution    | Medium      | Compute payloads, inference requests  |
+| AI           | Medium      | Model exchange, swarm coordination    |
+| Standard     | Normal      | General mission communication         |
+| Archive      | Low         | Historical replication                |
 
 ```rust
 #[repr(u16)]
@@ -784,15 +785,15 @@ enum MissionPropagationClass {
 
 **DGP GossipPriority Mapping:**
 
-| MissionPropagationClass | GossipPriority (RFC-0852) | Notes |
-|------------------------|--------------------------|-------|
-| Emergency | Critical | Mission-critical alerts |
-| Consensus | Consensus | Validator coordination |
-| Coordination | Mission | Mission lifecycle events |
-| Execution | Bulk | Compute task distribution |
-| Ai | Standard | AI inference results |
-| Standard | Standard | General mission traffic |
-| Archive | Archive | Historical data |
+| MissionPropagationClass | GossipPriority (RFC-0852) | Notes                     |
+| ----------------------- | ------------------------- | ------------------------- |
+| Emergency               | Critical                  | Mission-critical alerts   |
+| Consensus               | Consensus                 | Validator coordination    |
+| Coordination            | Mission                   | Mission lifecycle events  |
+| Execution               | Bulk                      | Compute task distribution |
+| Ai                      | Standard                  | AI inference results      |
+| Standard                | Standard                  | General mission traffic   |
+| Archive                 | Archive                   | Historical data           |
 
 **Determinism Requirement:** Propagation scheduling MUST be deterministic given identical gossip state. Priority ordering MUST NOT depend on local queue timing.
 
@@ -837,12 +838,12 @@ struct ExecutionTask {
 
 Mission-critical execution MUST remain deterministic per RFC-0008:
 
-| Component | Execution Class | Rationale |
-|-----------|----------------|-----------|
-| Task dispatch | Class A | Consensus-critical ordering |
-| Result collection | Class A | Deterministic aggregation |
-| AI inference | Class C | Inherently probabilistic |
-| Training | Class C | Inherently probabilistic |
+| Component         | Execution Class | Rationale                   |
+| ----------------- | --------------- | --------------------------- |
+| Task dispatch     | Class A         | Consensus-critical ordering |
+| Result collection | Class A         | Deterministic aggregation   |
+| AI inference      | Class C         | Inherently probabilistic    |
+| Training          | Class C         | Inherently probabilistic    |
 
 Execution validity MUST NOT depend on:
 
@@ -903,15 +904,15 @@ Missions MAY define policies for:
 
 **Decision Types and Quorum Requirements:**
 
-| Decision | Quorum | Mechanism |
-|----------|--------|-----------|
+| Decision               | Quorum                           | Mechanism                                             |
+| ---------------------- | -------------------------------- | ----------------------------------------------------- |
 | Admission (new member) | Coordinator approval OR 1/3 vote | Centralized: Coordinator decides; DAO/Federated: vote |
-| Role assignment | Coordinator approval OR 1/3 vote | Same as admission |
-| Topology change | 2/3 vote | All governance models except Centralized |
-| Mission termination | 2/3 vote + Coordinator proposal | Coordinator proposes, participants vote |
-| Policy modification | 2/3 vote | Requires explicit proposal with diff |
-| Emergency rekey | Coordinator authority | No vote (time-critical) |
-| Participant expulsion | Coordinator + 1/3 vote | Evidence-based (proof of misbehavior) |
+| Role assignment        | Coordinator approval OR 1/3 vote | Same as admission                                     |
+| Topology change        | 2/3 vote                         | All governance models except Centralized              |
+| Mission termination    | 2/3 vote + Coordinator proposal  | Coordinator proposes, participants vote               |
+| Policy modification    | 2/3 vote                         | Requires explicit proposal with diff                  |
+| Emergency rekey        | Coordinator authority            | No vote (time-critical)                               |
+| Participant expulsion  | Coordinator + 1/3 vote           | Evidence-based (proof of misbehavior)                 |
 
 **Governance Model Behaviors:**
 
@@ -1012,14 +1013,14 @@ Future integration with Deterministic Proof Substrate (RFC-0854).
 
 #### 15.1 Mission Proofs
 
-| Proof Type | Purpose | Status |
-|------------|---------|--------|
-| Execution proof | Correct computation | Future (RFC-0854) |
-| Relay proof | Routing correctness | Future (RFC-0860) |
-| Consensus proof | Validator agreement | Future |
-| AI inference proof | Verified inference | Future |
-| Availability proof | Service uptime | Future |
-| Aggregation proof | Recursive overlay validity | Future |
+| Proof Type         | Purpose                    | Status            |
+| ------------------ | -------------------------- | ----------------- |
+| Execution proof    | Correct computation        | Future (RFC-0854) |
+| Relay proof        | Routing correctness        | Future (RFC-0860) |
+| Consensus proof    | Validator agreement        | Future            |
+| AI inference proof | Verified inference         | Future            |
+| Availability proof | Service uptime             | Future            |
+| Aggregation proof  | Recursive overlay validity | Future            |
 
 #### 15.2 Recursive Aggregation
 
@@ -1076,35 +1077,35 @@ Executors return results to the Coordinator (or designated Aggregator). The Coor
 
 ### 17. Token Economics Integration
 
-| Activity | Token | Rationale |
-|----------|-------|-----------|
-| Relay bandwidth | OCTO-B | Envelope propagation |
+| Activity          | Token  | Rationale                    |
+| ----------------- | ------ | ---------------------------- |
+| Relay bandwidth   | OCTO-B | Envelope propagation         |
 | Compute execution | OCTO-A | AI inference, task execution |
-| Coordination | OCTO-O | Mission orchestration |
-| Gateway uptime | OCTO-N | Node operation |
-| Storage/archival | OCTO-S | Historical persistence |
-| Proof generation | OCTO-A | ZK proof computation |
+| Coordination      | OCTO-O | Mission orchestration        |
+| Gateway uptime    | OCTO-N | Node operation               |
+| Storage/archival  | OCTO-S | Historical persistence       |
+| Proof generation  | OCTO-A | ZK proof computation         |
 
 **Mission Operation Token Amounts:**
 
-| Operation | Token | Amount | Rationale |
-|-----------|-------|--------|-----------|
-| Mission message relay | OCTO-B | 0.001 per envelope | Bandwidth cost |
-| Compute job execution | OCTO-A | 0.01 per job | Compute cost |
-| Coordination action | OCTO-O | 0.005 per action | Orchestration overhead |
-| State archival | OCTO-S | 0.001 per snapshot | Storage cost |
-| Validation vote | OCTO-N | 0.002 per vote | Node operation |
-| Proof generation | OCTO-A | 0.05 per proof | ZK compute cost |
+| Operation             | Token  | Amount             | Rationale              |
+| --------------------- | ------ | ------------------ | ---------------------- |
+| Mission message relay | OCTO-B | 0.001 per envelope | Bandwidth cost         |
+| Compute job execution | OCTO-A | 0.01 per job       | Compute cost           |
+| Coordination action   | OCTO-O | 0.005 per action   | Orchestration overhead |
+| State archival        | OCTO-S | 0.001 per snapshot | Storage cost           |
+| Validation vote       | OCTO-N | 0.002 per vote     | Node operation         |
+| Proof generation      | OCTO-A | 0.05 per proof     | ZK compute cost        |
 
 **Slashing Conditions (MON-M2 fix):**
 
-| Violation | Penalty | Evidence |
-|-----------|---------|----------|
-| Invalid task result | Slash OCTO-A stake | Proof of incorrect computation |
-| Envelope forgery | Slash all stakes | Signature verification failure |
-| Isolation breach | Slash OCTO-B/O stake | Cross-mission envelope proof |
-| Free-riding (no contribution) | Slash OCTO stake proportional to inactivity | Heartbeat failure history |
-| Coordinator misbehavior | Slash OCTO-O stake + demotion | Governance vote with evidence |
+| Violation                     | Penalty                                     | Evidence                       |
+| ----------------------------- | ------------------------------------------- | ------------------------------ |
+| Invalid task result           | Slash OCTO-A stake                          | Proof of incorrect computation |
+| Envelope forgery              | Slash all stakes                            | Signature verification failure |
+| Isolation breach              | Slash OCTO-B/O stake                        | Cross-mission envelope proof   |
+| Free-riding (no contribution) | Slash OCTO stake proportional to inactivity | Heartbeat failure history      |
+| Coordinator misbehavior       | Slash OCTO-O stake + demotion               | Governance vote with evidence  |
 
 **Mission Resource Markets (Future):**
 
@@ -1145,93 +1146,93 @@ enum MonError {
 
 ## Performance Targets
 
-| Metric | Target | Measurement |
-|--------|--------|-------------|
-| Mission creation | <1s | Genesis to Created state |
-| Discovery phase | <30s | Created to Forming |
-| Formation phase | <30s | Forming to Active |
-| Membership admission | <100ms | Per-node admission decision |
-| Topology commitment | <500ms | Merkle computation for 100 nodes |
-| Execution dispatch | <100ms | Task to first executor |
-| State synchronization | <5s | Merkle anti-entropy for 1000 nodes |
-| Partition recovery | <60s | Reconnection to convergence |
-| Cross-carrier migration | <2s | Transport switch latency |
-| Key rotation | <5s | Full mission rekey for 100 nodes |
+| Metric                  | Target | Measurement                        |
+| ----------------------- | ------ | ---------------------------------- |
+| Mission creation        | <1s    | Genesis to Created state           |
+| Discovery phase         | <30s   | Created to Forming                 |
+| Formation phase         | <30s   | Forming to Active                  |
+| Membership admission    | <100ms | Per-node admission decision        |
+| Topology commitment     | <500ms | Merkle computation for 100 nodes   |
+| Execution dispatch      | <100ms | Task to first executor             |
+| State synchronization   | <5s    | Merkle anti-entropy for 1000 nodes |
+| Partition recovery      | <60s   | Reconnection to convergence        |
+| Cross-carrier migration | <2s    | Transport switch latency           |
+| Key rotation            | <5s    | Full mission rekey for 100 nodes   |
 
 ## Security Considerations
 
 ### Consensus Attacks
 
-| Attack | Impact | Mitigation |
-|--------|--------|------------|
-| Mission forgery | High | Genesis signature verification |
-| Membership forgery | High | Membership commitment signatures |
-| Topology manipulation | High | Merkle commitment verification |
-| Cross-mission leakage | Critical | Strict `mission_id` scoping |
+| Attack                | Impact   | Mitigation                       |
+| --------------------- | -------- | -------------------------------- |
+| Mission forgery       | High     | Genesis signature verification   |
+| Membership forgery    | High     | Membership commitment signatures |
+| Topology manipulation | High     | Merkle commitment verification   |
+| Cross-mission leakage | Critical | Strict `mission_id` scoping      |
 
 ### Economic Exploits
 
-| Attack | Impact | Mitigation |
-|--------|--------|------------|
-| Free-riding | Medium | Role-based staking requirements |
-| Sybil infiltration | High | Stake-gated admission + trust scores |
-| Resource exhaustion | Medium | OCTO-B/A/O economic friction |
+| Attack              | Impact | Mitigation                           |
+| ------------------- | ------ | ------------------------------------ |
+| Free-riding         | Medium | Role-based staking requirements      |
+| Sybil infiltration  | High   | Stake-gated admission + trust scores |
+| Resource exhaustion | Medium | OCTO-B/A/O economic friction         |
 
 ### Proof Forgery
 
-| Attack | Impact | Mitigation |
-|--------|--------|------------|
-| Invalid execution proof | High | RFC-0854 verification (when available) |
-| Fake relay proof | Medium | RFC-0860 verification (when available) |
-| State commitment forgery | High | Merkle verification at every node |
+| Attack                   | Impact | Mitigation                             |
+| ------------------------ | ------ | -------------------------------------- |
+| Invalid execution proof  | High   | RFC-0854 verification (when available) |
+| Fake relay proof         | Medium | RFC-0860 verification (when available) |
+| State commitment forgery | High   | Merkle verification at every node      |
 
 ### Replay Attacks
 
-| Attack | Impact | Mitigation |
-|--------|--------|------------|
-| Mission replay | High | Mission TTL + epoch validation |
-| Membership replay | Medium | `join_epoch` validation |
-| State replay | High | Logical timestamp ordering |
+| Attack            | Impact | Mitigation                     |
+| ----------------- | ------ | ------------------------------ |
+| Mission replay    | High   | Mission TTL + epoch validation |
+| Membership replay | Medium | `join_epoch` validation        |
+| State replay      | High   | Logical timestamp ordering     |
 
 ### Determinism Violations
 
-| Attack | Impact | Mitigation |
-|--------|--------|------------|
-| Non-deterministic admission | Critical | Deterministic policy evaluation |
-| Non-deterministic topology | Critical | Sorted Merkle commitment |
+| Attack                           | Impact   | Mitigation                        |
+| -------------------------------- | -------- | --------------------------------- |
+| Non-deterministic admission      | Critical | Deterministic policy evaluation   |
+| Non-deterministic topology       | Critical | Sorted Merkle commitment          |
 | Non-deterministic reconciliation | Critical | Deterministic conflict resolution |
 
 ### RFC-0008 Execution Class Mapping (CROSS-C3 fix)
 
 Per RFC-0008, each operation MUST be mapped to an execution class:
 
-| Operation | Class | Rationale |
-|-----------|-------|-----------|
-| MissionId derivation | A | Consensus-critical identity |
-| MissionDescriptor serialization | A | Consensus-critical state |
-| State transition evaluation | A | Consensus-critical lifecycle |
-| Admission policy evaluation | A | Consensus-critical membership |
-| Topology Merkle commitment | A | Consensus-critical state |
-| Key hierarchy derivation | A | Consensus-critical cryptography |
-| Heartbeat failure detection | A | Consensus-critical liveness |
-| Partition reconciliation | A | Consensus-critical state convergence |
-| Mission advertisement creation | B | Off-chain but deterministic |
-| Gateway discovery (GDP integration) | B | Off-chain but deterministic |
-| Execution task dispatch | B | Off-chain, deterministic ordering |
-| AI inference (within mission) | C | Inherently probabilistic |
-| AI swarm coordination | C | Inherently probabilistic |
-| Platform adapter I/O | C | Non-deterministic transport |
+| Operation                           | Class | Rationale                            |
+| ----------------------------------- | ----- | ------------------------------------ |
+| MissionId derivation                | A     | Consensus-critical identity          |
+| MissionDescriptor serialization     | A     | Consensus-critical state             |
+| State transition evaluation         | A     | Consensus-critical lifecycle         |
+| Admission policy evaluation         | A     | Consensus-critical membership        |
+| Topology Merkle commitment          | A     | Consensus-critical state             |
+| Key hierarchy derivation            | A     | Consensus-critical cryptography      |
+| Heartbeat failure detection         | A     | Consensus-critical liveness          |
+| Partition reconciliation            | A     | Consensus-critical state convergence |
+| Mission advertisement creation      | B     | Off-chain but deterministic          |
+| Gateway discovery (GDP integration) | B     | Off-chain but deterministic          |
+| Execution task dispatch             | B     | Off-chain, deterministic ordering    |
+| AI inference (within mission)       | C     | Inherently probabilistic             |
+| AI swarm coordination               | C     | Inherently probabilistic             |
+| Platform adapter I/O                | C     | Non-deterministic transport          |
 
 ## Adversarial Review
 
-| Threat | Impact | Mitigation | Verification |
-|--------|--------|------------|--------------|
-| Byzantine coordinator | Critical | Multi-validator consensus | Coordinator election test |
-| Eclipse attack via gateways | High | GDP diversity constraints | Multi-gateway test |
-| Mission partition attack | High | Autonomous reconciliation | Partition recovery test |
-| Key compromise | Critical | Emergency rekey protocol | Rekey simulation test |
-| Stealth mission deanonymization | High | Encrypted advertisements | Stealth discovery test |
-| Execution result manipulation | High | Proof-carrying execution | Proof verification test |
+| Threat                          | Impact   | Mitigation                | Verification              |
+| ------------------------------- | -------- | ------------------------- | ------------------------- |
+| Byzantine coordinator           | Critical | Multi-validator consensus | Coordinator election test |
+| Eclipse attack via gateways     | High     | GDP diversity constraints | Multi-gateway test        |
+| Mission partition attack        | High     | Autonomous reconciliation | Partition recovery test   |
+| Key compromise                  | Critical | Emergency rekey protocol  | Rekey simulation test     |
+| Stealth mission deanonymization | High     | Encrypted advertisements  | Stealth discovery test    |
+| Execution result manipulation   | High     | Proof-carrying execution  | Proof verification test   |
 
 ## Economic Analysis
 
@@ -1334,13 +1335,13 @@ Expected:
 
 ## Alternatives Considered
 
-| Approach | Pros | Cons | Decision |
-|----------|------|------|----------|
-| Static overlay configuration | Simple | No dynamic formation | Too rigid |
-| Single shared namespace | Simple routing | No isolation | Security risk |
-| Application-layer isolation | No protocol changes | No cryptographic guarantees | Insufficient |
-| Kubernetes-style orchestration | Proven | Not decentralized | Wrong model |
-| libp2p topic-based isolation | Native | Limited to P2P | Insufficient transport diversity |
+| Approach                       | Pros                | Cons                        | Decision                         |
+| ------------------------------ | ------------------- | --------------------------- | -------------------------------- |
+| Static overlay configuration   | Simple              | No dynamic formation        | Too rigid                        |
+| Single shared namespace        | Simple routing      | No isolation                | Security risk                    |
+| Application-layer isolation    | No protocol changes | No cryptographic guarantees | Insufficient                     |
+| Kubernetes-style orchestration | Proven              | Not decentralized           | Wrong model                      |
+| libp2p topic-based isolation   | Native              | Limited to P2P              | Insufficient transport diversity |
 
 **Decision:** MON provides cryptographic mission isolation above DOT's multi-carrier transport.
 
@@ -1348,79 +1349,79 @@ Expected:
 
 ### Phase 1: Core Mission Identity and Lifecycle (Months 1-3)
 
-| Task | Description | RFC Dependency |
-|------|-------------|----------------|
-| 1.1 | Implement `MissionId` with deterministic derivation | — |
-| 1.2 | Implement `MissionDescriptor` serialization (DCS) | RFC-0126 |
-| 1.3 | Implement `MissionState` lifecycle state machine | — |
-| 1.4 | Implement `MissionNode` with membership commitment | RFC-0009 |
-| 1.5 | Implement admission policy evaluation | — |
-| 1.6 | Implement mission creation/genesis protocol | — |
-| 1.7 | Write unit tests for deterministic derivation | — |
-| 1.8 | Write lifecycle integration tests | — |
+| Task | Description                                         | RFC Dependency |
+| ---- | --------------------------------------------------- | -------------- |
+| 1.1  | Implement `MissionId` with deterministic derivation | —              |
+| 1.2  | Implement `MissionDescriptor` serialization (DCS)   | RFC-0126       |
+| 1.3  | Implement `MissionState` lifecycle state machine    | —              |
+| 1.4  | Implement `MissionNode` with membership commitment  | RFC-0009       |
+| 1.5  | Implement admission policy evaluation               | —              |
+| 1.6  | Implement mission creation/genesis protocol         | —              |
+| 1.7  | Write unit tests for deterministic derivation       | —              |
+| 1.8  | Write lifecycle integration tests                   | —              |
 
 **Deliverables:** Mission identity, lifecycle, membership, admission.
 
 ### Phase 2: Topology and Cryptography (Months 3-6)
 
-| Task | Description | RFC Dependency |
-|------|-------------|----------------|
-| 2.1 | Implement `MissionKeyHierarchy` derivation | RFC-0853 |
-| 2.2 | Implement `TopologyCommitment` with sorted Merkle | — |
-| 2.3 | Implement topology model selection | — |
-| 2.4 | Implement scoped routing (mission_id enforcement) | RFC-0850 |
-| 2.5 | Implement mission gossip scope | RFC-0852 |
-| 2.6 | Implement key rotation protocol | RFC-0853 |
-| 2.7 | Write topology commitment tests | — |
-| 2.8 | Write cryptographic isolation tests | — |
+| Task | Description                                       | RFC Dependency |
+| ---- | ------------------------------------------------- | -------------- |
+| 2.1  | Implement `MissionKeyHierarchy` derivation        | RFC-0853       |
+| 2.2  | Implement `TopologyCommitment` with sorted Merkle | —              |
+| 2.3  | Implement topology model selection                | —              |
+| 2.4  | Implement scoped routing (mission_id enforcement) | RFC-0850       |
+| 2.5  | Implement mission gossip scope                    | RFC-0852       |
+| 2.6  | Implement key rotation protocol                   | RFC-0853       |
+| 2.7  | Write topology commitment tests                   | —              |
+| 2.8  | Write cryptographic isolation tests               | —              |
 
 **Deliverables:** Topology management, key hierarchy, scoped routing.
 
 ### Phase 3: Discovery and Governance (Months 6-9)
 
-| Task | Description | RFC Dependency |
-|------|-------------|----------------|
-| 3.1 | Implement `MissionAdvertisement` | RFC-0851 |
-| 3.2 | Implement discovery scopes (public, invite, stealth) | RFC-0851 |
-| 3.3 | Implement governance model framework | — |
-| 3.4 | Implement coordinator election | — |
-| 3.5 | Implement partition detection and recovery | — |
-| 3.6 | Implement state reconciliation protocol | — |
-| 3.7 | Write discovery isolation tests | — |
-| 3.8 | Write partition recovery tests | — |
+| Task | Description                                          | RFC Dependency |
+| ---- | ---------------------------------------------------- | -------------- |
+| 3.1  | Implement `MissionAdvertisement`                     | RFC-0851       |
+| 3.2  | Implement discovery scopes (public, invite, stealth) | RFC-0851       |
+| 3.3  | Implement governance model framework                 | —              |
+| 3.4  | Implement coordinator election                       | —              |
+| 3.5  | Implement partition detection and recovery           | —              |
+| 3.6  | Implement state reconciliation protocol              | —              |
+| 3.7  | Write discovery isolation tests                      | —              |
+| 3.8  | Write partition recovery tests                       | —              |
 
 **Deliverables:** Discovery, governance, partition resilience.
 
 ### Phase 4: Execution and Advanced Features (Months 9-12)
 
-| Task | Description | RFC Dependency |
-|------|-------------|----------------|
-| 4.1 | Implement `ExecutionTask` dispatch | — |
-| 4.2 | Implement execution result collection | — |
-| 4.3 | Implement multi-transport migration | RFC-0850 |
-| 4.4 | Implement OCTO-A/B/O/S/N accounting | — |
-| 4.5 | Implement mission archival protocol | — |
-| 4.6 | Write execution dispatch tests | — |
-| 4.7 | Write economic accounting tests | — |
-| 4.8 | Write adversarial test suite | — |
+| Task | Description                           | RFC Dependency |
+| ---- | ------------------------------------- | -------------- |
+| 4.1  | Implement `ExecutionTask` dispatch    | —              |
+| 4.2  | Implement execution result collection | —              |
+| 4.3  | Implement multi-transport migration   | RFC-0850       |
+| 4.4  | Implement OCTO-A/B/O/S/N accounting   | —              |
+| 4.5  | Implement mission archival protocol   | —              |
+| 4.6  | Write execution dispatch tests        | —              |
+| 4.7  | Write economic accounting tests       | —              |
+| 4.8  | Write adversarial test suite          | —              |
 
 **Deliverables:** Execution layer, transport migration, economics, archival.
 
 ## Key Files to Modify
 
-| File | Change |
-|------|--------|
-| `crates/octo-network/src/mon/mod.rs` | New MON module |
-| `crates/octo-network/src/mon/mission_id.rs` | MissionId, MissionDescriptor |
-| `crates/octo-network/src/mon/lifecycle.rs` | MissionState state machine |
-| `crates/octo-network/src/mon/membership.rs` | MissionNode, admission policies |
-| `crates/octo-network/src/mon/topology.rs` | TopologyCommitment, models |
-| `crates/octo-network/src/mon/keys.rs` | MissionKeyHierarchy derivation |
-| `crates/octo-network/src/mon/discovery.rs` | MissionAdvertisement |
-| `crates/octo-network/src/mon/governance.rs` | Governance models |
-| `crates/octo-network/src/mon/execution.rs` | ExecutionTask dispatch |
-| `crates/octo-network/src/mon/reconciliation.rs` | Partition recovery |
-| `crates/octo-network/src/mon/economics.rs` | Token accounting |
+| File                                            | Change                          |
+| ----------------------------------------------- | ------------------------------- |
+| `crates/octo-network/src/mon/mod.rs`            | New MON module                  |
+| `crates/octo-network/src/mon/mission_id.rs`     | MissionId, MissionDescriptor    |
+| `crates/octo-network/src/mon/lifecycle.rs`      | MissionState state machine      |
+| `crates/octo-network/src/mon/membership.rs`     | MissionNode, admission policies |
+| `crates/octo-network/src/mon/topology.rs`       | TopologyCommitment, models      |
+| `crates/octo-network/src/mon/keys.rs`           | MissionKeyHierarchy derivation  |
+| `crates/octo-network/src/mon/discovery.rs`      | MissionAdvertisement            |
+| `crates/octo-network/src/mon/governance.rs`     | Governance models               |
+| `crates/octo-network/src/mon/execution.rs`      | ExecutionTask dispatch          |
+| `crates/octo-network/src/mon/reconciliation.rs` | Partition recovery              |
+| `crates/octo-network/src/mon/economics.rs`      | Token accounting                |
 
 ## Future Work
 
@@ -1466,9 +1467,9 @@ One governance model cannot serve all use cases.
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0.0 | 2026-05-25 | Initial draft — identity, lifecycle, membership, topology, execution |
+| Version | Date       | Changes                                                              |
+| ------- | ---------- | -------------------------------------------------------------------- |
+| 1.0.0   | 2026-05-25 | Initial draft — identity, lifecycle, membership, topology, execution |
 
 ## Related RFCs
 

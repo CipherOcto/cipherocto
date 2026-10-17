@@ -83,7 +83,7 @@ fn test_to_signing_bytes_excludes_signature() {
 fn test_verify_signature_invalid_key() {
     let route = make_route(0xAA, 500, 100, 50, 200, 100, 100);
     // Zero signature with random key should fail
-    assert!(!route.verify_signature(&[0x42; 32]));
+    assert!(!route.verify_signature(&octo_algo_ed25519::ed25519_algorithm_id(), &[0x42; 32]));
 }
 
 // ── Compare routes ──

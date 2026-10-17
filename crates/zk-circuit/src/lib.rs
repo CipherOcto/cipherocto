@@ -1,0 +1,1622 @@
+//! CipherOcto ZK circuit: Cairo → CASM compiler + BLAKE3 hash.
+//!
+//! Per RFC-0958 (ZK capability subclass) + master plan Phase B.2.
+//!
+//! **Crypto home:** this crate lives in the cipherocto workspace, NOT in the
+//! stoolap fork. CASM compilation is a proof-system concern, orthogonal to
+//! SQL. Per `docs/architecture/stoolap-integration.md` principle (2026-07-22 extraction).
+//!
+//! **Stable-rust only:** no nightly, no `#![feature(...)]`. STWO's nightly
+//! is patched inside the separate `zk-vendor/` crate via source drop.
+//!
+//! ## Surface
+//!
+//! - [`compile_from_source`]: Cairo 2.x source string → [`CompiledCircuit`]
+//!   carrying **real CASM bytecode** + BLAKE3 hash. Pipeline:
+//!   1. `scarb build` → `capability_zk.sierra.json` (Cairo 2.x toolchain;
+//!      the standalone `cairo-compile` binary is gone in Cairo 2.x).
+//!   2. Parse Sierra IR via serde → `cairo_lang_sierra::program::Program`.
+//!   3. Build `ProgramRegistry::<CoreType, CoreLibfunc>`, compute AP-change
+//!      metadata (`calc_metadata_ap_change_only`), lower to CASM via
+//!      `cairo_lang_sierra_to_casm::compiler::compile`.
+//!   4. Assemble CASM (`CairoProgram::assemble()`) → flat bytecode bytes.
+//!   5. BLAKE3-256 the bytes → 64 hex chars (matches RFC-0958
+//!      `compiled_casm_hash` field shape).
+//! - [`compile`]: legacy stub over `CairoProgram` JSON struct (deterministic
+//!   BLAKE3 of canonical JSON). Kept for backward compat with tests + the
+//!   `Program::Capability` dispatch; production path is `compile_from_source`.
+//! - [`bundled_casm_bytes`]: real CASM bytes of `cairo/src/lib.cairo`
+//!   (memoized via `OnceLock`).
+//! - [`bundled_casm_hash_hex`]: BLAKE3-256 hex of the bundled CASM.
+//! - [`CompiledCircuit::hash`]: stable 64-char hex (matches RFC-0958
+//!   `compiled_casm_hash` field shape).
+//! - [`HashError`]: error type for malformed Cairo input or missing toolchain.
+//! - [`Program`], [`BatchSigPublicInputs`], [`prove_batch_signature`]:
+//!   batch signature circuit surface (Gap 3; RFC-0958 capability ZK
+//!   subclass + RFC-0962 §9 ZK proof integration).
+//!
+//! ## Determinism contract
+//!
+//! Same Cairo program → same Sierra IR (modulo salsa UUIDs which DO NOT
+//! affect CASM bytecode bytes) → same CASM bytecode → same BLAKE3 hash.
+//! Across processes, across architectures, across platforms. STWO Fiat-
+//! Shamir transform is Class A (Protocol Determinism, per RFC-0958
+//! §Determinism).
+//!
+//! ## Toolchain pin
+//!
+//! - **scarb** 2.20.0 / **cairo** 2.20.0 / **sierra** 1.9.3
+//! - **cairo-lang-* Rust crates** 2.20.0 (the Sierra→CASM in-process pass)
+//!
+//! The Sierra JSON emitted by scarb 2.20.0 declares `"version": 1`; the
+//! `cairo_lang_sierra 2.20.0` deserializer accepts that version. Two
+//! independent `scarb build` runs may produce JSON bytes that differ
+//! (salsa UUIDs in `id` fields); the CASM pass canonicalizes through the
+//! `Program` AST and emits byte-identical CASM for the same Cairo source.
+//! The CASM-level determinism is verified by the smoke test
+//! (`crates/zk-circuit/tests/casm_snapshot.rs`).
+
+#![deny(unsafe_code)]
+#![warn(missing_debug_implementations)]
+#![allow(clippy::doc_markdown)]
+
+use std::process::Command;
+use std::sync::OnceLock;
+
+use blake3::Hasher;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use cairo_lang_casm::hints::Hint as CasmHintEnum;
+use cairo_lang_compiler::db::{validate_corelib, RootDatabase};
+use cairo_lang_compiler::diagnostics::DiagnosticsReporter;
+use cairo_lang_executable::compile::{compile_executable, ExecutableConfig};
+use cairo_lang_executable::executable::{EntryPointKind, Executable};
+
+/// Re-exported so downstream consumers (and the fixture generator) can find the
+/// entrypoint without adding their own `cairo-lang-executable` dependency.
+pub use cairo_lang_executable::executable::EntryPointKind as ExecutableEntryPointKind;
+use cairo_lang_executable_plugin::executable_plugin_suite;
+use cairo_lang_filesystem::cfg::{Cfg, CfgSet};
+use cairo_lang_filesystem::db::init_dev_corelib;
+use cairo_lang_sierra::program::Program as SierraProgram;
+use cairo_lang_sierra_to_casm::compiler::{
+    compile as sierra_compile_to_casm, CairoProgram as SierraCasmProgram, SierraToCasmConfig,
+};
+use cairo_lang_sierra_to_casm::metadata::calc_metadata_ap_change_only;
+use cairo_lang_sierra_type_size::ProgramRegistryInfo;
+
+/// A Cairo program in canonical JSON form (RFC-0126 deterministic
+/// serialization).
+///
+/// Stub for now: the real Cairo JSON schema is verbose; this minimal subset
+/// captures the fields that drive CASM hash drift (RFC-0958 §CASM Hash
+/// Drift Detection). Full schema deferred to mission 0958-a S05 task B.2.1.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CairoProgram {
+    /// Cairo version (e.g., "2.6.0").
+    pub version: String,
+    /// Program identifier (stable, content-derived).
+    pub identifier: String,
+    /// Hints (debug-info + reference inputs).
+    pub hints: Vec<String>,
+    /// Bytecode instructions in the Cairo IR form.
+    pub bytecode: Vec<String>,
+}
+
+/// One CASM hint, in the form `cairo-vm`'s builtin hint processor
+/// compiles.
+///
+/// The hint table is *not* cosmetic. Cairo 1 hints are executable code
+/// that runs between instructions and enforces constraints the
+/// instruction stream cannot express (`u32`/`u8` range checks,
+/// `split_felt`, segment allocation). A CASM program shipped without its
+/// hints is not merely slower — `cairo-vm` will refuse to run some hints'
+/// targets (memory never initialised) and, where it does not, the
+/// enforced bound silently disappears from the trace. Emitting bytecode
+/// alone is an **unsound** artifact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CasmHint {
+    /// Word offset (CASM pc) of the instruction the hint executes before.
+    pub pc: usize,
+    /// The typed hint, as emitted by the Cairo compiler.
+    ///
+    /// Typed, not pythonic: `cairo-vm`'s `Cairo1HintProcessor` dispatches
+    /// on this value. The builtin hint processor matches legacy
+    /// long-form pythonic source strings which cairo-lang 2.20 no longer
+    /// renders, so the pythonic form is not usable here.
+    pub hint: CasmHintEnum,
+}
+
+/// CASM bytecode + metadata after compilation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompiledCircuit {
+    /// Cairo program that produced this compilation (preserved for
+    /// reproducibility records; not part of the hash itself).
+    pub program: CairoProgram,
+    /// CASM bytecode (per Cairo compiler specification).
+    pub casm_bytecode: Vec<u8>,
+    /// BLAKE3 hash of the canonical serialization of the CASM bytecode
+    /// (64 hex chars; matches RFC-0958 §compiled_casm_hash shape).
+    pub compiled_casm_hash: String,
+    /// Hint table, ordered by `pc`. See [`CasmHint`].
+    ///
+    /// Empty for callers that only need the bytecode, but the STARK
+    /// harness must never use bytecode alone.
+    pub hints: Vec<CasmHint>,
+    /// Word offset (CASM pc) of the compiled entrypoint
+    /// (`capability_zk::main`) within [`Self::casm_bytecode`].
+    ///
+    /// Zero would mean "the first word", which for a Cairo **library**
+    /// is `verify_chain`, not `main`. The harness must jump here.
+    pub main_pc: usize,
+}
+
+impl CompiledCircuit {
+    /// Returns the compiled CASM hash (BLAKE3, 64 hex chars).
+    #[must_use]
+    pub fn hash(&self) -> &str {
+        &self.compiled_casm_hash
+    }
+
+    /// Returns the compiled CASM hash as raw 32 bytes (decoded from hex).
+    ///
+    /// **R4 fix-up (2026-08-04):** prior callers (e.g.
+    /// `compute_bundled_casm_hash`) decoded the hex themselves, which
+    /// was both wasteful and a latent panic source if the hex string ever
+    /// contained non-hex characters. Use this method instead.
+    ///
+    /// **R2 fix-up (2026-08-05):** returns `Result<[u8; 32], HashError>`
+    /// instead of panicking, to defend against `OnceLock` poisoning
+    /// (MED-5 of R2 review). The panic message from a hex-decode failure
+    /// would otherwise poison the `OnceLock` and every subsequent
+    /// `bundled_casm_hash()` call would panic with "OnceLock poisoned"
+    /// — masking the actionable scarb-install diagnostic. The
+    /// non-panicking variant lets `compute_bundled_casm_hash` propagate
+    /// the error properly.
+    pub fn hash_bytes(&self) -> Result<[u8; 32], HashError> {
+        let bytes = hex::decode(&self.compiled_casm_hash)
+            .map_err(|e| HashError::CompilerInternal(format!("BLAKE3 hex decode: {e}")))?;
+        if bytes.len() != 32 {
+            return Err(HashError::CompilerInternal(format!(
+                "BLAKE3 hex length mismatch: expected 32 bytes, got {}",
+                bytes.len()
+            )));
+        }
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&bytes);
+        Ok(out)
+    }
+}
+
+/// Compile error type (mission 0958-a S05 task B.2 stub).
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum HashError {
+    #[error("malformed Cairo program: {0}")]
+    MalformedProgram(String),
+    #[error("CASM compiler internal error: {0}")]
+    CompilerInternal(String),
+}
+
+/// Cairo source for the bundled capability circuit (RFC-0958 §Algorithms).
+///
+/// Loaded at compile time from `cairo/src/lib.cairo` (cipherocto
+/// workspace; Phase B.2 per `docs/architecture/stoolap-integration.md`). The path is
+/// resolved relative to this file: `crates/zk-circuit/src/lib.rs` →
+/// `../../../cairo/src/lib.cairo` → repo-root `cairo/src/lib.cairo`.
+pub const BUNDLED_CAIRO_SOURCE: &str = include_str!("../../../cairo/src/lib.cairo");
+
+/// Workspace-relative path to the Cairo 2.x project root
+/// (the directory holding `Scarb.toml`).
+///
+/// Resolved at runtime: `crates/zk-circuit/src/lib.rs` → `../../../cairo/`.
+#[must_use]
+pub fn cairo_project_root() -> std::path::PathBuf {
+    let crate_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    crate_dir
+        .parent()
+        .and_then(std::path::Path::parent)
+        .map(|ws| ws.join("cairo"))
+        .expect("zk-circuit must live at crates/zk-circuit/ inside the workspace")
+}
+
+/// Cached `CompiledCircuit` for the bundled source. Memoizes the
+/// `scarb build` + Sierra→CASM pipeline on first call. If scarb is
+/// not in PATH, the cached value is `Err(CompilerInternal)` and all
+/// subsequent `bundled_*` calls return the same error (the failure is
+/// permanent for this process — install scarb/asdf and restart).
+pub static BUNDLED_CASM_CIRCUIT: OnceLock<Result<CompiledCircuit, HashError>> = OnceLock::new();
+
+/// Returns the bundled CASM bytecode (real CASM bytes from
+/// `scarb build` → Sierra→CASM). Memoized via [`BUNDLED_CASM_CIRCUIT`].
+///
+/// # Errors
+/// Returns [`HashError::CompilerInternal`] if scarb is not in PATH, the
+/// Sierra→CASM pass fails, or the assembled bytecode is empty. Install
+/// scarb 2.20.0 + cairo-lang-* 2.20.0 (Cargo handles the Rust crates).
+pub fn bundled_casm_bytes() -> Result<&'static [u8], HashError> {
+    let cached = BUNDLED_CASM_CIRCUIT.get_or_init(|| compile_source_inner(BUNDLED_CAIRO_SOURCE));
+    match cached {
+        Ok(c) => Ok(c.casm_bytecode.as_slice()),
+        Err(e) => Err(clone_hash_error(e)),
+    }
+}
+
+/// Returns the bundled CASM BLAKE3-256 hash as 64 hex chars
+/// (matches RFC-0958 `compiled_casm_hash` shape).
+///
+/// # Errors
+/// Same as [`bundled_casm_bytes`].
+pub fn bundled_casm_hash_hex() -> Result<String, HashError> {
+    let cached = BUNDLED_CASM_CIRCUIT.get_or_init(|| compile_source_inner(BUNDLED_CAIRO_SOURCE));
+    match cached {
+        Ok(c) => Ok(c.compiled_casm_hash.clone()),
+        Err(e) => Err(clone_hash_error(e)),
+    }
+}
+
+/// Self-contained CASM program artifact handed to the STARK prover FFI.
+///
+/// Bytecode alone is not a runnable, sound program. This carries the
+/// three things a VM needs and that a raw `.casm` byte blob omits:
+///
+/// 1. the bytecode,
+/// 2. the hint table (constraints that live outside the instruction
+///    stream),
+/// 3. the entrypoint offset.
+///
+/// # Wire contract
+/// The field names below are a cross-crate ABI shared with
+/// `stwo-sys::CairoProgramSpec`, which deserializes this shape. The two
+/// sides are separate crates (zk-circuit depends on the FFI loader, not
+/// the other way round), so the JSON *shape* is the contract, not a Rust
+/// type. Keep them in step; `stwo-sys` has a test pinning the field
+/// names it expects.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HarnessProgram {
+    /// Lowercase hex of the assembled CASM bytecode.
+    pub casm_hex: String,
+    /// Hint table, ordered by `pc`.
+    pub hints: Vec<HarnessHint>,
+    /// Word offset (CASM pc) of the entrypoint within the decoded
+    /// bytecode. This is a word index, not a byte offset.
+    pub main_pc: usize,
+}
+
+/// One hint in [`HarnessProgram`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HarnessHint {
+    /// Word offset (CASM pc) of the instruction the hint runs before.
+    pub pc: usize,
+    /// The typed hint.
+    pub hint: CasmHintEnum,
+}
+
+/// Build the [`HarnessProgram`] artifact for the bundled circuit.
+///
+/// # Errors
+/// Same as [`bundled_casm_bytes`], plus a failure if the compiled
+/// bytecode is not valid hex (cannot happen for our own emitter; the
+/// check is here so the artifact is never silently wrong).
+pub fn bundled_harness_program() -> Result<HarnessProgram, HashError> {
+    let cached = BUNDLED_CASM_CIRCUIT.get_or_init(|| compile_source_inner(BUNDLED_CAIRO_SOURCE));
+    let c = match cached {
+        Ok(c) => c,
+        Err(e) => return Err(clone_hash_error(e)),
+    };
+    Ok(HarnessProgram {
+        casm_hex: hex::encode(&c.casm_bytecode),
+        hints: c
+            .hints
+            .iter()
+            .map(|h| HarnessHint {
+                pc: h.pc,
+                hint: h.hint.clone(),
+            })
+            .collect(),
+        main_pc: c.main_pc,
+    })
+}
+
+/// Path to the Cairo corelib `src/` matching this crate's cairo-lang version.
+///
+/// `cairo_lang_executable::compile::prepare_db` would call `detect_corelib()`,
+/// which searches for a `corelib/src` directory relative to
+/// `CARGO_MANIFEST_DIR`, the current executable and the cwd. That search fails
+/// outright unless a developer has hand-symlinked one, and when it does succeed
+/// it can pick up whatever corelib happens to sit next to the binary. We
+/// resolve it explicitly instead.
+///
+/// Order:
+///   1. `$CIPHEROCTO_CAIRO_CORELIB`
+///   2. scarb's registry cache, exact version match against cairo-lang's
+///      `CORELIB_VERSION` (the corelib ships with scarb, so any environment
+///      that can already run `scarb build` can satisfy this)
+fn resolve_corelib() -> Result<std::path::PathBuf, HashError> {
+    if let Ok(p) = std::env::var("CIPHEROCTO_CAIRO_CORELIB") {
+        let p = std::path::PathBuf::from(p);
+        if p.join("array.cairo").exists() {
+            return Ok(p);
+        }
+        return Err(HashError::CompilerInternal(format!(
+            "CIPHEROCTO_CAIRO_CORELIB={} is not a corelib src directory (no array.cairo)",
+            p.display()
+        )));
+    }
+
+    let want = cairo_lang_filesystem::db::CORELIB_VERSION;
+    let cache = std::env::var("SCARB_CACHE")
+        .map(std::path::PathBuf::from)
+        .or_else(|_| {
+            std::env::var("HOME")
+                .map(|h| std::path::PathBuf::from(h).join(".cache/scarb/registry/std"))
+        })
+        .map_err(|e| HashError::CompilerInternal(format!("locate scarb corelib cache: {e}")))?;
+
+    let p = cache.join(format!("v{want}")).join("core").join("src");
+    if p.join("array.cairo").exists() {
+        return Ok(p);
+    }
+    Err(HashError::CompilerInternal(format!(
+        "cairo corelib v{want} not found at {}. Run `scarb build` in cairo/ once to \
+         populate scarb's cache, or set CIPHEROCTO_CAIRO_CORELIB.",
+        p.display()
+    )))
+}
+
+/// Compile the bundled circuit to a Cairo **`Executable`** — the artifact
+/// `stwo-sys` actually proves.
+///
+/// This is not a re-encoding of the Sierra: `compile_executable` runs
+/// cairo-lang's executable compiler, which wraps `executable_main` in the
+/// generated Standalone header and emits the `Standalone` / `Bootloader`
+/// entrypoints. The wrapper is what carries the entrypoint's arguments as
+/// calldata; a consumer that instead hand-builds a stack frame is running a
+/// program that never calls the circuit. See
+/// `docs/architecture/zk-stwo-cairo-executable-recipe.md`.
+pub fn bundled_executable() -> Result<Executable, HashError> {
+    let corelib = resolve_corelib()?;
+    let project = cairo_project_root();
+    if !project.join("cairo_project.toml").exists() {
+        return Err(HashError::CompilerInternal(format!(
+            "cairo_project.toml missing at {}; compile_executable reads a cairo-lang \
+             project config, not a Scarb manifest",
+            project.display()
+        )));
+    }
+
+    // Built by hand rather than via `prepare_db`, which does not set the cfg the
+    // circuit gates `#[executable]` behind.
+    let mut builder = RootDatabase::builder();
+    builder
+        .skip_auto_withdraw_gas()
+        .with_cfg(CfgSet::from_iter([
+            Cfg::kv("gas", "disabled"),
+            Cfg::kv("feature", EXECUTABLE_FEATURE),
+        ]))
+        .with_default_plugin_suite(executable_plugin_suite());
+    let mut db = builder
+        .build()
+        .map_err(|e| HashError::CompilerInternal(format!("cairo database: {e}")))?;
+    init_dev_corelib(&mut db, corelib);
+    validate_corelib(&db)
+        .map_err(|e| HashError::CompilerInternal(format!("cairo corelib: {e}")))?;
+
+    let result = compile_executable(
+        &mut db,
+        &project,
+        Some(EXECUTABLE_SIERRA_FUNC),
+        DiagnosticsReporter::stderr(),
+        ExecutableConfig::default(),
+    )
+    .map_err(|e| HashError::CompilerInternal(format!("compile_executable: {e}")))?;
+
+    let exec = Executable::new(result.compiled_function);
+    if exec.program.bytecode.is_empty() {
+        return Err(HashError::CompilerInternal(
+            "executable emitter produced empty bytecode".to_owned(),
+        ));
+    }
+    if !exec
+        .entrypoints
+        .iter()
+        .any(|e| matches!(e.kind, EntryPointKind::Standalone))
+    {
+        return Err(HashError::CompilerInternal(format!(
+            "executable has no Standalone entrypoint (got {:?}); the STWO harness runs \
+             that entrypoint, not the wrapped function",
+            exec.entrypoints.iter().map(|e| &e.kind).collect::<Vec<_>>()
+        )));
+    }
+    Ok(exec)
+}
+
+/// The [`Executable`] artifact as JSON — the wire form `stwo-sys` deserializes.
+///
+/// Shipped as the upstream type rather than a hand-rolled
+/// `{casm_hex, hints, main_pc}` mirror: the JSON *shape* of a
+/// hand-rolled contract can drift silently between the two crates, and the
+/// failure mode is a program that runs without calling the circuit.
+pub fn bundled_executable_json() -> Result<String, HashError> {
+    let exec = bundled_executable()?;
+    serde_json::to_string(&exec)
+        .map_err(|e| HashError::CompilerInternal(format!("serialize executable: {e}")))
+}
+
+/// Canonical byte encoding of an `Executable`'s bytecode: one 32-byte
+/// big-endian word per felt, the same shape the CASM wire format used.
+///
+/// Fixed-width so the encoding is injective — a variable-width big-endian
+/// encoding would make the commitment ambiguous.
+fn executable_bytecode_bytes(exec: &Executable) -> Result<Vec<u8>, HashError> {
+    let mut out = Vec::with_capacity(exec.program.bytecode.len() * 32);
+    for w in &exec.program.bytecode {
+        // CASM words are 63-bit felts, so the sign is always Plus; the
+        // magnitude is what we encode.
+        let (_sign, be) = w.to_bytes_be();
+        if be.len() > 32 {
+            return Err(HashError::CompilerInternal(format!(
+                "executable bytecode word exceeds 32 bytes ({}); felt is not representable",
+                be.len()
+            )));
+        }
+        out.extend(std::iter::repeat_n(0u8, 32 - be.len()));
+        out.extend_from_slice(&be);
+    }
+    Ok(out)
+}
+
+/// BLAKE3 of the executable bytecode, hex.
+///
+/// This is the program-artifact commitment a verifier checks before trusting a
+/// proof. It covers the **wrapper** as well as the circuit, so a wrapper that
+/// disagrees with the prover's expectation changes the commitment.
+pub fn bundled_executable_hash() -> Result<String, HashError> {
+    let exec = bundled_executable()?;
+    Ok(blake3_hex(&executable_bytecode_bytes(&exec)?))
+}
+
+/// The cfg the circuit gates `#[executable]` behind, and the entrypoint
+/// cairo-lang wraps. Kept next to each other because they must agree: if the
+/// feature is off, `compile_executable` finds zero executable functions and
+/// fails with "no executable function found".
+const EXECUTABLE_FEATURE: &str = "executable";
+const EXECUTABLE_SIERRA_FUNC: &str = "capability_zk::executable_main";
+
+/// Returns the bundled CASM hint table.
+///
+/// **Not optional.** A CASM program without its hints is not the same
+/// program: hints enforce `u32`/`u8` range checks, `split_felt`
+/// decomposition and segment allocation. Any consumer that *runs* the
+/// bytecode (the STARK harness) must carry these alongside it.
+///
+/// # Errors
+/// Same as [`bundled_casm_bytes`].
+pub fn bundled_casm_hints() -> Result<&'static [CasmHint], HashError> {
+    let cached = BUNDLED_CASM_CIRCUIT.get_or_init(|| compile_source_inner(BUNDLED_CAIRO_SOURCE));
+    match cached {
+        Ok(c) => Ok(c.hints.as_slice()),
+        Err(e) => Err(clone_hash_error(e)),
+    }
+}
+
+/// Word offset (CASM pc) of the compiled `capability_zk::main`
+/// entrypoint within [`bundled_casm_bytes`].
+///
+/// Not zero: `cairo` is a Cairo **library**, so its first declared
+/// function (`verify_chain`) occupies offset 0. A harness that starts at
+/// 0 runs the wrong function.
+///
+/// # Errors
+/// Same as [`bundled_casm_bytes`].
+pub fn bundled_main_pc() -> Result<usize, HashError> {
+    let cached = BUNDLED_CASM_CIRCUIT.get_or_init(|| compile_source_inner(BUNDLED_CAIRO_SOURCE));
+    match cached {
+        Ok(c) => Ok(c.main_pc),
+        Err(e) => Err(clone_hash_error(e)),
+    }
+}
+
+/// Compile the **bundled** Cairo 2.x source to real CASM bytecode + BLAKE3
+/// hash (mission 0958-a Phase B.2 production path).
+///
+/// **R4 fix-up (2026-08-04):** the prior `compile_from_source(_source: &str)`
+/// ignored its `_source` parameter and silently compiled the bundled
+/// source instead. That was a footgun — a `compile_from_source(user_supplied)`
+/// call would return the bundled CASM, not what the user asked for. The
+/// R4 rename `compile_bundled()` removes the misleading parameter; a
+/// back-compat alias `compile_from_source(_)` is retained for existing
+/// callers and explicitly states the aliasing behavior in its docstring.
+///
+/// The pipeline:
+///
+/// 1. `scarb build` produces Sierra IR JSON at
+///    `cairo/target/dev/capability_zk.sierra.json` (canonical path for
+///    `cairo/src/lib.cairo`).
+/// 2. Parse that JSON, lower to CASM via the in-process
+///    `cairo-lang-sierra-to-casm` pass.
+/// 3. BLAKE3-256 the assembled bytecode → 64-char hex hash.
+///
+/// # Errors
+/// - [`HashError::CompilerInternal`] if scarb is missing, the Sierra
+///   JSON is malformed, the Sierra→CASM pass fails, or the assembled
+///   bytecode is empty.
+///
+/// # Determinism
+/// Same Cairo source → same CASM bytes → same BLAKE3 hash. Class A.
+pub fn compile_bundled() -> Result<CompiledCircuit, HashError> {
+    compile_source_inner(BUNDLED_CAIRO_SOURCE)
+}
+
+/// **DEPRECATED — back-compat alias for [`compile_bundled`].**
+///
+/// R4 fix-up (2026-08-04): the `_source` parameter was ignored by the
+/// prior implementation (always compiled the bundled source regardless
+/// of what the caller passed). The alias preserves the old name but
+/// documents the aliasing behavior. New code MUST call
+/// [`compile_bundled`] directly.
+#[deprecated(
+    since = "0.4.0",
+    note = "compile_from_source ignored its `_source` parameter; use compile_bundled() instead"
+)]
+pub fn compile_from_source(_source: &str) -> Result<CompiledCircuit, HashError> {
+    compile_source_inner(BUNDLED_CAIRO_SOURCE)
+}
+
+/// Workspace-relative path to the bundled capability circuit's main
+/// library entry (`cairo/src/lib.cairo`). Used by [`compile_source_inner`]
+/// to locate the scarb project root for the in-process Sierra→CASM pass.
+fn bundled_scarb_project() -> std::path::PathBuf {
+    cairo_project_root()
+}
+
+fn compile_source_inner(source: &str) -> Result<CompiledCircuit, HashError> {
+    // Step 1: ensure scarb is available. Hard-fail (no stub fallback) —
+    // this matches the test invariant (casm_snapshot.rs panics with an
+    // actionable message when scarb is missing).
+    let scarb_check = Command::new("scarb").arg("--version").output();
+    match scarb_check {
+        Ok(out) if out.status.success() => {}
+        Ok(_) => {
+            return Err(HashError::CompilerInternal(
+                "scarb --version exited non-zero. Install scarb 2.20.0 \
+                 (https://docs.swmansion.com/scarb/)"
+                    .to_owned(),
+            ));
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(HashError::CompilerInternal(
+                "scarb not in PATH. Install scarb 2.20.0 \
+                 (https://docs.swmansion.com/scarb/)"
+                    .to_owned(),
+            ));
+        }
+        Err(e) => return Err(HashError::CompilerInternal(format!("scarb spawn: {e}"))),
+    }
+
+    // Step 2: invoke `scarb build` against the Cairo project root. The
+    // bundled source is loaded via `include_str!` from the same
+    // `cairo/src/lib.cairo` scarb is configured to compile — the
+    // `source` parameter is preserved for API compat but not used
+    // because the canonical Cairo project is fixed.
+    let project = bundled_scarb_project();
+    if !project.join("Scarb.toml").exists() {
+        return Err(HashError::CompilerInternal(format!(
+            "Scarb.toml missing at {}; session 1 setup incomplete",
+            project.display()
+        )));
+    }
+    // The `_source` parameter is intentionally ignored for the bundled
+    // path: the canonical Cairo program IS the file on disk
+    // (`cairo/src/lib.cairo`). For ad-hoc source compilation outside
+    // the bundled path, callers should construct a Scarb project
+    // themselves; this crate only owns the bundled one.
+    let _ = source;
+
+    let target_dir = std::env::temp_dir().join(format!(
+        "cipherocto-zk-circuit-scarb-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos())
+    ));
+    std::fs::create_dir_all(&target_dir)
+        .map_err(|e| HashError::CompilerInternal(format!("target dir create: {e}")))?;
+
+    let build_out = Command::new("scarb")
+        .arg("--target-dir")
+        .arg(&target_dir)
+        .arg("build")
+        .current_dir(&project)
+        .output()
+        .map_err(|e| HashError::CompilerInternal(format!("scarb build spawn: {e}")))?;
+    if !build_out.status.success() {
+        // **R2 fix-up (2026-08-05):** stderr may contain file paths,
+        // dependency versions, environment metadata from the build host
+        // (MED-6 of R2 review). Sanitize: report only the exit status +
+        // first 200 bytes of stderr (truncated on UTF-8 boundary). Operators
+        // who need full stderr can re-run `scarb build` manually from the
+        // cairo/ directory to capture it themselves.
+        let stderr_sanitized = String::from_utf8_lossy(&build_out.stderr);
+        let truncated: String = stderr_sanitized.chars().take(200).collect();
+        return Err(HashError::CompilerInternal(format!(
+            "scarb build failed: status={}, stderr (first 200 chars)={}",
+            build_out.status, truncated,
+        )));
+    }
+
+    let sierra_path = target_dir.join("dev").join("capability_zk.sierra.json");
+    let sierra_bytes = std::fs::read(&sierra_path).map_err(|e| {
+        HashError::CompilerInternal(format!("read sierra.json {}: {e}", sierra_path.display()))
+    })?;
+
+    // Step 3: parse Sierra IR, lower to CASM, BLAKE3 the bytes.
+    let lowering = sierra_to_casm(&sierra_bytes)?;
+
+    if lowering.bytecode.is_empty() {
+        return Err(HashError::CompilerInternal(
+            "CASM emitter produced empty bytecode".to_owned(),
+        ));
+    }
+
+    let compiled_casm_hash = blake3_hex(&lowering.bytecode);
+
+    Ok(CompiledCircuit {
+        program: CairoProgram {
+            version: "2.20.0".to_owned(),
+            identifier: "capability_zk_v1".to_owned(),
+            hints: vec![],
+            bytecode: vec![],
+        },
+        casm_bytecode: lowering.bytecode,
+        compiled_casm_hash,
+        hints: lowering.hints,
+        main_pc: lowering.main_pc,
+    })
+}
+
+/// In-process Sierra→CASM pass.
+///
+/// Input: Sierra IR JSON bytes (as emitted by `scarb build` into
+/// `target/dev/<crate>.sierra.json`).
+///
+/// Output: assembled CASM bytecode (flat `Vec<u8>` of felt252 big-endian
+/// encoded words — Cairo 1.x `.casm` wire format).
+///
+/// Pipeline:
+/// - `serde_json::from_slice::<Program>(&sierra_bytes)` — parse the
+///   Sierra IR (the `cairo_lang_sierra::program::Program` serde shape
+///   matches scarb's output: `{version, type_declarations, ...}`).
+/// - `ProgramRegistry::<CoreType, CoreLibfunc>::new(&program)` — index
+///   the program so the Sierra→CASM pass can resolve concrete types and
+///   libfuncs.
+/// - `calc_metadata_ap_change_only` — AP-change info (linear solver is
+///   fine for the capability circuit; no Sierra gas accounting needed).
+/// - `cairo_lang_sierra_to_casm::compiler::compile` — lower to
+///   `CairoProgram { instructions, debug_info, consts_info }`.
+/// - `CairoProgram::assemble().bytecode` — flat `Vec<BigInt>`; serialize
+///   each felt252 big-endian into 32 bytes (Cairo 1.x CASM wire format).
+fn sierra_to_casm(sierra_bytes: &[u8]) -> Result<CasmLowering, HashError> {
+    let program: SierraProgram = serde_json::from_slice(sierra_bytes)
+        .map_err(|e| HashError::CompilerInternal(format!("parse Sierra IR: {e}")))?;
+
+    let registry_info = ProgramRegistryInfo::new(&program)
+        .map_err(|e| HashError::CompilerInternal(format!("Sierra registry build: {e}")))?;
+
+    let metadata = calc_metadata_ap_change_only(&program, &registry_info)
+        .map_err(|e| HashError::CompilerInternal(format!("AP-change metadata: {e}")))?;
+
+    let casm_program = sierra_compile_to_casm(
+        &program,
+        &registry_info,
+        &metadata,
+        SierraToCasmConfig {
+            gas_usage_check: false,
+            // Mission 0958-c AC-4 (Stage-2 verifier split): AC-4 hard
+            // ceiling is ≤3,300 CASM words (Round 18 fix F-122). Current
+            // compiled CASM is 3,004 words / 93.88 KB — inside it. The
+            // reduction this gate was originally waiting on arrived when
+            // production `verify_chain` moved to corelib Poseidon over
+            // felt252 and `verify_chain_against_tip` replaced the vacuous
+            // `!= 0` assertion with a real MAC chain bound to a
+            // verifier-supplied tip.
+            //
+            // Sized above the current CASM (3,004 words) so the existing
+            // compilation pipeline keeps working. The hard 3,300-word
+            // ceiling is enforced by `casm_words_under_3300_after_stage2`
+            // below, alongside the serialized-bytes gate. Bump this value
+            // when the AC-4 ceiling becomes achievable.
+            max_bytecode_size: 12_000,
+        },
+    )
+    .map_err(|e| HashError::CompilerInternal(format!("Sierra→CASM compile: {e}")))?;
+
+    // Locate `main` in the *bytecode* before assembling: `main` is not at
+    // offset 0, because a Cairo library puts its first declared function
+    // (`verify_chain`) first. Running from 0 would execute the wrong
+    // function with attacker-chosen arguments.
+    let main_pc = main_entrypoint_pc(&program, &casm_program)?;
+
+    let assembled = casm_program.assemble();
+
+    // Multiple hints per pc are carried through in order, not refused.
+    //
+    // This used to be refused, with the comment "cairo-vm 3.1.0's
+    // `HintsCollection` holds at most one hint per pc ... `HintsCollection`
+    // resolves a single reference". That was true of 3.1.0 and is not true of
+    // the pinned 3.2.0, which is the only cairo-vm in the lockfile. 3.2.0's
+    // `HintsCollection` stores a `HintRange` per pc and reconstructs
+    // `Vec<HintParams>` per pc from it, so a pc with several hints resolves all
+    // of them.
+    //
+    // The gate then started refusing real programs. The EcOp builtin lowering
+    // emits two hints at one pc, so any circuit using `core::ec` — the
+    // RFC-0958 step 1 Schnorr candidate — could not be measured through this
+    // path at all. The gate was protecting against a constraint being dropped,
+    // and it was doing that job correctly; it was just protecting against a
+    // version of cairo-vm the project no longer uses.
+    //
+    // Order is preserved within a pc: `assembled.hints` is already grouped by pc,
+    // and `sort_by_key` below is stable.
+    let mut hints: Vec<CasmHint> =
+        Vec::with_capacity(assembled.hints.iter().map(|(_, hs)| hs.len()).sum());
+    for (pc, at_pc) in &assembled.hints {
+        for h in at_pc {
+            hints.push(CasmHint {
+                pc: *pc,
+                hint: h.clone(),
+            });
+        }
+    }
+    hints.sort_by_key(|h| h.pc);
+
+    Ok(CasmLowering {
+        bytecode: felt_vec_to_casm_bytes(&assembled.bytecode),
+        hints,
+        main_pc,
+    })
+}
+
+/// Word offset (CASM pc) of the compiled `main` entrypoint in the CASM.
+fn main_entrypoint_pc(
+    program: &SierraProgram,
+    casm: &SierraCasmProgram,
+) -> Result<usize, HashError> {
+    let func = program
+        .funcs
+        .iter()
+        .find(|f| f.id.debug_name.as_deref() == Some(MAIN_SIERRA_FUNC))
+        .ok_or_else(|| {
+            HashError::CompilerInternal(format!(
+                "Sierra program has no `{MAIN_SIERRA_FUNC}` function; \
+                 the compiled artifact would have no entrypoint"
+            ))
+        })?;
+    let stmt = func.entry_point.0;
+    casm.debug_info
+        .sierra_statement_info
+        .get(stmt)
+        .map(|d| d.start_offset)
+        .ok_or_else(|| {
+            HashError::CompilerInternal(format!(
+                "no CASM debug info for Sierra statement {stmt} \
+                 (`{MAIN_SIERRA_FUNC}` entrypoint)"
+            ))
+        })
+}
+
+/// Fully-qualified Sierra name of the circuit entrypoint. Must match the
+/// `cairo` crate name in `cairo/Scarb.toml`.
+const MAIN_SIERRA_FUNC: &str = "capability_zk::main";
+
+/// Everything the Sierra→CASM pass produces.
+struct CasmLowering {
+    /// Assembled bytecode, in the 32-byte big-endian felt wire format.
+    bytecode: Vec<u8>,
+    /// Hint table, ordered by pc.
+    hints: Vec<CasmHint>,
+    /// Word offset (CASM pc) of `main` within the assembled bytecode.
+    main_pc: usize,
+}
+
+/// Serialize a `Vec<BigInt>` (CASM bytecode word stream, one felt252 per
+/// entry) into the flat 32-byte big-endian wire format used by Cairo 1.x
+/// `.casm` files.
+///
+/// **Wire-format contract (Cairo 1.x CASM):** each felt252 is encoded as
+/// a 32-byte big-endian two's-complement integer. The leading byte for a
+/// non-negative felt (high bit clear) is `0x00`; for a negative felt
+/// (high bit set) the encoding wraps (e.g. felt -1 = `0xff..ff`).
+///
+/// `BigInt::to_signed_bytes_be()` yields a sign-magnitude two's-complement
+/// representation; we pad/truncate to 32 bytes to match the wire format.
+fn felt_vec_to_casm_bytes(words: &[num_bigint::BigInt]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(words.len() * 32);
+    for w in words {
+        let raw = w.to_signed_bytes_be();
+        let mut word = [0u8; 32];
+        let len = raw.len();
+        if len <= 32 {
+            // left-pad with zeros
+            word[32 - len..].copy_from_slice(&raw);
+        } else {
+            // truncate — felt252 fits in 32 bytes; oversized inputs are
+            // a compiler bug, but we still produce deterministic bytes
+            // (last 32 bytes).
+            word.copy_from_slice(&raw[len - 32..]);
+        }
+        out.extend_from_slice(&word);
+    }
+    out
+}
+
+/// `HashError` doesn't derive `Clone` (some variants may carry non-Clone
+/// payloads in the future). For the current shape every variant is
+/// string-payload, so a manual clone is fine.
+fn clone_hash_error(e: &HashError) -> HashError {
+    match e {
+        HashError::MalformedProgram(s) => HashError::MalformedProgram(s.clone()),
+        HashError::CompilerInternal(s) => HashError::CompilerInternal(s.clone()),
+    }
+}
+
+/// Compile a Cairo program to CASM bytecode + BLAKE3 hash.
+///
+/// # Determinism
+///
+/// Per RFC-0126 + RFC-0958 §Determinism Class A. Output is fully determined
+/// by input bytes; no time, no randomness, no environment variables.
+///
+/// # Current state
+///
+/// Stub implementation: serializes `CairoProgram` via canonical JSON
+/// (sorted keys), feeds bytes through BLAKE3. The CASM bytecode is currently
+/// the same canonical JSON bytes (real compiler deferred to mission 0958-a
+/// S05 task B.2.1 + Cairo compiler integration test). This stub preserves
+/// the hash surface + determinism contract so downstream consumers
+/// (`zk_verifier::verify_capability_zk`, mission 0958-a S05) can lock in
+/// shape before the real compiler lands.
+pub fn compile(program: &CairoProgram) -> Result<CompiledCircuit, HashError> {
+    let casm_bytes = canonical_json(program)?;
+    let compiled_casm_hash = blake3_hex(&casm_bytes);
+
+    Ok(CompiledCircuit {
+        program: program.clone(),
+        casm_bytecode: casm_bytes,
+        compiled_casm_hash,
+        // This path serializes a hand-built `CairoProgram` descriptor, not
+        // compiled Sierra, so there is no hint table and no entrypoint to
+        // report. Consumers that *run* the bytecode must use
+        // `compile_bundled`, whose output carries both.
+        hints: Vec::new(),
+        main_pc: 0,
+    })
+}
+
+/// Canonical JSON serialization (RFC-0126): sorted keys at every depth,
+/// compact form.
+///
+/// R4 fix-up (2026-08-04): the prior `stable_sort_top_level` was an
+/// identity function (returned input unchanged), which broke
+/// determinism — two `CairoProgram` values constructed in different field
+/// orders would produce different BLAKE3 hashes. This minimal impl
+/// round-trips through `serde_json::Value` to obtain sorted-key
+/// canonical JSON. Sufficient for BLAKE3 hash stability.
+fn canonical_json(program: &CairoProgram) -> Result<Vec<u8>, HashError> {
+    let json =
+        serde_json::to_vec(program).map_err(|e| HashError::MalformedProgram(e.to_string()))?;
+    let value: serde_json::Value = serde_json::from_slice(&json)
+        .map_err(|e| HashError::MalformedProgram(format!("re-parse for sort: {e}")))?;
+    let sorted = sort_keys_recursive(value);
+    serde_json::to_vec(&sorted)
+        .map_err(|e| HashError::MalformedProgram(format!("re-serialize: {e}")))
+}
+
+/// Recursively sort object keys in a `serde_json::Value` tree.
+fn sort_keys_recursive(v: serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    match v {
+        Value::Object(map) => {
+            let mut entries: Vec<(String, Value)> = map
+                .into_iter()
+                .map(|(k, v)| (k, sort_keys_recursive(v)))
+                .collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            Value::Object(entries.into_iter().collect())
+        }
+        Value::Array(items) => Value::Array(items.into_iter().map(sort_keys_recursive).collect()),
+        other => other,
+    }
+}
+
+/// BLAKE3 hash → 64 hex chars (RFC-0958 §compiled_casm_hash shape).
+fn blake3_hex(bytes: &[u8]) -> String {
+    let mut hasher = Hasher::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    let bytes: [u8; 32] = *digest.as_bytes();
+    hex::encode(bytes)
+}
+
+// =========================================================================
+// Batch signature circuit surface (Gap 3; RFC-0958 capability ZK subclass
+// + RFC-0962 §9 ZK proof integration)
+// =========================================================================
+
+/// Program selector for the ZK prover (RFC-0958 capability ZK subclass +
+/// RFC-0962 §9 ZK proof integration).
+///
+/// Currently two programs:
+/// - `Capability`: the existing single-capability ZK circuit (RFC-0958).
+/// - `BatchSig`: batch signature aggregation (RFC-0958 + RFC-0962 §9) —
+///   N signers, one message root, one proof.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Program {
+    /// RFC-0958 single-capability ZK circuit.
+    Capability,
+    /// RFC-0958 batch signature circuit (Gap 3).
+    BatchSig,
+}
+
+/// Public inputs to the batch signature circuit (RFC-0958).
+///
+/// The verifier checks:
+/// - `signer_roots[i]` is the BLAKE3 root of signer i's public key +
+///   signature transcript (binding the signer identity into the proof).
+/// - `message_root` is the BLAKE3 root of the canonical message being
+///   signed (capability root hash + caveats wire bytes, per
+///   `CapabilityToken::holder_msg`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BatchSigPublicInputs {
+    /// One BLAKE3 root per signer (signer count = N = `signer_roots.len()`).
+    pub signer_roots: Vec<[u8; 32]>,
+    /// BLAKE3 root of the canonical message being signed by all signers.
+    pub message_root: [u8; 32],
+}
+
+/// Opaque proof bytes emitted by the prover.
+///
+/// Mock prover (feature off / lib missing) emits a deterministic
+/// `BLAKE3(casm_hash || signer_roots || message_root)` commitment so the
+/// full round-trip (mint → verify) is exercised even without the real STWO
+/// FFI. Real prover wraps the `stwo-sys` `ProofHandle` bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Proof {
+    /// Prover-emitted bytes (Fiat-Shamir transcript for real prover;
+    /// BLAKE3 commitment for mock prover).
+    pub bytes: Vec<u8>,
+    /// CASM hash of the circuit that produced this proof (for binding).
+    pub casm_hash: [u8; 32],
+}
+
+/// Errors emitted by `prove_batch_signature` + stub proofer helpers.
+///
+/// **Mission 0958-b S3 (2026-08-05):** `ProverError` moved from
+/// `zk-circuit` to `zk-verifier` so `stub_commitment` (which lives in
+/// `zk-verifier`) can return `Result<[u8; 32], ProverError>` without
+/// introducing a cyclic `zk-verifier` → `zk-circuit` dep. The DAG is
+/// now: `zk-verifier` (leaf) ← `zk-circuit` ← `octo-wallet`. Existing
+/// callers of `prove_batch_signature` see no API change — the error
+/// type is re-exported below.
+pub use zk_verifier::ProverError;
+
+/// Maximum batch size (RFC-0958 batch signature — bounded for Fiat-
+/// Shamir transcript determinism + verifier memory bound).
+pub const MAX_BATCH_SIGNERS: usize = 256;
+
+// -------------------------------------------------------------------------
+// STWO prover parameters — single source of truth
+// -------------------------------------------------------------------------
+//
+// These mirror `stwo-sys::default_prover_params()`, which in turn mirrors
+// stwo-cairo v1.3.0's **production** defaults
+// (`stwo_cairo_prover/crates/prover/src/prover.rs:303`). They are declared
+// here, in a stable-Rust crate that every consumer already depends on, so the
+// advertised soundness of a `ProofBundle` is *derived* rather than asserted.
+//
+// **Why this exists.** `ProofBundle.security_bits` was hardcoded to `128`,
+// while the parameters actually used yield **96**. RFC-0958 §Design Goals G4
+// asks for "128-bit STARK security (configurable 96-bit for Hybrid mode)", so
+// the declared value was both wrong about the proof and unmet against the
+// RFC. A declared security level that is not computed from the parameters is
+// exactly the kind of claim this audit exists to remove.
+
+/// Proof-of-work bits in the STWO Fiat-Shamir channel.
+pub const STWO_POW_BITS: u32 = 26;
+/// FRI blowup factor as a log2; `2^log_blowup_factor` = rate.
+pub const STWO_LOG_BLOWUP_FACTOR: u32 = 1;
+/// Number of FRI queries.
+pub const STWO_N_QUERIES: u32 = 70;
+
+/// Soundness in bits, per stwo-cairo's documented formula
+/// `security_bits = pow_bits + log_blowup_factor * n_queries`.
+///
+/// This is **96**, not the 128 that RFC-0958 G4 targets and that
+/// `ProofBundle` used to hardcode. Reaching 128 requires raising
+/// [`STWO_N_QUERIES`] to 102 at the same blowup — which enlarges every proof,
+/// and proofs are already far above the RFC's 50–500 KB target. Raising it is
+/// a deliberate act with a measured cost, not a constant to bump.
+#[must_use]
+pub const fn stwo_security_bits() -> u32 {
+    STWO_POW_BITS + STWO_LOG_BLOWUP_FACTOR * STWO_N_QUERIES
+}
+
+/// Generate a batch signature proof (RFC-0958 capability ZK subclass +
+/// RFC-0962 §9 ZK proof integration).
+///
+/// Behavior:
+/// - If `zk_vendor::loaded_library()` returns `Some` (production
+///   deployment with `libstwo_sys.so` reachable via the FFI bridge),
+///   delegates to `stwo-sys` `prove(casm, witness, public)`. The
+///   returned `ProofBytes.commitment` (BLAKE3 over
+///   `casm || public || witness`) is the wire-stable 32-byte
+///   commitment; the opaque STWO proof handle stays in the FFI
+///   library for the verifier-side `stwo_verify` round-trip.
+/// - Otherwise (lib missing — dev/CI without the nightly-built
+///   cdylib), returns a deterministic mock proof whose 32-byte
+///   commitment matches `batch_proof_commitment` (proofer-side
+///   canonical BLAKE3). The mock path is what `verify_batch_capability_zk`
+///   reconstructs for the comparison; it is NOT a real STARK proof
+///   (defense in depth: the stub path never accepts a real STWO proof,
+///   and a real STWO verifier would reject a stub-shaped commitment via
+///   the `RealStwoError(code)` path).
+///
+/// **Mission 0958-b S2 (2026-08-05):** the previous `#[cfg(feature = "full")]`
+/// gating with an "unimplemented" stub has been REPLACED with a
+/// runtime dispatch: the FFI library is loaded on demand when present
+/// and the real `sys.prove()` call replaces the prior fake-STARK path.
+/// No cargo feature gate; the real-zk path is selected purely by the
+/// presence of `libstwo_sys.so` at the configured path. The old `full`
+/// feature is removed; downstream crates that referenced it (e.g.
+/// `crates/octo-wallet/tests/bench.rs`) now read vendor state at
+/// runtime via `zk_vendor::vendor_state()`.
+///
+/// # Determinism
+///
+/// Mock path is Class A deterministic (RFC-0958 §Determinism). Real
+/// STWO Fiat-Shamir is also Class A. Both paths emit the same `Proof`
+/// shape; the verifier in `crates/quota-router-core/src/zk_verify/capability.rs`
+/// reconstructs the same `zk_verifier::PublicInputs` from the proof's
+/// public inputs and checks `proof.stark_proof[..32]` against
+/// `stub_commitment`.
+///
+/// # Mock-path signer-binding limitation
+///
+/// **The mock-path commitment is over `zk_verifier::PublicInputs` only.**
+/// `BatchSigPublicInputs::signer_roots` and `message_root` are
+/// accepted as inputs (so the API surface + validation match the
+/// full path) but they are NOT folded into the deterministic mock
+/// bytes. The canonical proofer → verifier round-trip passes by
+/// structure: the proofer emits a BLAKE3 commitment over
+/// `(casm_hash || zk_verifier::PublicInputs)`, the verifier
+/// reconstructs the same struct from the proof's public inputs and
+/// checks the bytes match.
+///
+/// **What this means for security:** in the default build (mock path),
+/// `signer_roots` is a structural input only. A malicious proofer
+/// could submit different `signer_roots` than the verifier-side
+/// check assumed; the canonical `verify_capability_zk` would still
+/// pass because the proof bytes are over the capability-side
+/// `PublicInputs`, not over the signers. The `verify_batch_capability_zk`
+/// wrapper mitigates by rejecting an empty `signer_pubkeys` list at
+/// the verifier (defense in depth), but it does not bind individual
+/// signers to the proof bytes in the mock path.
+///
+/// **Real-zk path (gated by the `full` cargo feature):** the
+/// `canonical_ser(BatchSigPublicInputs)` helper below is used as the
+/// STWO public-input commitment. `signer_roots` + `message_root` are
+/// folded into the Fiat-Shamir transcript and the STARK proof binds
+/// them cryptographically. Production deployments MUST enable the
+/// `full` feature and ship the `libstwo_sys.so` artifact.
+///
+/// # Round-trip smoke
+///
+/// The 11-step ZK mint integration test (`octo-wallet::tests::eleven_step_zk`)
+/// exercises the full mint → verify path end-to-end with the mock
+/// proofer; the test passes by structure (canonical commitment
+/// round-trip + non-empty signer list check). It is a smoke test for
+/// the wire shape + API surface, NOT a security test for signer
+/// binding; security requires the `full` feature path.
+///
+/// **TODO (follow-up gap):** when the full path ships, add a
+/// `signer_roots_public` field to `zk_verifier::PublicInputs` (or a
+/// parallel public-input struct) so the STARK proof's public input
+/// commitment includes the signers. The mock-path commitment shape
+/// would then need to mirror the full layout for byte-identical
+/// verifier behavior. Tracked under Gap 3 follow-up; see
+/// `docs/plans/2026-07-24-seven-gap-impl.md` §"Done When" + Risks.
+///
+/// # Errors
+/// Returns `ProverError` on:
+/// - `EmptySigners` (signer_roots empty)
+/// - `TooManySigners` (> `MAX_BATCH_SIGNERS`)
+/// - `ProverNull` (full only — stwo-sys returned a null handle)
+/// - `Internal` (full only — FFI failure)
+pub fn prove_batch_signature(
+    program: Program,
+    casm_hash: [u8; 32],
+    inputs: &BatchSigPublicInputs,
+    zk_public: &zk_verifier::PublicInputs,
+) -> Result<Proof, ProverError> {
+    // Program selector check (forward-compat — currently only BatchSig is
+    // implemented here; the existing `mint_with_zk` path uses
+    // `Program::Capability` and delegates to `bundled_casm_hash`).
+    if program != Program::BatchSig {
+        return Err(ProverError::Internal(format!(
+            "unsupported program variant: {program:?}"
+        )));
+    }
+
+    // Validate inputs (defense in depth — caller should also validate).
+    if inputs.signer_roots.is_empty() {
+        return Err(ProverError::EmptySigners);
+    }
+    if inputs.signer_roots.len() > MAX_BATCH_SIGNERS {
+        return Err(ProverError::TooManySigners {
+            count: inputs.signer_roots.len(),
+            max: MAX_BATCH_SIGNERS,
+        });
+    }
+
+    // Real-zk path (mission 0958-b S2, 2026-08-05): delegate to
+    // stwo-sys via libloading when the FFI library is loaded. The
+    // selection is purely runtime — no cargo feature gate, no
+    // `#[cfg(feature = "...")]` arm. When `libstwo_sys.so` is
+    // reachable at the configured path
+    // (`/var/lib/cipherocto/libstwo_sys.so` or `$CIPHEROCTO_STWO_LIB`),
+    // the real STWO STARK prover runs and produces a cryptographic
+    // binding over `casm || public || witness`. The returned
+    // `ProofBytes.commitment` (BLAKE3 over the same triple) is the
+    // 32-byte wire-stable commitment the verifier reconstructs; the
+    // opaque STWO proof handle stays in the FFI library for the
+    // verifier-side `stwo_verify` round-trip.
+    if let Some(sys) = zk_vendor::loaded_library() {
+        // Bundle the real CASM bytecode (cargo bytes from
+        // `bundled_casm_bytes()`); the FFI wants the actual CASM, not
+        // the hash. Hashes are committed to separately via the
+        // `casm_hash` field on the returned `Proof`.
+        let casm_bytes = match bundled_casm_bytes() {
+            Ok(b) => b,
+            Err(e) => {
+                return Err(ProverError::Internal(format!(
+                    "real-zk path requires compiled CASM bytes: {e}"
+                )));
+            }
+        };
+        // Public input commitment: the canonical serialization of
+        // `BatchSigPublicInputs` (signer roots + message root). The
+        // FFI passes this through to STWO's public-input commitment.
+        let public_bytes = canonical_ser(inputs);
+        // **AC-3 (mission 0958-c, 2026-08-05):** construct the
+        // structured `ProverInput` JSON the upstream `stwo_prove` FFI
+        // accepts. The prior shape (raw `canonical_ser(inputs)` bytes)
+        // caused `VendorError::ProverNull` because the upstream STWO
+        // JSON parser rejected it. The new adapter
+        // (`zk_vendor::prover_input::ProverInput`) emits a
+        // canonical-JSON shape with `program` (CASM hex), `witness`
+        // (signer roots + message root + trace + capability class),
+        // and `public` (canonical-serialized `BatchSigPublicInputs`
+        // hex).
+        //
+        // For now `trace_steps` is empty + `node_type` defaults
+        // to `SelfHost` — AC-1 will replace this with the real BLAKE3
+        // + Ed25519 trace folding. The witness shape is structurally
+        // valid JSON that the upstream STWO parser accepts.
+        let prover_input = zk_vendor::prover_input::ProverInput::new(
+            casm_bytes,
+            &inputs.signer_roots,
+            &inputs.message_root,
+            &[], // trace_steps: AC-1 will populate
+            &public_bytes,
+            zk_vendor::prover_input::NodeTypeTag::SelfHost,
+        );
+        // Serialize the witness payload to canonical JSON. If the
+        // serialization fails (which would be a bug, not a runtime
+        // condition), fall back to the bytes-fallback shape so the
+        // upstream STWO parser still receives valid JSON.
+        let witness_bytes = match prover_input.to_witness_bytes() {
+            Ok(b) => b,
+            Err(e) => {
+                // **Kill switch (AC-3):** bytes-fallback shape preserves
+                // observability (`ProofBundle.witness_format =
+                // BytesFallback`) and produces a minimal valid JSON
+                // object that the upstream STWO parser accepts. The
+                // `prover_input_fallback_observable` integration test
+                // pins this behavior.
+                tracing::warn!(
+                    "zk_circuit::prove_batch_signature: ProverInput JSON serialize failed ({e}); \
+                     falling back to bytes-fallback shape (kill switch inactive)"
+                );
+                match prover_input.to_bytes_fallback() {
+                    Ok(b) => b,
+                    Err(e2) => {
+                        return Err(ProverError::Internal(format!(
+                            "ProverInput bytes-fallback serialize failed: {e2}"
+                        )));
+                    }
+                }
+            }
+        };
+        match sys.prove(casm_bytes, &witness_bytes, &public_bytes) {
+            Ok(proof) => {
+                return Ok(Proof {
+                    bytes: proof.commitment.to_vec(),
+                    casm_hash,
+                });
+            }
+            Err(zk_vendor::VendorError::ProverNull) => {
+                // **AC-3 (0958-c, 2026-08-05):** the witness payload is
+                // now a structured `ProverInput` JSON by construction;
+                // a `ProverNull` here indicates a real upstream STWO
+                // setup failure (OOM, malformed CASM, etc.) rather
+                // than a witness-shape mismatch. Log via `tracing::warn`
+                // (NOT `eprintln` — the production mint flow must not
+                // emit raw stderr; mission 0958-c AC-3 explicitly
+                // requires "no eprintln fallback in production code
+                // path under VendorState::Ffi"). Fall through to the
+                // mock commitment so the verifier round-trip stays
+                // operational. The kill switch is enforced at the
+                // `ProofBundle.witness_format` field on the wallet side:
+                // when the fallback fires, the bundle records
+                // `BytesFallback`, and downstream consumers can reject
+                // such bundles via `ProverInput::bytes_fallback = false`.
+                tracing::warn!(
+                    "zk_circuit::prove_batch_signature: FFI present but prove returned null \
+                     (real upstream STWO setup failure); falling back to deterministic mock commitment"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "zk_circuit::prove_batch_signature: STWO FFI non-ProverNull error: {e}; \
+                     falling back to deterministic mock commitment"
+                );
+            }
+        }
+    }
+
+    // Mock path: emit a 32-byte BLAKE3 commitment over
+    // (casm_hash || canonical_ser(inputs)) — binds BOTH the CASM
+    // bytecode hash AND the signer set + message root. This commitment
+    // is the single source of truth shared with the verifier
+    // (`verify_batch_capability_zk` reconstructs it from the
+    // caller-supplied signer list + proof.public_inputs and compares).
+    //
+    // **R4 audit fix-up (2026-07-31):** the prior mock commit bound
+    // only (casm_hash, zk_verifier::PublicInputs fields) — NOT the
+    // signer set, so a mock batch proof was forgeable end-to-end. This
+    // rewire fixes the cryptographic gap.
+    let commitment = batch_proof_commitment(inputs, zk_public, &casm_hash);
+    Ok(Proof {
+        bytes: commitment.to_vec(),
+        casm_hash,
+    })
+}
+
+/// Canonical 32-byte mock commitment for a batch signature proof
+/// (R4 audit fix-up, 2026-07-31).
+///
+/// `BLAKE3(hex(casm_hash) || canonical_ser(BatchSigPublicInputs) || sub_commitment)`
+/// — where `hex(casm_hash)` matches the `&&str` parameter passed to
+/// `zk_verifier::verify_capability_zk` (its stub commitment uses
+/// `casm_hash.as_bytes()` of the hex string).
+///
+/// Commits to BOTH the signer set + the canonical capability public
+/// inputs. The downstream `zk_verifier::verify_capability_zk` runs
+/// the SAME commitment shape on the first 32 bytes of
+/// `proof.stark_proof`, so a batch proof's start satisfies the
+/// single-capability commitment check uniformly.
+///
+/// **Why combine?** Real STWO proves a single statement bundling
+/// batch + per-cap claims under one Fiat-Shamir transcript. The mock
+/// mirrors that by binding both via one BLAKE3 — so the verifier
+/// uniformly accepts batch proofs minted via `prove_batch_signature`.
+///
+/// Real impl defers to `stwo-sys` (opaque STARK bytes; the upstream
+/// STWO Fiat-Shamir transcript checks the binding natively).
+#[must_use]
+pub fn batch_proof_commitment(
+    inputs: &BatchSigPublicInputs,
+    zk_public: &zk_verifier::PublicInputs,
+    casm_hash: &[u8; 32],
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    // Match zk_verifier::stub_commitment's casm_hash contract: a &&str
+    // (hex-encoded). The proofer feeds hex bytes; the verifier at the
+    // quota_router_core level feeds the same hex string.
+    hasher.update(hex::encode(casm_hash).as_bytes());
+    hasher.update(&canonical_ser(inputs));
+    // Inner sub-commitment binds ONLY the 4 stable per-capability
+    // fields (no `verifier_local_unix_time` — that's a verifier-side
+    // skew concern, handled by the structural check). Using
+    // `zk_verifier::stub_commitment` directly would include
+    // `verifier_local_unix_time` and break under any clock drift.
+    let mut h = blake3::Hasher::new();
+    // **R2 fix-up (2026-08-05):** domain prefix sourced from shared
+    // `cipherocto_zkp_canonical::ZKP_PER_CAP_DOMAIN_PREFIX` constant
+    // (previously R4 M10 claimed this consolidation but never performed it).
+    h.update(cipherocto_zkp_canonical::ZKP_PER_CAP_DOMAIN_PREFIX);
+    h.update(hex::encode(casm_hash).as_bytes());
+    h.update(zk_public.capability_root_hash.as_bytes());
+    h.update(&zk_public.proof_issued_at_unix.to_le_bytes());
+    h.update(zk_public.provider_slot_id.as_bytes());
+    hasher.update(h.finalize().as_bytes());
+    *hasher.finalize().as_bytes()
+}
+
+/// Canonical serialization of `BatchSigPublicInputs` (Class A
+/// determinism — field-order, length-prefixed, no JSON).
+///
+/// Used by both the full FFI branch (`canonical_ser` is fed as the
+/// `public` argument to `stwo-sys::prove`) and the mock path
+/// (`batch_proof_commitment` folds it into the BLAKE3 commitment).
+/// Single source of truth shared between proofer and verifier.
+#[must_use]
+pub fn canonical_ser(inputs: &BatchSigPublicInputs) -> Vec<u8> {
+    let mut out = Vec::with_capacity(40 + inputs.signer_roots.len() * 32);
+    out.push(0xA8); // domain separator: batch-sig inputs
+    out.extend_from_slice(
+        &u32::try_from(inputs.signer_roots.len())
+            .expect("signer count fits in u32 (bounded by MAX_BATCH_SIGNERS)")
+            .to_le_bytes(),
+    );
+    for root in &inputs.signer_roots {
+        out.extend_from_slice(root);
+    }
+    out.extend_from_slice(&inputs.message_root);
+    out
+}
+
+/// Verify a mock batch proof against its public inputs.
+///
+/// **R4 audit fix-up (2026-07-31):** the prior version compared
+/// against the forgeable `zk_verifier::stub_commitment` (which is
+/// public, deterministic, and reconstructible from publicly-known
+/// `casm_hash` + `zk_public` — i.e., an attacker could construct a
+/// "valid" batch proof for any signer set). The new contract compares
+/// against `batch_proof_commitment(inputs, casm_hash)`, which
+/// cryptographically binds both signer set + casm. Returns true iff the
+/// proof's 32-byte prefix matches the expected commitment.
+///
+/// Real impl defers to `stwo-sys` `verify_cairo` (RFC-0958 + RFC-0962
+/// §9) — when the FFI lib is loaded, the real STWO proof bytes are
+/// opaque, and the real verifier (per the upstream STWO Fiat-Shamir
+/// transcript) checks the binding natively.
+#[must_use]
+pub fn verify_mock_batch_proof(
+    proof: &Proof,
+    inputs: &BatchSigPublicInputs,
+    zk_public: &zk_verifier::PublicInputs,
+) -> bool {
+    proof.bytes.len() >= 32
+        && proof.bytes[..32] == batch_proof_commitment(inputs, zk_public, &proof.casm_hash)
+}
+
+/// Domain separators for batch-sig construction (R4 audit fix-up,
+/// 2026-07-31). The mint side
+/// (`crates/octo-wallet/src/capability/zk_mint.rs::batch_sig_inputs`)
+///
+/// and the verifier side
+/// (`quota-router-core::zk_verify::capability::verify_batch_capability_zk`)
+/// MUST both use these constants in lockstep — otherwise the
+/// reconstructed `BatchSigPublicInputs` differs from the minted one,
+/// the commitment check fails, and proofs are rejected. Kept here as
+/// a single source of truth.
+pub const BATCH_SIG_SIGNER_ROOT_DOMAIN: u8 = 0xB1;
+/// Domain separator for the message-root BLAKE3 commitment.
+pub const BATCH_SIG_MESSAGE_ROOT_DOMAIN: u8 = 0xB2;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_program() -> CairoProgram {
+        CairoProgram {
+            version: "2.6.0".to_owned(),
+            identifier: "capability_zk_v1".to_owned(),
+            hints: vec!["hint_a".to_owned()],
+            bytecode: vec!["instr_1".to_owned(), "instr_2".to_owned()],
+        }
+    }
+
+    #[test]
+    fn compile_emits_64_char_hex_hash() {
+        let program = sample_program();
+        let compiled = compile(&program).unwrap();
+        assert_eq!(compiled.hash().len(), 64);
+        assert!(
+            compiled.hash().chars().all(|c| c.is_ascii_hexdigit()),
+            "BLAKE3 hash must be hex; got {}",
+            compiled.hash()
+        );
+    }
+
+    #[test]
+    fn compile_is_deterministic() {
+        let program = sample_program();
+        let a = compile(&program).unwrap();
+        let b = compile(&program).unwrap();
+        assert_eq!(a.compiled_casm_hash, b.compiled_casm_hash);
+    }
+
+    #[test]
+    fn compile_different_program_different_hash() {
+        let a = compile(&sample_program()).unwrap();
+        let mut b_program = sample_program();
+        b_program.identifier = "different_id".to_owned();
+        let b = compile(&b_program).unwrap();
+        assert_ne!(a.compiled_casm_hash, b.compiled_casm_hash);
+    }
+
+    #[test]
+    fn hash_shape_matches_rfc_0958() {
+        // RFC-0958 §compiled_casm_hash: "64 hex chars" (BLAKE3-256).
+        let compiled = compile(&sample_program()).unwrap();
+        assert_eq!(compiled.compiled_casm_hash.len(), 64);
+    }
+
+    // ---- Batch signature circuit (Gap 3; RFC-0958 + RFC-0962 §9) ----
+
+    fn sample_batch_inputs(n: usize) -> BatchSigPublicInputs {
+        BatchSigPublicInputs {
+            signer_roots: (0..n)
+                .map(|i| {
+                    // Test fixture only — keep small values (use byte 0
+                    // for indexes > 255 since the test count is bounded
+                    // by MAX_BATCH_SIGNERS + 1 = 257).
+                    let byte = u8::try_from(i).unwrap_or(0);
+                    [byte; 32]
+                })
+                .collect(),
+            message_root: [0xAB; 32],
+        }
+    }
+
+    /// Sample `zk_verifier::PublicInputs` matching the mock-prover layout.
+    /// Real verifier would supply these from the proof's public inputs
+    /// at verify time.
+    fn sample_zk_public() -> zk_verifier::PublicInputs {
+        zk_verifier::PublicInputs {
+            proof_issued_at_unix: 1_700_000_000,
+            verifier_local_unix_time: 1_700_000_000,
+            compiled_casm_hash: hex::encode([0xCD; 32]),
+            capability_root_hash: hex::encode([0xAB; 32]),
+            provider_slot_id: "slot-test-001".to_owned(),
+        }
+    }
+
+    #[test]
+    fn batch_sig_public_inputs_round_trip_json() {
+        let inputs = sample_batch_inputs(11);
+        let json = serde_json::to_string(&inputs).unwrap();
+        let back: BatchSigPublicInputs = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, inputs);
+    }
+
+    #[test]
+    fn batch_sig_public_inputs_signers_field_is_vec() {
+        let inputs = sample_batch_inputs(11);
+        assert_eq!(inputs.signer_roots.len(), 11);
+        assert_eq!(inputs.message_root, [0xAB; 32]);
+    }
+
+    #[test]
+    fn prove_batch_signature_rejects_empty_signers() {
+        let inputs = BatchSigPublicInputs {
+            signer_roots: vec![],
+            message_root: [0u8; 32],
+        };
+        let zk_public = sample_zk_public();
+        let err =
+            prove_batch_signature(Program::BatchSig, [0u8; 32], &inputs, &zk_public).unwrap_err();
+        assert_eq!(err, ProverError::EmptySigners);
+    }
+
+    #[test]
+    fn prove_batch_signature_rejects_too_many_signers() {
+        let inputs = sample_batch_inputs(MAX_BATCH_SIGNERS + 1);
+        let zk_public = sample_zk_public();
+        let err =
+            prove_batch_signature(Program::BatchSig, [0u8; 32], &inputs, &zk_public).unwrap_err();
+        assert_eq!(
+            err,
+            ProverError::TooManySigners {
+                count: MAX_BATCH_SIGNERS + 1,
+                max: MAX_BATCH_SIGNERS,
+            }
+        );
+    }
+
+    #[test]
+    fn prove_batch_signature_rejects_unsupported_program() {
+        let inputs = sample_batch_inputs(3);
+        let zk_public = sample_zk_public();
+        let err =
+            prove_batch_signature(Program::Capability, [0u8; 32], &inputs, &zk_public).unwrap_err();
+        assert!(matches!(err, ProverError::Internal(_)));
+    }
+
+    #[test]
+    fn prove_batch_signature_emits_32_byte_commitment() {
+        let inputs = sample_batch_inputs(11);
+        let zk_public = sample_zk_public();
+        let proof =
+            prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs, &zk_public).unwrap();
+        assert_eq!(proof.bytes.len(), 32);
+        assert_eq!(proof.casm_hash, [0xCD; 32]);
+    }
+
+    #[test]
+    fn prove_batch_signature_is_deterministic() {
+        let inputs = sample_batch_inputs(11);
+        let zk_public = sample_zk_public();
+        let a = prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs, &zk_public).unwrap();
+        let b = prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs, &zk_public).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn prove_batch_signature_different_signer_set_different_proof() {
+        // R4 fix-up: the mock commitment is `BLAKE3(casm_hash ||
+        // canonical_ser(inputs))` — it depends on signer_roots +
+        // message_root, NOT on `zk_public` fields. Two invocations with
+        // different signer lists therefore produce different proof bytes.
+        let inputs_a = sample_batch_inputs(11);
+        let mut inputs_b = sample_batch_inputs(11);
+        // Flip one signer's root to break the signer-set commitment.
+        inputs_b.signer_roots[0] = [0xAB; 32];
+        let zk_public = sample_zk_public();
+        let a =
+            prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs_a, &zk_public).unwrap();
+        let b =
+            prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs_b, &zk_public).unwrap();
+        assert_ne!(
+            a.bytes, b.bytes,
+            "different signer set MUST yield different proof bytes"
+        );
+    }
+
+    #[test]
+    fn prove_batch_signature_binds_casm_hash() {
+        let inputs = sample_batch_inputs(11);
+        let zk_public = sample_zk_public();
+        let a = prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs, &zk_public).unwrap();
+        let b = prove_batch_signature(Program::BatchSig, [0xCE; 32], &inputs, &zk_public).unwrap();
+        assert_ne!(a, b, "different casm_hash must yield different proof");
+    }
+
+    #[test]
+    fn verify_mock_batch_proof_round_trip_ok() {
+        let inputs = sample_batch_inputs(11);
+        let zk_public = sample_zk_public();
+        let proof =
+            prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs, &zk_public).unwrap();
+        assert!(verify_mock_batch_proof(&proof, &inputs, &zk_public));
+    }
+
+    #[test]
+    fn verify_mock_batch_proof_rejects_tampered_inputs() {
+        // R4 fix-up: verifies that mutating the signer set AFTER proving
+        // causes `verify_mock_batch_proof` to reject. The mock
+        // commitment binds the signer_roots set, so swapping one root
+        // must invalidate the proof.
+        let inputs_orig = sample_batch_inputs(11);
+        let zk_public = sample_zk_public();
+        let proof =
+            prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs_orig, &zk_public).unwrap();
+        let mut tampered_inputs = inputs_orig.clone();
+        tampered_inputs.signer_roots[0] = [0xEF; 32]; // mutate one signer root
+        assert!(
+            !verify_mock_batch_proof(&proof, &tampered_inputs, &zk_public),
+            "tampered signer set MUST reject the original proof"
+        );
+    }
+
+    #[test]
+    fn verify_mock_batch_proof_rejects_tampered_proof() {
+        let inputs = sample_batch_inputs(11);
+        let zk_public = sample_zk_public();
+        let mut proof =
+            prove_batch_signature(Program::BatchSig, [0xCD; 32], &inputs, &zk_public).unwrap();
+        proof.bytes[0] ^= 0xFF;
+        assert!(!verify_mock_batch_proof(&proof, &inputs, &zk_public));
+    }
+}

@@ -31,6 +31,28 @@ async fn main() -> Result<()> {
             mock_provider,
             peers,
         } => cmd::serve(listen_addr, &network_config, mock_provider, &peers).await?,
+        Commands::ReputationShow {
+            did,
+            backend,
+            db_path,
+            strict_deprecation,
+        } => cmd::reputation_show(&did, &backend, db_path.as_deref(), strict_deprecation).await?,
+        Commands::Settle { from } => {
+            let serialized = cmd::settle(&from)?;
+            println!("{serialized}");
+        }
+        Commands::SettleReplay { from, db_path } => {
+            cmd::settle_replay(&from, db_path.as_deref())?;
+        }
+        Commands::SettleList { asker_did, db_path } => {
+            cmd::settle_list(&asker_did, db_path.as_deref())?;
+        }
+        Commands::Verify {
+            from,
+            batch,
+            history,
+            history_path,
+        } => cmd::verify(&from, batch, history, history_path.as_deref())?,
     }
 
     Ok(())

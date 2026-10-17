@@ -369,6 +369,10 @@ impl std::error::Error for AdapterLoadError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dot::adapters::{
+        BroadcastDomainId, DeliveryReceipt, DeterministicEnvelope, PlatformAdapterError,
+        RawPlatformMessage,
+    };
 
     #[test]
     fn test_registry_empty() {
@@ -392,10 +396,103 @@ mod tests {
         assert!(report.is_empty());
     }
 
+    /// Minimal `PlatformAdapter` whose only exercised method is
+    /// `platform_type()`. `register_builtin` reads exactly that plus
+    /// `capabilities()`; everything else is unreachable from these tests.
+    struct StubAdapter(crate::dot::PlatformType);
+
+    #[async_trait::async_trait]
+    impl PlatformAdapter for StubAdapter {
+        async fn send_message(
+            &self,
+            _domain: &BroadcastDomainId,
+            _envelope: &DeterministicEnvelope,
+            _payload: &[u8],
+        ) -> Result<DeliveryReceipt, PlatformAdapterError> {
+            unimplemented!("not exercised by registry tests")
+        }
+        async fn receive_messages(
+            &self,
+            _domain: &BroadcastDomainId,
+        ) -> Result<Vec<RawPlatformMessage>, PlatformAdapterError> {
+            unimplemented!("not exercised by registry tests")
+        }
+        fn canonicalize(
+            &self,
+            _raw: &RawPlatformMessage,
+        ) -> Result<DeterministicEnvelope, PlatformAdapterError> {
+            unimplemented!("not exercised by registry tests")
+        }
+        // `Default` rather than a field list, so adding a capability field
+        // does not break this stub.
+        fn capabilities(&self) -> CapabilityReport {
+            CapabilityReport::default()
+        }
+        fn domain_id(&self, _platform_id: &str) -> BroadcastDomainId {
+            unimplemented!("not exercised by registry tests")
+        }
+        fn platform_type(&self) -> crate::dot::PlatformType {
+            self.0
+        }
+    }
+
+    /// Health transitions on a registered adapter.
+    ///
+    /// This test previously had an empty body and a comment conceding that
+    /// "the API is verified by the existence of both methods" — so it could
+    /// not fail, and `mark_unhealthy` / `mark_healthy` had no coverage at
+    /// all. The blocker it cited was not real: `register_builtin` is public
+    /// and takes any `Box<dyn PlatformAdapter>`.
     #[test]
     fn test_mark_unhealthy_and_healthy() {
-        // This test requires a built-in adapter, which we don't have in unit tests.
-        // The API is verified by the existence of both methods.
+        let mut registry = AdapterRegistry::new(vec![]);
+        registry
+            .register_builtin(Box::new(StubAdapter(crate::dot::PlatformType::Telegram)))
+            .expect("first builtin register");
+
+        let pt = crate::dot::PlatformType::Telegram as u16;
+        assert_eq!(
+            registry.health_report().get(&pt),
+            Some(&AdapterHealth::Healthy),
+            "register_builtin must default a new adapter to Healthy"
+        );
+
+        registry.mark_unhealthy(pt);
+        assert_eq!(
+            registry.health_report().get(&pt),
+            Some(&AdapterHealth::Unhealthy),
+            "mark_unhealthy must be observable through health_report"
+        );
+
+        registry.mark_healthy(pt);
+        assert_eq!(
+            registry.health_report().get(&pt),
+            Some(&AdapterHealth::Healthy),
+            "mark_healthy must restore a recovered adapter"
+        );
+    }
+
+    /// `mark_unhealthy` / `mark_healthy` are silent no-ops for a platform
+    /// that is not registered.
+    ///
+    /// Pinned deliberately: both methods guard on `if let Some(entry)`, so
+    /// a typo'd or stale platform id is swallowed with no signal. That is
+    /// a fail-open choice. Whether it should fail closed is a protocol
+    /// question, so this records the current behaviour rather than
+    /// endorsing it — if the guard is ever tightened to return a `Result`,
+    /// this test is what should fail first.
+    #[test]
+    fn test_mark_health_on_unregistered_platform_is_a_silent_no_op() {
+        let mut registry = AdapterRegistry::new(vec![]);
+        let absent = crate::dot::PlatformType::Nostr as u16;
+
+        registry.mark_unhealthy(absent);
+        registry.mark_healthy(absent);
+
+        assert!(
+            registry.health_report().is_empty(),
+            "marking an unregistered platform must not create an entry"
+        );
     }
 
     #[test]

@@ -1,7 +1,10 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use thiserror::Error;
 
-use super::{AbTest, PromptFilter, PromptTemplate, PromptVersion};
+use super::{
+    AbTest, AbTestMetrics, AbTestMetricsAtomic, PromptFilter, PromptTemplate, PromptVersion,
+};
 
 #[derive(Error, Debug)]
 pub enum StorageError {
@@ -21,6 +24,10 @@ pub struct PromptStorage {
     prompts: HashMap<String, PromptTemplate>,
     versions: HashMap<String, Vec<PromptVersion>>,
     ab_tests: HashMap<String, AbTest>,
+    /// Persisted A/B metric snapshots. The `AbTest::metrics` field is
+    /// the live in-memory atomic state; this map holds the durable
+    /// snapshot last written via `persist_ab_test_metrics`.
+    ab_test_metrics: HashMap<String, AbTestMetrics>,
 }
 
 impl PromptStorage {
@@ -29,6 +36,7 @@ impl PromptStorage {
             prompts: HashMap::new(),
             versions: HashMap::new(),
             ab_tests: HashMap::new(),
+            ab_test_metrics: HashMap::new(),
         }
     }
 
@@ -170,6 +178,44 @@ impl PromptStorage {
             .cloned()
             .ok_or_else(|| StorageError::PromptNotFound(prompt_id.to_string()))
     }
+
+    /// Persist the current A/B metrics snapshot for `prompt_id`. In the
+    /// in-memory substrate this writes into the `ab_test_metrics` map; in
+    /// the stoolap-backed backend (future work) it writes a row into the
+    /// `ab_test_metrics` table.
+    pub fn persist_ab_test_metrics(
+        &mut self,
+        prompt_id: &str,
+        metrics: &AbTestMetricsAtomic,
+    ) -> Result<(), StorageError> {
+        self.ab_test_metrics
+            .insert(prompt_id.to_string(), metrics.snapshot());
+        Ok(())
+    }
+
+    /// Persist from a pre-built snapshot. Used when the caller has
+    /// already taken the snapshot on another thread (avoiding the cost
+    /// of a second atomic read).
+    pub fn persist_ab_test_metrics_snapshot(
+        &mut self,
+        prompt_id: &str,
+        snapshot: AbTestMetrics,
+    ) -> Result<(), StorageError> {
+        self.ab_test_metrics.insert(prompt_id.to_string(), snapshot);
+        Ok(())
+    }
+
+    /// Read the last persisted A/B metrics snapshot. `None` if no
+    /// snapshot has been written for this prompt.
+    pub fn get_ab_test_metrics(&self, prompt_id: &str) -> Option<AbTestMetrics> {
+        self.ab_test_metrics.get(prompt_id).cloned()
+    }
+
+    /// Return the live atomic metrics holder for an A/B test. `None` if
+    /// no test exists for the prompt.
+    pub fn live_ab_test_metrics(&self, prompt_id: &str) -> Option<Arc<AbTestMetricsAtomic>> {
+        self.ab_tests.get(prompt_id).map(|t| t.metrics.clone())
+    }
 }
 
 impl Default for PromptStorage {
@@ -239,5 +285,58 @@ mod tests {
         storage.store_prompt(make_prompt("p1", "Test")).unwrap();
         storage.delete_prompt("p1").unwrap();
         assert!(storage.get_prompt("p1").is_err());
+    }
+
+    #[test]
+    fn test_persist_ab_test_metrics() {
+        use super::super::ab_test::AbTestMetrics;
+        use chrono::Utc;
+
+        let mut storage = PromptStorage::new();
+        let prompt = make_prompt("p1", "Test");
+        storage.store_prompt(prompt).unwrap();
+        let test = super::super::AbTest::new(
+            "p1".into(),
+            "1.0.0".into(),
+            "2.0.0".into(),
+            0.5,
+            Utc::now(),
+            None,
+            &AbTestMetrics::default(),
+        );
+        storage.set_ab_test(test);
+
+        // Pre-populate atomic metrics then persist
+        let atomic = storage.live_ab_test_metrics("p1").unwrap();
+        atomic.inc_requests_a();
+        atomic.inc_requests_a();
+        atomic.inc_requests_b();
+        storage.persist_ab_test_metrics("p1", &atomic).unwrap();
+
+        let snap = storage.get_ab_test_metrics("p1").unwrap();
+        assert_eq!(snap.requests_a, 2);
+        assert_eq!(snap.requests_b, 1);
+
+        // Snapshot-only path
+        let snap = AbTestMetrics {
+            requests_a: 10,
+            requests_b: 20,
+            ..AbTestMetrics::default()
+        };
+        storage
+            .persist_ab_test_metrics_snapshot("p1", snap.clone())
+            .unwrap();
+        let snap2 = storage.get_ab_test_metrics("p1").unwrap();
+        assert_eq!(snap2.requests_a, 10);
+        assert_eq!(snap2.requests_b, 20);
+
+        // Unknown prompt returns None
+        assert!(storage.get_ab_test_metrics("missing").is_none());
+    }
+
+    #[test]
+    fn test_live_ab_test_metrics_missing_returns_none() {
+        let storage = PromptStorage::new();
+        assert!(storage.live_ab_test_metrics("missing").is_none());
     }
 }

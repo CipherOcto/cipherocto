@@ -1,0 +1,82 @@
+//! `pub mod stoolap` re-export block per RFC-0206 §Substrate Re-export Block.
+//!
+//! 1:1 aliases for `stoolap` types consumers need to type row-decoding
+//! code returned by `Database::execute_checked`. Consumers use
+//! `use octo_storage_core::stoolap::{ResultRow, ApiTransaction, Rows, Error, Value}`
+//! instead of taking a direct `stoolap` Cargo.toml dep, preserving
+//! the substrate as the abstraction layer per CLAUDE.md §Core Engineering
+//! Principles ("no parallel abstractions").
+//!
+//! **Deliberately excludes `stoolap::Database`** — the inner type behind
+//! the `Database` newtype. Reaching for the raw type via the re-export
+//! block would defeat the newtype abstraction; consumers must use
+//! `octo_storage_core::Database` + the `From<Database>` escape hatch
+//! (substrate-internal usage) per §Substrate Newtype Refactor.
+//!
+//! **`DataType` IS re-exported** (added in RFC-0206 §Substrate
+//! Re-export Block amendment) — it is the typed-Value discriminant
+//! enum used in `Value::Null(DataType::Null)` constructor calls.
+//! Without it, consumer code leaks `octo_storage_core::stoolap::DataType::*` raw upstream
+//! references; re-exporting it here preserves the substrate abstraction
+//! layer per CLAUDE.md §Core Engineering Principles ("no parallel
+//! abstractions"). Upstream is `#[non_exhaustive]`; consumers must use
+//! the listed variants only.
+
+// `pub use` re-exports — clippy unused_imports false-positive: these
+// are intentional public re-exports without internal consumers; they
+// MUST stay reachable for downstream crates to `use
+// octo_storage_core::stoolap::{...}`.
+#![allow(unused_imports)]
+
+pub use stoolap::core::DataType;
+pub use stoolap::core::Error;
+// NB: stoolap's top-level `Transaction` re-export (lib.rs line 144,
+// `pub use storage::{..., Transaction, ...}`) binds to the
+// `storage::Transaction` *trait* (storage/traits/transaction.rs:48),
+// not the `api::Transaction` *struct* (api/transaction.rs:56) that
+// consumers actually want. The struct is exposed at the top level as
+// `stoolap::ApiTransaction` (lib.rs line 192,
+// `pub use api::{..., Transaction as ApiTransaction, ...}`). Re-export
+// the latter so `octo_storage_core::stoolap::ApiTransaction` is usable
+// as a type in consumer function signatures.
+pub use stoolap::ApiTransaction;
+pub use stoolap::ResultRow;
+pub use stoolap::Rows;
+pub use stoolap::Value;
+
+// === `pub mod pubsub` (RFC-0206 §Substrate Re-export Block extension) ===
+//
+// 7 `stoolap::pubsub` types + nested `pub mod wal_pubsub` re-export so
+// consumer crates can `use octo_storage_core::stoolap::pubsub::{EventBus,
+// WalPubSub, DatabaseEvent, ...}` instead of taking a direct `stoolap`
+// Cargo.toml dep. Resolves qrc 34+ `stoolap::pubsub::*` blocker (see
+// `0206-008c-stoolap-pubsub-block-extension`).
+//
+// `parse_event` lives in `stoolap::pubsub::wal_pubsub` (NOT re-exported
+// at the `pubsub` module level by upstream) — exposed via nested
+// `pub mod wal_pubsub` so consumers keep `pubsub::wal_pubsub::parse_event`
+// traversal pattern.
+pub mod pubsub {
+    //! `stoolap::pubsub` re-exports — RFC-0206 §Substrate Re-export Block
+    //! extension. Consumers `use octo_storage_core::stoolap::pubsub::{EventBus,
+    //! WalPubSub, DatabaseEvent, InvalidationReason, SchemaChangeType,
+    //! OperationType, generate_event_id}` instead of taking a direct `stoolap`
+    //! Cargo.toml dep. Preserves substrate abstraction layer per CLAUDE.md
+    //! §Core Engineering Principles ("no parallel abstractions").
+    #![allow(unused_imports)]
+
+    pub use stoolap::pubsub::generate_event_id;
+    pub use stoolap::pubsub::DatabaseEvent;
+    pub use stoolap::pubsub::EventBus;
+    pub use stoolap::pubsub::InvalidationReason;
+    pub use stoolap::pubsub::OperationType;
+    pub use stoolap::pubsub::SchemaChangeType;
+    pub use stoolap::pubsub::WalPubSub;
+
+    /// `stoolap::pubsub::wal_pubsub` re-exports — `parse_event` is NOT
+    /// re-exported by upstream `stoolap::pubsub` mod.rs; consume via nested
+    /// `pubsub::wal_pubsub::parse_event` path.
+    pub mod wal_pubsub {
+        pub use stoolap::pubsub::wal_pubsub::parse_event;
+    }
+}

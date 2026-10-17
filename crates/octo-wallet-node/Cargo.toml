@@ -1,0 +1,97 @@
+[package]
+name = "octo-wallet-node"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "CipherOcto wallet specialized-node adapter (RFC-0871 §Wallet Node Lifecycle). Bridges octo-wallet to the NodeEnvelope mesh."
+
+[lib]
+name = "octo_wallet_node"
+path = "src/lib.rs"
+
+[dependencies]
+# Layer 1 stable substrate (RFC-0871 §Data Structures)
+octo-protocol = { path = "../octo-protocol" }
+# Layer B identity + wallet core (RFC-0009 HsmAdapter, RFC-0957 macaroon)
+octo-wallet = { path = "../octo-wallet" }
+# Layer B identity (canonical DID codec, RFC-0010)
+octo-ident = { path = "../octo-ident" }
+# Layer D transport adapter (RFC-0863 NodeTransport)
+octo-transport = { path = "../../octo-transport" }
+# Layer A core — RouterAnnouncePayload type (mission 0871e-phase5c;
+# broadcast_announce emits the canonical shape instead of stub bytes)
+quota-router-core = { path = "../quota-router-core" }
+# Layer E paid-query extension (RFC-0871 §Implementation Phases Phase 5,
+# mission 0871e-paid-query-caveat). Owns the paid-query caveat
+# verification bridge consumed by the WALLET_PAID_QUERY_VERIFY handler.
+octo-paid-query = { path = "../octo-paid-query" }
+# Layer A amount-bearing substrate (mission 0862-c9 RETIRED). The
+# `WALLET_PAID_QUERY_VERIFY` handler constructs `Dqa` values directly
+# (no `MicroOctoW` alias — that alias was killed project-wide per
+# user mandate 2026-08-17). Git dep required because `octo-determin`
+# is workspace-excluded. Cost arithmetic uses `dqa_cmp` / `dqa_sub`
+# helpers exposed by the substrate.
+octo-determin = { git = "https://github.com/CipherOcto/cipherocto", branch = "next" }
+# Layer 4 extension: macaroon wire form substrate (RFC-0957 §Wire Format,
+# mission 0957-phase2a). `serialize_wire` / `deserialize_wire` /
+# `compute_cap_root_hash_from_wire` live here; the wallet-node handler
+# emits the real v1 wire form (replacing the Phase 1 MVP
+# `CIPHEROCTO_MINT_V1:*` placeholder).
+octo-cap-macaroon = { path = "../octo-cap-macaroon" }
+# Canonical-JSON serialization for the `Caveat` payload at the
+# `WALLET_ATTENUATE_CAPABILITY` request boundary (mission
+# 0957-phase2d). The new caveat arrives as canonical-JSON bytes
+# (NOT the typed `Caveat` enum directly — the central enum derives
+# serde-only, not borsh; the handler converts at the wire edge).
+serde_json = "1"
+# Mission B (RFC-0960 §2.5): PaymentEventProducer lives at Layer C
+# (octo-wallet-node) and depends on Layer B substrate crate (octo-vault).
+octo-vault = { path = "../octo-vault" }
+# Layer E attestation strategy crates (RFC-0973 §Registration Host).
+#
+# These two edges are the entire point of the host. The registry compares an
+# RFC-range id's owner against a claimant the host observes at link time, so
+# registration is not performable without a crate that actually links the
+# strategies — and it must not be a Layer-B core crate, which would invert the
+# dependency direction the layer model forbids (RFC-0973 Lifecycle
+# Requirement 8). `octo-cap-poi` is the only strategy linked here today;
+# `root_secret_knowledge` in `octo-cap-zk` ships unregistered, and linking a
+# crate that registers nothing would not make it reachable.
+octo-cap-poi = { path = "../octo-cap-poi" }
+
+# Async runtime for NetworkReceiver impl + broadcast_announce
+tokio = { version = "1", features = ["rt", "sync", "macros", "time"] }
+async-trait = "0.1"
+
+# Canonical coding (RFC-0126)
+borsh = "=1.5.0"
+# BLAKE3 for the canonical envelope_id derivation (mirrored across other crates)
+blake3 = "1.5"
+# bs58 for deriving public-key DID wire form (RFC-0010 F4)
+bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
+
+# Errors
+thiserror = "1"
+
+[dev-dependencies]
+# Test signer for HSM mock
+hex = "0.4"
+# Layer C storage adapter, TEST FIXTURES ONLY. The mint handler now writes a
+# real `HolderRecord`, so its tests need a registry to assert against;
+# `StoolapHolderRegistry::open_in_memory()` is the reference implementation
+# named by RFC-0957-A1 §4. Declared here rather than in `[dependencies]` so no
+# production path in this crate can reach storage — RFC-0871 §G9.
+octo-ident-storage = { path = "../octo-ident-storage" }
+# Ed25519 verification in tests (verify signature against public key)
+ed25519-dalek = { version = "2.2", features = ["serde"] }
+# bs58 for deriving public-key DID wire form in tests
+bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+# Mission 0871a MVP — strict pedantic lints deferred to follow-on polish pass.
+pedantic = "allow"

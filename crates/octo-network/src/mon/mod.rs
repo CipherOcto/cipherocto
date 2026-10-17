@@ -5,23 +5,32 @@
 
 pub mod bind_envelope;
 pub mod bootstrap;
+pub mod coordinator;
 pub mod discovery;
 pub mod economics;
+pub mod election;
+pub mod envelope_inspector;
 pub mod error;
 pub mod execution;
+pub mod forward_envelope;
 pub mod gossip;
 pub mod governance;
 pub mod governance_rotation;
+pub mod heartbeat;
 pub mod keys;
 pub mod lifecycle;
+pub mod liveness;
+pub mod local_gateway_identity;
 pub mod membership;
 pub mod nostr_bootstrap;
 pub mod quadratic;
 pub mod rebind;
+pub mod rebind_arm;
 pub mod reconciliation;
-pub mod reputation;
 pub mod slash;
 pub mod slash_aggregation;
+pub mod slash_bridge;
+pub mod slashing;
 pub mod topology;
 pub mod trust_graph;
 pub mod vdf;
@@ -32,11 +41,12 @@ pub mod routing;
 // Re-exports for convenience
 pub use bind_envelope::{BindEnvelope, RebindAbortReason, RebindEnvelope, RebindPrepare};
 pub use bootstrap::{
-    verify_authority, BootstrapMode, SeedAuthorityError, SeedEntry, SeedHealth, SeedListAuthority,
-    SeedListEnvelope, SlashedSeedBlacklist, StaleSeed, EPOCH_GOVERNANCE_TAKEOVER,
-    MAX_SEED_AGE_EPOCHS,
+    verify_authority, BootstrapConfig, BootstrapConfigError, BootstrapError, BootstrapMode,
+    BootstrapOrchestrator, BootstrapState, SeedAuthorityError, SeedEntry, SeedHealth,
+    SeedListAuthority, SeedListEnvelope, SlashedSeedBlacklist, StaleSeed,
+    EPOCH_GOVERNANCE_TAKEOVER, MAX_SEED_AGE_EPOCHS,
 };
-pub use discovery::MissionDiscoveryScope;
+pub use discovery::{MissionAdvertisementCache, MissionDiscoveryScope, MissionInvitationCache};
 pub use error::MonError;
 pub use gossip::{
     MissionGossipMessage, MissionGossipScope, MissionPropagationClass, SCOPE_FLAG_ENCRYPTED,
@@ -55,8 +65,10 @@ pub use mission_id::{MissionId, MissionType};
 pub use nostr_bootstrap::{DotCapabilityClaim, Nip05Error, Nip05Identifier, NostrBootstrapAdapter};
 pub use quadratic::{elect, voting_weight, CoordinatorCandidate, ElectionResult};
 pub use rebind::{CoordinatorState, PrepareVote, RebindCoordinator, REBIND_TIMEOUT_SECS};
+pub use rebind_arm::{
+    dispatch_rebind_arm_action, RebindArmAction, RebindArmError, RebindArmKey, RebindArmPayload,
+};
 pub use reconciliation::{MobilitySession, ReconciliationState, TransportCarrier};
-pub use reputation::{CoordinatorReputation, SlashEventRef, SlashReputationStore, HARD_THRESHOLD};
 pub use slash::{slash_code, BootstrapMisbehavior, SlashEnvelope};
 pub use slash_aggregation::{
     AggregationResult, RejectionReason, SlashAggregator, SlashVote, Vote, SLASH_VOTE_WINDOW_SECS,

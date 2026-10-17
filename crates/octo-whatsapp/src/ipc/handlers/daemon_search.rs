@@ -101,9 +101,9 @@ mod tests {
     use crate::query::embedder::MockEmbedder;
     use crate::query::tantivy_sidecar::TantivySidecar;
     use crate::query::{QueryIngester, QueryService};
+    use octo_storage_core::Database;
     use std::path::PathBuf;
     use std::sync::Arc;
-    use stoolap::Database;
     use tempfile::tempdir;
 
     fn synth_message(id: u64, peer: &str, text: &str, ts: i64) -> InboundEvent {

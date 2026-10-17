@@ -16,7 +16,7 @@ use octo_adapter_telegram_mtproto::{MtprotoTelegramAdapter, MtprotoTelegramClien
 /// `format!("{:?}", adapter.lifecycle().state())` which
 /// returned the Debug form (e.g. `Uninitialised`). The
 /// adapter now exposes `AdapterLifecycle::state_name()`
-/// which returns a kebab-cased `&'static str` (e.g.
+/// which returns a kebab-cased `&&'static str` (e.g.
 /// `uninitialised`, `shutting-down`) that is more
 /// operator-friendly in error messages.
 ///

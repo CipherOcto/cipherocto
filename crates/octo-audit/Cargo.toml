@@ -1,0 +1,67 @@
+[package]
+name = "octo-audit"
+version = "0.1.0"
+edition = "2021"
+description = "Layer B audit facade — re-exports octo-audit-core (RFC-0012 §Module Layout)"
+license = "Apache-2.0"
+authors = ["CipherOcto"]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+# Layer B facade → Layer A substrate (RFC-0012 §Module Layout). Years-stable
+# substrate; the facade just exposes it at a friendly name for owner crates
+# (e.g. `octo-wallet`, `octo-cli`) that prefer a non-`-core` import.
+octo-audit-core = { path = "../octo-audit-core" }
+# Mission 0012-audit-stoolap-sink: concrete storage adapter for
+# `AppendOnlyAuditSink`. octo-storage-core is the Layer A storage
+# facade (RFC-0206 §Substrate Newtype Refactor); the audit facade
+# (Layer B) depends on it to wire the trait → concrete DB engine.
+octo-storage-core = { path = "../octo-storage-core" }
+# RFC-0016 §6.2 receipt read-path substrate: octo-audit Layer B facade
+# re-exports canonical Receipt + helpers from octo-settlement Layer B
+# facade. octo-settlement itself re-exports octo-settlement-core
+# Layer A frozen substrate (RFC-0014 §Module Layout); the B→B→A canonical
+# path is preserved per RFC-0016 §6.1 chain-hash note.
+octo-settlement = { path = "../octo-settlement" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+# Per-façade scrubber compilation posture (RFC-0012-v3 §S5.1 / RFC-0014-v3 §S5.1; Layer B façade)
+regex = { workspace = true }
+# Lazy static regex compilation (RFC-0012-v3 §S5.1 / RFC-0014-v3 §S5.1; Layer B façade)
+once_cell = { workspace = true }
+# RFC-0015-a §6.1: `AgentTransitionPayload::agent_id` carries the
+# canonical UUID of the transitioning agent (Layer B façade;
+# `octo-audit-core` Layer A stays free of the `uuid` crate per
+# RFC-0012 frozen contract — the payload uses `String` hex form on
+# the substrate side, and `Uuid` only at this façade boundary).
+uuid = { workspace = true }
+# RFC-0016-a §6.3: `ChainHash::Display` emits canonical lowercase
+# hex form (no `0x` prefix). `hex` is workspace-pinned Layer A
+# primitive (widely used by other Layer B façades including
+# `octo-settlement` for `Hex32`).
+hex = { workspace = true }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+empty_line_after_doc_comments = "allow"
+doc_lazy_continuation = "allow"
+
+[features]
+# Default OFF — internal-only `audit_home()` surface per
+# RFC-0016 §6.2.3 + §Adversary Analysis row "canonical-path info leak".
+# Only the `octo-audit` Layer B façade (cli tests + future write-path
+# missions) can call `audit_home` when this flag is enabled; default
+# `cargo build` builds DO NOT include the function (compile-error guard).
+#
+# RFC-0015-a §6.4 paired-acceptance bridge: also enables the
+# `AuditEventKind::AgentTransition` cfg-gated variant on the
+# `octo-audit-core` Layer A substrate via Cargo feature
+# pass-through — when this facade feature is on, the substrate's
+# `octo-audit-internal` feature also turns on, so the variant is
+# visible to both layers atomically. No chance of a partial-flag
+# build exposing the extension on one layer but not the other.
+octo-audit-internal = ["octo-audit-core/octo-audit-internal"]

@@ -1,0 +1,2623 @@
+//! Caveat DSL for macaroon capability tokens (RFC-0957 §Caveat DSL Extension + §Attenuation Invariant).
+//!
+//! Strongly-typed enum for common caveats + `Raw` escape hatch for unknown axes.
+//! `canonical_ser` per RFC-0126 deterministic serialization so HMAC inputs are
+//! stable across implementations.
+
+use std::collections::HashSet;
+
+use cipherocto_encoding::{encode as encode_constraint, Constraint};
+use octo_determin::{dqa_cmp, Dqa};
+use serde::{Deserialize, Serialize};
+
+use crate::dqa_serde;
+
+pub mod evaluator;
+pub mod payment;
+#[allow(deprecated)]
+pub use payment::{
+    octo_w_asset_id, AttenuationError, PaidQueryDecision, PaidQueryRejectionReason, PaymentCaveat,
+    PaymentDecision, PaymentRejectionReason, OCTO_W_ASSET_ID_BYTES, PAID_QUERY_CAVEAT_NAME,
+};
+
+// (2026-08-17) `MicroOctoW` type alias was RETIRED project-wide. All
+// amount-bearing caveat payload fields use `octo_determin::Dqa`
+// directly at `scale = 0`. The `Dqa` type does not derive serde, so
+// each `Dqa` field uses `#[serde(with = "dqa_serde::field")]` to
+// encode the 16-byte BE `DqaEncoding` wire form (determin/src/dqa.rs).
+
+/// Provider identifier (opaque string).
+pub type ProviderId = String;
+
+/// Model reference (provider-specific model string).
+pub type ModelRef = String;
+
+/// Unix epoch seconds.
+pub type UnixTimeSecs = u64;
+
+/// Overlay identity (did:octo:...).
+pub type OverlayIdentity = String;
+
+/// ISO-3166 country code (2-letter).
+pub type ISO3166 = String;
+
+/// Ask identifier (RFC-0959 `AskId` — content-addressable hash).
+pub type AskId = [u8; 32];
+
+/// BLAKE3 32-byte digest.
+pub type Blake3 = [u8; 32];
+
+/// Cache policy attached to a capability token.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "policy")]
+pub enum CachePolicy {
+    /// Cache disabled.
+    #[serde(rename = "off")]
+    Off,
+    /// Cache opt-in; holder may attach a specific cache key hash.
+    #[serde(rename = "opt-in")]
+    OptIn { cache_key_hash: Option<Blake3> },
+    /// Cache always; TTL in seconds.
+    #[serde(rename = "always")]
+    Always { ttl_secs: u32 },
+}
+
+/// Per-axis upper bound on settlement cost.
+///
+/// Caveat format: `PerAxisMax { axis, max_per_1k }` where `axis` is a string
+/// (e.g., "input_tokens", "output_tokens", "cached_input_tokens") and
+/// `max_per_1k` is the maximum micro-OCTO-W per 1000 units of that axis.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PerAxisMax {
+    pub axis: String,
+    #[serde(with = "dqa_serde::field")]
+    pub max_per_1k: Dqa,
+}
+
+/// Rate-limit bounds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RateLimit {
+    pub rpm: u32,
+    pub tpm: u32,
+}
+
+/// Strongly-typed caveat enum + `Raw` escape hatch.
+///
+/// **Attenuation invariant:** Attenuators MAY add caveats but MUST NOT
+/// remove caveats. The verify routine enforces this.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value")]
+#[non_exhaustive]
+pub enum Caveat {
+    /// Total budget cap (implied sum over all axes at settlement time).
+    #[serde(
+        rename = "amount_max",
+        serialize_with = "dqa_serde::field::serialize",
+        deserialize_with = "dqa_serde::field::deserialize"
+    )]
+    AmountMax(Dqa),
+
+    /// Per-axis cap. Holder may settle up to `max_per_1k` per 1000 units.
+    #[serde(rename = "per_axis_max")]
+    PerAxisMax(PerAxisMax),
+
+    /// Allowed model.
+    #[serde(rename = "model")]
+    Model(ModelRef),
+
+    /// Allowed providers (any-of).
+    #[serde(rename = "provider")]
+    Provider(Vec<ProviderId>),
+
+    /// Capability expires at this Unix time (inclusive).
+    #[serde(rename = "before")]
+    Before(UnixTimeSecs),
+
+    /// Audience (DID) the capability is bound to.
+    #[serde(rename = "audience")]
+    Audience(OverlayIdentity),
+
+    /// Rate-limit envelope.
+    #[serde(rename = "rate_limit")]
+    RateLimit(RateLimit),
+
+    /// Bind capability to a specific request body hash (anti-replay).
+    ///
+    /// `with = "crate::hex_id_32"` aligns the derived `Serialize` with the
+    /// hex that `canonical_ser` emits for this arm. Without it the emitter
+    /// wrote a 64-hex string and the input form demanded a 32-element array,
+    /// so the arm rejected the hex it produced. `Blake3` is a type ALIAS for
+    /// `[u8; 32]`, not a newtype, so the adapter applies exactly as it does
+    /// for `Vault`.
+    #[serde(rename = "invocation_hash_bind", with = "crate::hex_id_32")]
+    InvocationHashBind(Blake3),
+
+    /// Jurisdiction whitelist.
+    #[serde(rename = "jurisdiction")]
+    Jurisdiction(HashSet<ISO3166>),
+
+    /// Cache policy.
+    #[serde(rename = "cache_strategy")]
+    CacheStrategy(CachePolicy),
+
+    /// Bind capability to a specific Ask by id.
+    ///
+    /// See `InvocationHashBind` for why the adapter is present. `AskId` is
+    /// likewise a type ALIAS for `[u8; 32]`.
+    #[serde(rename = "ask_binding", with = "crate::hex_id_32")]
+    AskBinding(AskId),
+
+    /// Third-party caveat requiring a discharge macaroon.
+    #[serde(rename = "third_party")]
+    ThirdParty(String),
+
+    /// Escape hatch for unknown / forward-compat caveat names.
+    #[serde(rename = "raw")]
+    Raw(RawCaveat),
+
+    // RFC-0965 §3 — caveat payload encodings.
+    /// Bind capability to a specific vault (RFC-0960 §2.1).
+    #[serde(rename = "vault", with = "crate::hex_id_32")]
+    Vault([u8; 32]),
+
+    /// Permission kind (RFC-0965 §3.2).
+    #[serde(rename = "permission")]
+    Permission(PermissionKind),
+
+    /// Valid time range. New in RFC-0957; for the legacy
+    /// single-timestamp variant see RFC-0965 §3.3 `ValidAfter`.
+    #[serde(rename = "valid_range")]
+    ValidRange {
+        valid_after_unix: u64,
+        valid_until_unix: u64,
+    },
+
+    /// Per-transaction cap. New in RFC-0957; distinct from
+    /// `AmountMax` which is total budget.
+    #[serde(rename = "max_per_tx")]
+    MaxPerTx(u128),
+
+    /// Audit window duration (RFC-0965 §3.5). 0 = instant.
+    #[serde(rename = "audit_window")]
+    AuditWindow { duration_secs: u64 },
+
+    /// Max number of uses (RFC-0965 §3.4; 0 = unlimited).
+    #[serde(rename = "max_uses")]
+    MaxUses { count: u32 },
+
+    /// Wrapped-only (RFC-0965 §3.7): capability only usable through a
+    /// parent capability. Chain depth bounded to 16 per RFC-0965
+    /// §3.7 R7-F1.
+    #[serde(rename = "wrapped_only")]
+    WrappedOnly {
+        #[serde(with = "crate::hex_id_32")]
+        parent_capability: [u8; 32],
+    },
+
+    /// Factory vet (RFC-0965 §3.8): pre-validated invocation
+    /// (target + selector + arg template). NOT raw bytes (phishing vector).
+    #[serde(rename = "factory")]
+    Factory(FactoryVet),
+
+    /// Policy reference (RFC-0965 §3.10 + RFC-0967). Carries the
+    /// policy_id hash + the policy version_seq + a witness signature
+    /// binding the attenuation per RFC-0967 §8.2.
+    #[serde(rename = "policy_reference")]
+    PolicyReference {
+        #[serde(with = "crate::hex_id_32")]
+        policy_id: [u8; 32],
+        policy_version_seq: u64,
+        #[serde(with = "serde_bytes_arr64")]
+        attenuation_witness: [u8; 64],
+    },
+
+    /// Valid-after time bound (RFC-0965 §3.3). Single timestamp; for
+    /// ranges use `ValidRange` above (new in RFC-0957) or the
+    /// RFC-0964 `Constraint::ValidRange`.
+    #[serde(rename = "valid_after")]
+    ValidAfter { not_before_unix: u64 },
+
+    /// Redemption context (RFC-0965 §3.6). Anti-replay domain separator.
+    /// `context_hash = BLAKE3(0xA2 || canonical_ser(context))` per RFC-0965 §3.6.
+    #[serde(rename = "redemption_context")]
+    RedemptionContext {
+        #[serde(with = "crate::hex_id_32")]
+        context_hash: [u8; 32],
+    },
+
+    /// Shard pin (RFC-0965 §1.2 + RFC-0963 §6). Restricts capability to a
+    /// specific shard.
+    #[serde(rename = "sharded")]
+    Sharded { shard_id: u32 },
+
+    /// Payment caveat (RFC-0965 §1 Caveat type enumeration; 0x1A-0xCF
+    /// reserved range at v2.1 §4 Discriminator; mission 0957-phase2b).
+    /// Bounds holder spend against `budget`
+    /// over queries against `model`. Subsumes monotonic narrowing
+    /// (child budget ≤ parent budget, child expiry ≤ parent expiry,
+    /// parent model empty OR matches child model).
+    #[serde(rename = "payment")]
+    Payment(PaymentCaveat),
+
+    /// Asset-binding co-bound caveat (RFC-0965 §5 PermissionKind Co-Bound Caveat).
+    /// When co-occurring with `Caveat::Payment` in the same chain,
+    /// `set_subsumes` enforces `payment.asset_id == self.asset_id`
+    /// (Round 1 CRITICAL #5 mitigation — prevents PermissionKind bypass
+    /// on USDC budgets being spent against OCTO-W queries).
+    #[serde(rename = "asset_binding")]
+    AssetBinding(AssetBinding),
+}
+
+/// A time window a caveat imposes on redemption.
+///
+/// Returned by [`Caveat::time_bounds`] and combined across a caveat set by
+/// logical AND: a capability carrying both `Before` and `ValidRange` must
+/// satisfy both, which is the intersection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimeBounds {
+    /// Valid while `now <= deadline_unix`.
+    NotAfter {
+        /// Inclusive expiry instant, Unix seconds.
+        deadline_unix: u64,
+    },
+    /// Valid while `valid_after_unix <= now <= valid_until_unix`.
+    Range {
+        /// Inclusive start, Unix seconds.
+        valid_after_unix: u64,
+        /// Inclusive end, Unix seconds.
+        valid_until_unix: u64,
+    },
+    /// Valid while `now >= not_before_unix`.
+    NotBefore {
+        /// Earliest valid instant, Unix seconds.
+        not_before_unix: u64,
+    },
+}
+
+impl TimeBounds {
+    /// Whether `now_unix` falls inside this window, with a refusal reason if not.
+    ///
+    /// Both range endpoints are **inclusive**, matching the caveat semantics:
+    /// `ValidRange [1000, 2000]` admits exactly 1000 and 2000.
+    pub fn admit(&self, now_unix: u64) -> Result<(), String> {
+        match *self {
+            Self::NotAfter { deadline_unix } if now_unix > deadline_unix => {
+                Err(format!("expired at {deadline_unix}"))
+            }
+            Self::NotBefore { not_before_unix } if now_unix < not_before_unix => {
+                Err(format!("not yet valid; starts at {not_before_unix}"))
+            }
+            Self::Range {
+                valid_after_unix,
+                valid_until_unix,
+            } => {
+                // RFC-0960 §R5-F2: `after > until` is unsatisfiable, so every
+                // instant is rejected rather than the range wrapping around.
+                if valid_after_unix > valid_until_unix {
+                    return Err(format!(
+                        "unsatisfiable ValidRange [{valid_after_unix}, {valid_until_unix}]"
+                    ));
+                }
+                if now_unix < valid_after_unix {
+                    return Err(format!("not yet valid; starts at {valid_after_unix}"));
+                }
+                if now_unix > valid_until_unix {
+                    return Err(format!("expired at {valid_until_unix}"));
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+impl std::fmt::Display for TimeBounds {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotAfter { deadline_unix } => write!(f, "Before {deadline_unix}"),
+            Self::Range {
+                valid_after_unix,
+                valid_until_unix,
+            } => write!(f, "ValidRange [{valid_after_unix}, {valid_until_unix}]"),
+            Self::NotBefore { not_before_unix } => write!(f, "ValidAfter {not_before_unix}"),
+        }
+    }
+}
+
+/// Permission kind enum (RFC-0965 §3.2).
+///
+/// Adding new kinds is a backwards-compatible variant add per RFC-0960 §R1-F6.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionKind {
+    NativeTokenTransfer,
+    Erc20TokenTransfer,
+    ContractCall,
+    Reservation,
+    VaultMutation,
+}
+
+/// Canonical action template (RFC-0960 §10.7 + RFC-0965 §3.8).
+///
+/// `action_template` is a typed invocation shape (selector + ordered args),
+/// NOT opaque bytes. The verifier runs the same constraint pipeline
+/// against the deployed target before redeeming.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActionTemplate {
+    /// Selector (function/method identifier).
+    pub selector: String,
+    /// Ordered canonical args (DIDs, amounts, asset_ids, …).
+    pub args: Vec<String>,
+}
+
+/// Factory vet (RFC-0960 §2.2 + RFC-0965 §3.8).
+///
+/// Canonicalised by RFC-0126. NOT opaque bytes — the verifier runs the same
+/// constraint pipeline against the deployed target before redeeming.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FactoryVet {
+    /// Target vault for the pre-validated invocation.
+    #[serde(with = "crate::hex_id_32")]
+    pub target_vault_id: [u8; 32],
+    /// Typed invocation shape (selector + ordered args).
+    pub action_template: ActionTemplate,
+    /// Who must invoke (default = capability holder).
+    pub required_caller: Option<String>,
+    /// Pre-conditions that must all hold at redemption time (RFC-0964
+    /// `Constraint` set).
+    pub pre_conditions: Vec<Constraint>,
+    /// Hard deadline for deploying + redeeming.
+    pub expiry_for_deploy_unix: u64,
+}
+
+/// Escape-hatch caveat (name + value bytes).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RawCaveat {
+    pub name: String,
+    #[serde(with = "serde_bytes")]
+    pub value: Vec<u8>,
+}
+
+/// Asset-binding co-bound caveat payload (RFC-0965 §5 PermissionKind Co-Bound Caveat).
+///
+/// Pairs with a `Caveat::Payment(p)` to enforce that the payment
+/// caveat's `asset_id` matches this `asset_id`. Prevents
+/// `PermissionKind::Erc20TokenTransfer`-style bypass where a USDC
+/// budget could authorize an OCTO-W payment.
+///
+/// Wire form: serde_json hex-encoded 32-byte asset_id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AssetBinding {
+    /// 32-byte asset_id (`BLAKE3("cipherocto/asset/v1/" + role_token)`).
+    #[serde(with = "crate::hex_id_32")]
+    pub asset_id: [u8; 32],
+}
+
+/// Caveat name string (used as `info` parameter to HMAC-BLAKE3).
+///
+/// The serde representation is the RFC-0964 short snake_case tag
+/// (`amount_max`, `per_axis_max`, `invocation_hash_bind`, ...); the
+/// [`Self::as_str`] form is the full HMAC info string and is NOT
+/// used on the wire. Consumers (CLI summary views, downstream
+/// substrate crates) can project the typed enum directly via
+/// [`CaveatName::short_name`] / [`CaveatName::from_short_tag`]
+/// without re-implementing the table — the previous CLI-side
+/// `CaveatKind` mirror enum collapsed into this one once the CLI
+/// gained the substrate traits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CaveatName {
+    AmountMax,
+    PerAxisMax,
+    Model,
+    Provider,
+    Before,
+    Audience,
+    RateLimit,
+    InvocationHashBind,
+    Jurisdiction,
+    CacheStrategy,
+    AskBinding,
+    ThirdParty,
+    Raw,
+    Vault,
+    Permission,
+    ValidRange,
+    MaxPerTx,
+    AuditWindow,
+    MaxUses,
+    WrappedOnly,
+    Factory,
+    PolicyReference,
+    ValidAfter,
+    RedemptionContext,
+    Sharded,
+    Payment,
+    AssetBinding,
+}
+
+impl CaveatName {
+    /// Wire-stable identifier used as HMAC info string.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::AmountMax => "cipherocto/cap/v1/caveat/amount_max",
+            Self::PerAxisMax => "cipherocto/cap/v1/caveat/per_axis_max",
+            Self::Model => "cipherocto/cap/v1/caveat/model",
+            Self::Provider => "cipherocto/cap/v1/caveat/provider",
+            Self::Before => "cipherocto/cap/v1/caveat/before",
+            Self::Audience => "cipherocto/cap/v1/caveat/audience",
+            Self::RateLimit => "cipherocto/cap/v1/caveat/rate_limit",
+            Self::InvocationHashBind => "cipherocto/cap/v1/caveat/invocation_hash_bind",
+            Self::Jurisdiction => "cipherocto/cap/v1/caveat/jurisdiction",
+            Self::CacheStrategy => "cipherocto/cap/v1/caveat/cache_strategy",
+            Self::AskBinding => "cipherocto/cap/v1/caveat/ask_binding",
+            Self::ThirdParty => "cipherocto/cap/v1/caveat/third_party",
+            Self::Raw => "cipherocto/cap/v1/caveat/raw",
+            Self::Vault => "cipherocto/cap/v1/caveat/vault",
+            Self::Permission => "cipherocto/cap/v1/caveat/permission",
+            Self::ValidRange => "cipherocto/cap/v1/caveat/valid_range",
+            Self::MaxPerTx => "cipherocto/cap/v1/caveat/max_per_tx",
+            Self::AuditWindow => "cipherocto/cap/v1/caveat/audit_window",
+            Self::MaxUses => "cipherocto/cap/v1/caveat/max_uses",
+            Self::WrappedOnly => "cipherocto/cap/v1/caveat/wrapped_only",
+            Self::Factory => "cipherocto/cap/v1/caveat/factory",
+            Self::PolicyReference => "cipherocto/cap/v1/caveat/policy_reference",
+            Self::ValidAfter => "cipherocto/cap/v1/caveat/valid_after",
+            Self::RedemptionContext => "cipherocto/cap/v1/caveat/redemption_context",
+            Self::Sharded => "cipherocto/cap/v1/caveat/sharded",
+            Self::Payment => "cipherocto/cap/v1/caveat/payment",
+            Self::AssetBinding => "cipherocto/cap/v1/caveat/asset_binding",
+        }
+    }
+
+    /// Short RFC-0964 serde tag (snake_case). This is the wire form
+    /// for `CaveatSummary.kind` and the canonical string the CLI
+    /// renders. Distinct from [`Self::as_str`] (the full HMAC info
+    /// string used inside the macaroon).
+    #[must_use]
+    pub const fn short_name(&self) -> &'static str {
+        match self {
+            Self::AmountMax => "amount_max",
+            Self::PerAxisMax => "per_axis_max",
+            Self::Model => "model",
+            Self::Provider => "provider",
+            Self::Before => "before",
+            Self::Audience => "audience",
+            Self::RateLimit => "rate_limit",
+            Self::InvocationHashBind => "invocation_hash_bind",
+            Self::Jurisdiction => "jurisdiction",
+            Self::CacheStrategy => "cache_strategy",
+            Self::AskBinding => "ask_binding",
+            Self::ThirdParty => "third_party",
+            Self::Raw => "raw",
+            Self::Vault => "vault",
+            Self::Permission => "permission",
+            Self::ValidRange => "valid_range",
+            Self::MaxPerTx => "max_per_tx",
+            Self::AuditWindow => "audit_window",
+            Self::MaxUses => "max_uses",
+            Self::WrappedOnly => "wrapped_only",
+            Self::Factory => "factory",
+            Self::PolicyReference => "policy_reference",
+            Self::ValidAfter => "valid_after",
+            Self::RedemptionContext => "redemption_context",
+            Self::Sharded => "sharded",
+            Self::Payment => "payment",
+            Self::AssetBinding => "asset_binding",
+        }
+    }
+
+    /// Parse a short serde tag (snake_case). Returns `None` for
+    /// unknown tags — the caller decides the fail-closed policy
+    /// (typically `unwrap_or(CaveatName::Raw)` for forward-compat).
+    #[must_use]
+    pub fn from_short_tag(tag: &str) -> Option<Self> {
+        Some(match tag {
+            "amount_max" => Self::AmountMax,
+            "per_axis_max" => Self::PerAxisMax,
+            "model" => Self::Model,
+            "provider" => Self::Provider,
+            "before" => Self::Before,
+            "audience" => Self::Audience,
+            "rate_limit" => Self::RateLimit,
+            "invocation_hash_bind" => Self::InvocationHashBind,
+            "jurisdiction" => Self::Jurisdiction,
+            "cache_strategy" => Self::CacheStrategy,
+            "ask_binding" => Self::AskBinding,
+            "third_party" => Self::ThirdParty,
+            "raw" => Self::Raw,
+            "vault" => Self::Vault,
+            "permission" => Self::Permission,
+            "valid_range" => Self::ValidRange,
+            "max_per_tx" => Self::MaxPerTx,
+            "audit_window" => Self::AuditWindow,
+            "max_uses" => Self::MaxUses,
+            "wrapped_only" => Self::WrappedOnly,
+            "factory" => Self::Factory,
+            "policy_reference" => Self::PolicyReference,
+            "valid_after" => Self::ValidAfter,
+            "redemption_context" => Self::RedemptionContext,
+            "sharded" => Self::Sharded,
+            "payment" => Self::Payment,
+            "asset_binding" => Self::AssetBinding,
+            _ => return None,
+        })
+    }
+}
+
+impl std::fmt::Display for CaveatName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.short_name())
+    }
+}
+
+impl PermissionKind {
+    /// Wire-stable identifier.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::NativeTokenTransfer => "cipherocto/cap/v1/permission/native_token_transfer",
+            Self::Erc20TokenTransfer => "cipherocto/cap/v1/permission/erc20_token_transfer",
+            Self::ContractCall => "cipherocto/cap/v1/permission/contract_call",
+            Self::Reservation => "cipherocto/cap/v1/permission/reservation",
+            Self::VaultMutation => "cipherocto/cap/v1/permission/vault_mutation",
+        }
+    }
+}
+
+/// Monotonic subsumption (RFC-0957 §Attenuation Invariant).
+///
+/// `parent ⊇ child` iff every caveat in `child` is implied by some caveat in
+/// `parent`. Used at attenuation verification: a child capability may only
+/// add caveats (or narrow existing ones), never remove or widen.
+///
+/// Per-variant subsumption rules (child narrows parent):
+/// - `AmountMax`: child ≤ parent (child budget ≤ parent budget)
+/// - `PerAxisMax`: same-axis child ≤ parent
+/// - `Model`: parent model == child model
+/// - `Provider`: child set ⊆ parent set
+/// - `Before`: child deadline ≤ parent deadline (child expires earlier)
+/// - `Audience`: parent DID == child DID
+/// - `RateLimit`: child rpm ≤ parent rpm AND child tpm ≤ parent tpm
+/// - `CacheStrategy`: parent more permissive (Always › OptIn › Off)
+/// - `Jurisdiction`: child set ⊆ parent set
+/// - `InvocationHashBind`: parent hash == child hash
+/// - `AskBinding`: parent ask_id == child ask_id
+/// - `ThirdParty`: parent channel == child channel
+/// - `Raw`: parent name == child name AND parent value == child value
+#[must_use]
+pub fn set_subsumes(parent: &[Caveat], child: &[Caveat]) -> bool {
+    child.iter().all(|c| parent_caveat_implies(parent, c))
+}
+
+/// Catalog-aware subsumption check. Adds the Raw caveat fail-closed
+/// invariant: any `Caveat::Raw` whose `name` is not registered with
+/// the catalog is rejected (returns `false`). Mission 0957-a AC #13.
+///
+/// `is_raw_registered` is the catalog's registration predicate
+/// (see `CapabilityCatalog::is_raw_name_registered`). Pass
+/// `|_| false` for the legacy fail-closed default (reject all Raw).
+#[must_use]
+pub fn set_subsumes_with_registry<F: Fn(&str) -> bool>(
+    parent: &[Caveat],
+    child: &[Caveat],
+    is_raw_registered: F,
+) -> bool {
+    child.iter().all(|c| {
+        // Fail-closed for unregistered Raw caveat names.
+        if let Caveat::Raw(r) = c {
+            if !is_raw_registered(&r.name) {
+                return false;
+            }
+        }
+        parent_caveat_implies(parent, c)
+    })
+}
+
+#[allow(clippy::too_many_lines)]
+fn parent_caveat_implies(parent: &[Caveat], child: &Caveat) -> bool {
+    match child {
+        Caveat::AmountMax(c) => parent
+            .iter()
+            .any(|p| matches!(p, Caveat::AmountMax(p) if dqa_cmp(*c, *p) <= 0)),
+        Caveat::PerAxisMax(c) => parent.iter().any(|p| match p {
+            Caveat::PerAxisMax(p_inner) => {
+                p_inner.axis == c.axis && dqa_cmp(c.max_per_1k, p_inner.max_per_1k) <= 0
+            }
+            _ => false,
+        }),
+        Caveat::Model(c) => parent
+            .iter()
+            .any(|p| matches!(p, Caveat::Model(p) if p == c)),
+        Caveat::Provider(c) => parent.iter().any(|p| match p {
+            Caveat::Provider(p) => {
+                let c_set: HashSet<&String> = c.iter().collect();
+                let p_set: HashSet<&String> = p.iter().collect();
+                c_set.is_subset(&p_set)
+            }
+            _ => false,
+        }),
+        Caveat::Before(c) => parent
+            .iter()
+            .any(|p| matches!(p, Caveat::Before(p) if *c <= *p)),
+        Caveat::Audience(c) => parent
+            .iter()
+            .any(|p| matches!(p, Caveat::Audience(p) if p == c)),
+        Caveat::RateLimit(c) => parent.iter().any(|p| match p {
+            Caveat::RateLimit(p_inner) => c.rpm <= p_inner.rpm && c.tpm <= p_inner.tpm,
+            _ => false,
+        }),
+        Caveat::CacheStrategy(c) => parent.iter().any(|p| match p {
+            Caveat::CacheStrategy(p_inner) => cache_policy_subsumes(p_inner, c),
+            _ => false,
+        }),
+        Caveat::Jurisdiction(c) => parent.iter().any(|p| match p {
+            Caveat::Jurisdiction(p) => c.is_subset(p),
+            _ => false,
+        }),
+        Caveat::InvocationHashBind(c) => parent
+            .iter()
+            .any(|p| matches!(p, Caveat::InvocationHashBind(p) if p == c)),
+        Caveat::AskBinding(c) => parent
+            .iter()
+            .any(|p| matches!(p, Caveat::AskBinding(p) if p == c)),
+        Caveat::ThirdParty(c) => parent
+            .iter()
+            .any(|p| matches!(p, Caveat::ThirdParty(p) if p == c)),
+        Caveat::Raw(c) => parent.iter().any(|p| match p {
+            Caveat::Raw(p_inner) => p_inner.name == c.name && p_inner.value == c.value,
+            _ => false,
+        }),
+        // RFC-0965 §3 — new types. Subsumption rules:
+        // - Vault: parent vault_id == child vault_id (cannot change vault
+        //   via attenuation).
+        // - Permission: parent kind == child kind (cannot widen kind).
+        // - ValidRange: child range ⊆ parent range (valid_after >= parent,
+        //   valid_until <= parent).
+        // - MaxPerTx: child amount <= parent amount.
+        // - AuditWindow: child duration >= parent duration (upgrade from
+        //   high-trust to auditable; R7-F8).
+        // - MaxUses: child count <= parent count (0 = unlimited is most
+        //   permissive — parent 0 subsumes child N).
+        // - WrappedOnly: parent_capability == child parent_capability.
+        // - Factory: requires full canonical-vector equality (the vet is a
+        //   signed assertion; cannot change target/template).
+        // - PolicyReference: hash equality.
+        Caveat::Vault(c) => parent
+            .iter()
+            .any(|p| matches!(p, Caveat::Vault(p) if p == c)),
+        Caveat::AssetBinding(c) => parent.iter().any(|p| match p {
+            // Co-bound rule (RFC-0965 §5 PermissionKind Co-Bound Caveat): when parent
+            // carries a Caveat::AssetBinding AND child carries a
+            // Caveat::Payment with a different asset_id, the chain is
+            // rejected (prevents PermissionKind bypass on cross-asset
+            // payment caveats).
+            Caveat::AssetBinding(p_inner) => p_inner.asset_id == c.asset_id,
+            Caveat::Payment(p) => p.asset_id.0 == c.asset_id,
+            _ => false,
+        }),
+        Caveat::Permission(c) => parent
+            .iter()
+            .any(|p| matches!(p, Caveat::Permission(p) if p == c)),
+        Caveat::ValidRange { valid_after_unix: c_after, valid_until_unix: c_until } => {
+            parent.iter().any(|p| match p {
+                Caveat::ValidRange { valid_after_unix: p_after, valid_until_unix: p_until } => {
+                    c_after >= p_after && c_until <= p_until
+                }
+                _ => false,
+            })
+        }
+        Caveat::MaxPerTx(c) => parent
+            .iter()
+            .any(|p| matches!(p, Caveat::MaxPerTx(p) if c <= p)),
+        Caveat::AuditWindow { duration_secs: c_dur } => parent.iter().any(|p| match p {
+            Caveat::AuditWindow { duration_secs: p_dur } => c_dur >= p_dur,
+            _ => false,
+        }),
+        Caveat::MaxUses { count: c_count } => parent.iter().any(|p| match p {
+            // Parent unlimited: subsumes any child (including unlimited).
+            Caveat::MaxUses { count: 0 } => true,
+            // Bounded parent, unlimited child: not subsumed (widening).
+            Caveat::MaxUses { count: _ } if *c_count == 0 => false,
+            // Bounded parent, bounded child: child count <= parent count.
+            Caveat::MaxUses { count: p_count } => c_count <= p_count,
+            _ => false,
+        }),
+        Caveat::WrappedOnly { parent_capability: c_parent } => parent.iter().any(|p| match p {
+            Caveat::WrappedOnly { parent_capability: p_parent } => p_parent == c_parent,
+            _ => false,
+        }),
+        Caveat::Factory(c) => parent.iter().any(|p| match p {
+            Caveat::Factory(p) => {
+                p.target_vault_id == c.target_vault_id && p.action_template == c.action_template && p.required_caller == c.required_caller && p.pre_conditions == c.pre_conditions && p.expiry_for_deploy_unix == c.expiry_for_deploy_unix
+            }
+            _ => false,
+        }),
+        Caveat::PolicyReference { policy_id, policy_version_seq, attenuation_witness } => {
+            parent.iter().any(|p| matches!(
+                p,
+                Caveat::PolicyReference {
+                    policy_id: p_id,
+                    policy_version_seq: p_seq,
+                    attenuation_witness: p_wit,
+                } if p_id == policy_id && p_seq == policy_version_seq && p_wit == attenuation_witness
+            ))
+        }
+        Caveat::ValidAfter { not_before_unix: c_after } => parent.iter().any(|p| match p {
+            Caveat::ValidAfter { not_before_unix: p_after } => c_after >= p_after,
+            _ => false,
+        }),
+        Caveat::RedemptionContext { context_hash: c_hash } => parent.iter().any(|p| match p {
+            Caveat::RedemptionContext { context_hash: p_hash } => p_hash == c_hash,
+            _ => false,
+        }),
+        Caveat::Sharded { shard_id: c_shard } => parent.iter().any(|p| match p {
+            Caveat::Sharded { shard_id: p_shard } => p_shard == c_shard,
+            _ => false,
+        }),
+        // Payment caveat subsumption (RFC-0965 §2 PaymentCaveat Specification, mission 0957-phase2b):
+        // child budget ≤ parent budget, child expiry ≤ parent expiry,
+        // parent model empty OR matches child model. The child cannot
+        // widen to a wildcard model (RFC-0957 §Attenuation Invariant).
+        Caveat::Payment(c) => parent.iter().any(|p| match p {
+            Caveat::Payment(p_inner) => {
+                dqa_cmp(c.budget, p_inner.budget) <= 0
+                    && c.expires_at_unix_ms <= p_inner.expires_at_unix_ms
+                    && (p_inner.model.is_empty() || p_inner.model == c.model)
+            }
+            _ => false,
+        }),
+    }
+}
+
+/// Cache policy subsumption: parent must be more permissive than child.
+///
+/// Permissiveness order: `Off` (no cache, most restrictive) ⊂ `OptIn`
+/// (opt-in caching) ⊂ `Always` (cache always, least restrictive).
+/// `parent ⊇ child` iff parent's policy permits all caching that child does.
+#[allow(clippy::match_same_arms, clippy::unnested_or_patterns)]
+fn cache_policy_subsumes(parent: &CachePolicy, child: &CachePolicy) -> bool {
+    match (parent, child) {
+        // Off ↔ Off: same restriction level.
+        (CachePolicy::Off, CachePolicy::Off) => true,
+
+        // Always ↔ Always: parent TTL must cover child TTL (child no longer).
+        (CachePolicy::Always { ttl_secs: p_ttl }, CachePolicy::Always { ttl_secs: c_ttl }) => {
+            c_ttl <= p_ttl
+        }
+
+        // OptIn ↔ OptIn: parent bound to key requires child to be too.
+        (
+            CachePolicy::OptIn {
+                cache_key_hash: p_kh,
+            },
+            CachePolicy::OptIn {
+                cache_key_hash: c_kh,
+            },
+        ) => match (p_kh, c_kh) {
+            (None, _) => true, // parent allows any key
+            (Some(p), Some(c)) => p == c,
+            (Some(_), None) => false, // parent bound to specific key, child not
+        },
+
+        // Cross-variant: parent must be more permissive.
+        (CachePolicy::Always { .. }, CachePolicy::OptIn { .. }) => true, // Always allows OptIn
+        (CachePolicy::Always { .. }, CachePolicy::Off) => true,          // Always allows Off
+        (CachePolicy::OptIn { .. }, CachePolicy::Off) => true,           // OptIn allows Off
+        // Off is most restrictive; cannot permit OptIn or Always.
+        // OptIn is more restrictive than Always.
+        (CachePolicy::Off, CachePolicy::OptIn { .. }) => false,
+        (CachePolicy::Off, CachePolicy::Always { .. }) => false,
+        (CachePolicy::OptIn { .. }, CachePolicy::Always { .. }) => false,
+    }
+}
+
+impl Caveat {
+    /// The time window this caveat imposes, or `None` if it imposes none.
+    ///
+    /// The match below is deliberately **exhaustive with no wildcard arm**, so
+    /// adding a caveat variant is a compile error until someone classifies it
+    /// here. That is the whole point of this function.
+    ///
+    /// It exists because the H-4 redemption guard used to hardcode a list of
+    /// time-bearing variants, with a `_ => {}` arm for everything else. A
+    /// variant missed by that list redeemed **indefinitely** — silently, with
+    /// no test failure. `Caveat::Before` had been missed that way for the life
+    /// of the guard: a capability whose sole deadline was `Before` never
+    /// expired. Making the classification exhaustive turns that silent skip
+    /// into a compile error at the moment the variant lands.
+    ///
+    /// `Raw` returns `None` by design. A raw caveat may carry a deadline, but
+    /// core cannot know that without trusting the bytes; a caller that does
+    /// know supplies its own evaluator through
+    /// [`crate::caveat::evaluator::CaveatEvaluator`] instead.
+    pub fn time_bounds(&self) -> Option<TimeBounds> {
+        match self {
+            Self::Before(deadline_unix) => Some(TimeBounds::NotAfter {
+                deadline_unix: *deadline_unix,
+            }),
+            Self::ValidRange {
+                valid_after_unix,
+                valid_until_unix,
+            } => Some(TimeBounds::Range {
+                valid_after_unix: *valid_after_unix,
+                valid_until_unix: *valid_until_unix,
+            }),
+            Self::ValidAfter { not_before_unix } => Some(TimeBounds::NotBefore {
+                not_before_unix: *not_before_unix,
+            }),
+            // Non-time-bearing variants, listed exhaustively and on purpose.
+            // A new variant will not compile until it is placed here, which is
+            // the decision this function exists to force.
+            Self::AmountMax(_)
+            | Self::PerAxisMax(_)
+            | Self::Model(_)
+            | Self::Provider(_)
+            | Self::Audience(_)
+            | Self::RateLimit(_)
+            | Self::InvocationHashBind(_)
+            | Self::Jurisdiction(_)
+            | Self::CacheStrategy(_)
+            | Self::AskBinding(_)
+            | Self::ThirdParty(_)
+            | Self::Raw(_)
+            | Self::Vault(_)
+            | Self::Permission(_)
+            | Self::MaxPerTx(_)
+            | Self::AuditWindow { .. }
+            | Self::MaxUses { .. }
+            | Self::WrappedOnly { .. }
+            | Self::Factory(_)
+            | Self::PolicyReference { .. }
+            | Self::RedemptionContext { .. }
+            | Self::Sharded { .. }
+            | Self::Payment(_)
+            | Self::AssetBinding(_) => None,
+        }
+    }
+
+    /// Registry key for caveat predicate evaluation (RFC-0974 §Amendment 1).
+    ///
+    /// A core variant keys on its RFC-0964 short tag — the same string
+    /// `CaveatName::short_name` returns and the same string
+    /// `CaveatName::from_short_tag` parses. A [`Caveat::Raw`] keys on the
+    /// caller-supplied `name`, which is what makes third-party caveats
+    /// evaluable without editing this crate.
+    ///
+    /// Borrowed for both cases: the short tag is `'static` and `RawCaveat.name`
+    /// outlives the borrow of `self`.
+    #[must_use]
+    pub fn evaluator_key(&self) -> std::borrow::Cow<'_, str> {
+        match self {
+            Self::Raw(raw) => std::borrow::Cow::Borrowed(raw.name.as_str()),
+            other => std::borrow::Cow::Borrowed(other.name().short_name()),
+        }
+    }
+
+    /// Wire-stable name (used as HMAC info).
+    #[must_use]
+    pub fn name(&self) -> CaveatName {
+        match self {
+            Self::AmountMax(_) => CaveatName::AmountMax,
+            Self::PerAxisMax(_) => CaveatName::PerAxisMax,
+            Self::Model(_) => CaveatName::Model,
+            Self::Provider(_) => CaveatName::Provider,
+            Self::Before(_) => CaveatName::Before,
+            Self::Audience(_) => CaveatName::Audience,
+            Self::RateLimit(_) => CaveatName::RateLimit,
+            Self::InvocationHashBind(_) => CaveatName::InvocationHashBind,
+            Self::Jurisdiction(_) => CaveatName::Jurisdiction,
+            Self::CacheStrategy(_) => CaveatName::CacheStrategy,
+            Self::AskBinding(_) => CaveatName::AskBinding,
+            Self::ThirdParty(_) => CaveatName::ThirdParty,
+            Self::Raw(_) => CaveatName::Raw,
+            Self::Vault(_) => CaveatName::Vault,
+            Self::Permission(_) => CaveatName::Permission,
+            Self::ValidRange { .. } => CaveatName::ValidRange,
+            Self::MaxPerTx(_) => CaveatName::MaxPerTx,
+            Self::AuditWindow { .. } => CaveatName::AuditWindow,
+            Self::MaxUses { .. } => CaveatName::MaxUses,
+            Self::WrappedOnly { .. } => CaveatName::WrappedOnly,
+            Self::Factory(_) => CaveatName::Factory,
+            Self::PolicyReference { .. } => CaveatName::PolicyReference,
+            Self::ValidAfter { .. } => CaveatName::ValidAfter,
+            Self::RedemptionContext { .. } => CaveatName::RedemptionContext,
+            Self::Sharded { .. } => CaveatName::Sharded,
+            Self::Payment(_) => CaveatName::Payment,
+            Self::AssetBinding(_) => CaveatName::AssetBinding,
+        }
+    }
+
+    /// Canonical serialization per RFC-0126 (deterministic JSON).
+    ///
+    /// Sort keys alphabetically; `serde_json` with `preserve_order = false`
+    /// (default) gives non-deterministic output. We use a custom serializer
+    /// that produces stable output: tagged variant → `tag || value`.
+    #[must_use]
+    pub fn canonical_ser(&self) -> Vec<u8> {
+        // Deterministic JSON: serialize each variant as `{"type": "...", "value": <payload>}`.
+        // serde_json cannot serialize tagged newtype variants directly, so we
+        // build the JSON value manually. HashSet + Vec<ProviderId> are sorted
+        // for determinism (HMAC input stability across orderings).
+        let value = match self {
+            // Budget carries the full 16-byte `DqaEncoding` (value 8B BE +
+            // scale 1B + 7 reserved), hex-encoded, per RFC-0011 §Caveat
+            // Catalog ("The canonical form MUST carry `scale`"). Emitting
+            // the bare `i64` would drop the scale, so two budgets 10^6 apart
+            // would produce a byte-identical `capability_id` preimage. The
+            // regression test `canonical_budget_is_injective_on_economic_value`
+            // pins this.
+            Caveat::AmountMax(v) => serde_json::json!({
+                "type": "amount_max",
+                "value": hex::encode(dqa_serde::dqa_to_bytes(v)),
+            }),
+            Caveat::PerAxisMax(p) => serde_json::json!({"type": "per_axis_max", "value": p}),
+            Caveat::Model(m) => serde_json::json!({"type": "model", "value": m}),
+            Caveat::Provider(p) => {
+                let mut sorted: Vec<&String> = p.iter().collect();
+                sorted.sort();
+                serde_json::json!({"type": "provider", "value": sorted})
+            }
+            Caveat::Before(t) => serde_json::json!({"type": "before", "value": t}),
+            Caveat::Audience(a) => serde_json::json!({"type": "audience", "value": a}),
+            Caveat::RateLimit(r) => serde_json::json!({"type": "rate_limit", "value": r}),
+            Caveat::InvocationHashBind(h) => {
+                serde_json::json!({"type": "invocation_hash_bind", "value": hex::encode(h)})
+            }
+            Caveat::Jurisdiction(set) => {
+                let mut sorted: Vec<&String> = set.iter().collect();
+                sorted.sort();
+                serde_json::json!({"type": "jurisdiction", "value": sorted})
+            }
+            Caveat::CacheStrategy(c) => serde_json::json!({"type": "cache_strategy", "value": c}),
+            Caveat::AskBinding(id) => {
+                serde_json::json!({"type": "ask_binding", "value": hex::encode(id)})
+            }
+            Caveat::ThirdParty(channel) => {
+                serde_json::json!({"type": "third_party", "value": channel})
+            }
+            Caveat::Raw(r) => serde_json::json!({
+                "type": "raw",
+                "value": {"name": r.name, "value": hex::encode(&r.value)}
+            }),
+            Caveat::Vault(id) => serde_json::json!({"type": "vault", "value": hex::encode(id)}),
+            Caveat::Permission(k) => {
+                // The SHORT TAG, not the HMAC info string.
+                //
+                // `PermissionKind` derives `Serialize` with
+                // `rename_all = "snake_case"`, so the input form expects
+                // `"vault_mutation"`. This arm used to write
+                // `PermissionKind::as_str()`, which is the full HMAC info string
+                // `"cipherocto/cap/v1/permission/vault_mutation"` — a different
+                // vocabulary, not a different encoding of the same one, so the
+                // canonical form could not be re-read at all.
+                //
+                // `as_str()` is correct for its own purpose: it is the `info`
+                // parameter to HMAC-BLAKE3, and `caveat_name_stable` pins that
+                // distinction between the HMAC string and the wire tag. Mixing
+                // the two here is what created the asymmetry.
+                //
+                // Emitting the derived form rather than a hand-written string
+                // table means a variant added to `PermissionKind` is covered
+                // automatically by `rename_all`, and `tv_cf_26` derives the
+                // variant set from this crate's source to confirm it.
+                serde_json::json!({
+                    "type": "permission",
+                    "value": serde_json::to_value(k).expect("PermissionKind is serializable"),
+                })
+            }
+            Caveat::ValidRange {
+                valid_after_unix,
+                valid_until_unix,
+            } => serde_json::json!({
+                "type": "valid_range",
+                "value": {
+                    "valid_after_unix": valid_after_unix,
+                    "valid_until_unix": valid_until_unix,
+                }
+            }),
+            Caveat::MaxPerTx(amount) => serde_json::json!({"type": "max_per_tx", "value": amount}),
+            Caveat::AuditWindow { duration_secs } => {
+                serde_json::json!({"type": "audit_window", "value": duration_secs})
+            }
+            Caveat::MaxUses { count } => serde_json::json!({"type": "max_uses", "value": count}),
+            Caveat::WrappedOnly { parent_capability } => {
+                // The `value` is an OBJECT, not a bare hex string. `Caveat` is
+                // adjacently tagged, so a struct-payload arm's input form
+                // expects an object under `value`. This arm used to write the
+                // bare string, which no input form could parse regardless of
+                // encoding. Changing it alters `caveat_body_hash` and so every
+                // capability id carrying a `wrapped_only` caveat — see
+                // RFC-0011-caveat-form-amendment.md §Known deviations 4.
+                serde_json::json!({
+                    "type": "wrapped_only",
+                    "value": { "parent_capability": hex::encode(parent_capability) },
+                })
+            }
+            Caveat::Factory(vet) => {
+                // Canonicalise each constraint via RFC-0964 wire format.
+                let pre_conditions: Vec<String> = vet
+                    .pre_conditions
+                    .iter()
+                    .map(|c| hex::encode(encode_constraint(c).expect("constraint encoding")))
+                    .collect();
+                serde_json::json!({
+                    "type": "factory",
+                    "value": {
+                        "target_vault_id": hex::encode(vet.target_vault_id),
+                        "action_template": {
+                            "selector": vet.action_template.selector,
+                            "args": vet.action_template.args,
+                        },
+                        "required_caller": vet.required_caller,
+                        "pre_conditions": pre_conditions,
+                        "expiry_for_deploy_unix": vet.expiry_for_deploy_unix,
+                    }
+                })
+            }
+            Caveat::PolicyReference {
+                policy_id,
+                policy_version_seq,
+                attenuation_witness,
+            } => {
+                serde_json::json!({
+                    "type": "policy_reference",
+                    "value": {
+                        "policy_id": hex::encode(policy_id),
+                        "policy_version_seq": policy_version_seq,
+                        "attenuation_witness": hex::encode(attenuation_witness),
+                    }
+                })
+            }
+            Caveat::ValidAfter { not_before_unix } => {
+                serde_json::json!({"type": "valid_after", "value": not_before_unix})
+            }
+            Caveat::RedemptionContext { context_hash } => {
+                // Object envelope, for the same adjacently-tagged reason as
+                // `wrapped_only`. Digest-relevant; see §Known deviations 4.
+                serde_json::json!({
+                    "type": "redemption_context",
+                    "value": { "context_hash": hex::encode(context_hash) }
+                })
+            }
+            Caveat::Sharded { shard_id } => {
+                serde_json::json!({"type": "sharded", "value": shard_id})
+            }
+            Caveat::Payment(p) => {
+                // LOSSLESS, and deliberately so.
+                //
+                // This arm used to project four of `PaymentCaveat`'s seven
+                // fields — `caveat_name`, `budget`, `model`,
+                // `expires_at_unix_ms` — and drop `asset_id`,
+                // `registry_snapshot_epoch`, and `nonce`. The four that
+                // survived were exactly the four inert descriptive fields,
+                // and the three that were dropped are the three that
+                // CONSTRAIN what the capability may do: the asset binding
+                // that stops a USDC budget being spent against an OCTO-W
+                // query, the registry-epoch staleness guard, and the
+                // anti-replay token.
+                //
+                // There was never a design reason. The projection was written
+                // on 2026-08-10, when those four WERE all of the struct's
+                // fields, and it was lossless then. Three fields were added on
+                // 2026-08-26 by `726960ea` (the 8-gate verify plus
+                // `Caveat::AssetBinding`), and that commit did not touch this
+                // match arm. Nothing failed, because a hand-written field list
+                // does not break when a struct grows a field.
+                //
+                // Two consequences made it worse than a stale digest:
+                //
+                // * `caveat_body_hash` feeds the capability id, so two payment
+                //   caveats differing only in asset, epoch, or nonce hashed
+                //   identically. Enforcement still reads the real fields, so
+                //   this is an identifier collision rather than a bypass.
+                // * `caveat_body_hash` also backs the dry-run pastejacking
+                //   echo in `octo-cli capability mint`, whose entire purpose is
+                //   to show the operator what they are about to authorize. The
+                //   echo was hiding the asset binding and the nonce from the
+                //   one surface that exists to display them.
+                //
+                // The budget keeps its 16-byte hex encoding, carrying `scale`
+                // as `PaymentCaveat::attenuate` Gate 3 requires — the regression
+                // test `canonical_payment_budget_carries_scale` pins that, and
+                // the `budget` field's own `#[serde(with = "dqa_serde::field")]`
+                // produces it.
+                //
+                // The projection is written out field by field rather than
+                // taken from `serde_json::to_value(p)`, and the reason is
+                // specific: the `budget` field's adapter is
+                // `dqa_serde::field`, whose `serialize` calls
+                // `serialize_bytes`, which `serde_json::Value` renders as an
+                // ARRAY OF NUMBERS rather than the canonical hex string. The
+                // derived form therefore does not carry `budget` as hex, and
+                // using it here broke `canonical_payment_budget_carries_scale`.
+                //
+                // That trade is deliberate: the hand-written list can drift when
+                // the struct gains a field, which is exactly how this arm lost
+                // three of them. `tv_cf_25` closes that gap by reading the
+                // field names out of `PaymentCaveat`'s own source and failing
+                // if the projection omits any, so the drift cannot recur
+                // silently. That guard is why the list can be explicit here
+                // without inheriting the original defect.
+                //
+                // Wire forms, from the field adapters: `asset_id` and `nonce`
+                // are 64-char lowercase hex via `hex_id_32`;
+                // `registry_snapshot_epoch` is a decimal STRING via
+                // `serde_epoch`; `budget` is 16-byte hex carrying `scale`.
+                serde_json::json!({
+                    "type": "payment",
+                    "value": {
+                        "caveat_name": p.caveat_name,
+                        "asset_id": hex::encode(p.asset_id.as_bytes()),
+                        "budget": hex::encode(dqa_serde::dqa_to_bytes(&p.budget)),
+                        "model": p.model,
+                        "expires_at_unix_ms": p.expires_at_unix_ms,
+                        "registry_snapshot_epoch": p.registry_snapshot_epoch.0.to_string(),
+                        "nonce": hex::encode(p.nonce.as_bytes()),
+                    }
+                })
+            }
+            Caveat::AssetBinding(b) => {
+                // Object envelope, for the same adjacently-tagged reason as
+                // `wrapped_only`. Digest-relevant; see §Known deviations 4.
+                serde_json::json!({
+                    "type": "asset_binding",
+                    "value": { "asset_id": hex::encode(b.asset_id) }
+                })
+            }
+        };
+        serde_json::to_vec(&value).expect("serializable")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json;
+
+    #[test]
+    fn caveat_name_stable() {
+        // Wire-stable identifier MUST NOT change between releases without
+        // bumping version constant in RFC-0957.
+        assert_eq!(
+            CaveatName::AmountMax.as_str(),
+            "cipherocto/cap/v1/caveat/amount_max"
+        );
+        assert_eq!(
+            CaveatName::AskBinding.as_str(),
+            "cipherocto/cap/v1/caveat/ask_binding"
+        );
+    }
+
+    /// R20 Lens-4 F1: `CaveatName::short_name()` is the wire tag
+    /// (snake_case), distinct from `as_str()` (the HMAC info
+    /// string). Pin both so the substrate does not silently drift
+    /// into reusing the HMAC string for the wire tag.
+    #[test]
+    fn caveat_name_short_name_is_snake_case() {
+        assert_eq!(CaveatName::AmountMax.short_name(), "amount_max");
+        assert_eq!(CaveatName::PerAxisMax.short_name(), "per_axis_max");
+        assert_eq!(
+            CaveatName::InvocationHashBind.short_name(),
+            "invocation_hash_bind"
+        );
+        assert_eq!(CaveatName::ValidAfter.short_name(), "valid_after");
+        assert_eq!(CaveatName::PolicyReference.short_name(), "policy_reference");
+        assert_eq!(
+            CaveatName::RedemptionContext.short_name(),
+            "redemption_context"
+        );
+        assert_eq!(CaveatName::AssetBinding.short_name(), "asset_binding");
+    }
+
+    /// R20 Lens-4 F1: `Display` delegates to `short_name()` and
+    /// `from_short_tag` round-trips. Unknown tags return `None` —
+    /// the CLI caller decides fail-closed (`unwrap_or(Raw)`).
+    #[test]
+    fn caveat_name_display_and_from_short_tag_roundtrip() {
+        for variant in [
+            CaveatName::AmountMax,
+            CaveatName::PerAxisMax,
+            CaveatName::Model,
+            CaveatName::Provider,
+            CaveatName::Before,
+            CaveatName::Audience,
+            CaveatName::RateLimit,
+            CaveatName::InvocationHashBind,
+            CaveatName::Jurisdiction,
+            CaveatName::CacheStrategy,
+            CaveatName::AskBinding,
+            CaveatName::ThirdParty,
+            CaveatName::Raw,
+            CaveatName::Vault,
+            CaveatName::Permission,
+            CaveatName::ValidRange,
+            CaveatName::MaxPerTx,
+            CaveatName::AuditWindow,
+            CaveatName::MaxUses,
+            CaveatName::WrappedOnly,
+            CaveatName::Factory,
+            CaveatName::PolicyReference,
+            CaveatName::ValidAfter,
+            CaveatName::RedemptionContext,
+            CaveatName::Sharded,
+            CaveatName::Payment,
+            CaveatName::AssetBinding,
+        ] {
+            let tag = variant.short_name();
+            assert_eq!(variant.to_string(), tag, "Display mismatch for {variant:?}");
+            assert_eq!(
+                CaveatName::from_short_tag(tag),
+                Some(variant),
+                "from_short_tag round-trip failed for {tag}"
+            );
+        }
+        // Unknown tag fails closed (None) — caller decides.
+        assert_eq!(
+            CaveatName::from_short_tag("cipherocto/cap/v1/caveat/foo"),
+            None
+        );
+        assert_eq!(CaveatName::from_short_tag(""), None);
+    }
+
+    /// R20 Lens-4 F1: serde representation is the short tag, not the
+    /// full HMAC info string. The CLI's `CaveatSummaryView.kind`
+    /// serializes via this; the on-wire tag must stay snake_case.
+    #[test]
+    fn caveat_name_serde_uses_short_tag() {
+        let json = serde_json::to_string(&CaveatName::AmountMax).unwrap();
+        assert_eq!(json, "\"amount_max\"");
+        let json = serde_json::to_string(&CaveatName::InvocationHashBind).unwrap();
+        assert_eq!(json, "\"invocation_hash_bind\"");
+        let restored: CaveatName = serde_json::from_str("\"amount_max\"").unwrap();
+        assert_eq!(restored, CaveatName::AmountMax);
+    }
+
+    #[test]
+    fn canonical_ser_deterministic_for_jurisdiction() {
+        let a = Caveat::Jurisdiction(["US".to_owned(), "DE".to_owned()].into_iter().collect());
+        let b = Caveat::Jurisdiction(["DE".to_owned(), "US".to_owned()].into_iter().collect());
+        assert_eq!(a.canonical_ser(), b.canonical_ser());
+    }
+
+    #[test]
+    fn canonical_ser_stable_across_runs() {
+        let c = Caveat::AmountMax(Dqa::new(1_000_000, 0).unwrap());
+        assert_eq!(c.canonical_ser(), c.canonical_ser());
+    }
+
+    #[test]
+    fn canonical_ser_provider_order_independent() {
+        let a = Caveat::Provider(vec!["openai".to_owned(), "anthropic".to_owned()]);
+        let b = Caveat::Provider(vec!["anthropic".to_owned(), "openai".to_owned()]);
+        assert_eq!(a.canonical_ser(), b.canonical_ser());
+    }
+
+    /// R9 finding: `canonical_ser` had deterministic unit tests for
+    /// Jurisdiction + Provider order-independence, plus a stability test,
+    /// but no broader property test covering more variants. This test
+    /// constructs a representative sample of variants (one per "kind"
+    /// of inner payload — primitive, struct, sequence, set, enum) and
+    /// asserts determinism + structural properties.
+    ///
+    /// Determinism is the load-bearing property for HMAC input stability
+    /// across implementations (RFC-0126). A regression that broke
+    /// determinism for any variant would silently break HMAC chain
+    /// verification across wallet ↔ verifier boundaries.
+    #[test]
+    fn canonical_ser_property_test_sample() {
+        // Sample: one variant per payload shape — primitive, struct, seq, set, enum.
+        let samples: Vec<Caveat> = vec![
+            // Primitive payloads.
+            // Note: avoid `u128::MAX` — `json!` macro rejects values outside
+            // the i64 range. Use modest values that fit in JSON numbers.
+            Caveat::AmountMax(Dqa::new(1_000_000, 0).unwrap()),
+            Caveat::Before(1_700_000_000),
+            Caveat::MaxPerTx(50_000u128),
+            // Struct payloads.
+            Caveat::PerAxisMax(PerAxisMax {
+                axis: "input_tokens".to_owned(),
+                max_per_1k: Dqa::new(500, 0).unwrap(),
+            }),
+            Caveat::RateLimit(RateLimit {
+                rpm: 60,
+                tpm: 100_000,
+            }),
+            Caveat::AuditWindow { duration_secs: 0 },
+            Caveat::MaxUses { count: 0 },
+            Caveat::ValidRange {
+                valid_after_unix: 0,
+                valid_until_unix: u64::MAX,
+            },
+            Caveat::PolicyReference {
+                policy_id: [0xff; 32],
+                policy_version_seq: u64::MAX,
+                attenuation_witness: [0xab; 64],
+            },
+            // Sequence payloads.
+            Caveat::Provider(vec!["a".to_owned(), "b".to_owned(), "c".to_owned()]),
+            Caveat::ThirdParty("escrow".to_owned()),
+            // Set payloads.
+            Caveat::Jurisdiction(["US".to_owned()].into_iter().collect()),
+            // Enum payloads.
+            Caveat::Permission(PermissionKind::VaultMutation),
+            Caveat::CacheStrategy(CachePolicy::Always { ttl_secs: u32::MAX }),
+        ];
+
+        for caveat in &samples {
+            // Determinism: same input → same bytes.
+            let bytes_a = caveat.canonical_ser();
+            let bytes_b = caveat.canonical_ser();
+            assert_eq!(
+                bytes_a, bytes_b,
+                "canonical_ser not deterministic for {caveat:?}"
+            );
+
+            // Non-empty: every variant must serialize to at least the type tag.
+            assert!(
+                !bytes_a.is_empty(),
+                "canonical_ser produced empty bytes for {caveat:?}"
+            );
+        }
+
+        // Distinct variants → distinct bytes (sanity check the type-tag
+        // disambiguates). Two structurally different caveats serialize to
+        // different output (the type tag in the JSON object differs).
+        let before_bytes = Caveat::Before(1_700_000_000).canonical_ser();
+        let amountmax_bytes = Caveat::AmountMax(Dqa::new(0, 0).unwrap()).canonical_ser();
+        assert_ne!(
+            before_bytes, amountmax_bytes,
+            "distinct Caveat variants must yield distinct canonical_ser output"
+        );
+    }
+
+    // RFC-0957 §Attenuation Invariant + 0957-a mission AC: set_subsumes enforces monotonic
+    // attenuation — child capability may only narrow, never widen.
+
+    // --- time classification -------------------------------------------------
+    //
+    // `time_bounds` exists because the H-4 redemption guard used to keep a
+    // hand-maintained list of time-bearing variants with a wildcard arm, and a
+    // variant missing from that list redeemed indefinitely. `Before` was
+    // missing. These tests pin the classification that replaced it.
+
+    #[test]
+    fn time_bounds_covers_before_valid_range_and_valid_after() {
+        assert_eq!(
+            Caveat::Before(200).time_bounds(),
+            Some(TimeBounds::NotAfter { deadline_unix: 200 })
+        );
+        assert_eq!(
+            Caveat::ValidRange {
+                valid_after_unix: 100,
+                valid_until_unix: 200,
+            }
+            .time_bounds(),
+            Some(TimeBounds::Range {
+                valid_after_unix: 100,
+                valid_until_unix: 200,
+            })
+        );
+        assert_eq!(
+            Caveat::ValidAfter {
+                not_before_unix: 100
+            }
+            .time_bounds(),
+            Some(TimeBounds::NotBefore {
+                not_before_unix: 100
+            })
+        );
+    }
+
+    #[test]
+    fn time_bounds_is_none_for_non_time_variants() {
+        assert!(Caveat::Model("m".to_owned()).time_bounds().is_none());
+        assert!(Caveat::AmountMax(Dqa::new(1, 0).unwrap())
+            .time_bounds()
+            .is_none());
+        assert!(Caveat::PolicyReference {
+            policy_id: [0u8; 32],
+            policy_version_seq: 1,
+            attenuation_witness: [0u8; 64],
+        }
+        .time_bounds()
+        .is_none());
+        // `Raw` is deliberately not time-classified: core cannot know whether
+        // the opaque bytes carry a deadline without trusting them.
+        assert!(Caveat::Raw(RawCaveat {
+            name: "app.example/deadline".to_owned(),
+            value: b"{}".to_vec(),
+        })
+        .time_bounds()
+        .is_none());
+    }
+
+    #[test]
+    fn not_after_admits_inclusive_and_refuses_after() {
+        let b = TimeBounds::NotAfter { deadline_unix: 200 };
+        assert!(b.admit(0).is_ok());
+        assert!(b.admit(200).is_ok(), "the deadline instant is inclusive");
+        assert!(b.admit(201).is_err());
+    }
+
+    #[test]
+    fn not_before_refuses_before_and_admits_from() {
+        let b = TimeBounds::NotBefore {
+            not_before_unix: 200,
+        };
+        assert!(b.admit(199).is_err());
+        assert!(b.admit(200).is_ok(), "the start instant is inclusive");
+        assert!(b.admit(500).is_ok());
+    }
+
+    #[test]
+    fn range_admits_both_inclusive_endpoints() {
+        let b = TimeBounds::Range {
+            valid_after_unix: 100,
+            valid_until_unix: 200,
+        };
+        assert!(b.admit(99).is_err());
+        assert!(b.admit(100).is_ok(), "start is inclusive");
+        assert!(b.admit(150).is_ok());
+        assert!(b.admit(200).is_ok(), "end is inclusive");
+        assert!(b.admit(201).is_err());
+    }
+
+    #[test]
+    fn inverted_range_is_unsatisfiable_at_every_instant() {
+        // RFC-0960 §R5-F2: the range must not wrap around midnight-style.
+        let b = TimeBounds::Range {
+            valid_after_unix: 300,
+            valid_until_unix: 100,
+        };
+        for now in [0_u64, 100, 200, 300, 1_000] {
+            assert!(b.admit(now).is_err(), "inverted range admitted now={now}");
+        }
+        assert!(b.admit(0).unwrap_err().contains("unsatisfiable"));
+    }
+
+    #[test]
+    fn time_bounds_display_round_trips_the_caveat_names() {
+        assert_eq!(
+            TimeBounds::NotAfter { deadline_unix: 200 }.to_string(),
+            "Before 200"
+        );
+        assert_eq!(
+            TimeBounds::Range {
+                valid_after_unix: 100,
+                valid_until_unix: 200,
+            }
+            .to_string(),
+            "ValidRange [100, 200]"
+        );
+        assert_eq!(
+            TimeBounds::NotBefore {
+                not_before_unix: 100
+            }
+            .to_string(),
+            "ValidAfter 100"
+        );
+    }
+
+    #[test]
+    fn refusal_reasons_name_the_bound_not_the_instant() {
+        // `admit` reports the violated bound. The `now` that violated it is
+        // carried alongside by the caller, which has it as a separate value —
+        // duplicating it here would make the two disagree.
+        let expired = TimeBounds::NotAfter { deadline_unix: 200 }
+            .admit(500)
+            .unwrap_err();
+        assert!(
+            expired.contains("expired") && expired.contains("200"),
+            "reason must name expiry: {expired}"
+        );
+
+        let early = TimeBounds::NotBefore {
+            not_before_unix: 900,
+        }
+        .admit(500)
+        .unwrap_err();
+        assert!(
+            early.contains("not yet valid") && early.contains("900"),
+            "reason must name the start: {early}"
+        );
+    }
+
+    #[test]
+    fn subsumes_empty_parent_allows_empty_child() {
+        assert!(set_subsumes(&[], &[]));
+    }
+
+    #[test]
+    fn subsumes_empty_parent_rejects_nonempty_child() {
+        let child = vec![Caveat::Model("gpt-4".to_owned())];
+        assert!(!set_subsumes(&[], &child));
+    }
+
+    #[test]
+    fn subsumes_model_requires_same_value() {
+        let parent = vec![Caveat::Model("gpt-4".to_owned())];
+        assert!(set_subsumes(&parent, &[Caveat::Model("gpt-4".to_owned())]));
+        assert!(!set_subsumes(
+            &parent,
+            &[Caveat::Model("claude-3".to_owned())]
+        ));
+    }
+
+    #[test]
+    fn subsumes_amount_max_narrows() {
+        // parent 1000 OCTO-W; child 500 OCTO-W (narrowing) ⇒ child ⊆ parent
+        let parent = vec![Caveat::AmountMax(Dqa::new(1_000_000_000, 0).unwrap())];
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::AmountMax(Dqa::new(500_000_000, 0).unwrap())]
+        ));
+        // child 1500 OCTO-W (widening) ⇒ reject
+        assert!(!set_subsumes(
+            &parent,
+            &[Caveat::AmountMax(Dqa::new(1_500_000_000, 0).unwrap())]
+        ));
+    }
+
+    // ---------------------------------------------------------------------
+    // Canonical-encoding scale regression tests.
+    //
+    // `subsumes_amount_max_narrows` above compares every budget at `scale = 0`,
+    // which is why the encoder's dropped `scale` survived: the subsumption
+    // check uses `dqa_cmp` and is correct, so a scale-blind test suite sees
+    // green while the canonical form silently conflates budgets 10^6 apart.
+    // The encoder is the HMAC input for `capability_id`, so conflating them
+    // is an identity collision, not a display bug.
+    //
+    // RFC-0011 §Caveat Catalog: "The canonical form MUST carry `scale` —
+    // without it, a CLI form guessing `scale=0` against a parent `scale=6`
+    // would yield a child worth 1,000,000x the intended amount that still
+    // passes narrowing."
+    // ---------------------------------------------------------------------
+
+    /// Helper: pull the 16-byte `DqaEncoding` payload out of an `amount_max`
+    /// canonical envelope and decode it back to a `Dqa`.
+    fn decode_canonical_budget(canonical: &[u8]) -> Dqa {
+        let v: serde_json::Value = serde_json::from_slice(canonical).expect("canonical is JSON");
+        let hexed = v["value"].as_str().expect("value is a hex string");
+        let bytes = hex::decode(hexed).expect("value is valid hex");
+        assert_eq!(bytes.len(), 16, "DqaEncoding is 16 bytes");
+        dqa_serde::dqa_from_bytes(&bytes).expect("DqaEncoding decodes")
+    }
+
+    /// The two budgets below differ by 10^6 in economic value and share a
+    /// numerator. Before the fix their canonical bytes were byte-identical,
+    /// so both hashed into the same `capability_id`. This is the regression.
+    #[test]
+    fn canonical_budget_is_injective_on_economic_value() {
+        let a = Dqa::new(1_000_000, 0).expect("dqa");
+        let b = Dqa::new(1_000_000, 6).expect("dqa");
+        // Preconditions: same numerator, genuinely different economic value.
+        assert_eq!(a.value, b.value, "numerators match by construction");
+        assert_ne!(
+            dqa_cmp(a, b),
+            0,
+            "economic values must differ, else this test proves nothing"
+        );
+        assert_ne!(
+            Caveat::AmountMax(a).canonical_ser(),
+            Caveat::AmountMax(b).canonical_ser(),
+            "budgets 10^6 apart must not share a canonical preimage"
+        );
+    }
+
+    /// The inverse property: economically IDENTICAL budgets must produce
+    /// byte-identical canonical forms, or the encoding is not canonical.
+    /// `1000 @ scale 3` and `1 @ scale 0` are both 1.0, and
+    /// `DqaEncoding::from_dqa` canonicalizes before encoding, so these
+    /// collapse to the same wire form by design.
+    #[test]
+    fn canonical_budget_is_canonical_for_equivalent_values() {
+        let a = Dqa::new(1_000, 3).expect("dqa");
+        let b = Dqa::new(1, 0).expect("dqa");
+        assert_eq!(
+            dqa_cmp(a, b),
+            0,
+            "precondition: the two budgets are worth the same"
+        );
+        assert_eq!(
+            Caveat::AmountMax(a).canonical_ser(),
+            Caveat::AmountMax(b).canonical_ser(),
+            "economically equal budgets must share a canonical form"
+        );
+    }
+
+    /// The scale must survive the round trip through the canonical form —
+    /// not merely the numerator. Asserting only on the numerator is what let
+    /// the original defect pass review.
+    #[test]
+    fn canonical_budget_round_trips_the_scale() {
+        for (value, scale) in [(1_000_000i64, 6u8), (1_000, 3), (7, 0), (1, 9)] {
+            let dqa = Dqa::new(value, scale).expect("dqa");
+            let back = decode_canonical_budget(&Caveat::AmountMax(dqa).canonical_ser());
+            assert_eq!(
+                dqa_cmp(dqa, back),
+                0,
+                "scale {scale} must survive the canonical round trip"
+            );
+        }
+    }
+
+    /// `Caveat::Payment` carries a budget too, and dropped the same scale.
+    /// This matters more here than the encoder alone suggests, because
+    /// `PaymentCaveat::attenuate` Gate 3 REJECTS a budget whose scale differs
+    /// from the parent's. The substrate enforced the invariant on the way in
+    /// and discarded it on the way out.
+    #[test]
+    fn canonical_payment_budget_carries_scale() {
+        use crate::{AssetId, Epoch, Nonce};
+        let budget = Dqa::new(1_000_000, 6).expect("dqa");
+        let parent = PaymentCaveat::new(
+            AssetId::from_bytes(OCTO_W_ASSET_ID_BYTES),
+            budget,
+            "gpt-4",
+            u64::MAX,
+            Epoch::new(0),
+            Nonce::from_bytes([0u8; 32]),
+        );
+        let child = PaymentCaveat::new(
+            AssetId::from_bytes(OCTO_W_ASSET_ID_BYTES),
+            Dqa::new(5, 0).expect("dqa"),
+            "gpt-4",
+            u64::MAX,
+            Epoch::new(0),
+            Nonce::from_bytes([0u8; 32]),
+        );
+        let pc = Caveat::Payment(parent);
+        assert_ne!(
+            pc.canonical_ser(),
+            Caveat::Payment(child).canonical_ser(),
+            "payment budgets must not share a canonical preimage"
+        );
+        // The payload must decode back to a budget worth the SAME amount.
+        // `DqaEncoding::from_dqa` canonicalizes (strips trailing zeros), so
+        // `1000000 @ 6` encodes as `1 @ 0` — the scale is preserved as
+        // economic value, not as a literal byte. Asserting the raw scale byte
+        // would pin the wrong property.
+        let v: serde_json::Value = serde_json::from_slice(&pc.canonical_ser()).expect("json");
+        let bytes = hex::decode(v["value"]["budget"].as_str().expect("hex str")).expect("hex");
+        assert_eq!(bytes.len(), 16, "payment budget uses the 16-byte encoding");
+        let decoded = dqa_serde::dqa_from_bytes(&bytes).expect("decodes");
+        assert_eq!(
+            dqa_cmp(budget, decoded),
+            0,
+            "payment budget must survive the canonical round trip economically"
+        );
+    }
+
+    /// `subsumes_amount_max_narrows` only ever compares at `scale = 0`. This
+    /// is the cross-scale case the encoder defect actually lived in: the
+    /// subsumption check is scale-aware and correct, so this test passing is
+    /// exactly why the bug looked harmless from the authorization side.
+    #[test]
+    fn subsumes_amount_max_narrows_across_scales() {
+        // parent 1000 @ scale 3 == 1.0
+        let parent = vec![Caveat::AmountMax(Dqa::new(1_000, 3).expect("dqa"))];
+        // child 500 @ scale 3 == 0.5 ⇒ narrowing
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::AmountMax(Dqa::new(500, 3).expect("dqa"))]
+        ));
+        // child 1 @ scale 0 == 1.0 ⇒ equal, still subsumes
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::AmountMax(Dqa::new(1, 0).expect("dqa"))]
+        ));
+        // child 1000 @ scale 0 == 1000.0 ⇒ WIDENING by 1000x, must reject.
+        // Raw-numerator comparison would wrongly accept this: 1000 <= 1000.
+        assert!(
+            !set_subsumes(
+                &parent,
+                &[Caveat::AmountMax(Dqa::new(1_000, 0).expect("dqa"))]
+            ),
+            "same numerator, 1000x wider — must not pass narrowing"
+        );
+    }
+
+    #[test]
+    fn subsumes_before_earlier_in_child() {
+        // parent expires at ts 200; child expires at ts 100 (earlier = narrower) ⇒ child ⊆ parent
+        let parent = vec![Caveat::Before(200)];
+        assert!(set_subsumes(&parent, &[Caveat::Before(100)]));
+        // child expires later (ts 300) ⇒ reject (widening)
+        assert!(!set_subsumes(&parent, &[Caveat::Before(300)]));
+    }
+
+    #[test]
+    fn subsumes_provider_subset() {
+        let parent = vec![Caveat::Provider(vec![
+            "openai".to_owned(),
+            "anthropic".to_owned(),
+            "google".to_owned(),
+        ])];
+        let child_narrow = vec![Caveat::Provider(vec![
+            "openai".to_owned(),
+            "anthropic".to_owned(),
+        ])];
+        assert!(set_subsumes(&parent, &child_narrow));
+        let child_wider = vec![Caveat::Provider(vec![
+            "openai".to_owned(),
+            "cohere".to_owned(),
+        ])];
+        assert!(!set_subsumes(&parent, &child_wider));
+    }
+
+    #[test]
+    fn subsumes_jurisdiction_subset() {
+        let parent = vec![Caveat::Jurisdiction(
+            ["US".to_owned(), "DE".to_owned()].into_iter().collect(),
+        )];
+        let child_narrow = vec![Caveat::Jurisdiction(
+            ["US".to_owned()].into_iter().collect(),
+        )];
+        assert!(set_subsumes(&parent, &child_narrow));
+        let child_wider = vec![Caveat::Jurisdiction(
+            ["US".to_owned(), "FR".to_owned()].into_iter().collect(),
+        )];
+        assert!(!set_subsumes(&parent, &child_wider));
+    }
+
+    #[test]
+    fn subsumes_rate_limit_narrows() {
+        let parent = vec![Caveat::RateLimit(RateLimit {
+            rpm: 100,
+            tpm: 10_000,
+        })];
+        let child_narrow = vec![Caveat::RateLimit(RateLimit {
+            rpm: 50,
+            tpm: 5_000,
+        })];
+        assert!(set_subsumes(&parent, &child_narrow));
+        let child_wider = vec![Caveat::RateLimit(RateLimit {
+            rpm: 200,
+            tpm: 5_000,
+        })];
+        assert!(!set_subsumes(&parent, &child_wider));
+    }
+
+    #[test]
+    fn subsumes_per_axis_same_axis_narrows() {
+        let parent = vec![Caveat::PerAxisMax(PerAxisMax {
+            axis: "input_tokens".to_owned(),
+            max_per_1k: Dqa::new(1_000, 0).unwrap(),
+        })];
+        let child = vec![Caveat::PerAxisMax(PerAxisMax {
+            axis: "input_tokens".to_owned(),
+            max_per_1k: Dqa::new(500, 0).unwrap(),
+        })];
+        assert!(set_subsumes(&parent, &child));
+    }
+
+    #[test]
+    fn subsumes_per_axis_different_axis_rejects() {
+        let parent = vec![Caveat::PerAxisMax(PerAxisMax {
+            axis: "input_tokens".to_owned(),
+            max_per_1k: Dqa::new(1_000, 0).unwrap(),
+        })];
+        let child = vec![Caveat::PerAxisMax(PerAxisMax {
+            axis: "output_tokens".to_owned(),
+            max_per_1k: Dqa::new(500, 0).unwrap(),
+        })];
+        assert!(!set_subsumes(&parent, &child));
+    }
+
+    #[test]
+    fn subsumes_must_match_all_child_caveats() {
+        // parent has 2 caveats; child needs both implied
+        let parent = vec![Caveat::Model("gpt-4".to_owned()), Caveat::Before(2_000)];
+        let child_ok = vec![Caveat::Model("gpt-4".to_owned()), Caveat::Before(1_500)];
+        assert!(set_subsumes(&parent, &child_ok));
+        let child_missing = vec![Caveat::Model("gpt-4".to_owned()), Caveat::Before(2_500)];
+        assert!(!set_subsumes(&parent, &child_missing));
+    }
+
+    #[test]
+    fn subsumes_extra_parent_caveats_allowed() {
+        // Parent can have caveats not present in child — child just runs
+        // within parent's full constraint set.
+        let parent = vec![Caveat::Model("gpt-4".to_owned()), Caveat::Before(2_000)];
+        let child = vec![Caveat::Model("gpt-4".to_owned())];
+        assert!(set_subsumes(&parent, &child));
+    }
+
+    #[test]
+    fn subsumes_audience_must_match() {
+        let parent = vec![Caveat::Audience(
+            octo_ident::test_helpers::sample_did(111).clone(),
+        )];
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::Audience(
+                octo_ident::test_helpers::sample_did(111).clone()
+            )]
+        ));
+        assert!(!set_subsumes(
+            &parent,
+            &[Caveat::Audience(
+                octo_ident::test_helpers::sample_did(234).clone()
+            )]
+        ));
+    }
+
+    #[test]
+    fn subsumes_invocation_hash_bind_must_match() {
+        let h = [0xab; 32];
+        let parent = vec![Caveat::InvocationHashBind(h)];
+        assert!(set_subsumes(&parent, &[Caveat::InvocationHashBind(h)]));
+        let different = [0xcd; 32];
+        assert!(!set_subsumes(
+            &parent,
+            &[Caveat::InvocationHashBind(different)]
+        ));
+    }
+
+    #[test]
+    fn subsumes_cache_policy_always_is_most_permissive() {
+        // Always ⊇ OptIn ⊇ Off — parent Always allows any child cache policy.
+        let parent = vec![Caveat::CacheStrategy(CachePolicy::Always {
+            ttl_secs: 3600,
+        })];
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::CacheStrategy(CachePolicy::Off)]
+        ));
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::CacheStrategy(CachePolicy::OptIn {
+                cache_key_hash: None
+            })]
+        ));
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::CacheStrategy(CachePolicy::Always { ttl_secs: 60 })]
+        ));
+    }
+
+    #[test]
+    fn subsumes_cache_policy_off_is_most_restrictive() {
+        // Off only permits Off child — cannot widen to OptIn or Always.
+        let parent = vec![Caveat::CacheStrategy(CachePolicy::Off)];
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::CacheStrategy(CachePolicy::Off)]
+        ));
+        assert!(!set_subsumes(
+            &parent,
+            &[Caveat::CacheStrategy(CachePolicy::OptIn {
+                cache_key_hash: None
+            })]
+        ));
+        assert!(!set_subsumes(
+            &parent,
+            &[Caveat::CacheStrategy(CachePolicy::Always { ttl_secs: 60 })]
+        ));
+    }
+
+    #[test]
+    fn subsumes_cache_policy_opt_in_permits_off() {
+        let parent = vec![Caveat::CacheStrategy(CachePolicy::OptIn {
+            cache_key_hash: None,
+        })];
+        // OptIn allows Off (no cache) since Off is more restrictive.
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::CacheStrategy(CachePolicy::Off)]
+        ));
+        // OptIn does not allow Always (Always is less restrictive).
+        assert!(!set_subsumes(
+            &parent,
+            &[Caveat::CacheStrategy(CachePolicy::Always { ttl_secs: 60 })]
+        ));
+    }
+
+    #[test]
+    fn subsumes_cache_policy_opt_in_key_match() {
+        let key = [0x42; 32];
+        let parent = vec![Caveat::CacheStrategy(CachePolicy::OptIn {
+            cache_key_hash: Some(key),
+        })];
+        // child must specify the same key
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::CacheStrategy(CachePolicy::OptIn {
+                cache_key_hash: Some(key)
+            })]
+        ));
+        // child without key ⇒ reject (parent bound to specific key)
+        assert!(!set_subsumes(
+            &parent,
+            &[Caveat::CacheStrategy(CachePolicy::OptIn {
+                cache_key_hash: None
+            })]
+        ));
+    }
+
+    #[test]
+    fn subsumes_raw_matches_name_and_value() {
+        let parent = vec![Caveat::Raw(RawCaveat {
+            name: "custom".to_owned(),
+            value: vec![0x01, 0x02],
+        })];
+        let child_ok = vec![Caveat::Raw(RawCaveat {
+            name: "custom".to_owned(),
+            value: vec![0x01, 0x02],
+        })];
+        let child_bad = vec![Caveat::Raw(RawCaveat {
+            name: "custom".to_owned(),
+            value: vec![0x03],
+        })];
+        assert!(set_subsumes(&parent, &child_ok));
+        assert!(!set_subsumes(&parent, &child_bad));
+    }
+
+    #[test]
+    fn subsumes_disjoint_types_reject() {
+        // Parent has Model, child has Provider — different caveat types.
+        let parent = vec![Caveat::Model("gpt-4".to_owned())];
+        let child = vec![Caveat::Provider(vec!["openai".to_owned()])];
+        assert!(!set_subsumes(&parent, &child));
+    }
+
+    // RFC-0965 §3 — new variant subsumption rules.
+
+    #[test]
+    fn subsumes_vault_must_match_id() {
+        let v1 = [0x01; 32];
+        let v2 = [0x02; 32];
+        let parent = vec![Caveat::Vault(v1)];
+        assert!(set_subsumes(&parent, &[Caveat::Vault(v1)]));
+        assert!(!set_subsumes(&parent, &[Caveat::Vault(v2)]));
+    }
+
+    #[test]
+    fn subsumes_permission_must_match_kind() {
+        let parent = vec![Caveat::Permission(PermissionKind::NativeTokenTransfer)];
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::Permission(PermissionKind::NativeTokenTransfer)]
+        ));
+        assert!(!set_subsumes(
+            &parent,
+            &[Caveat::Permission(PermissionKind::Reservation)]
+        ));
+    }
+
+    #[test]
+    fn subsumes_valid_range_narrows() {
+        let parent = vec![Caveat::ValidRange {
+            valid_after_unix: 100,
+            valid_until_unix: 1000,
+        }];
+        // child narrower on both sides ⇒ accepted
+        let child = vec![Caveat::ValidRange {
+            valid_after_unix: 200,
+            valid_until_unix: 800,
+        }];
+        assert!(set_subsumes(&parent, &child));
+        // child widens on either side ⇒ rejected
+        let widens_after = vec![Caveat::ValidRange {
+            valid_after_unix: 50,
+            valid_until_unix: 800,
+        }];
+        assert!(!set_subsumes(&parent, &widens_after));
+        let widens_until = vec![Caveat::ValidRange {
+            valid_after_unix: 200,
+            valid_until_unix: 2000,
+        }];
+        assert!(!set_subsumes(&parent, &widens_until));
+    }
+
+    #[test]
+    fn subsumes_max_per_tx_narrows() {
+        let parent = vec![Caveat::MaxPerTx(1_000)];
+        assert!(set_subsumes(&parent, &[Caveat::MaxPerTx(500)]));
+        assert!(!set_subsumes(&parent, &[Caveat::MaxPerTx(2_000)]));
+    }
+
+    #[test]
+    fn subsumes_audit_window_upgrade_resolves_r7_f8() {
+        // R7-F8: parent 0 (high-trust, instant) can upgrade to non-zero
+        // (auditable). `c_dur >= p_dur` rule admits this.
+        let parent = vec![Caveat::AuditWindow { duration_secs: 0 }];
+        let child = vec![Caveat::AuditWindow {
+            duration_secs: 86400,
+        }];
+        assert!(set_subsumes(&parent, &child));
+        // Reverse: parent 24h, child 0 (releaseaudit) — disallowed (downgrade).
+        let reverse_parent = vec![Caveat::AuditWindow {
+            duration_secs: 86400,
+        }];
+        let reverse_child = vec![Caveat::AuditWindow { duration_secs: 0 }];
+        assert!(!set_subsumes(&reverse_parent, &reverse_child));
+    }
+
+    #[test]
+    fn subsumes_max_uses_zero_means_unlimited() {
+        let parent = vec![Caveat::MaxUses { count: 0 }];
+        // 0 = unlimited: subsumes any count.
+        assert!(set_subsumes(&parent, &[Caveat::MaxUses { count: 100 }]));
+        assert!(set_subsumes(&parent, &[Caveat::MaxUses { count: 0 }]));
+        // Bounded parent: child must be ≤ parent.
+        let bounded = vec![Caveat::MaxUses { count: 50 }];
+        assert!(set_subsumes(&bounded, &[Caveat::MaxUses { count: 25 }]));
+        assert!(!set_subsumes(&bounded, &[Caveat::MaxUses { count: 75 }]));
+        // Cannot widen to unlimited via attenuation.
+        assert!(!set_subsumes(&bounded, &[Caveat::MaxUses { count: 0 }]));
+    }
+
+    #[test]
+    fn subsumes_wrapped_only_must_match_parent() {
+        let p1 = [0xaa; 32];
+        let p2 = [0xbb; 32];
+        let parent = vec![Caveat::WrappedOnly {
+            parent_capability: p1,
+        }];
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::WrappedOnly {
+                parent_capability: p1
+            }]
+        ));
+        assert!(!set_subsumes(
+            &parent,
+            &[Caveat::WrappedOnly {
+                parent_capability: p2
+            }]
+        ));
+    }
+
+    #[test]
+    fn subsumes_factory_requires_full_equality() {
+        let vet1 = FactoryVet {
+            target_vault_id: [0x01; 32],
+            action_template: ActionTemplate {
+                selector: "transfer_v1".to_owned(),
+                args: vec!["arg1".to_owned()],
+            },
+            required_caller: Some(octo_ident::test_helpers::sample_did(238).clone()),
+            pre_conditions: vec![Constraint::SingleUse],
+            expiry_for_deploy_unix: 1_000_000,
+        };
+        let mut vet2 = vet1.clone();
+        vet2.action_template = ActionTemplate {
+            selector: "transfer_v1".to_owned(),
+            args: vec!["arg99".to_owned()],
+        };
+        let parent = vec![Caveat::Factory(vet1.clone())];
+        assert!(set_subsumes(&parent, &[Caveat::Factory(vet1)]));
+        assert!(!set_subsumes(&parent, &[Caveat::Factory(vet2)]));
+    }
+
+    #[test]
+    fn subsumes_policy_reference_must_match_hash() {
+        let p1 = [0x11; 32];
+        let p2 = [0x22; 32];
+        let parent = vec![Caveat::PolicyReference {
+            policy_id: p1,
+            policy_version_seq: 1,
+            attenuation_witness: [0u8; 64],
+        }];
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::PolicyReference {
+                policy_id: p1,
+                policy_version_seq: 1,
+                attenuation_witness: [0u8; 64],
+            }]
+        ));
+        assert!(!set_subsumes(
+            &parent,
+            &[Caveat::PolicyReference {
+                policy_id: p2,
+                policy_version_seq: 1,
+                attenuation_witness: [0u8; 64],
+            }]
+        ));
+    }
+
+    #[test]
+    fn subsumes_valid_after_narrows() {
+        let parent = vec![Caveat::ValidAfter {
+            not_before_unix: 100,
+        }];
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::ValidAfter {
+                not_before_unix: 100
+            }]
+        ));
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::ValidAfter {
+                not_before_unix: 200
+            }]
+        ));
+        assert!(!set_subsumes(
+            &parent,
+            &[Caveat::ValidAfter {
+                not_before_unix: 50
+            }]
+        ));
+    }
+
+    #[test]
+    fn subsumes_redemption_context_must_match() {
+        let h = [0x42; 32];
+        let h2 = [0x99; 32];
+        let parent = vec![Caveat::RedemptionContext { context_hash: h }];
+        assert!(set_subsumes(
+            &parent,
+            &[Caveat::RedemptionContext { context_hash: h }]
+        ));
+        assert!(!set_subsumes(
+            &parent,
+            &[Caveat::RedemptionContext { context_hash: h2 }]
+        ));
+    }
+
+    #[test]
+    fn subsumes_sharded_must_match_shard_id() {
+        let parent = vec![Caveat::Sharded { shard_id: 3 }];
+        assert!(set_subsumes(&parent, &[Caveat::Sharded { shard_id: 3 }]));
+        assert!(!set_subsumes(&parent, &[Caveat::Sharded { shard_id: 5 }]));
+    }
+
+    #[test]
+    fn new_variants_canonical_ser_distinct() {
+        // Each new variant must produce a distinct canonical_ser output.
+        let v1 = Caveat::Vault([0x01; 32]);
+        let v2 = Caveat::Permission(PermissionKind::NativeTokenTransfer);
+        let v3 = Caveat::ValidRange {
+            valid_after_unix: 0,
+            valid_until_unix: 100,
+        };
+        let v4 = Caveat::MaxPerTx(100);
+        let v5 = Caveat::AuditWindow { duration_secs: 60 };
+        let v6 = Caveat::MaxUses { count: 5 };
+        let v7 = Caveat::WrappedOnly {
+            parent_capability: [0xab; 32],
+        };
+        let v8 = Caveat::Factory(FactoryVet {
+            target_vault_id: [0x01; 32],
+            action_template: ActionTemplate {
+                selector: "s".to_owned(),
+                args: Vec::new(),
+            },
+            required_caller: None,
+            pre_conditions: vec![],
+            expiry_for_deploy_unix: 0,
+        });
+        let v9 = Caveat::PolicyReference {
+            policy_id: [0xff; 32],
+            policy_version_seq: 1,
+            attenuation_witness: [0u8; 64],
+        };
+        let serials = [
+            v1.canonical_ser(),
+            v2.canonical_ser(),
+            v3.canonical_ser(),
+            v4.canonical_ser(),
+            v5.canonical_ser(),
+            v6.canonical_ser(),
+            v7.canonical_ser(),
+            v8.canonical_ser(),
+            v9.canonical_ser(),
+        ];
+        let unique: std::collections::HashSet<_> = serials.iter().collect();
+        assert_eq!(
+            unique.len(),
+            9,
+            "RFC-0965 variants must have distinct canonical_ser"
+        );
+    }
+
+    #[test]
+    fn new_variants_caveat_name_distinct() {
+        // Each variant name() must yield a distinct CaveatName.
+        use std::collections::HashSet;
+        let names = vec![
+            Caveat::Vault([0; 32]).name(),
+            Caveat::Permission(PermissionKind::NativeTokenTransfer).name(),
+            Caveat::ValidRange {
+                valid_after_unix: 0,
+                valid_until_unix: 0,
+            }
+            .name(),
+            Caveat::MaxPerTx(0).name(),
+            Caveat::AuditWindow { duration_secs: 0 }.name(),
+            Caveat::MaxUses { count: 0 }.name(),
+            Caveat::WrappedOnly {
+                parent_capability: [0; 32],
+            }
+            .name(),
+            Caveat::Factory(FactoryVet {
+                target_vault_id: [0; 32],
+                action_template: ActionTemplate {
+                    selector: String::new(),
+                    args: Vec::new(),
+                },
+                required_caller: None,
+                pre_conditions: vec![],
+                expiry_for_deploy_unix: 0,
+            })
+            .name(),
+            Caveat::PolicyReference {
+                policy_id: [0; 32],
+                policy_version_seq: 0,
+                attenuation_witness: [0; 64],
+            }
+            .name(),
+        ];
+        let unique: HashSet<_> = names.iter().collect();
+        assert_eq!(unique.len(), 9);
+    }
+
+    #[test]
+    fn subsumes_factory_typed_preconditions_must_match_set() {
+        // Per RFC-0965 §3.8: Factory subsumption requires full canonical
+        // equality of the pre_conditions set (the vet is a signed
+        // assertion; cannot change constraints via attenuation).
+        let vet_a = FactoryVet {
+            target_vault_id: [0x01; 32],
+            action_template: ActionTemplate {
+                selector: "x".to_owned(),
+                args: Vec::new(),
+            },
+            required_caller: None,
+            pre_conditions: vec![Constraint::SingleUse, Constraint::MaxUses { count: 5 }],
+            expiry_for_deploy_unix: 1_000_000,
+        };
+        let parent = vec![Caveat::Factory(vet_a.clone())];
+        assert!(set_subsumes(&parent, &[Caveat::Factory(vet_a.clone())]));
+        // Different constraint type → no subsume
+        let mut vet_b = vet_a.clone();
+        vet_b.pre_conditions = vec![Constraint::CallerBound(
+            octo_ident::test_helpers::sample_did(239).clone(),
+        )];
+        assert!(!set_subsumes(&parent, &[Caveat::Factory(vet_b)]));
+    }
+
+    #[test]
+    fn factory_action_template_typed_not_opaque() {
+        // action_template is ActionTemplate { selector, args }, not Vec<u8>.
+        let t1 = ActionTemplate {
+            selector: "transfer".to_owned(),
+            args: vec!["100".to_owned(), "alice".to_owned()],
+        };
+        let t2 = t1.clone();
+        assert_eq!(t1, t2);
+        let t3 = ActionTemplate {
+            selector: "transfer".to_owned(),
+            args: vec!["200".to_owned(), "alice".to_owned()],
+        };
+        assert_ne!(t1, t3);
+    }
+
+    /// R7 finding: `Caveat` derives `Serialize/Deserialize` with per-variant
+    /// `#[serde(rename = "...")]` tags. The serde roundtrip was previously
+    /// tested transitively for only 2/25 variants (`Model`, `Before`); the
+    /// other 23 RFC-0965 variants (`Vault`, `Permission`, `ValidRange`,
+    /// `MaxPerTx`, `AuditWindow`, `MaxUses`, `WrappedOnly`, `Factory`,
+    /// `PolicyReference`, `ValidAfter`, `RedemptionContext`, `Sharded`, …)
+    /// had no explicit serde roundtrip coverage.
+    ///
+    /// This table-driven test serializes each variant through serde_json and
+    /// asserts byte-exact equality on deserialize. Catches regressions in
+    /// the `#[serde(rename)]` annotations or field ordering.
+    #[test]
+    fn caveat_serde_json_roundtrip_all_variants() {
+        let mut jurisdiction = HashSet::new();
+        jurisdiction.insert("US".to_owned());
+        jurisdiction.insert("GB".to_owned());
+
+        let factory_action = ActionTemplate {
+            selector: "transfer".to_owned(),
+            args: vec!["100".to_owned(), "alice".to_owned()],
+        };
+
+        let samples: Vec<Caveat> = vec![
+            Caveat::AmountMax(Dqa::new(1_000_000, 0).unwrap()),
+            Caveat::PerAxisMax(PerAxisMax {
+                axis: "input_tokens".to_owned(),
+                max_per_1k: Dqa::new(500, 0).unwrap(),
+            }),
+            Caveat::Model("gpt-4".to_owned()),
+            Caveat::Provider(vec!["provider-a".to_owned(), "provider-b".to_owned()]),
+            Caveat::Before(2_000_000_000),
+            Caveat::Audience("did:octo:zAudience".to_owned()),
+            Caveat::RateLimit(RateLimit {
+                rpm: 60,
+                tpm: 100_000,
+            }),
+            Caveat::InvocationHashBind([0xab; 32]),
+            Caveat::Jurisdiction(jurisdiction),
+            Caveat::CacheStrategy(CachePolicy::Off),
+            Caveat::CacheStrategy(CachePolicy::OptIn {
+                cache_key_hash: Some([0xcd; 32]),
+            }),
+            Caveat::CacheStrategy(CachePolicy::Always { ttl_secs: 300 }),
+            Caveat::AskBinding([0xef; 32]),
+            Caveat::ThirdParty("escrow".to_owned()),
+            Caveat::Raw(RawCaveat {
+                name: "custom/forward-compat".to_owned(),
+                value: vec![0x01, 0x02, 0x03],
+            }),
+            Caveat::Vault([0x11; 32]),
+            Caveat::Permission(PermissionKind::NativeTokenTransfer),
+            Caveat::Permission(PermissionKind::Erc20TokenTransfer),
+            Caveat::Permission(PermissionKind::ContractCall),
+            Caveat::Permission(PermissionKind::Reservation),
+            Caveat::Permission(PermissionKind::VaultMutation),
+            Caveat::ValidRange {
+                valid_after_unix: 1_700_000_000,
+                valid_until_unix: 2_000_000_000,
+            },
+            Caveat::MaxPerTx(50_000u128),
+            Caveat::AuditWindow {
+                duration_secs: 3600,
+            },
+            Caveat::MaxUses { count: 100 },
+            Caveat::WrappedOnly {
+                parent_capability: [0x22; 32],
+            },
+            Caveat::Factory(FactoryVet {
+                target_vault_id: [0x33; 32],
+                action_template: factory_action,
+                required_caller: None,
+                pre_conditions: Vec::new(),
+                expiry_for_deploy_unix: 2_000_000_000,
+            }),
+            Caveat::PolicyReference {
+                policy_id: [0x44; 32],
+                policy_version_seq: 7,
+                attenuation_witness: [0x55; 64],
+            },
+            Caveat::ValidAfter {
+                not_before_unix: 1_700_000_000,
+            },
+            Caveat::RedemptionContext {
+                context_hash: [0x66; 32],
+            },
+            Caveat::Sharded { shard_id: 42 },
+        ];
+
+        // All distinct — sanity check the helper assembled 25 variants.
+        assert_eq!(
+            samples.len(),
+            31,
+            "25 distinct variants + CachePolicy x3 + PermissionKind x5 = 31"
+        );
+
+        for caveat in &samples {
+            let json = serde_json::to_string(caveat).expect("serialize Caveat");
+            let restored: Caveat = serde_json::from_str(&json).expect("deserialize Caveat");
+            assert_eq!(&restored, caveat, "round-trip mismatch for {caveat:?}");
+        }
+    }
+
+    /// R8 finding: `PermissionKind` has 5 variants but only one
+    /// (`NativeTokenTransfer`) was previously tested in subsumption. The
+    /// subsumption rule (parent kind must equal child kind — cannot
+    /// widen the permission type via attenuation) is the same across all
+    /// variants, but a regression that special-cased one variant would
+    /// not be caught. Table-driven test exercises all 5.
+    #[test]
+    fn permission_kind_subsumption_all_variants() {
+        let all_kinds = [
+            PermissionKind::NativeTokenTransfer,
+            PermissionKind::Erc20TokenTransfer,
+            PermissionKind::ContractCall,
+            PermissionKind::Reservation,
+            PermissionKind::VaultMutation,
+        ];
+
+        for kind in all_kinds {
+            // Same-kind subsumes (parent and child both have the kind).
+            assert!(
+                set_subsumes(&[Caveat::Permission(kind)], &[Caveat::Permission(kind)]),
+                "PermissionKind::{kind:?} must subsume itself"
+            );
+
+            // Different kinds do NOT subsume — try each pair.
+            for other in all_kinds {
+                if other == kind {
+                    continue;
+                }
+                assert!(
+                    !set_subsumes(&[Caveat::Permission(kind)], &[Caveat::Permission(other)],),
+                    "PermissionKind::{kind:?} must NOT subsume {other:?}"
+                );
+            }
+        }
+    }
+
+    /// R8 finding: `Factory` subsumption requires full canonical-vector
+    /// equality across 5 fields (`target_vault_id`, `action_template`,
+    /// `required_caller`, `pre_conditions`, `expiry_for_deploy_unix`).
+    /// The existing tests cover `action_template` mismatch and
+    /// `pre_conditions` mismatch, but `required_caller` (Option<String>)
+    /// and `expiry_for_deploy_unix` (u64) variants of mismatch are
+    /// independent — regressions on those fields would not be caught.
+    #[test]
+    fn factory_subsumption_required_caller_must_match() {
+        let base = Caveat::Factory(FactoryVet {
+            target_vault_id: [0x33; 32],
+            action_template: ActionTemplate {
+                selector: "transfer".to_owned(),
+                args: vec!["100".to_owned(), "alice".to_owned()],
+            },
+            required_caller: None,
+            pre_conditions: Vec::new(),
+            expiry_for_deploy_unix: 2_000_000_000,
+        });
+        let child_none = Caveat::Factory(FactoryVet {
+            required_caller: None,
+            ..match_factory(&base)
+        });
+        let child_some = Caveat::Factory(FactoryVet {
+            required_caller: Some("did:octo:zCaller".to_owned()),
+            ..match_factory(&base)
+        });
+        // Parent required_caller = None. Child None subsumes (equal).
+        assert!(
+            set_subsumes(core::slice::from_ref(&base), &[child_none]),
+            "Factory required_caller=None must subsume when both None"
+        );
+        // Parent required_caller = None. Child Some does NOT subsume
+        // (would allow a caller that the parent didn't).
+        assert!(
+            !set_subsumes(
+                core::slice::from_ref(&base),
+                core::slice::from_ref(&child_some)
+            ),
+            "Factory required_caller=None must NOT subsume required_caller=Some(_)"
+        );
+
+        // Reverse: parent = Some, child = None does NOT subsume
+        // (would loosen the caller constraint).
+        let parent_some = Caveat::Factory(FactoryVet {
+            required_caller: Some("did:octo:zCaller".to_owned()),
+            ..match_factory(&base)
+        });
+        let child_none2 = Caveat::Factory(FactoryVet {
+            required_caller: None,
+            ..match_factory(&base)
+        });
+        assert!(
+            !set_subsumes(&[parent_some], &[child_none2]),
+            "Factory required_caller=Some(_) must NOT subsume required_caller=None"
+        );
+    }
+
+    /// R8 finding: `Factory::expiry_for_deploy_unix` mismatch must reject.
+    /// Independent of `action_template` / `pre_conditions` regressions.
+    #[test]
+    fn factory_subsumption_expiry_for_deploy_must_match() {
+        let parent = Caveat::Factory(FactoryVet {
+            target_vault_id: [0x33; 32],
+            action_template: ActionTemplate {
+                selector: "transfer".to_owned(),
+                args: vec!["100".to_owned(), "alice".to_owned()],
+            },
+            required_caller: None,
+            pre_conditions: Vec::new(),
+            expiry_for_deploy_unix: 2_000_000_000,
+        });
+        let child_same = Caveat::Factory(FactoryVet {
+            expiry_for_deploy_unix: 2_000_000_000,
+            ..match_factory(&parent)
+        });
+        let child_later = Caveat::Factory(FactoryVet {
+            expiry_for_deploy_unix: 3_000_000_000,
+            ..match_factory(&parent)
+        });
+        let child_earlier = Caveat::Factory(FactoryVet {
+            expiry_for_deploy_unix: 1_000_000_000,
+            ..match_factory(&parent)
+        });
+        assert!(set_subsumes(core::slice::from_ref(&parent), &[child_same]));
+        // Neither longer nor shorter deploy expiry subsumes — must match.
+        assert!(
+            !set_subsumes(core::slice::from_ref(&parent), &[child_later]),
+            "Factory expiry_for_deploy_unix mismatch must reject"
+        );
+        assert!(
+            !set_subsumes(&[parent], &[child_earlier]),
+            "Factory expiry_for_deploy_unix mismatch must reject"
+        );
+    }
+
+    /// Helper: clone all fields from a `Caveat::Factory` so test sites
+    /// can override a single field. Pulled out because the
+    /// `..match_factory(&base)` syntax requires a function call, not a
+    /// literal.
+    fn match_factory(c: &Caveat) -> FactoryVet {
+        match c {
+            Caveat::Factory(f) => f.clone(),
+            _ => panic!("expected Caveat::Factory"),
+        }
+    }
+
+    /// RFC-0011 §Caveat Form Amendment: the canonical hex form emitted
+    /// by `canonical_ser` MUST be acceptable as `--caveats` input. The
+    /// pre-amendment asymmetry was closed by adding `visit_str` to
+    /// `dqa_serde::field`.
+    ///
+    /// Note: the substrate canonicalises trailing-zero numerators through
+    /// the wire form (1_000_000 @ scale 6 is the same wire form as
+    /// 1 @ scale 0). Use a value/scale that does not get canonicalised
+    /// to make the structural round-trip clean.
+    #[test]
+    fn tv_cf_07_canonical_amount_max_reparses_through_input_form() {
+        let c = Caveat::AmountMax(Dqa::new(1_234_567, 3).unwrap());
+        let canonical = c.canonical_ser();
+        // canonical is `{"type":"amount_max","value":"<64-hex>"}`. The
+        // 64-hex value MUST parse back to a Caveat via the input
+        // (#[serde(with = "dqa_serde::field")]) form.
+        let restored: Caveat = serde_json::from_slice(&canonical).expect("canonical form reparses");
+        assert_eq!(restored, c);
+    }
+
+    /// RFC-0011 §Caveat Form Amendment: the canonical hex form of
+    /// `Caveat::Vault([u8; 32])` MUST be acceptable as input. Closed by
+    /// applying `#[serde(with = "hex_id_32")]` to the variant.
+    #[test]
+    fn tv_cf_08_canonical_vault_reparses_through_input_form() {
+        let id = [0xaau8; 32];
+        let c = Caveat::Vault(id);
+        let canonical = c.canonical_ser();
+        let restored: Caveat = serde_json::from_slice(&canonical).expect("canonical form reparses");
+        assert_eq!(restored, c);
+    }
+
+    /// Migration back-compat: the legacy 32-element array form MUST
+    /// continue to parse after the `hex_id_32` adapter lands.
+    #[test]
+    fn tv_cf_09_legacy_vault_array_form_still_parses() {
+        let id = [0xaau8; 32];
+        let arr: Vec<u8> = id.to_vec();
+        let json = serde_json::json!({"type": "vault", "value": arr});
+        let restored: Caveat = serde_json::from_value(json).expect("legacy array form");
+        assert_eq!(restored, Caveat::Vault(id));
+    }
+}
+
+// `serde_bytes` shim — Json representation: hex string.
+mod serde_bytes {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(bytes: &Vec<u8>, ser: S) -> Result<S::Ok, S::Error> {
+        ser.serialize_str(&hex::encode(bytes))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<Vec<u8>, D::Error> {
+        let s = String::deserialize(de)?;
+        hex::decode(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+/// `serde_bytes` shim for `[u8; 64]` — hex-string representation.
+mod serde_bytes_arr64 {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(bytes: &[u8; 64], ser: S) -> Result<S::Ok, S::Error> {
+        ser.serialize_str(&hex::encode(bytes))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<[u8; 64], D::Error> {
+        let s = String::deserialize(de)?;
+        let v = hex::decode(&s).map_err(serde::de::Error::custom)?;
+        if v.len() != 64 {
+            return Err(serde::de::Error::custom("expected 64 bytes"));
+        }
+        let mut out = [0u8; 64];
+        out.copy_from_slice(&v);
+        Ok(out)
+    }
+}

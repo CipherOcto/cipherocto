@@ -22,7 +22,7 @@
 //! unset AND `health.bearer_required = false`, `/metrics` accepts
 //! every request but logs a `WARN` once on first hit.
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -269,21 +269,32 @@ fn unauthorized_response() -> Response<Body> {
     (StatusCode::UNAUTHORIZED, "unauthorized\n").into_response()
 }
 
-/// Extract a peer-IP label from the request's `Forwarded` /
-/// `X-Forwarded-For` / socket address (none available here, so
-/// fall back to `127.0.0.1`).
+/// Label used for the auth-failure metric when no socket peer is available.
+///
+/// L-5: this used to read the first entry of the client's own
+/// `X-Forwarded-For` header. The header is set by the client, so every
+/// auth-failure metric could be attributed to an arbitrary address — turning a
+/// security signal into a forgeable field.
+///
+/// The fix is fail-closed rather than a trusted-proxy list, because this
+/// handler has no access to the socket peer address (`axum::serve` is built
+/// without `ConnectInfo`, so `SocketAddr` is not plumbed in). Honouring
+/// `X-Forwarded-For` correctly means comparing the *actual* peer against a
+/// configured trusted-proxy set; with no peer address there is nothing to
+/// compare against, so any use of the header would be trusting an unverifiable
+/// claim.
+///
+/// Restoring real attribution needs the `ConnectInfo` plumbing in the serve
+/// call at the top of this file; that is the CD-5 (D8) work. Until then the
+/// header is ignored outright.
+const PEER_LABEL_UNAVAILABLE: &str = "127.0.0.1";
+
 fn peer_ip_label(headers: &HeaderMap) -> String {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .map(|s| s.trim().to_string())
-        .filter(|s| {
-            // Accept only literal IPv4/IPv6 — anything else means a
-            // proxy returned junk.
-            s.parse::<IpAddr>().is_ok()
-        })
-        .unwrap_or_else(|| "127.0.0.1".to_string())
+    // `headers` is deliberately unused: see the doc comment. Taking the
+    // parameter keeps the call sites honest for when the socket peer is
+    // plumbed through.
+    let _ = headers;
+    PEER_LABEL_UNAVAILABLE.to_string()
 }
 
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {

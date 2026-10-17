@@ -1,6 +1,6 @@
 //! Deterministic Vector (DVEC) Implementation
 //!
-//! This module implements RFC-0112 v1.14: Deterministic Vectors (DVEC)
+//! This module implements RFC-0112: Deterministic Vectors (DVEC)
 //!
 //! Key design principles:
 //! - Generic over any `DvecScalar` type (DQA or Decimal)

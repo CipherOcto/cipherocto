@@ -39,7 +39,7 @@ use std::sync::Arc;
 pub type QrDisplayFn = Arc<dyn Fn(&str) + Send + Sync + 'static>;
 
 /// Lazy-initialized HandshakeV2 + responder static key. Bundled so
-/// `OnceCell` can hand out a single `&HandshakeState` for the
+/// `OnceCell` can hand out a single `&&HandshakeState` for the
 /// duration of a `get_assertion` call without re-running the QR
 /// render.
 pub(crate) struct HandshakeState {

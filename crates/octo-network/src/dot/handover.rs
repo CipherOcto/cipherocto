@@ -1,13 +1,15 @@
 //! Coordinator Term Handover — RFC-0855p-e
 //!
 //! Implements the `HandoverRequestEnvelope` (subtype `b"HORQ"`),
-//! `HandoverAckEnvelope` (subtype `b"HOAK"`), and
-//! `HandoverDoneEnvelope` (subtype `b"HODN"`) types, plus the supporting
-//! `HandoverReason`, `CoordinatorRole`, `SlashTally`, and `SlashEvent`
-//! types.
+//! `HandoverAckEnvelope` (subtype `b"HOAK"`),
+//! `HandoverDoneEnvelope` (subtype `b"HODN"`), and
+//! `HandoverCancelEnvelope` (subtype `b"HORC"`) types, plus the supporting
+//! `HandoverReason`, `CoordinatorRole`, `SlashTally`, `SlashEvent`,
+//! `SenderStateSnapshotOrdinal`, `MeshAggregatedSignature`,
+//! `horq_quorum(witness_set_size)`, and HOAK second-witness quorum gate.
 //!
-//! See RFC-0855p-e §"Data Structure (preliminary)" and
-//! `missions/claimed/0855p-e-handover-request-envelope.md` Phase 1.
+//! See RFC-0855p-e §Data Structure and
+//! `missions/claimed/0855p-e-handover-envelope-substrate.md` Phase 1+2.
 //!
 //! ## Canonical 10-byte header
 //!
@@ -17,7 +19,7 @@
 //! order, with fixed-size integers big-endian, byte arrays verbatim, and
 //! `String`/`Vec<u8>` length-prefixed by a big-endian `u32` count.
 
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey};
 use thiserror::Error;
 
 use super::binding::{header, write_string, GroupBinding, ENVELOPE_TYPE, ENVELOPE_VERSION};
@@ -25,6 +27,15 @@ use super::binding::{header, write_string, GroupBinding, ENVELOPE_TYPE, ENVELOPE
 #[cfg(test)]
 use super::binding::GroupState;
 use super::error::DotError;
+
+// -----------------------------------------------------------------------------
+// Cross-RFC canonical home re-export
+// -----------------------------------------------------------------------------
+
+/// Forward-skew tolerance (envelope epoch ahead of recipient head). Canonical
+/// home: RFC-0855p-d1. Re-exported here so handover acceptance can use
+/// `±MAX_FSKEW_EPOCHS = 4` without importing from d1.
+pub use super::subgroup_state::MAX_FSKEW_EPOCHS;
 
 // -----------------------------------------------------------------------------
 // Subtype tags
@@ -36,6 +47,165 @@ pub const HANDOVER_REQUEST_TAG: [u8; 4] = *b"HORQ";
 pub const HANDOVER_ACK_TAG: [u8; 4] = *b"HOAK";
 /// Subtype tag for `HandoverDoneEnvelope`.
 pub const HANDOVER_DONE_TAG: [u8; 4] = *b"HODN";
+/// Subtype tag for `HandoverCancelEnvelope` (incumbent cancel during lockout).
+pub const HANDOVER_REQUEST_CANCEL: [u8; 4] = *b"HORC";
+
+// -----------------------------------------------------------------------------
+// BLAKE3 domain separation contexts (RFC-0853)
+// -----------------------------------------------------------------------------
+
+/// BLAKE3 domain separation string for HORQ replay-key tuple derivation.
+pub const HORQ_CONTEXT: &str = "DOT/1/HANDOVER_REQUEST";
+/// BLAKE3 domain separation string for HOAK replay-key tuple derivation.
+pub const HOAK_CONTEXT: &str = "DOT/1/HANDOVER_ACK";
+/// BLAKE3 domain separation string for HODN replay-key tuple derivation.
+pub const HODN_CONTEXT: &str = "DOT/1/HANDOVER_DONE";
+/// BLAKE3 domain separation string for HORC replay-key tuple derivation.
+pub const HORC_CONTEXT: &str = "DOT/1/HANDOVER_CANCEL";
+
+/// BLAKE3 domain separation string for the cross-envelope MeshAggregatedSignature.
+pub const MESH_AGGREGATED_SIGNATURE: &str = "DOT/1/HANDOVER_MAS";
+
+/// RFC-0855p-e §BLAKE3 Construction Conventions: domain prefix for `ack_hash`.
+pub const HASH_DOMAIN_ACK: &str = "DOT/1/HANDOVER/ack";
+/// RFC-0855p-e §BLAKE3 Construction Conventions: domain prefix for `done_hash`.
+pub const HASH_DOMAIN_DONE: &str = "DOT/1/HANDOVER/done";
+/// RFC-0855p-e §BLAKE3 Construction Conventions: domain prefix for `cancel_payload_hash`.
+pub const HASH_DOMAIN_CANCEL_PAYLOAD: &str = "DOT/1/HANDOVER/cancel_payload";
+
+// -----------------------------------------------------------------------------
+// v1.3 named constants (HANDOVER_RACE_WINDOW split per plateau closure)
+// -----------------------------------------------------------------------------
+
+/// Concurrent HORQ race window (backward + concurrent bound). Distinct from
+/// `HORQ_BACKWARD_WINDOW` (backward-replay bound) and `HANDOVER_FORWARD_SKEW_BOOST`
+/// (forward-skew tolerance). Per RFC-0855p-e §Layer placement table.
+pub const HANDOVER_RACE_WINDOW: u64 = 5;
+
+/// HORQ backward-replay window (replaces the deprecated `HANDOVER_REPLAY_WINDOW`
+/// phantom constant). Replay-key rejection range when accepting HORQ envelopes.
+pub const HORQ_BACKWARD_WINDOW: u64 = 5;
+
+/// Forward-skew boost (HODN acceptance site). 0 = no boost; recipient uses
+/// canonical `MAX_FSKEW_EPOCHS = 4` from d1. Reserved for future RFC-amendment
+/// without breaking the constant surface.
+pub const HANDOVER_FORWARD_SKEW_BOOST: u64 = 0;
+
+// -----------------------------------------------------------------------------
+// SenderStateSnapshotOrdinal (Layer A — typed wrapper with private field)
+// -----------------------------------------------------------------------------
+
+/// Typed ordinal for the sender's state snapshot at HORQ emission time.
+/// Internal field is PRIVATE (NOT `pub u8`) so external callers MUST route
+/// through `new()` for validation per RFC-0855p-e §Data Structure invariant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SenderStateSnapshotOrdinal(u8);
+
+impl SenderStateSnapshotOrdinal {
+    /// Active state (witness may accept single HOAK).
+    pub const ACTIVE: u8 = 0x01;
+    /// Pending state (witness MUST gather `horq_quorum(witness_set_size)`
+    /// distinct second-witness HOAKs before accepting HORQ).
+    pub const PENDING: u8 = 0x02;
+    /// Suspect state (witness MUST gather full witness-set quorum + report).
+    pub const SUSPECT: u8 = 0x03;
+
+    /// Construct from a raw byte. Returns `InvalidOrdinal` for unknown values.
+    pub fn new(byte: u8) -> Result<Self, InvalidOrdinalError> {
+        match byte {
+            Self::ACTIVE | Self::PENDING | Self::SUSPECT => Ok(Self(byte)),
+            _ => Err(InvalidOrdinalError { got: byte }),
+        }
+    }
+
+    pub fn as_byte(&self) -> u8 {
+        self.0
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.0 == Self::ACTIVE
+    }
+}
+
+/// Error type for `SenderStateSnapshotOrdinal::new`.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[error("invalid SenderStateSnapshotOrdinal byte 0x{got:02x} (must be 0x01=Active, 0x02=Pending, 0x03=Suspect)")]
+pub struct InvalidOrdinalError {
+    pub got: u8,
+}
+
+// -----------------------------------------------------------------------------
+// Layer-B re-exports from octo-coordinator-types shared crate
+// (per mission 0855p-e-coordinator-types-shared-crate)
+// -----------------------------------------------------------------------------
+
+/// Slash tally update event — shared Layer-B type per RFC-0855p-e
+/// §Layer-C Substrate Types follow-on note. Canonical home:
+/// `octo_coordinator_types::SlashTallyUpdate`. Re-exported here so
+/// downstream consumers can continue importing from `octo_network::dot::handover`.
+pub use octo_coordinator_types::SlashTallyUpdate;
+
+/// `SlashReasonCode` typed discriminator — shared Layer-B type. Canonical
+/// home: `octo_coordinator_types::SlashReasonCode`. Re-exported here for
+/// backward compat. The shared crate variant is `#[non_exhaustive]`-free
+/// with `Extension(u16)` catching user-extension registry 0x0100-0xFFFF;
+/// `reason_id()` returns raw u16 for wire mapping.
+pub use octo_coordinator_types::{HandoverReasonTypeId, SlashReasonCode};
+
+// -----------------------------------------------------------------------------
+// MeshAggregatedSignature (Layer C — bitmap + aggregated BLS signature)
+// -----------------------------------------------------------------------------
+
+/// Mesh-aggregated signature surface for HODN acceptance. Bitmap covers both
+/// HORC + S2PA predecessors per RFC-0855p-e §Mesh Aggregated Signature Coverage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MeshAggregatedSignature {
+    /// Signers bitmap (bit i set = witness i signed).
+    pub signers_bitmap: Vec<u8>,
+    /// BLS12-381 G1 compressed aggregated signature (48 bytes).
+    pub aggregated_signature: [u8; 48],
+}
+
+impl MeshAggregatedSignature {
+    /// Construct from signers bitmap + aggregated signature.
+    pub fn new(signers_bitmap: Vec<u8>, aggregated_signature: [u8; 48]) -> Self {
+        Self {
+            signers_bitmap,
+            aggregated_signature,
+        }
+    }
+
+    /// Count of distinct signers (bits set).
+    pub fn count_signers(&self) -> u32 {
+        self.signers_bitmap
+            .iter()
+            .map(|b| b.count_ones())
+            .sum::<u32>()
+    }
+}
+
+// -----------------------------------------------------------------------------
+// horq_quorum (Layer C — distinct from hodn_quorum in d3)
+// -----------------------------------------------------------------------------
+
+/// HORQ-side quorum policy: minimum distinct witnesses for HORQ acceptance.
+///
+/// Distinct from `hodn_quorum` (d3 canonical home); both
+/// functions take `witness_set_size`, but the policy domain differs (HORQ-side
+/// vs HODN-side). Kept separate on purpose per RFC-0855p-d3 §HODN quorum.
+///
+/// Formula: `max(witness_set_size * 2 / 3, 2)` (floor 2; 0 only when set is empty).
+/// Examples: 0→0, 1→2, 2→2, 3→2, 6→4, 9→6.
+pub fn horq_quorum(witness_set_size: usize) -> usize {
+    if witness_set_size == 0 {
+        return 0;
+    }
+    (witness_set_size * 2 / 3).max(2)
+}
+
+/// Forward-reference re-export of `hodn_quorum` (canonical home lives in d3).
+/// Formula `(wss * 2).div_ceil(3)` per RFC-0855p-d3 §Data Structure.
+pub use super::subgroup_routing::hodn_quorum;
 
 // -----------------------------------------------------------------------------
 // HandoverReason
@@ -43,7 +213,7 @@ pub const HANDOVER_DONE_TAG: [u8; 4] = *b"HODN";
 
 /// Reason a coordinator is initiating a handover.
 ///
-/// See RFC-0855p-e §"Data Structure (preliminary)".
+/// See RFC-0855p-e §Data Structure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum HandoverReason {
@@ -85,8 +255,8 @@ impl HandoverReason {
 
 /// Type of coordinator initiating the handover.
 ///
-/// (R16 R1-L3 fix: this enum was referenced by RFC-0855p-e §"Data Structure"
-/// but was not defined in v0.1 of the RFC. Inlined here.)
+/// (Inlined here per RFC-0855p-e §Data Structure — the RFC references this
+/// enum but does not define it inline.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum CoordinatorRole {
@@ -121,8 +291,8 @@ impl CoordinatorRole {
 
 /// A single slash event.
 ///
-/// See RFC-0855p-e §"SlashTally struct" (R16 R1-H5 fix: inlined here; the
-/// previous version referenced non-existent RFC-0855p-b.1).
+/// See RFC-0855p-e §Data Structure. (Inlined here; the canonical form was
+/// not previously defined.)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlashEvent {
     /// Slash reason code (per RFC-0855p-b §B code space 0x0001-0xFFFF).
@@ -154,8 +324,8 @@ impl SlashEvent {
     /// Sign the event in place.
     ///
     /// R17 R1-LOW-10 fix: the call
-    /// `ed25519_dalek::Signer::sign(key, &payload).to_bytes()` has
-    /// been replaced with the equivalent shorthand `key.sign(&payload).to_bytes()`
+    /// `ed25519_dalek::Signer::sign(key, &&payload).to_bytes()` has
+    /// been replaced with the equivalent shorthand `key.sign(&&payload).to_bytes()`
     /// (via the `Signer` trait brought into scope at the top of the
     /// module). The behaviour is identical; the new form matches
     /// every other `sign(...)` call site in the DOT protocol.
@@ -166,18 +336,25 @@ impl SlashEvent {
 
     /// Verify the coordinator's signature.
     ///
-    /// R17 R1-HIGH-8 fix: the `blake3::hash(&payload)` is now computed
+    /// R17 R1-HIGH-8 fix: the `blake3::hash(&&payload)` is now computed
     /// inside the `map_err` closure, so it only runs on the error
     /// path. Previously it ran unconditionally on every successful
     /// verify, wasting ~1µs of CPU per call.
-    pub fn verify(&self, coordinator_pubkey: &VerifyingKey) -> Result<(), DotError> {
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        coordinator_pubkey: &[u8],
+    ) -> Result<(), DotError> {
         let payload = self.payload_bytes();
-        let sig = Signature::from_bytes(&self.signature);
-        coordinator_pubkey
-            .verify(&payload, &sig)
-            .map_err(|_| DotError::InvalidSignature {
-                envelope_id: *blake3::hash(&payload).as_bytes(),
-            })?;
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            coordinator_pubkey,
+            &payload,
+            &self.signature,
+        )
+        .map_err(|_| DotError::InvalidSignature {
+            envelope_id: *blake3::hash(&payload).as_bytes(),
+        })?;
         Ok(())
     }
 }
@@ -225,14 +402,15 @@ impl SlashTally {
     pub fn append(
         &mut self,
         event: SlashEvent,
-        coordinator_pubkey: &VerifyingKey,
+        algorithm: &octo_ident::AlgorithmId,
+        coordinator_pubkey: &[u8],
         current_epoch: u64,
     ) -> Result<(), HandoverError> {
-        event
-            .verify(coordinator_pubkey)
-            .map_err(|_| HandoverError::SlashTallyInvalid {
+        event.verify(algorithm, coordinator_pubkey).map_err(|_| {
+            HandoverError::SlashTallyInvalid {
                 index: self.slash_events.len(),
-            })?;
+            }
+        })?;
         self.slash_events.push(event);
         self.last_updated_epoch = current_epoch;
         Ok(())
@@ -257,7 +435,7 @@ impl SlashTally {
 
 /// Coordinator handover request (DOT/1/HANDOVER_REQUEST).
 ///
-/// See RFC-0855p-e §"Data Structure (preliminary)". R16 R1-C1 fix: the
+/// See RFC-0855p-e §Data Structure. R16 R1-C1 fix: the
 /// 1-byte subtype + 1-byte version stub from v0.1 has been replaced with the
 /// canonical 10-byte header per RFC-0850p-c §A.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -292,8 +470,13 @@ pub struct HandoverRequestEnvelope {
     pub current_epoch: u64,
     /// `BLAKE3-256(header || body)`.
     pub handover_hash: [u8; 32],
-    /// Ed25519 signature over `handover_hash`.
-    pub signature: [u8; 64],
+    /// Signature over `handover_hash`. Width is the signer's algorithm's, not
+    /// this crate's: this envelope is signed through the operator's
+    /// `CapabilitySigner`, and that trait no longer promises Ed25519's 64
+    /// bytes (mission `0009-e8`). It held a `[u8; 64]` and a doc claiming the
+    /// substrate guaranteed the width; that guarantee was the trait's return
+    /// type, and the trait has been widened.
+    pub signature: Vec<u8>,
 }
 
 impl HandoverRequestEnvelope {
@@ -325,7 +508,7 @@ impl HandoverRequestEnvelope {
             nonce: [0u8; 32],
             current_epoch,
             handover_hash: [0u8; 32],
-            signature: [0u8; 64],
+            signature: vec![0u8; 64],
         }
     }
 
@@ -370,11 +553,15 @@ impl HandoverRequestEnvelope {
     /// Sign the envelope in place. Recomputes `handover_hash` and signs it.
     pub fn sign(&mut self, key: &SigningKey) {
         self.handover_hash = self.compute_handover_hash();
-        self.signature = key.sign(&self.handover_hash).to_bytes();
+        self.signature = key.sign(&self.handover_hash).to_bytes().to_vec();
     }
 
     /// Verify the signature against the coordinator's public key.
-    pub fn verify(&self, coordinator_pubkey: &VerifyingKey) -> Result<(), DotError> {
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        coordinator_pubkey: &[u8],
+    ) -> Result<(), DotError> {
         let computed = self.compute_handover_hash();
         if computed != self.handover_hash {
             return Err(DotError::Serialization(format!(
@@ -383,21 +570,34 @@ impl HandoverRequestEnvelope {
                 &self.handover_hash[..8]
             )));
         }
-        let sig = Signature::from_bytes(&self.signature);
-        coordinator_pubkey
-            .verify(&self.handover_hash, &sig)
-            .map_err(|_e| DotError::InvalidSignature {
-                envelope_id: self.handover_hash,
-            })?;
+        // The envelope field is variable width because the signer is
+        // algorithm-agnostic (mission `0009-e8`). This verifier is Ed25519
+        // and says so, so a wrong-width signature is *malformed* rather
+        // than an ordinary bad signature — refused here rather than coerced.
+        let sig_bytes: [u8; 64] =
+            self.signature
+                .as_slice()
+                .try_into()
+                .map_err(|_| DotError::InvalidSignature {
+                    envelope_id: self.handover_hash,
+                })?;
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            coordinator_pubkey,
+            &self.handover_hash,
+            &sig_bytes,
+        )
+        .map_err(|_e| DotError::InvalidSignature {
+            envelope_id: self.handover_hash,
+        })?;
         Ok(())
     }
 }
 
 /// Witness ACK of a HANDOVER_REQUEST (DOT/1/HANDOVER_ACK).
 ///
-/// See RFC-0855p-e §"Data Structure" — R16 R2 fix: the v0.2 RFC listed
-/// this envelope in the Envelope Type Added table (subtype `b"HOAK"`) but
-/// did not define the struct. Added here.
+/// See RFC-0855p-e §Data Structure — added here per the Envelope Type Added
+/// table (subtype `b"HOAK"`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandoverAckEnvelope {
     /// `b"DOT1"`.
@@ -472,7 +672,11 @@ impl HandoverAckEnvelope {
     }
 
     /// Verify against the witness's public key.
-    pub fn verify(&self, witness_pubkey: &VerifyingKey) -> Result<(), DotError> {
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        witness_pubkey: &[u8],
+    ) -> Result<(), DotError> {
         let computed = self.compute_ack_hash();
         if computed != self.ack_hash {
             return Err(DotError::Serialization(format!(
@@ -481,20 +685,23 @@ impl HandoverAckEnvelope {
                 &self.ack_hash[..8]
             )));
         }
-        let sig = Signature::from_bytes(&self.signature);
-        witness_pubkey
-            .verify(&self.ack_hash, &sig)
-            .map_err(|_e| DotError::InvalidSignature {
-                envelope_id: self.ack_hash,
-            })?;
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            witness_pubkey,
+            &self.ack_hash,
+            &self.signature,
+        )
+        .map_err(|_e| DotError::InvalidSignature {
+            envelope_id: self.ack_hash,
+        })?;
         Ok(())
     }
 }
 
 /// New coordinator's confirmation (DOT/1/HANDOVER_DONE).
 ///
-/// See RFC-0855p-e §"Data Structure" — R16 R2 fix: same as
-/// `HandoverAckEnvelope`; the struct was missing from the v0.2 RFC.
+/// See RFC-0855p-e §Data Structure — same as `HandoverAckEnvelope`;
+/// added per the Envelope Type Added table (subtype `b"HODN"`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandoverDoneEnvelope {
     /// `b"DOT1"`.
@@ -573,7 +780,11 @@ impl HandoverDoneEnvelope {
     }
 
     /// Verify against the new coordinator's public key.
-    pub fn verify(&self, new_coordinator_pubkey: &VerifyingKey) -> Result<(), DotError> {
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        new_coordinator_pubkey: &[u8],
+    ) -> Result<(), DotError> {
         let computed = self.compute_done_hash();
         if computed != self.done_hash {
             return Err(DotError::Serialization(format!(
@@ -582,13 +793,193 @@ impl HandoverDoneEnvelope {
                 &self.done_hash[..8]
             )));
         }
-        let sig = Signature::from_bytes(&self.signature);
-        new_coordinator_pubkey
-            .verify(&self.done_hash, &sig)
-            .map_err(|_e| DotError::InvalidSignature {
-                envelope_id: self.done_hash,
-            })?;
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            new_coordinator_pubkey,
+            &self.done_hash,
+            &self.signature,
+        )
+        .map_err(|_e| DotError::InvalidSignature {
+            envelope_id: self.done_hash,
+        })?;
         Ok(())
+    }
+}
+
+// -----------------------------------------------------------------------------
+// HandoverCancelEnvelope (DOT/1/HANDOVER_CANCEL)
+// -----------------------------------------------------------------------------
+
+/// Incumbent coordinator's cancel envelope (DOT/1/HORC). Clears incumbent-HORQ
+/// lockout rule per RFC-0855p-e §Security Considerations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandoverCancelEnvelope {
+    /// `b"DOT1"`.
+    pub envelope_type: [u8; 4],
+    /// `b"HORC"`.
+    pub envelope_subtype: [u8; 4],
+    /// `0x0001` (canonical version).
+    pub version: u16,
+    /// Incumbent coordinator's peer_id.
+    pub incumbent_coordinator_id: [u8; 32],
+    /// Current term id (the term being cancelled).
+    pub current_term_id: [u8; 32],
+    /// BLAKE3-256 of the in-flight HORQ envelope being cancelled.
+    pub cancelled_horq_hash: [u8; 32],
+    /// Current epoch.
+    pub current_epoch: u64,
+    /// 16-byte random nonce.
+    pub nonce: [u8; 16],
+    /// BLAKE3-256(incumbent_coordinator_id || current_term_id ||
+    ///   cancelled_horq_hash || current_epoch || nonce)
+    ///   — domain-prefixed per RFC-0855p-e §Payload Hash.
+    pub payload_hash: [u8; 32],
+    /// Ed25519 signature over `payload_hash`.
+    pub signature: [u8; 64],
+}
+
+impl HandoverCancelEnvelope {
+    /// Construct a new `HandoverCancelEnvelope` with canonical header populated.
+    pub fn new(
+        incumbent_coordinator_id: [u8; 32],
+        current_term_id: [u8; 32],
+        cancelled_horq_hash: [u8; 32],
+        current_epoch: u64,
+    ) -> Self {
+        let nonce = [0u8; 16];
+        let payload_hash = compute_horc_payload_hash(
+            &incumbent_coordinator_id,
+            &current_term_id,
+            &cancelled_horq_hash,
+            current_epoch,
+            &nonce,
+        );
+        Self {
+            envelope_type: ENVELOPE_TYPE,
+            envelope_subtype: HANDOVER_REQUEST_CANCEL,
+            version: ENVELOPE_VERSION,
+            incumbent_coordinator_id,
+            current_term_id,
+            cancelled_horq_hash,
+            current_epoch,
+            nonce,
+            payload_hash,
+            signature: [0u8; 64],
+        }
+    }
+
+    /// Serialize the body (everything after the 10-byte header) to bytes.
+    pub fn body_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(32 + 32 + 32 + 8 + 16 + 32);
+        buf.extend_from_slice(&self.incumbent_coordinator_id);
+        buf.extend_from_slice(&self.current_term_id);
+        buf.extend_from_slice(&self.cancelled_horq_hash);
+        buf.extend_from_slice(&self.current_epoch.to_be_bytes());
+        buf.extend_from_slice(&self.nonce);
+        buf.extend_from_slice(&self.payload_hash);
+        buf
+    }
+
+    /// Compute `payload_hash` with current field values.
+    pub fn compute_payload_hash(&self) -> [u8; 32] {
+        compute_horc_payload_hash(
+            &self.incumbent_coordinator_id,
+            &self.current_term_id,
+            &self.cancelled_horq_hash,
+            self.current_epoch,
+            &self.nonce,
+        )
+    }
+
+    /// Sign the envelope in place. Recomputes `payload_hash` and signs it.
+    pub fn sign(&mut self, key: &SigningKey) {
+        self.payload_hash = self.compute_payload_hash();
+        self.signature = key.sign(&self.payload_hash).to_bytes();
+    }
+
+    /// Verify the signature against the incumbent coordinator's public key.
+    pub fn verify(
+        &self,
+        algorithm: &octo_ident::AlgorithmId,
+        incumbent_pubkey: &[u8],
+    ) -> Result<(), DotError> {
+        let computed = self.compute_payload_hash();
+        if computed != self.payload_hash {
+            return Err(DotError::Serialization(format!(
+                "HandoverCancelEnvelope: payload_hash mismatch (computed {:02x?}, stored {:02x?})",
+                &computed[..8],
+                &self.payload_hash[..8]
+            )));
+        }
+        octo_algo_ed25519::verify_dispatch(
+            algorithm,
+            incumbent_pubkey,
+            &self.payload_hash,
+            &self.signature,
+        )
+        .map_err(|_e| DotError::InvalidSignature {
+            envelope_id: self.payload_hash,
+        })?;
+        Ok(())
+    }
+}
+
+// -----------------------------------------------------------------------------
+// HOAK second-witness quorum gate (RFC-0855p-e §Security Considerations)
+// -----------------------------------------------------------------------------
+
+/// HOAK second-witness quorum gate result per RFC-0855p-e §Security
+/// Considerations: when accepting a HORQ whose `sender_state_snapshot_ordinal
+/// != SenderStateSnapshotOrdinal::ACTIVE`, count distinct
+/// `attests_to_predecessor_state=true` HOAK signatures per
+/// `(coordinator_id, coordinator_term_id, current_epoch)` and reject unless
+/// count reaches `horq_quorum(witness_set_size)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HoakQuorumDecision {
+    /// Gate passes — `count >= horq_quorum(witness_set_size)`.
+    Pass {
+        distinct_witnesses: usize,
+        required: usize,
+    },
+    /// Gate fails — `count < horq_quorum(witness_set_size)`.
+    Fail {
+        distinct_witnesses: usize,
+        required: usize,
+    },
+}
+
+/// Evaluate the HOAK second-witness quorum gate.
+///
+/// `attests_to_predecessor_state_per_witness` is `witness_set_size`-long;
+/// `true` at index i means witness i's HOAK attests to the predecessor state
+/// (the second-witness quorum path).
+pub fn evaluate_hoak_second_witness_quorum(
+    sender_ordinal: &SenderStateSnapshotOrdinal,
+    witness_set_size: usize,
+    attests_to_predecessor_state_per_witness: &[bool],
+) -> HoakQuorumDecision {
+    if sender_ordinal.is_active() {
+        // Active state: gate is automatic pass (single HOAK sufficient).
+        return HoakQuorumDecision::Pass {
+            distinct_witnesses: attests_to_predecessor_state_per_witness.len(),
+            required: 0,
+        };
+    }
+    let distinct_witnesses = attests_to_predecessor_state_per_witness
+        .iter()
+        .filter(|b| **b)
+        .count();
+    let required = horq_quorum(witness_set_size);
+    if distinct_witnesses >= required {
+        HoakQuorumDecision::Pass {
+            distinct_witnesses,
+            required,
+        }
+    } else {
+        HoakQuorumDecision::Fail {
+            distinct_witnesses,
+            required,
+        }
     }
 }
 
@@ -596,17 +987,25 @@ impl HandoverDoneEnvelope {
 // Helpers
 // -----------------------------------------------------------------------------
 
-/// BLAKE3-256(handover_request_hash || witness_id || witness_epoch || nonce).
+/// BLAKE3-256(HASH_DOMAIN_ACK || handover_request_hash || witness_id || witness_epoch || nonce).
 ///
 /// R17 R1-CRITICAL-1 fix: nonce is now INCLUDED so swapping or stripping
 /// the nonce changes the hash and breaks the signature.
+/// R2.5 fix: domain prefix per RFC-0855p-e §BLAKE3 Construction Conventions
+/// (cross-namespace collision prevention vs payload_hash/done_hash/etc).
+///
+/// Open deviation: RFC v1.1 field set is `handover_request_hash || witness_id_be
+/// || witness_epoch_be || (attests_to_predecessor_state as u8_be) ||
+/// attested_epoch_be`; substrate uses nonce. Field-set reconcile tracked
+/// separately.
 fn compute_ack_hash(
     handover_request_hash: &[u8; 32],
     witness_id: &[u8; 32],
     witness_epoch: u64,
     nonce: &[u8; 32],
 ) -> [u8; 32] {
-    let mut buf = Vec::with_capacity(32 + 32 + 8 + 32);
+    let mut buf = Vec::with_capacity(HASH_DOMAIN_ACK.len() + 32 + 32 + 8 + 32);
+    buf.extend_from_slice(HASH_DOMAIN_ACK.as_bytes());
     buf.extend_from_slice(handover_request_hash);
     buf.extend_from_slice(witness_id);
     buf.extend_from_slice(&witness_epoch.to_be_bytes());
@@ -614,17 +1013,19 @@ fn compute_ack_hash(
     *blake3::hash(&buf).as_bytes()
 }
 
-/// BLAKE3-256(handover_request_hash || new_coordinator_id || accepted_epoch || nonce).
+/// BLAKE3-256(HASH_DOMAIN_DONE || handover_request_hash || new_coordinator_id || accepted_epoch || nonce).
 ///
 /// R17 R1-CRITICAL-1 fix: nonce is now INCLUDED so swapping or stripping
 /// the nonce changes the hash and breaks the signature.
+/// R2.5 fix: domain prefix per RFC-0855p-e §BLAKE3 Construction Conventions.
 fn compute_done_hash(
     handover_request_hash: &[u8; 32],
     new_coordinator_id: &[u8; 32],
     accepted_epoch: u64,
     nonce: &[u8; 32],
 ) -> [u8; 32] {
-    let mut buf = Vec::with_capacity(32 + 32 + 8 + 32);
+    let mut buf = Vec::with_capacity(HASH_DOMAIN_DONE.len() + 32 + 32 + 8 + 32);
+    buf.extend_from_slice(HASH_DOMAIN_DONE.as_bytes());
     buf.extend_from_slice(handover_request_hash);
     buf.extend_from_slice(new_coordinator_id);
     buf.extend_from_slice(&accepted_epoch.to_be_bytes());
@@ -647,6 +1048,30 @@ fn group_binding_payload(gb: &GroupBinding) -> Vec<u8> {
     buf.push(gb.state.as_byte());
     buf.extend_from_slice(&gb.binding_hash);
     buf
+}
+
+/// BLAKE3-256(HASH_DOMAIN_CANCEL_PAYLOAD || incumbent_coordinator_id ||
+///   current_term_id || cancelled_horq_hash || current_epoch || nonce).
+///
+/// Domain-prefixed per RFC-0855p-e §Payload Hash (HORC envelope).
+/// R2.5 fix: domain prefix was claimed but not actually applied; now
+/// prepended to the buf before hashing (matches RFC §BLAKE3 Construction
+/// Conventions canonical form).
+fn compute_horc_payload_hash(
+    incumbent_coordinator_id: &[u8; 32],
+    current_term_id: &[u8; 32],
+    cancelled_horq_hash: &[u8; 32],
+    current_epoch: u64,
+    nonce: &[u8; 16],
+) -> [u8; 32] {
+    let mut buf = Vec::with_capacity(HASH_DOMAIN_CANCEL_PAYLOAD.len() + 32 + 32 + 32 + 8 + 16);
+    buf.extend_from_slice(HASH_DOMAIN_CANCEL_PAYLOAD.as_bytes());
+    buf.extend_from_slice(incumbent_coordinator_id);
+    buf.extend_from_slice(current_term_id);
+    buf.extend_from_slice(cancelled_horq_hash);
+    buf.extend_from_slice(&current_epoch.to_be_bytes());
+    buf.extend_from_slice(nonce);
+    *blake3::hash(&buf).as_bytes()
 }
 
 // -----------------------------------------------------------------------------
@@ -723,11 +1148,21 @@ mod tests {
         let key = make_key(11);
         let pubkey = key.verifying_key();
         let ev = make_slash_event(0x000E, [0x77u8; 32], 100);
-        assert!(ev.verify(&pubkey).is_ok());
+        assert!(ev
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
+            .is_ok());
         // Tampered evidence -> signature fails.
         let mut bad = ev.clone();
         bad.slash_evidence_hash = [0x00u8; 32];
-        assert!(bad.verify(&pubkey).is_err());
+        assert!(bad
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
+            .is_err());
     }
 
     #[test]
@@ -739,14 +1174,16 @@ mod tests {
         tally
             .append(
                 make_slash_event(0x000E, [0x77u8; 32], 50),
-                &coord_pubkey,
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &coord_pubkey.to_bytes(),
                 50,
             )
             .unwrap();
         tally
             .append(
                 make_slash_event(0x000F, [0x88u8; 32], 100),
-                &coord_pubkey,
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &coord_pubkey.to_bytes(),
                 100,
             )
             .unwrap();
@@ -779,7 +1216,12 @@ mod tests {
         };
         ev.sign(&real_key);
 
-        let result = tally.append(ev, &claimed_pubkey, 50);
+        let result = tally.append(
+            ev,
+            &octo_algo_ed25519::ed25519_algorithm_id(),
+            &claimed_pubkey.to_bytes(),
+            50,
+        );
         assert!(matches!(
             result,
             Err(HandoverError::SlashTallyInvalid { index: 0 })
@@ -801,7 +1243,8 @@ mod tests {
         tally
             .append(
                 make_slash_event(0x000E, [0x77u8; 32], 100),
-                &slash_coord_pubkey,
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &slash_coord_pubkey.to_bytes(),
                 100,
             )
             .unwrap();
@@ -831,7 +1274,12 @@ mod tests {
         env.nonce = [0xAAu8; 32];
 
         env.sign(&key);
-        assert!(env.verify(&pubkey).is_ok());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
+            .is_ok());
     }
 
     #[test]
@@ -850,7 +1298,12 @@ mod tests {
         env.nonce = [0xAAu8; 32];
         env.sign(&key);
         env.current_epoch = 999;
-        assert!(env.verify(&pubkey).is_err());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
+            .is_err());
     }
 
     #[test]
@@ -867,7 +1320,12 @@ mod tests {
             200,
         );
         env.sign(&key);
-        assert!(env.verify(&other.verifying_key()).is_err());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &other.verifying_key().to_bytes()
+            )
+            .is_err());
     }
 
     #[test]
@@ -877,7 +1335,12 @@ mod tests {
         let mut env = HandoverAckEnvelope::new([0xA1u8; 32], *pubkey.as_bytes(), 250);
         env.nonce = [0xC1u8; 32];
         env.sign(&key);
-        assert!(env.verify(&pubkey).is_ok());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
+            .is_ok());
     }
 
     // R17 R1-CRITICAL-1 regression test: changing the nonce must change
@@ -904,7 +1367,9 @@ mod tests {
         env.nonce = [0xC1u8; 32];
         env.sign(&key);
         // Recompute manually — R17 R1-CRITICAL-1 fix: nonce included.
+        // R2.5 fix: domain prefix per RFC-0855p-e §BLAKE3 Construction Conventions.
         let mut buf = Vec::new();
+        buf.extend_from_slice(HASH_DOMAIN_ACK.as_bytes());
         buf.extend_from_slice(&[0xA1u8; 32]);
         buf.extend_from_slice(pubkey.as_bytes());
         buf.extend_from_slice(&250u64.to_be_bytes());
@@ -921,7 +1386,12 @@ mod tests {
         env.nonce = [0xC1u8; 32];
         env.sign(&key);
         env.witness_epoch = 999;
-        assert!(env.verify(&pubkey).is_err());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
+            .is_err());
     }
 
     #[test]
@@ -931,7 +1401,12 @@ mod tests {
         let mut env = HandoverDoneEnvelope::new([0xD1u8; 32], *pubkey.as_bytes(), 500);
         env.nonce = [0xE1u8; 32];
         env.sign(&key);
-        assert!(env.verify(&pubkey).is_ok());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
+            .is_ok());
     }
 
     // R17 R1-CRITICAL-1 regression test: changing the nonce must change
@@ -958,7 +1433,9 @@ mod tests {
         env.nonce = [0xE1u8; 32];
         env.sign(&key);
         // Recompute manually — R17 R1-CRITICAL-1 fix: nonce included.
+        // R2.5 fix: domain prefix per RFC-0855p-e §BLAKE3 Construction Conventions.
         let mut buf = Vec::new();
+        buf.extend_from_slice(HASH_DOMAIN_DONE.as_bytes());
         buf.extend_from_slice(&[0xD1u8; 32]);
         buf.extend_from_slice(pubkey.as_bytes());
         buf.extend_from_slice(&500u64.to_be_bytes());
@@ -975,7 +1452,12 @@ mod tests {
         env.nonce = [0xE1u8; 32];
         env.sign(&key);
         env.accepted_epoch = 999;
-        assert!(env.verify(&pubkey).is_err());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
+            .is_err());
     }
 
     #[test]
@@ -1032,7 +1514,12 @@ mod tests {
             });
         }
         env.sign(&key);
-        assert!(env.verify(&pubkey).is_ok());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
+            .is_ok());
     }
 
     #[test]
@@ -1041,5 +1528,552 @@ mod tests {
         let ev2 = make_slash_event(0x000E, [0x77u8; 32], 100);
         assert_eq!(ev1.payload_bytes(), ev2.payload_bytes());
         assert_eq!(ev1.signature, ev2.signature);
+    }
+
+    // ============================================================================
+    // v1.3 RFC-0855p-e reconciled test vectors
+    // ============================================================================
+
+    // TV-HO-1: valid HORQ acceptance; sender_state_snapshot_ordinal = Active; happy path.
+    #[test]
+    fn tv_ho_1_horq_acceptance_active_ordinal() {
+        let ordinal = SenderStateSnapshotOrdinal::new(SenderStateSnapshotOrdinal::ACTIVE).unwrap();
+        assert!(ordinal.is_active());
+        // witness_set_size=3 → horq_quorum(3)=2. Single HOAK with Active ordinal
+        // is sufficient (gate is automatic pass for Active).
+        let decision = evaluate_hoak_second_witness_quorum(&ordinal, 3, &[true]);
+        assert!(matches!(
+            decision,
+            HoakQuorumDecision::Pass {
+                distinct_witnesses: 1,
+                required: 0
+            }
+        ));
+    }
+
+    // TV-HO-2: HORC envelope — incumbent cancel during lockout.
+    #[test]
+    fn tv_ho_2_horc_envelope_sign_verify() {
+        let key = make_key(7);
+        let pubkey = key.verifying_key();
+        let mut env = HandoverCancelEnvelope::new(
+            [0x11u8; 32],
+            [0x22u8; 32],
+            [0x33u8; 32], // cancelled_horq_hash
+            200,
+        );
+        env.nonce = [0x44u8; 16];
+        env.sign(&key);
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &pubkey.to_bytes()
+            )
+            .is_ok());
+    }
+
+    // TV-HO-3: HORC payload_hash changes when nonce changes.
+    #[test]
+    fn tv_ho_3_horc_payload_hash_nonce_changes() {
+        let key = make_key(7);
+        let mut env = HandoverCancelEnvelope::new([0x11u8; 32], [0x22u8; 32], [0x33u8; 32], 200);
+        env.nonce = [0x01; 16];
+        env.sign(&key);
+        let original = env.payload_hash;
+        env.nonce = [0x02; 16];
+        env.sign(&key);
+        assert_ne!(env.payload_hash, original);
+    }
+
+    // TV-HO-4: HORC wrong key fails.
+    #[test]
+    fn tv_ho_4_horc_wrong_key_fails() {
+        let key = make_key(7);
+        let other = make_key(8);
+        let mut env = HandoverCancelEnvelope::new([0x11u8; 32], [0x22u8; 32], [0x33u8; 32], 200);
+        env.nonce = [0x01; 16];
+        env.sign(&key);
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &other.verifying_key().to_bytes()
+            )
+            .is_err());
+    }
+
+    // TV-HO-5: HANDOVER_RACE_WINDOW + HORQ_BACKWARD_WINDOW + HANDOVER_FORWARD_SKEW_BOOST
+    // constants split correctly per plateau closure.
+    #[test]
+    fn tv_ho_5_race_window_constants_split() {
+        assert_eq!(HANDOVER_RACE_WINDOW, 5);
+        assert_eq!(HORQ_BACKWARD_WINDOW, 5);
+        assert_eq!(HANDOVER_FORWARD_SKEW_BOOST, 0);
+        assert_eq!(MAX_FSKEW_EPOCHS, 4);
+    }
+
+    // TV-HO-6: BLAKE3 domain separation contexts match RFC-0853.
+    #[test]
+    fn tv_ho_6_blake3_contexts() {
+        assert_eq!(HORQ_CONTEXT, "DOT/1/HANDOVER_REQUEST");
+        assert_eq!(HOAK_CONTEXT, "DOT/1/HANDOVER_ACK");
+        assert_eq!(HODN_CONTEXT, "DOT/1/HANDOVER_DONE");
+        assert_eq!(HORC_CONTEXT, "DOT/1/HANDOVER_CANCEL");
+        assert_eq!(MESH_AGGREGATED_SIGNATURE, "DOT/1/HANDOVER_MAS");
+    }
+
+    // TV-HO-7: SenderStateSnapshotOrdinal private field; new() + InvalidOrdinal.
+    #[test]
+    fn tv_ho_7_sender_state_snapshot_ordinal() {
+        // Active round-trip.
+        let active = SenderStateSnapshotOrdinal::new(0x01).unwrap();
+        assert_eq!(active.as_byte(), 0x01);
+        assert!(active.is_active());
+        // Pending + Suspect.
+        let pending = SenderStateSnapshotOrdinal::new(0x02).unwrap();
+        assert!(!pending.is_active());
+        let suspect = SenderStateSnapshotOrdinal::new(0x03).unwrap();
+        assert!(!suspect.is_active());
+        // Invalid byte → InvalidOrdinalError.
+        let bad = SenderStateSnapshotOrdinal::new(0x00);
+        assert!(matches!(bad, Err(InvalidOrdinalError { got: 0x00 })));
+        let bad2 = SenderStateSnapshotOrdinal::new(0xFF);
+        assert!(matches!(bad2, Err(InvalidOrdinalError { got: 0xFF })));
+    }
+
+    // TV-HO-8: SlashReasonCode 0x0013-0x0016 entries (per RFC-0855p-e §Future Work F-7).
+    #[test]
+    fn tv_ho_8_slash_reason_code_future_work_f7() {
+        assert_eq!(SlashReasonCode::FalseAttestation.reason_id(), 0x0013);
+        assert_eq!(SlashReasonCode::QuorumTimeout.reason_id(), 0x0014);
+        assert_eq!(SlashReasonCode::TallyTamper.reason_id(), 0x0015);
+        assert_eq!(SlashReasonCode::LateDelivery.reason_id(), 0x0016);
+        // Extension variant.
+        let ext = SlashReasonCode::Extension(0x0100);
+        assert_eq!(ext.reason_id(), 0x0100);
+    }
+
+    // TV-HO-9: HOAK second-witness quorum gate — witness_set_size=3, horq_quorum(3)=2.
+    // Pending ordinal requires ≥2 distinct second-witness HOAKs.
+    #[test]
+    fn tv_ho_9_hoak_second_witness_quorum_gate() {
+        let pending = SenderStateSnapshotOrdinal::new(SenderStateSnapshotOrdinal::PENDING).unwrap();
+        // 1 second-witness → reject (count=1, required=2).
+        let decision = evaluate_hoak_second_witness_quorum(&pending, 3, &[true, false, false]);
+        assert!(matches!(
+            decision,
+            HoakQuorumDecision::Fail {
+                distinct_witnesses: 1,
+                required: 2
+            }
+        ));
+        // 2 distinct second-witness HOAKs → gate passes.
+        let decision = evaluate_hoak_second_witness_quorum(&pending, 3, &[true, true, false]);
+        assert!(matches!(
+            decision,
+            HoakQuorumDecision::Pass {
+                distinct_witnesses: 2,
+                required: 2
+            }
+        ));
+        // Active ordinal → automatic pass (no quorum required).
+        let active = SenderStateSnapshotOrdinal::new(SenderStateSnapshotOrdinal::ACTIVE).unwrap();
+        let decision = evaluate_hoak_second_witness_quorum(&active, 3, &[true]);
+        assert!(matches!(
+            decision,
+            HoakQuorumDecision::Pass {
+                distinct_witnesses: 1,
+                required: 0
+            }
+        ));
+    }
+
+    // TV-HO-10: horq_quorum vs hodn_quorum are DISTINCT functions (per plateau closure).
+    #[test]
+    fn tv_ho_10_horq_quorum_distinct_from_hodn_quorum() {
+        // witness_set_size=3 → both return 2 (per mission spec).
+        // Formula: max(witness_set_size * 2 / 3, 2).
+        assert_eq!(horq_quorum(0), 0);
+        assert_eq!(horq_quorum(1), 2);
+        assert_eq!(horq_quorum(2), 2);
+        assert_eq!(horq_quorum(3), 2);
+        assert_eq!(horq_quorum(6), 4);
+        assert_eq!(horq_quorum(9), 6);
+        // Same formula for hodn_quorum (placeholder; canonical home in d3).
+        assert_eq!(hodn_quorum(3), 2);
+    }
+
+    // TV-HO-11: MeshAggregatedSignature count_signers.
+    #[test]
+    fn tv_ho_11_mesh_aggregated_signature_signers_count() {
+        let bitmap = vec![0b0000_0111, 0b0000_0011]; // 5 distinct signers
+        let mas = MeshAggregatedSignature::new(bitmap, [0u8; 48]);
+        assert_eq!(mas.count_signers(), 5);
+        let empty = MeshAggregatedSignature::new(vec![], [0u8; 48]);
+        assert_eq!(empty.count_signers(), 0);
+    }
+
+    // TV-HO-12: HandoverReasonTypeId typed discriminator.
+    #[test]
+    fn tv_ho_12_handover_reason_type_id() {
+        let id = HandoverReasonTypeId([0xABu8; 16]);
+        assert_eq!(id.0, [0xABu8; 16]);
+    }
+
+    // TV-HO-13: SlashTallyUpdate basic shape.
+    #[test]
+    fn tv_ho_13_slash_tally_update() {
+        let upd = SlashTallyUpdate {
+            slash_reason_code: 0x0013,
+            slashed_peer_id: [0x77u8; 32],
+            witness_count: 3,
+            epoch: 100,
+        };
+        assert_eq!(upd.slash_reason_code, 0x0013);
+        assert_eq!(upd.witness_count, 3);
+    }
+}
+
+// =========================================================================
+// RFC-0855p-b §Phase 4 — Handover protocol handlers (public substrate)
+// =========================================================================
+//
+// Voluntary / Forced / Emergency handover paths + MessagePreservationQueue.
+// Composes with `HandoverReasonTypeId` from `octo-coordinator-types::lib`
+// (Layer B). Layer-C-only substrate per RFC §Key Files-851.
+//
+// Lifted out of the inline `tests` mod so external integration tests
+// (e.g. `canonical_handover_blobs`) can construct and exercise the
+// handlers without reaching into private scope.
+
+/// Phase 4 voluntary handover envelope: signed by the departing active
+/// coordinator to initiate Active → Handover transition.
+///
+/// Distinct from `HandoverRequestEnvelope` (RFC-0855p-e) which is the
+/// wire-format envelope; this struct is the §Phase 4 high-level state
+/// transition initiator (voluntary path).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VoluntaryHandoverRequest {
+    /// Departing coordinator (signer).
+    pub predecessor: [u8; 32],
+    /// Successor coordinator id (designated by predecessor).
+    pub successor: [u8; 32],
+    /// Mission id (for HODN envelope routing).
+    pub mission_id: [u8; 32],
+    /// Epoch handover initiates.
+    pub handover_epoch: u64,
+    /// 128-bit handover reason tag (RFC-0855p-e typed discriminator).
+    pub reason: octo_coordinator_types::HandoverReasonTypeId,
+}
+
+/// Phase 4 forced handover trigger: liveness subsystem requests
+/// `Suspect → Handover` for a coordinator whose grace period has
+/// elapsed (composition with `liveness::evaluate_liveness`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ForcedHandoverTrigger {
+    /// Coordinator being forced into handover (predecessor).
+    pub predecessor: [u8; 32],
+    /// Designated successor (chosen by liveness/election floor).
+    pub successor: [u8; 32],
+    /// Mission id.
+    pub mission_id: [u8; 32],
+    /// Epoch forced handover triggers.
+    pub trigger_epoch: u64,
+    /// Handover reason tag.
+    pub reason: octo_coordinator_types::HandoverReasonTypeId,
+}
+
+/// Phase 4 emergency handover: governance override signed by
+/// `governance_id`. Forces `Active → Handover` bypassing the ordinary
+/// voluntary / forced path. Used for incident response.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EmergencyHandover {
+    /// Coordinator being overridden (predecessor).
+    pub predecessor: [u8; 32],
+    /// Emergency successor (governance-appointed).
+    pub successor: [u8; 32],
+    /// Mission id.
+    pub mission_id: [u8; 32],
+    /// Epoch the override applies.
+    pub override_epoch: u64,
+    /// Governance multi-sig id (signer of the override envelope).
+    pub governance_id: [u8; 32],
+    /// Handover reason tag.
+    pub reason: octo_coordinator_types::HandoverReasonTypeId,
+}
+
+/// Pending envelope awaiting handover acknowledgement. Each entry is
+/// `(sequence, BLAKE3(canonical_bytes(envelope)))`.
+pub type PendingEnvelope = (u64, [u8; 32]);
+
+/// Phase 4 message preservation queue: predecessor's pending envelopes
+/// transferred to successor during HandoverRequest acknowledgement.
+/// Flushed on successor `Active` transition.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MessagePreservationQueue {
+    /// Predecessor coordinator id.
+    pub predecessor: [u8; 32],
+    /// Successor coordinator id.
+    pub successor: [u8; 32],
+    /// Pending envelopes awaiting transfer: `(sequence, BLAKE3(envelope))`.
+    pub pending_envelopes: Vec<PendingEnvelope>,
+}
+
+impl MessagePreservationQueue {
+    /// Construct a fresh preservation queue for a predecessor → successor
+    /// handover pair.
+    pub fn new(predecessor: [u8; 32], successor: [u8; 32]) -> Self {
+        Self {
+            predecessor,
+            successor,
+            pending_envelopes: Vec::new(),
+        }
+    }
+
+    /// Enqueue a pending envelope (pre-handover acknowledgement).
+    pub fn enqueue(&mut self, sequence: u64, envelope_digest: [u8; 32]) {
+        self.pending_envelopes.push((sequence, envelope_digest));
+    }
+
+    /// Flush the queue to a successor `Active` transition. Returns the
+    /// drained envelope set; queue is reset.
+    pub fn flush(&mut self) -> Vec<PendingEnvelope> {
+        std::mem::take(&mut self.pending_envelopes)
+    }
+
+    /// Transfer ownership from predecessor to successor — consumed by
+    /// the `HandoverRequest` ack path. Returns `Err(PreservationQueueEmpty)`
+    /// if the queue is already drained.
+    pub fn transfer(
+        self,
+        expected_predecessor: [u8; 32],
+    ) -> Result<(Vec<PendingEnvelope>, MessagePreservationQueue), DotError> {
+        if self.predecessor != expected_predecessor {
+            return Err(DotError::PreservationPredecessorMismatch {
+                expected: expected_predecessor,
+                actual: self.predecessor,
+            });
+        }
+        let transferred = self.pending_envelopes.clone();
+        // After transfer, queue is drained into successor's receiver.
+        Ok((
+            transferred,
+            MessagePreservationQueue::new(self.predecessor, self.successor),
+        ))
+    }
+
+    /// Length of the pending envelope set.
+    pub fn len(&self) -> usize {
+        self.pending_envelopes.len()
+    }
+
+    /// True iff no pending envelopes.
+    pub fn is_empty(&self) -> bool {
+        self.pending_envelopes.is_empty()
+    }
+}
+
+/// Outcome of a §Phase 4 handover path resolution.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HandoverOutcome {
+    /// Handover initiated; preservation queue staged.
+    Initiated {
+        /// Predecessor coordinator id.
+        predecessor: [u8; 32],
+        /// Successor coordinator id.
+        successor: [u8; 32],
+        /// Handover reason tag.
+        reason: octo_coordinator_types::HandoverReasonTypeId,
+        /// Preservation queue (ready for transfer on acknowledgement).
+        queue: MessagePreservationQueue,
+    },
+    /// Handover triggered (forced path from liveness subsystem).
+    Triggered {
+        /// Predecessor coordinator id.
+        predecessor: [u8; 32],
+        /// Successor coordinator id.
+        successor: [u8; 32],
+        /// Handover reason tag.
+        reason: octo_coordinator_types::HandoverReasonTypeId,
+    },
+    /// Emergency override applied.
+    Overridden {
+        /// Predecessor coordinator id.
+        predecessor: [u8; 32],
+        /// Emergency successor.
+        successor: [u8; 32],
+        /// Governance id (signer).
+        governance_id: [u8; 32],
+        /// Handover reason tag.
+        reason: octo_coordinator_types::HandoverReasonTypeId,
+    },
+}
+
+/// Resolve a voluntary handover request per RFC-0855p-b §Phase 4 path 1.
+///
+/// Builds a [`MessagePreservationQueue`] from `pending_envelopes` so
+/// the successor receives the predecessor's pending message set before
+/// the `Handover → Inactive` transition. The successor is then eligible
+/// to fold into [`crate::dot::handover::HandoverRequestEnvelope`]
+/// (RFC-0855p-e) for the wire-format broadcast.
+pub fn resolve_voluntary_handover(
+    request: &VoluntaryHandoverRequest,
+    pending_envelopes: Vec<PendingEnvelope>,
+) -> HandoverOutcome {
+    let mut queue = MessagePreservationQueue::new(request.predecessor, request.successor);
+    for (seq, digest) in pending_envelopes {
+        queue.enqueue(seq, digest);
+    }
+    HandoverOutcome::Initiated {
+        predecessor: request.predecessor,
+        successor: request.successor,
+        reason: request.reason,
+        queue,
+    }
+}
+
+/// Resolve a forced handover trigger (Phase 3 liveness → Phase 4 trigger).
+pub fn resolve_forced_handover(trigger: &ForcedHandoverTrigger) -> HandoverOutcome {
+    HandoverOutcome::Triggered {
+        predecessor: trigger.predecessor,
+        successor: trigger.successor,
+        reason: trigger.reason,
+    }
+}
+
+/// Resolve an emergency governance handover override. Distinct from
+/// voluntary + forced paths — bypasses normal liveness detection.
+pub fn resolve_emergency_handover(emergency: &EmergencyHandover) -> HandoverOutcome {
+    HandoverOutcome::Overridden {
+        predecessor: emergency.predecessor,
+        successor: emergency.successor,
+        governance_id: emergency.governance_id,
+        reason: emergency.reason,
+    }
+}
+
+/// Test vectors pinned at the §Phase 4 substrate level (Layer C).
+/// Composes with `HandoverReasonTypeId` (Layer B typed discriminator).
+#[cfg(test)]
+mod phase4_tests {
+    use super::*;
+
+    fn sample_voluntary() -> VoluntaryHandoverRequest {
+        VoluntaryHandoverRequest {
+            predecessor: [0xAAu8; 32],
+            successor: [0xBBu8; 32],
+            mission_id: [0x01u8; 32],
+            handover_epoch: 200,
+            reason: octo_coordinator_types::HandoverReasonTypeId::SUBDC_VOLUNTARY_RESIGNATION,
+        }
+    }
+
+    // TV-HO-P4-VOL: Voluntary Active → Handover → Inactive path.
+    #[test]
+    fn tv_ho_p4_voluntary_handover() {
+        let req = sample_voluntary();
+        let pending = vec![(1u64, [0xC1u8; 32]), (2u64, [0xC2u8; 32])];
+        let outcome = resolve_voluntary_handover(&req, pending);
+        match outcome {
+            HandoverOutcome::Initiated {
+                predecessor,
+                successor,
+                reason,
+                queue,
+            } => {
+                assert_eq!(predecessor, [0xAAu8; 32]);
+                assert_eq!(successor, [0xBBu8; 32]);
+                assert_eq!(
+                    reason,
+                    octo_coordinator_types::HandoverReasonTypeId::SUBDC_VOLUNTARY_RESIGNATION
+                );
+                assert_eq!(queue.len(), 2);
+            }
+            _ => panic!("voluntary handover expected Initiated"),
+        }
+    }
+
+    // TV-HO-P4-FORCED: Forced Suspect → Handover (Phase 3 trigger).
+    #[test]
+    fn tv_ho_p4_forced_handover() {
+        let trigger = ForcedHandoverTrigger {
+            predecessor: [0xAAu8; 32],
+            successor: [0xBBu8; 32],
+            mission_id: [0x01u8; 32],
+            trigger_epoch: 200,
+            reason: octo_coordinator_types::HandoverReasonTypeId::SUBDC_MISCONDUCT,
+        };
+        let outcome = resolve_forced_handover(&trigger);
+        match outcome {
+            HandoverOutcome::Triggered {
+                predecessor,
+                successor,
+                reason,
+            } => {
+                assert_eq!(predecessor, [0xAAu8; 32]);
+                assert_eq!(successor, [0xBBu8; 32]);
+                assert_eq!(
+                    reason,
+                    octo_coordinator_types::HandoverReasonTypeId::SUBDC_MISCONDUCT
+                );
+            }
+            _ => panic!("forced handover expected Triggered"),
+        }
+    }
+
+    // TV-HO-P4-EMERGENCY: Emergency governance override.
+    #[test]
+    fn tv_ho_p4_emergency_handover() {
+        let emergency = EmergencyHandover {
+            predecessor: [0xAAu8; 32],
+            successor: [0xCCu8; 32],
+            mission_id: [0x01u8; 32],
+            override_epoch: 200,
+            governance_id: [0x99u8; 32],
+            reason: octo_coordinator_types::HandoverReasonTypeId::TERM_EXPIRED,
+        };
+        let outcome = resolve_emergency_handover(&emergency);
+        match outcome {
+            HandoverOutcome::Overridden {
+                predecessor,
+                successor,
+                governance_id,
+                reason,
+            } => {
+                assert_eq!(predecessor, [0xAAu8; 32]);
+                assert_eq!(successor, [0xCCu8; 32]);
+                assert_eq!(governance_id, [0x99u8; 32]);
+                assert_eq!(
+                    reason,
+                    octo_coordinator_types::HandoverReasonTypeId::TERM_EXPIRED
+                );
+            }
+            _ => panic!("emergency handover expected Overridden"),
+        }
+    }
+
+    // TV-HO-P4-PRESERVATION: MessagePreservationQueue flush + transfer.
+    #[test]
+    fn tv_ho_p4_preservation_queue() {
+        let mut q = MessagePreservationQueue::new([0xAAu8; 32], [0xBBu8; 32]);
+        q.enqueue(1, [0xC1u8; 32]);
+        q.enqueue(2, [0xC2u8; 32]);
+        assert_eq!(q.len(), 2);
+        let drained = q.flush();
+        assert_eq!(drained.len(), 2);
+        assert!(q.is_empty());
+    }
+
+    // TV-HO-P4-TRANSFER: Transfer ownership with predecessor check.
+    #[test]
+    fn tv_ho_p4_preservation_transfer_predecessor_mismatch() {
+        let q = MessagePreservationQueue::new([0xAAu8; 32], [0xBBu8; 32]);
+        let err = q.transfer([0xCCu8; 32]).unwrap_err();
+        match err {
+            DotError::PreservationPredecessorMismatch { expected, actual } => {
+                assert_eq!(expected, [0xCCu8; 32]);
+                assert_eq!(actual, [0xAAu8; 32]);
+            }
+            _ => panic!("expected PreservationPredecessorMismatch"),
+        }
     }
 }

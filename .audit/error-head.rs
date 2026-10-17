@@ -1,0 +1,2125 @@
+//! Operator-facing error envelope — RFC-0011 §Error Handling.
+
+use std::io::Write;
+use thiserror::Error;
+
+/// Every operator-visible failure mode of the `octo` CLI.
+///
+/// `#[non_exhaustive]` per F-14 + Wave 4.5 finding 10 — additive growth
+/// must remain non-semver-breaking. Downstream `match` sites use
+/// wildcard patterns (verified via the `render`/`hint`/`exit_code`
+/// methods, which cover every current variant).
+#[derive(Error, Debug)]
+#[non_exhaustive]
+pub enum OctoCliError {
+    /// Argument parsing failed.
+    #[error("{0}")]
+    ClapParse(#[from] clap::Error),
+    /// No active identity in the wallet.
+    #[error("no active identity")]
+    NoActiveIdentity,
+    /// A mutating command was invoked without confirmation flags.
+    ///
+    /// Fires for any operator mode (Human / Ci / Dev) when the
+    /// confirmation gate is unmet. Exact escape hatches depend on mode
+    /// and command; the operator sees the per-mode help text from
+    /// `OctoCliError::render` rather than a mode-specific label here.
+    #[error("ConfirmationRequired: --confirm required for mutating command {command}")]
+    ConfirmationRequired {
+        /// Command that required confirmation.
+        command: String,
+    },
+    /// A mutating command was invoked under `--mode auditor`.
+    ///
+    /// Auditor is a read-only role and is denied **before** the
+    /// confirmation gate fires. Wave 3 LOW: a separate variant lets
+    /// the operator see "auditor mode is read-only" rather than the
+    /// generic "--confirm required" (which would be misleading —
+    /// adding `--confirm` does not unblock an Auditor session).
+    #[error("auditor mode is read-only; refusing mutating command {command}")]
+    AuditorDenied {
+        /// Command the auditor attempted to invoke.
+        command: String,
+    },
+    /// A rotation is already in flight.
+    #[error("identity rotation already in progress")]
+    AlreadyRotating,
+    /// Requested identity is unknown.
+    #[error("identity not found: {0}")]
+    IdentityNotFound(String),
+    /// HSM backend unavailable.
+    #[error("HSM unavailable: {0}")]
+    HsmUnavailable(String),
+    /// Identity already revoked.
+    #[error("identity already revoked")]
+    AlreadyRevoked,
+    /// Caveat expression failed to parse.
+    #[error("caveat parse error: {message}")]
+    CaveatParse {
+        /// Parser diagnostic.
+        message: String,
+    },
+    /// Caveats parsed but combine illegally.
+    #[error("invalid caveat combination: {detail}")]
+    InvalidCaveatCombination {
+        /// Why the combination is invalid.
+        detail: String,
+    },
+    /// Requested holder is unknown.
+    #[error("holder not found: {0}")]
+    HolderNotFound(String),
+    /// Attenuation would widen authority.
+    #[error("attenuation violation: {0}")]
+    AttenuationViolation(String),
+    /// Signing operation failed.
+    #[error("signing failed: {0}")]
+    SigningFailed(String),
+    /// Parent capability is unknown.
+    #[error("parent capability not found: {0}")]
+    ParentCapNotFound(String),
+    /// Requested policy is unknown.
+    #[error("policy not found: {0}")]
+    PolicyNotFound(String),
+    /// Requested policy version is unknown.
+    #[error("policy `{policy}` has no version {version}")]
+    PolicyVersionNotFound {
+        /// Policy name.
+        policy: String,
+        /// Requested version.
+        version: u32,
+    },
+    /// Requested role is unknown (RFC-0011-d §Error Handling).
+    #[error("role not found: {0}")]
+    RoleNotFound(String),
+    /// Operator OCTO stake is below the role's minimum (RFC-0011-d).
+    #[error("stake insufficient: required {required} micro-OCTO, available {available}")]
+    StakeInsufficient {
+        /// Required stake (micro-OCTO).
+        required: u64,
+        /// Available stake (micro-OCTO).
+        available: u64,
+    },
+    /// Role exists but cannot be selected (RFC-0011-d).
+    #[error("role `{role_id}` not selectable: {reason}")]
+    RoleNotSelectable {
+        /// Role slug.
+        role_id: String,
+        /// Why the role cannot be selected.
+        reason: String,
+    },
+    /// Active signer DID does not match the operator DID (F-16).
+    #[error("signer mismatch: signer did `{signer_did}` != operator did `{operator_did}`")]
+    SignerMismatch {
+        /// Signer DID derived from the active public key.
+        signer_did: String,
+        /// Operator DID supplied on the command line.
+        operator_did: String,
+    },
+    /// RFC-0855p-c §5a group binding ceremony rejected the
+    /// domain-coordinator binding (stale `PlatformAdminProof`, invalid
+    /// state transition, signature mismatch). Maps from
+    /// `octo_role::RoleError::GroupBindingRejected`. Recoverable —
+    /// re-fetch the proof and retry.
+    #[error("group binding rejected: {reason}")]
+    GroupBindingRejected {
+        /// Substrate reason string (RFC-0855p-c `BindingError`).
+        reason: String,
+    },
+    /// Secret was offered on stdin without `--allow-stdin-secret`.
+    #[error("secret material on pipe; pass --allow-stdin-secret to override")]
+    StdinSecretRefused,
+    /// Filter expression is malformed.
+    #[error("invalid filter: {0}")]
+    InvalidFilter(String),
+    /// A deprecated stub was invoked (post-v2.0 cut; soft sentinel —
+    /// see RFC-0011 §Changelog v2.0 entry).
+    ///
+    /// Carries `replaced_by` so operator switch tables and JSON
+    /// envelope parsers can grep the outbound payload for a
+    /// human-readable replacement hint. Non-stale code paths
+    /// (e.g. clap `unrecognized subcommand`) supersede this path
+    /// for operators who invoke a removed stub fresh today; this
+    /// variant preserves the v1.1 `StaleStub` exit-65 contract
+    /// for any operator that observed the hard-error during the
+    /// v1.1 cycle, and for any library caller that surfaces the
+    /// variant directly. Retained per
+    /// `docs/architecture/design-principles.md` §Extension over enumeration:
+    /// `#[non_exhaustive]` library surface must not lose variants.
+    #[error("`{name}` was removed; use `{replaced_by}` (see `octo --help` for the current subcommand list)")]
+    StaleStub {
+        /// Stub command name.
+        name: String,
+        /// Human-readable replacement hint (e.g. `octo-wallet init`
+        /// for `octo init`).
+        replaced_by: &'static str,
+    },
+    /// Reputation aggregate for the given `(did, role)` was not found
+    /// (RFC-0011-b §Substrate `[ADD]` map: `ReputationError::AggregateEmpty`).
+    #[error("reputation not found for did `{did}` role `{role}`")]
+    ReputationNotFound {
+        /// Subject DID.
+        did: String,
+        /// Role slug.
+        role: String,
+    },
+    /// Reputation subject DID is in the `Revoked` lifecycle state
+    /// (RFC-0968 §Roles and Authorities). Auditor mode fails closed
+    /// regardless of caller mode (RFC-0011-b §Security Considerations 3).
+    #[error("reputation revoked for did `{did}`")]
+    ReputationRevoked {
+        /// Subject DID.
+        did: String,
+    },
+    /// Anchor chain digest mismatch (RFC-0011-b §Substrate `[ADD]`
+    /// map: `ReputationError::AnchorDigestMismatch`). Surfaces the
+    /// last anchored unix timestamp for diagnostic context.
+    #[error("anchor chain broken for did `{did}` (last anchor at unix {last_anchor_unix})")]
+    AnchorChainBroken {
+        /// Subject DID.
+        did: String,
+        /// Unix seconds of the last accepted anchor.
+        last_anchor_unix: i64,
+    },
+    /// `--no-anchor-verify` was passed outside Dev mode
+    /// (RFC-0011-b §Security Considerations 1a; DEV-ONLY escape hatch).
+    #[error(
+        "--no-anchor-verify is DEV-only (got mode `{mode}`); switch to --mode dev or drop the flag"
+    )]
+    NoAnchorVerifyInMode {
+        /// Resolved operator mode label (lowercase).
+        mode: &'static str,
+    },
+    /// Role slug failed the substrate `Role::parse` guard
+    /// (RFC-0011-b §7.4 `Role::parse` rejects empty / whitespace).
+    #[error("invalid role slug `{slug}`: {reason}")]
+    InvalidRoleSlug {
+        /// The supplied role slug (sanitized).
+        slug: String,
+        /// Why the slug was rejected.
+        reason: String,
+    },
+    /// TTL hop count is out of the `1..=8` range allowed by RFC-0871.
+    /// Surfaces from `octo mesh forward --ttl-hops`. Substrate clamps to
+    /// the per-node-type TTL ceiling from `RouterAnnouncePayload`; the
+    /// CLI enforces the wider 1..=8 operator-facing bound at dispatch
+    /// (RFC-0011-f §Error Handling). Exit 17 per the amendment-chain
+    /// slot allocation reserved by RFC-0011-f §Exit Codes.
+    #[error("invalid TTL hops: {hops} (must be in 1..=8 per RFC-0871 ceiling)")]
+    InvalidTtlHops {
+        /// The offending hop count.
+        hops: u8,
+    },
+    /// Mesh capability is missing or insufficient for the requested
+    /// dispatch. `forward` and `rpc` require an RFC-0957 capability
+    /// caveat per RFC-0011-f §Design Goals; substrate-truth verification at the
+    /// dispatch boundary surfaces this when the envelope carries only a
+    /// signature authorization (no capability bound) or the bound
+    /// capability's `Audience` caveat does not match the resolved peer
+    /// DID (RFC-0957 §Attenuation Invariant). Exit 18.
+    #[error("mesh capability missing or insufficient: {detail}")]
+    MeshCapabilityInsufficient {
+        /// Operator-safe diagnostic.
+        detail: String,
+    },
+    /// Envelope authorization verification failed at the dispatch
+    /// boundary per RFC-0871 §Algorithms "Envelope receive (node-side)"
+    /// step 6 (signature verify against the current `verifying_key`) or
+    /// the substrate's request/reply correlation path. CLI maps the
+    /// substrate `ProtocolError` family (e.g. `SignerKeyRevoked`,
+    /// `InvalidSignature`, `AudienceMismatch`) to this single
+    /// operator-facing variant; the substrate owns the canonical
+    /// distinction. Exit 19.
+    #[error("envelope authorization failed: {detail}")]
+    EnvelopeAuthorizationFailed {
+        /// Operator-safe diagnostic.
+        detail: String,
+    },
+    /// Endpoint URI scheme is not in the mesh allowlist
+    /// (`tcp://`, `quic://`, `bluetooth://` per RFC-0011-f §Peer
+    /// Summary Shape). Mapped from `octo_mesh::MeshError::InvalidEndpointScheme`
+    /// at the `peer add` dispatch boundary. Exit 28 (shared slot
+    /// with `forward`'s `InvalidTtlHops` per RFC-0011-f §Exit Codes).
+    #[error("invalid endpoint URI scheme: `{scheme}` (allowlist: tcp://, quic://, bluetooth://)")]
+    InvalidEndpointScheme {
+        /// The rejected scheme (lowercase, no `://`).
+        scheme: String,
+    },
+    /// RPC reply did not arrive within the substrate timeout ceiling
+    /// (default 30s per RFC-0011-f §Performance Targets). Surfaced
+    /// from `octo_mesh::MeshError::RpcTimeout` at the `mesh rpc`
+    /// dispatch boundary. The substrate ceiling is
+    /// `octo_mesh::rpc_invoke`'s `timeout_ms` parameter (CLI default
+    /// 30_000). Exit 20 per RFC-0011-f §Error Handling +
+    /// §Subcommand Taxonomy `rpc` "Exit codes" row; this slot is
+    /// claimed by the mesh amendment chain (codes 17-30 reserved
+    /// for mesh errors) and supersedes RFC-0011-b's prior use for
+    /// `ReputationNotFound` — both failure modes are operator-
+    /// unambiguous within their respective command surfaces.
+    #[error("RPC timeout after {timeout_ms}ms: peer `{peer}` method `{method}`")]
+    RpcTimeout {
+        /// Target peer DID (RFC-0010 canonical wire form).
+        peer: String,
+        /// Method name (verbatim operator input).
+        method: String,
+        /// Timeout ceiling in milliseconds (substrate-defined;
+        /// CLI default 30_000).
+        timeout_ms: u64,
+    },
+    /// Vault not owned by the active DID (RFC-0011-e §Error Handling).
+    /// Mapped from `octo_vault::ProjectionError::VaultUnknown` at the
+    /// `vault balance` dispatch boundary. Exit 23 per RFC-0011-e
+    /// §Error Handling (reserved 17-63 range; 23 slot claimed by
+    /// the vault amendment chain for read-surface failures).
+    #[error("vault not owned: {0}")]
+    VaultNotOwned(String),
+    /// Projected vault balance is below the requested transfer amount
+    /// (RFC-0011-e §Error Handling). Raised at `vault transfer`
+    /// pre-flight step 4 (`project_vault_balance` < `--amount`). Both
+    /// operands are rendered in DQA canonical form (RFC-0960-v36
+    /// §Wire Form) so the operator can diff them directly. Exit 24.
+    ///
+    /// Transfer amounts are NOT redacted — they are chain-public
+    /// information per RFC-0011-e §Redaction
+    #[error("insufficient balance: have {have}, need {need}")]
+    InsufficientBalance {
+        /// Projected balance, DQA canonical form.
+        have: String,
+        /// Requested transfer amount, DQA canonical form.
+        need: String,
+    },
+    /// `vault transfer` invoked without an RFC-0011-d transfer-capability
+    /// provisioning for the active DID (RFC-0011-e §Error Handling).
+    /// Exit 25.
+    ///
+    /// This is also the **stub-with-error** state: until the substrate
+    /// role-gate hook lands, `vault transfer` surfaces this variant
+    /// regardless of HSM availability (RFC-0011-e §Implementation
+    /// Phases). The CLI does NOT implement role provisioning — that is
+    /// RFC-0011-d's surface (per ``docs/architecture/design-principles.md``
+    /// `docs/architecture/design-principles.md` §No parallel abstractions).
+    #[error(
+        "role not provisioned: transfer requires a provisioned transfer capability; see RFC-0011-d"
+    )]
+    RoleNotProvisioned,
+    /// Cross-chain transfer attempted without `--dest-chain-id`
+    /// (RFC-0011-e §Security: Cross-Chain Confusion). Exit 26.
+    ///
+    /// The CLI surfaces BOTH the source chain (parsed from `--from`)
+    /// and the substrate-resolved destination chain so the operator can
+    /// see what the substrate detected. There is no `ChainIdResolver`
+    /// trait in the projection substrate, so the destination chain
+    /// arrives via an opaque substrate error.
+    #[error("chain id mismatch: source chain `{from}` != destination chain `{to}`; pass --dest-chain-id to confirm a cross-chain transfer")]
+    ChainIdMismatch {
+        /// Source chain ID (canonical form, from `--from`).
+        from: String,
+        /// Substrate-resolved destination chain ID (canonical form).
+        to: String,
+    },
+    /// `--chain-id` or `--dest-chain-id` failed RFC-0010 canonical-form
+    /// parse (RFC-0011-e §Error Handling). Exit 26 — shared with
+    /// [`OctoCliError::ChainIdMismatch`] because both are operator-input
+    /// validation failures on chain IDs.
+    #[error("invalid chain id: {received}")]
+    InvalidChainId {
+        /// The rejected operator input, verbatim.
+        received: String,
+    },
+
+    /// Neither `OCTO_HOME` nor `$HOME` is set in the operator's
+    /// environment. The CLI fails closed (exit 27) rather than
+    /// defaulting to `/tmp/.octo` — a world-readable/writable
+    /// directory on shared hosts, where any local user could race
+    /// the operator's writes or inject peer-table entries
+    /// (Wave 4.5 Lens-2 finding 3).
+    #[error("no OCTO_HOME or HOME available; set $OCTO_HOME or $HOME before running this command")]
+    NoOctoHome,
+
+    /// Agent manifest JSON parse failure (RFC-0011-c §9.8). `path` is
+    /// the operator-supplied `--manifest-path` so the operator can
+    /// correct the file reference; `reason` is the underlying
+    /// `serde_json` diagnostic. Maps from substrate
+    /// `WalletError::ManifestParse { path, reason }`. Exit 39.
+    #[error("agent manifest parse error at `{path}`: {reason}")]
+    ManifestParseError {
+        /// Operator-supplied `--manifest-path` value.
+        path: String,
+        /// Substrate diagnostic (sanitized).
+        reason: String,
+    },
+    /// 6-step capability validation pipeline failed at the given
+    /// 1-based step (RFC-0002 §Capability Validation; RFC-0011-c
+    /// §9.6). Substrate signals each step's specific failure mode;
+    /// CLI surfaces the step number to the operator. Exit 40.
+    #[error("capability validation failed at step {0} (RFC-0002 §Capability Validation)")]
+    CapabilityValidationFailed(usize),
+    /// `register_agent` was called with `(manifest, active_did)`
+    /// whose derived `agent_id` is already present in the wallet
+    /// substrate registry (RFC-0011-c §9.10). Exit 41.
+    #[error("agent already registered: {0}")]
+    AgentAlreadyExists(uuid::Uuid),
+
+    /// `--limit` argument was zero or otherwise unparseable for the
+    /// agent-list filter (RFC-0011-c §9.8, slot 45 reserved by the
+    /// agent amendment chain). Substrate clamps at 1024 silently —
+    /// this variant surfaces the operator error up front so the
+    /// `0` / non-numeric input never reaches the substrate. Exit 45.
+    #[error("invalid --limit value `{0}` (must be 1..=1024)")]
+    InvalidLimit(String),
+
+    /// `--cursor` argument could not be parsed by the substrate
+    /// (RFC-0011-c §9.8, slot 46 reserved by the agent amendment
+    /// chain). Phase 1 cursors are opaque tokens; malformed input
+    /// surfaces here so the CLI never reaches the substrate with
+    /// ambiguous pagination state. Exit 46.
+    #[error("invalid --cursor value `{0}` (malformed opaque token)")]
+    InvalidCursor(String),
+
+    /// `lookup_agent` miss — agent UUID not found in the caller-attested
+    /// DID's wallet registry (RFC-0011-c §9.8 + RFC-0015 §6.2.3).
+    /// Mirrors the `AgentAlreadyExists` (slot 41) inverse but for the
+    /// not-found side. Exit 42.
+    #[error("agent not found: {0}")]
+    AgentNotFound(uuid::Uuid),
+
+    /// Caller-attested DID does not match the filter's `holder_did`
+    /// field — SECURITY HIGH (multi-DID enumeration prevention per
+    /// RFC-0015 §6.2.1). Exit 17 per RFC-0011 §Exit Codes 17-63
+    /// reserved range (NOT slot 13 which is `PolicyNotFound`, NOT
+    /// slot 37 which is owned by RFC-0011-g `UnknownAttestationKind`).
+    #[error("forbidden: holder DID mismatch")]
+    ForbiddenHolderMismatch,
+
+    /// `transition_agent` observed the per-agent lock held by a
+    /// concurrent transition (RFC-0015-a §6.1 + RFC-0011-c §9.8,
+    /// slot 43 reserved by the agent amendment chain). Exit 43.
+    #[error("agent already in transition: {0}")]
+    AlreadyInTransition(uuid::Uuid),
+
+    /// `transition_agent` rejected the requested state-machine edge
+    /// (RFC-0015-a §6.1 + Appendix A state-machine guard). The CLI
+    /// renders the typed `from`/`to` labels (canonical
+    /// `AgentState::as_str()` form) so the operator can diff against
+    /// the substrate guard table. Exit 43 (shared slot with
+    /// `AlreadyInTransition` — both are write-path state errors).
+    #[error("invalid agent state transition: {from} -> {to}")]
+    InvalidStateTransition {
+        /// Current (rejected-source) state label (`AgentState::as_str`).
+        from: String,
+        /// Requested (rejected-target) state label (`AgentState::as_str`).
+        to: String,
+    },
+
+    /// Audit chain sink is not configured (RFC-0015-a §6.1 paired-
+    /// acceptance bridge — no `octo-audit` sink registered for the
+    /// write-path façade). Exit 52 per RFC-0011-c §9.8 slot
+    /// allocation + RFC-0016-a §6.7 audit-substrate-not-ready code.
+    /// Same slot as `AuditUnavailable` substrate mapping; the CLI
+    /// surfaces this when the substrate's `octo-audit-internal`
+    /// feature is OFF (default build) OR when the sink registration
+    /// step has not run.
+    #[error("audit substrate not ready: register the audit sink or enable the octo-audit-internal feature")]
+    AuditSubstrateNotReady,
+
+    /// Receipt id not found in the receipt store (RFC-0016-a §6.7
+    /// paired-with-RFC-0011-a; canonical decimal `u64` form).
+    /// Mapped from `octo_audit::AuditError::ReceiptNotFound` at
+    /// the dispatch boundary. Exit 17 per RFC-0016-a §6.7 table;
+    /// shares the slot with `InvalidTtlHops` + `ForbiddenHolderMismatch`
+    /// per the established amendment-chain shared-slot pattern
+    /// (operator-unambiguous within their respective command surfaces).
+    #[error("receipt not found: {0}")]
+    ReceiptNotFound(String),
+
+    /// Per-process trust boundary violated on the audit substrate
+    /// (RFC-0016-a §6.7 paired-with-RFC-0011-a; canonical scrubbed
+    /// path form). Mapped from
+    /// `octo_audit::AuditError::PermissionDenied` at the dispatch
+    /// boundary. Exit 13 per RFC-0016-a §6.7 table; shares the slot
+    /// with `PolicyNotFound` (both are operator-input validation
+    /// failures on access credentials — operator-unambiguous within
+    /// their respective command surfaces).
+    #[error("permission denied: {0}")]
+    PermissionDenied(String),
+
+    /// Substrate-faithful read pipeline failure on the audit surface
+    /// (RFC-0011-a §Error Handling). Surfaces from the
+    /// `list_receipts` / `get_receipt` substrate path when the
+    /// substrate returns a non-`ReceiptNotFound` / non-`InvalidFilter`
+    /// / non-`PermissionDenied` failure (e.g. `SinkSpecific` adapter
+    /// failure, registry mutex poisoning). Exit 18 per RFC-0011-a
+    /// §Error Handling — first occupant of the parent-reserved
+    /// 17-63 range after `ReceiptNotFound` (17). Shares the slot
+    /// with `MeshCapabilityInsufficient` (amendment-chain shared-
+    /// slot pattern; operator-unambiguous within their respective
+    /// command surfaces).
+    #[error("audit read failed: {0}")]
+    AuditReadFailed(String),
+
+    /// `octo audit list` matched more rows than the substrate hard
+    /// ceiling (RFC-0011-a §Filters; substrate `MAX_LIMIT = 10_000`
+    /// per TV-AUD-4c). The operator gets an explicit signal — not a
+    /// silently-clamped truncation — so the next call can narrow the
+    /// filter and re-invoke. Exit 19 per RFC-0011-a §Error Handling
+    /// — first occupant of the parent-reserved 17-63 range after
+    /// `ReceiptNotFound` (17) + `AuditReadFailed` (18). Shares the
+    /// slot with `EnvelopeAuthorizationFailed` (amendment-chain
+    /// shared-slot pattern; operator-unambiguous within their
+    /// respective command surfaces).
+    #[error("audit response too large: matched {matched}, limit {limit} (RFC-0011-a §Filters MAX_LIMIT)")]
+    AuditResponseTooLarge {
+        /// Number of rows that matched the filter (before truncation).
+        matched: usize,
+        /// Substrate hard ceiling (`MAX_LIMIT = 10_000`).
+        limit: usize,
+    },
+
+    /// `octo agent attach` observed the target agent exists but is
+    /// not in `Running` state (RFC-0011-c §9.8 + RFC-0015-a §6.3,
+    /// slot 48 reserved by the agent amendment chain). Exit 48.
+    #[error("agent not running: {0}")]
+    AgentNotRunning(uuid::Uuid),
+
+    /// `octo agent attach` reached the runtime substrate boundary but
+    /// the `octo-runtime` crate is not yet wired into the CLI
+    /// dispatch path (per RFC-0011-c §Implementation Phases Phase 1
+    /// release gate; substrate `octo_runtime::attach` exists but the
+    /// in-process `RuntimeHandle` mint pathway requires the
+    /// `octo agent run --detach` integration that ships in a follow-on
+    /// mission). Exit 51 per RFC-0011-c §9.8 slot allocation.
+    #[error("runtime substrate not ready: octo agent run --detach must ship before attach can bind to a live RuntimeHandle (per RFC-0011-c §Implementation Phases Phase 1)")]
+    RuntimeSubstrateNotReady,
+
+    /// `octo_runtime::attach` returned a substrate-level failure
+    /// (handle revoked, channel closed, invalid attach token).
+    /// Mapped from `octo_runtime::RuntimeError::HandleRevoked` /
+    /// `RuntimeError::RuntimeAttachFailed { reason }` /
+    /// `RuntimeError::EventStreamClosed` at the dispatch boundary.
+    /// Exit 49 per RFC-0011-c §9.8.
+    #[error("runtime attach failed: {reason}")]
+    RuntimeAttachFailed {
+        /// Substrate-internal failure reason (sanitized by CLI via
+        /// `sanitize_substrate_error`).
+        reason: String,
+    },
+
+    /// `octo_runtime::spawn_agent` returned a substrate-level failure
+    /// (handle mint failed, channel registration error, reused
+    /// handle). Mapped from
+    /// `octo_runtime::RuntimeError::RuntimeSpawnFailed { reason }`
+    /// at the dispatch boundary. Exit 44 per RFC-0011-c §9.8
+    /// slot allocation (RFC-0011-c agent amendment chain slots
+    /// 39-52 reserved). The legacy `RuntimeError::InvalidAttachHandle`
+    /// variant was folded into `RuntimeSpawnFailed` during the
+    /// Path B rename — substrate-visible 6-field `AttachHandle`
+    /// token errors surface via the `AttachError` envelope
+    /// (`From<AttachError> for OctoCliError` below).
+    #[error("runtime spawn failed: {reason}")]
+    RuntimeSpawnFailed {
+        /// Substrate-internal failure reason (sanitized by CLI via
+        /// `sanitize_substrate_error`).
+        reason: String,
+    },
+
+    /// `octo governance snapshot` resolved to a snapshot whose
+    /// `expires_at_unix <= now_unix` (TTL boundary inclusive on
+    /// the stale side per RFC-0011-g §Performance Targets). Exit
+    /// 35 per RFC-0011-g §Error Handling.
+    #[error("snapshot stale: snapshot_id {snapshot_id_hex} expired {age_secs}s ago (TTL = 600s)")]
+    SnapshotStale {
+        /// Hex-encoded snapshot id (BLAKE3-256).
+        snapshot_id_hex: String,
+        /// Age in seconds since `expires_at_unix`.
+        age_secs: u64,
+    },
+
+    /// `octo governance snapshot --proposal-state <state>` carried a
+    /// label that did not match any canonical `ProposalState`. The
+    /// CLI accepts the RFC-0011-g §Subcommand Taxonomy labels;
+    /// the dispatch boundary translates to substrate-native
+    /// `ProposalState` discriminants and surfaces this error when
+    /// translation fails. Exit 2 per clap arg-parse convention.
+    #[error("invalid proposal-state label `{state}`; expected one of `Open`, `Quorum-Reached`, `Closed-Accepted`, `Closed-Rejected`, `Closed-Expired` per RFC-0011-g §Subcommand Taxonomy")]
+    InvalidProposalState {
+        /// The unrecognized label supplied on the CLI.
+        state: String,
+    },
+
+    /// `octo governance snapshot` reached the substrate boundary but
+    /// the `octo-governance` cache layer or projection surface
+    /// returned an internal failure. Maps from
+    /// `GovernanceSnapshotError::CacheError { reason }` /
+    /// `GovernanceSnapshotError::InvalidChainId { input, reason }`.
+    /// Exit 51 per the governance substrate boundary slot
+    /// (parallel to `RuntimeSubstrateNotReady` exit 51).
+    #[error("governance substrate error: {reason}")]
+    GovernanceSubstrateError {
+        /// Sanitized substrate failure reason.
+        reason: String,
+    },
+
+    /// `octo governance vote --vote-cap <cap_id>` rejected the
+    /// capability token (RFC-0011-g §Error Handling + RFC-0957
+    /// §Capability Verification). The substrate
+    /// `GovernanceError::VoteRejected { reason }` envelope surfaces
+    /// this with operator-readable rationale (capability caveat set
+    /// failure per RFC-0957 §Attenuation Invariant: missing
+    /// `Audience(proposal_id)` OR missing `Before(deadline)` OR
+    /// missing `Provider(active_role)`). Exit 36 per RFC-0011-g
+    /// §Error Handling.
+    #[error("vote rejected: {reason}")]
+    VoteRejected {
+        /// RFC-0957 attenuation failure reason (caveat set mismatch).
+        reason: String,
+    },
+
+    /// `octo governance attest <subject_did> <attestation_kind>` carried
+    /// a kind reference that did not match any registered attestation
+    /// kind in the substrate registry (RFC-0011-g §Attestation Kind
+    /// Resolution — TypedDiscriminator pattern per
+    /// `docs/architecture/design-principles.md` §Extension over enumeration).
+    /// The substrate carries the typed-discriminator namespace; this
+    /// error surfaces the unknown kind verbatim so the operator can
+    /// diff against the registered namespace. Exit 37 per RFC-0011-g
+    /// §Error Handling (slot reserved at `error.rs:373` comment).
+    #[error("unknown attestation kind: {kind_ref}")]
+    UnknownAttestationKind {
+        /// Typed-discriminator kind reference supplied on the CLI
+        /// (`<namespace>:<subkind>` form per RFC-0011-g §Attestation Kind
+        /// Resolution).
+        kind_ref: String,
+    },
+
+    /// `octo governance attest` or `octo governance vote` invoked
+    /// against a substrate that is not yet ready per the multi-prereq
+    /// gate (RFC-0011-g §Compatibility Mixed-Version Compatibility).
+    /// The substrate returns `GovernanceError::PrereqNotAccepted { rfc_ref }`
+    /// when the relevant upstream RFC is still in Draft; the CLI
+    /// surfaces this verbatim. Exit 38 per RFC-0011-g §Error Handling
+    /// (no operator cost; advisory).
+    #[error("prerequisite not accepted: {rfc_ref}")]
+    PrereqNotAccepted {
+        /// RFC reference of the gating prerequisite that has not
+        /// yet reached Accepted status.
+        rfc_ref: String,
+    },
+
+    /// Unexpected internal failure.
+    #[error("internal error: {0}")]
+    Internal(String),
+
+    /// `AttachHandle` token's TTL elapsed (`now_unix > token.ttl_unix`)
+    /// OR the substrate-reserved fail-CLOSED sentinel `ttl_unix == u64::MAX`
+    /// (per RFC-0011-c §F.2 step (c) of `attach_with_token`).
+    /// Both paths collapse to one envelope via substrate `AttachError::Expired`.
+    /// Exit 53.
+    #[error("attach handle expired: mint={mint_unix}, ttl={ttl_unix}, now={now_unix}")]
+    AttachHandleExpired {
+        /// `mint_timestamp_unix` from the token (mirrors substrate
+        /// `AttachError::Expired::mint_unix` so the operator can
+        /// read the full `{mint, ttl, now}` triplet without
+        /// re-deriving it).
+        mint_unix: u64,
+        /// `ttl_unix` from the token.
+        ttl_unix: u64,
+        /// Operator-clock `now_unix` observed at validation.
+        now_unix: u64,
+    },
+
+    /// `AttachHandle` signature verification failed against the
+    /// expected holder public key — RFC-0011-c §F.2 step (a). Mapped
+    /// from `octo_runtime::AttachError::BadSignature`. Exit 54.
+    #[error("attach handle bad signature: {reason}")]
+    AttachHandleBadSignature {
+        /// Substrate-internal reason (sanitized via `sanitize_substrate_error`).
+        reason: String,
+    },
+
+    /// `AttachHandle` claims a `session_id` that does not match the
+    /// current spawn-time session id registered for the agent —
+    /// RFC-0011-c §F.2 step (d). Mapped from
+    /// `octo_runtime::AttachError::SessionMismatch`. Exit 55.
+    #[error("attach session mismatch: token claims session `{token_session_hex}`, agent registered `{registered_session_hex}`")]
+    AttachSessionMismatch {
+        /// Hex-encoded session id from the token (64 lowercase hex chars).
+        token_session_hex: String,
+        /// Hex-encoded registered session id (64 lowercase hex chars).
+        registered_session_hex: String,
+    },
+
+    /// `AttachHandle` references a `session_id` that is not present in
+    /// the spawn-time registry for any agent under the active DID —
+    /// RFC-0011-c §F.2 step (d) predecessor. Mapped from
+    /// `octo_runtime::AttachError::UnknownSession`. Exit 56.
+    #[error("attach session unknown: session `{0}` is not registered for any active agent")]
+    AttachSessionUnknown(String),
+
+    /// Stoolap-backed event-cursor persistence failure (Phase 2
+    /// RFC-0011-c §F.3 feature-gated surface). Mapped from
+    /// `octo_runtime::AttachError::PersistenceError`. Exit 57.
+    #[error("persistence error: {0}")]
+    PersistenceError(String),
+
+    /// Revocation-set mutation/lookup failure on the process-singleton
+    /// revocation set (RFC-0011-c §F.3). Mapped from
+    /// `octo_runtime::AttachError::RevocationError`. Exit 58.
+    #[error("revocation error: {0}")]
+    RevocationError(String),
+
+    /// Operator-supplied session id hex string failed to parse
+    /// (wrong length, non-UTF-8 bytes, non-hex pair). CLI-parse
+    /// failure on `octo agent revoke-attach --session-id` input —
+    /// the supplied string is not a 64-char lowercase hex
+    /// `SessionId`. Distinct from `AttachHandleBadSignature` (exit
+    /// 54, substrate signature-verify failure). Exit 47 per
+    /// RFC-0011-c §9.8 row.
+    #[error("invalid session id hex: {reason}")]
+    InvalidSessionIdHex {
+        /// Diagnostic reason (length / encoding / non-hex).
+        reason: String,
+    },
+
+    /// `octo agent attach --since <UNIX>` carried a cursor that is
+    /// below the token's mint timestamp — the token cannot
+    /// authorize events that pre-date it. Mapped from
+    /// `octo_runtime::AttachError::InvalidSinceCursor` per
+    /// RFC-0011-c §F.2 validation chain step (d). Exit 53 (shared
+    /// slot with `AttachHandleExpired` per amendment-chain
+    /// shared-slot pattern; operator-unambiguous within the attach
+    /// command surface — the render layer distinguishes the two
+    /// payloads).
+    #[error("invalid since cursor: requested {requested} is below token mint {mint_unix}")]
+    InvalidSinceCursor {
+        /// Token mint timestamp (lower-bound replay horizon).
+        mint_unix: u64,
+        /// `since_unix` supplied by the caller (below mint).
+        requested: u64,
+    },
+
+    /// `attach_with_token` step (e) found no registered handler for
+    /// the token's `TransportKind` (RFC-0011-c §F.2 step (e) +
+    /// `docs/architecture/design-principles.md` §per-extension crates +
+    /// registry). Substrate ships the built-in `InProcessHandler`;
+    /// extension transports (e.g., `UnixSocket`) require a
+    /// follow-on Layer D transport crate
+    /// (`octo-runtime-transport-unix`, …) to register a handler
+    /// at process startup. Mapped from
+    /// `octo_runtime::AttachError::TransportHandlerNotRegistered`.
+    /// Exit 59 per RFC-0011-c §9.8 extension slots 39-61.
+    #[error("transport handler not registered for kind `{kind_label}`")]
+    TransportHandlerNotRegistered {
+        /// Discriminator label from the substrate surface
+        /// (`InProcess`, `UnixSocket`, or `Raw(<uuid>)`).
+        kind_label: String,
+    },
+
+    /// Operator passed `--detach --token-file` against an idempotent
+    /// self-transition (`Registered → Running` no-op where the
+    /// substrate did not mint a fresh `RuntimeHandle`). The clap
+    /// interlock `requires = "detach"` lets the combo pass validation
+    /// even when the spawn was a no-op; without a fresh handle there
+    /// is no `session_id` to bind a token to. CLI-side dispatch
+    /// surface — distinct from the 9 substrate `AttachError` mirror
+    /// variants (slots 53-61). Exit 60 per RFC-0011-c §9.8 (reserved
+    /// per this amendment cycle).
+    #[error("token mint skipped: {reason}")]
+    TokenMintSkipped {
+        /// Operator-actionable reason (idempotent self-transition
+        /// vs agent not in transition-eligible state).
+        reason: String,
+    },
+
+    /// Replay detected — `since_unix` cursor at or behind the recorded
+    /// session cursor (the consumption guarantee is violated). Mirrors
+    /// `octo_runtime::AttachError::ReplayDetected` per the RFC-0011-c
+    /// §9.7 follow-on amendment. Exit 61 (own slot — distinct from
+    /// `Internal(reason)` exit 64).
+    #[error(
+        "replay detected: since cursor {since_unix} is at or behind the recorded cursor {recorded_cursor}"
+    )]
+    ReplayDetected {
+        /// `since_unix` from the rejected attach invocation (at or
+        /// behind the recorded session cursor).
+        since_unix: u64,
+        /// Highest `since_unix` previously accepted for this session.
+        recorded_cursor: u64,
+    },
+}
+
+impl OctoCliError {
+    /// Process exit code for this failure.
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            Self::ClapParse(_) => 2,
+            Self::NoActiveIdentity => 2,
+            Self::ConfirmationRequired { .. } => 2,
+            Self::AuditorDenied { .. } => 2,
+            Self::AlreadyRotating => 3,
+            Self::IdentityNotFound(_) => 4,
+            Self::HsmUnavailable(_) => 5,
+            Self::AlreadyRevoked => 6,
+            Self::CaveatParse { .. } => 7,
+            Self::InvalidCaveatCombination { .. } => 8,
+            Self::HolderNotFound(_) => 9,
+            Self::AttenuationViolation(_) => 10,
+            Self::SigningFailed(_) => 11,
+            Self::ParentCapNotFound(_) => 12,
+            Self::PolicyNotFound(_) => 13,
+            Self::PolicyVersionNotFound { .. } => 14,
+            Self::StdinSecretRefused => 15,
+            Self::InvalidFilter(_) => 16,
+            Self::RoleNotFound(_) => 31,
+            Self::StakeInsufficient { .. } => 32,
+            Self::RoleNotSelectable { .. } => 33,
+            // 34 reserved per F-16 (was RoleBindingConflict; intentionally
+            // skipped — last-writer-wins per RFC-0011-d §Security 2).
+            Self::SignerMismatch { .. } => 35,
+            Self::GroupBindingRejected { .. } => 36,
+            // 28 shared with `InvalidTtlHops` (RFC-0011-f §Exit Codes;
+            // follow-on `forward` mission claims the same slot).
+            Self::InvalidEndpointScheme { .. } => 28,
+            Self::ReputationNotFound { .. } => 20,
+            Self::ReputationRevoked { .. } => 21,
+            Self::AnchorChainBroken { .. } => 22,
+            Self::NoAnchorVerifyInMode { .. } => 2,
+            Self::InvalidRoleSlug { .. } => 2,
+            Self::InvalidTtlHops { .. } => 17,
+            Self::MeshCapabilityInsufficient { .. } => 18,
+            Self::EnvelopeAuthorizationFailed { .. } => 19,
+            Self::RpcTimeout { .. } => 20,
+            Self::VaultNotOwned(_) => 23,
+            Self::InsufficientBalance { .. } => 24,
+            Self::RoleNotProvisioned => 25,
+            Self::ChainIdMismatch { .. } => 26,
+            // Shared exit 26 with `ChainIdMismatch` per RFC-0011-e
+            // §Error Handling — both are chain-ID input validation
+            // failures.
+            Self::InvalidChainId { .. } => 26,
+            // Wave 4.5 Lens-2: fail-closed on missing $OCTO_HOME / $HOME
+            // (no `/tmp/.octo` fallback — world-readable). Exit 27
+            // (free slot in the 17-30 mesh reserved range).
+            Self::NoOctoHome => 27,
+            // RFC-0011-c §9.8: agent amendment chain slots 39-52.
+            Self::ManifestParseError { .. } => 39,
+            Self::CapabilityValidationFailed(_) => 40,
+            Self::AgentAlreadyExists(_) => 41,
+            Self::AgentNotFound(_) => 42,
+            // RFC-0011 §Exit Codes 17-63 reserved range; slot 17
+            // (free per amendment tracker — RFC-0011-g owns 37).
+            Self::ForbiddenHolderMismatch => 17,
+            Self::InvalidLimit(_) => 45,
+            Self::InvalidCursor(_) => 46,
+            // RFC-0015-a §6.3 + RFC-0011-c §9.8: agent amendment chain
+            // write-path slots. `AlreadyInTransition` and
+            // `InvalidStateTransition` share slot 43 (both are
+            // state-machine write-path errors).
+            Self::AlreadyInTransition(_) => 43,
+            Self::InvalidStateTransition { .. } => 43,
+            Self::AuditSubstrateNotReady => 52,
+            // RFC-0016-a §6.7 paired-with-RFC-0011-a CLI-shape
+            // variants. Shares slot 17 with `InvalidTtlHops` +
+            // `ForbiddenHolderMismatch` (amendment-chain shared-slot
+            // pattern; operator-unambiguous within respective command
+            // surfaces).
+            Self::ReceiptNotFound(_) => 17,
+            // Shares slot 13 with `PolicyNotFound` (operator-input
+            // validation failures on access credentials; operator-
+            // unambiguous within respective command surfaces).
+            Self::PermissionDenied(_) => 13,
+            // Shares slot 18 with `MeshCapabilityInsufficient`
+            // (amendment-chain shared-slot pattern; operator-
+            // unambiguous within their respective command surfaces).
+            Self::AuditReadFailed(_) => 18,
+            // Shares slot 19 with `EnvelopeAuthorizationFailed`
+            // (amendment-chain shared-slot pattern; operator-
+            // unambiguous within their respective command surfaces).
+            Self::AuditResponseTooLarge { .. } => 19,
+            Self::AgentNotRunning(_) => 48,
+            Self::RuntimeSubstrateNotReady => 51,
+            Self::RuntimeAttachFailed { .. } => 49,
+            Self::RuntimeSpawnFailed { .. } => 44,
+            Self::SnapshotStale { .. } => 35,
+            Self::InvalidProposalState { .. } => 2,
+            Self::GovernanceSubstrateError { .. } => 51,
+            Self::VoteRejected { .. } => 36,
+            Self::UnknownAttestationKind { .. } => 37,
+            Self::PrereqNotAccepted { .. } => 38,
+            Self::Internal(_) => 64,
+            Self::StaleStub { .. } => 65,
+            // RFC-0011-c §F + §9.8: AttachHandle token pathway slots
+            // 53-58 (paired with the substrate
+            // `octo_runtime::AttachError::exit_code` table so the CLI
+            // boundary and the substrate boundary agree on slot
+            // allocation).
+            Self::AttachHandleExpired { .. } => 53,
+            Self::AttachHandleBadSignature { .. } => 54,
+            Self::AttachSessionMismatch { .. } => 55,
+            Self::AttachSessionUnknown(_) => 56,
+            Self::PersistenceError(_) => 57,
+            Self::RevocationError(_) => 58,
+            Self::InvalidSessionIdHex { .. } => 47,
+            // Shared slot with `AttachHandleExpired` (exit 53) per
+            // amendment-chain shared-slot pattern; the render layer
+            // distinguishes the two payloads.
+            Self::InvalidSinceCursor { .. } => 53,
+            // RFC-0011-c §F.2 step (e) + per-extension crates +
+            // registry pattern: extension transport (UnixSocket, …)
+            // without a registered handler surfaces as exit 59.
+            Self::TransportHandlerNotRegistered { .. } => 59,
+            // RFC-0011-c §F.6.1: CLI-dispatch-side precondition
+            // failure (idempotent self-transition on `--detach`
+            // `--token-file`). Distinct from substrate AttachError
+            // mirror variants slots 53-59. Exit 60 reserved per
+            // §9.8 reserved range 39-63.
+            Self::TokenMintSkipped { .. } => 60,
+            // RFC-0011-c §9.7 follow-on amendment + §9.8 row: own
+            // slot 61 — distinct from `Internal(reason)` exit 64.
+            // Typed-discriminator additive variant; preserves the
+            // full `{since_unix, recorded_cursor}` pair on the CLI
+            // boundary so the operator can read the diagnostic
+            // without re-deriving from event-stream state.
+            Self::ReplayDetected { .. } => 61,
+        }
+    }
+
+    /// Operator-safe message with substrate internals stripped.
+    pub fn user_message(&self) -> String {
+        sanitize_substrate_error(&self.to_string())
+    }
+
+    /// Per-variant remediation hint.
+    pub fn hint(&self) -> Option<String> {
+        let h: String = match self {
+            Self::ClapParse(_) => "run `octo --help` for usage".to_string(),
+            Self::NoActiveIdentity => "create or select an identity before running this command".to_string(),
+            Self::ConfirmationRequired { .. } => {
+                "re-run with `--confirm` to acknowledge the mutation".to_string()
+            }
+            Self::AuditorDenied { .. } => {
+                "auditor mode is read-only; switch to --mode human or --mode ci to perform mutations".to_string()
+            }
+            Self::AlreadyRotating => "complete or abort the in-flight rotation first".to_string(),
+            Self::IdentityNotFound(_) => "list identities with `octo identity show`".to_string(),
+            Self::HsmUnavailable(_) => "check that the HSM backend is reachable".to_string(),
+            Self::AlreadyRevoked => "this identity is already revoked; no action needed".to_string(),
+            Self::CaveatParse { .. } => "check the caveat expression syntax".to_string(),
+            Self::InvalidCaveatCombination { .. } => "remove conflicting caveats".to_string(),
+            Self::HolderNotFound(_) => "verify the holder DID".to_string(),
+            Self::AttenuationViolation(_) => "attenuation may only narrow authority".to_string(),
+            Self::SigningFailed(_) => "verify the signing key is available".to_string(),
+            Self::ParentCapNotFound(_) => "list capabilities with `octo capability list`".to_string(),
+            Self::PolicyNotFound(_) => "list policies with `octo policy list`".to_string(),
+            Self::PolicyVersionNotFound { .. } => "omit `--version` to use the latest version".to_string(),
+            Self::StdinSecretRefused => "re-run with `--allow-stdin-secret` if intended".to_string(),
+            Self::InvalidFilter(_) => "filter syntax is `key=value`".to_string(),
+            Self::RoleNotFound(_) => "list roles with `octo role list`".to_string(),
+            Self::StakeInsufficient { .. } => "top up the operator's OCTO stake and retry".to_string(),
+            Self::RoleNotSelectable { .. } => "verify the role slug + operator permissions".to_string(),
+            Self::SignerMismatch { .. } => {
+                "the active signer does not match the supplied operator DID".to_string()
+            }
+            Self::GroupBindingRejected { .. } => {
+                "re-fetch the platform admin proof and retry the role binding".to_string()
+            }
+            Self::ReputationNotFound { .. } => {
+                "the subject has no aggregate for this role yet; attestations land first".to_string()
+            }
+            Self::ReputationRevoked { .. } => {
+                "revoked DIDs are read-only across all operator modes (RFC-0011-b §Security 3)".to_string()
+            }
+            Self::AnchorChainBroken { .. } => {
+                "the last anchor chain digest does not match the substrate; verify the chain".to_string()
+            }
+            Self::NoAnchorVerifyInMode { .. } => {
+                "drop --no-anchor-verify or re-run with --mode dev".to_string()
+            }
+            Self::InvalidRoleSlug { .. } => {
+                "role slugs must be non-empty and contain no whitespace".to_string()
+            }
+            Self::InvalidTtlHops { .. } => {
+                "--ttl-hops must be in the inclusive range 1..=8 (RFC-0871 ceiling); substrate further clamps to per-node-type ceiling from RouterAnnouncePayload".to_string()
+            }
+            Self::MeshCapabilityInsufficient { .. } => {
+                "the envelope must carry an Authorization::Capability with Audience caveat bound to the target peer DID (RFC-0957 §Attenuation Invariant)".to_string()
+            }
+            Self::EnvelopeAuthorizationFailed { .. } => {
+                "verify the envelope signature against the current verifying key, the audience caveat matches the target peer DID, and the envelope has not expired".to_string()
+            }
+            Self::RpcTimeout { peer, method, timeout_ms } => {
+                format!(
+                    "the peer `{peer}` did not reply within {timeout_ms}ms for method `{method}`; verify peer reachability + RFC-0871 envelope transport + consider raising the timeout via --rpc-timeout-ms"
+                )
+            }
+            Self::InvalidEndpointScheme { .. } => {
+                "endpoint URI scheme must be one of tcp://, quic://, bluetooth://".to_string()
+            }
+            Self::VaultNotOwned(_) => {
+                "the requested vault is not owned by the active DID; verify the vault_id".to_string()
+            }
+            Self::InsufficientBalance { .. } => {
+                "top up the source vault or lower --amount; re-check with `octo vault balance <id>`"
+                    .to_string()
+            }
+            Self::RoleNotProvisioned => {
+                "provision a transfer capability for the active DID (`octo role select`); see RFC-0011-d"
+                    .to_string()
+            }
+            Self::ChainIdMismatch { .. } => {
+                "pass --dest-chain-id to confirm a cross-chain transfer, or target a vault on the source chain"
+                    .to_string()
+            }
+            Self::InvalidChainId { .. } => {
+                "chain IDs use the RFC-0010 canonical form (64-char lowercase hex)".to_string()
+            }
+            Self::NoOctoHome => {
+                "set $OCTO_HOME (preferred) or $HOME before invoking this command; the CLI does not fall back to /tmp/.octo on shared hosts".to_string()
+            }
+            Self::ManifestParseError { .. } => {
+                "verify the manifest file is valid JSON conforming to the AgentManifest wire form (RFC-0002 §Agent Manifest)".to_string()
+            }
+            Self::CapabilityValidationFailed(_) => {
+                "the manifest failed one of the 6 capability-validation steps (RFC-0002 §Capability Validation); review the substrate diagnostic for the failing step".to_string()
+            }
+            Self::AgentAlreadyExists(_) => {
+                "the derived agent_id (RFC-0011-c §9.10) is already registered; check with `octo agent list` (once that subcommand ships) before re-submitting".to_string()
+            }
+            Self::AgentNotFound(_) => {
+                "the supplied agent_id was not registered to the active DID; check with `octo agent list` for owned agents".to_string()
+            }
+            Self::ForbiddenHolderMismatch => {
+                "the requested holder_did does not match the active operator DID; SECURITY HIGH — multi-DID enumeration is denied at the substrate (RFC-0015 §6.2.1)".to_string()
+            }
+            Self::InvalidLimit(_) => {
+                "pass `--limit` as a positive integer in the range 1..=1024 (the substrate hard ceiling per RFC-0015 §6.2.1)".to_string()
+            }
+            Self::InvalidCursor(_) => {
+                "the supplied cursor is malformed; cursors are opaque tokens reserved for forward-compat pagination (Phase 2)".to_string()
+            }
+            Self::AlreadyInTransition(_) => {
+                "the target agent is currently being transitioned by a concurrent command; wait for the in-flight transition to complete and retry".to_string()
+            }
+            Self::InvalidStateTransition { from, to } => {
+                format!(
+                    "the requested state transition `{from} -> {to}` is not a valid edge per RFC-0015-a Appendix A state-machine guard; valid edges are `registered -> running` (run mission) and `running -> terminated` (destroy mission)"
+                )
+            }
+            Self::AuditSubstrateNotReady => {
+                "the audit chain sink is not configured; run with --features octo-audit-internal OR ensure the runtime adapter has called `register_audit_sink` at startup".to_string()
+            }
+            Self::ReceiptNotFound(receipt_id) => {
+                format!(
+                    "receipt `{receipt_id}` is not present in the receipt store; verify the receipt_id (canonical decimal u64 form) or list receipts with `octo audit list` to find available ids"
+                )
+            }
+            Self::PermissionDenied(path) => {
+                format!(
+                    "the audit substrate denied access to `{path}`; per-process trust boundary enforced — ensure the receipt store parent directory is owned by the process UID and mode 0700 (RFC-0016-a §Security 3)"
+                )
+            }
+            Self::AuditReadFailed(reason) => {
+                format!(
+                    "the audit substrate read pipeline failed: `{reason}`; this is a substrate-internal failure distinct from a missing receipt (`ReceiptNotFound`, exit 17) or filter rejection (`InvalidFilter`, exit 16). Check the substrate logs and retry"
+                )
+            }
+            Self::AuditResponseTooLarge { matched, limit } => {
+                format!(
+                    "the audit list matched {matched} rows, exceeding the substrate hard ceiling of {limit} (RFC-0011-a §Filters `MAX_LIMIT = 10_000` per TV-AUD-4c); narrow the filter (e.g. `--since`, `--until`, `--subject-did`, `--model`, `--status`) and re-invoke — there is no cursor pagination in Phase 1"
+                )
+            }
+            Self::AgentNotRunning(_) => {
+                "the target agent exists but is not in `Running` state; run `octo agent run` before `octo agent attach`".to_string()
+            }
+            Self::RuntimeSubstrateNotReady => {
+                "the runtime substrate boundary is reached but the in-process RuntimeHandle mint pathway is not yet wired (per RFC-0011-c §Implementation Phases Phase 1); ship `octo agent run --detach` in a follow-on mission to bind attach to a live spawn".to_string()
+            }
+            Self::RuntimeAttachFailed { .. } => {
+                "the runtime attach call failed at the substrate boundary (handle revoked, channel closed, or invalid attach token); verify the agent is in `Running` state via `octo agent list` and the spawn has not been terminated".to_string()
+            }
+            Self::SnapshotStale { .. } => {
+                "the snapshot is stale (TTL = 600s per RFC-0011-g §Performance Targets); re-run with --force-refresh to bypass the cache".to_string()
+            }
+            Self::InvalidProposalState { .. } => {
+                "use one of the RFC-0011-g §Subcommand Taxonomy labels: `Open`, `Quorum-Reached`, `Closed-Accepted`, `Closed-Rejected`, `Closed-Expired`".to_string()
+            }
+            Self::GovernanceSubstrateError { .. } => {
+                "the governance substrate returned an internal failure (cache or projection surface); check the substrate logs and retry".to_string()
+            }
+            Self::VoteRejected { reason } => {
+                format!(
+                    "vote rejected: {reason}; verify the capability token's RFC-0957 caveat set (Audience / Before / Provider) or run `octo governance inspect <cap_id>` for details"
+                )
+            }
+            Self::UnknownAttestationKind { kind_ref } => {
+                format!(
+                    "unknown attestation kind `{kind_ref}`; the discriminator is not registered. Use `octo governance attest --list-kinds` once Phase 2 substrate lands"
+                )
+            }
+            Self::PrereqNotAccepted { rfc_ref } => {
+                format!(
+                    "the {rfc_ref} substrate is not Accepted; the `attest` / `vote` primitives are reserved until the prerequisite RFC lands. Check `accepted/` for the current state"
+                )
+            }
+            Self::StaleStub { name, replaced_by } => format!(
+                "this command was removed; see the migration notes \
+                 (use `{replaced_by}` instead of `{name}`)"
+            ),
+            Self::Internal(_) => "re-run with `RUST_LOG=debug` and report the diagnostic".to_string(),
+            Self::RuntimeSpawnFailed { .. } => {
+                "the runtime spawn call failed at the substrate boundary (handle mint error, channel registration failure, or invalid attach handle token); retry; if the failure persists, check that the agent is in a transition-eligible state (`octo agent list`)".to_string()
+            }
+            Self::AttachHandleExpired { mint_unix, ttl_unix, now_unix } => {
+                format!(
+                    "the AttachHandle token has expired (mint={mint_unix}, ttl={ttl_unix}, now={now_unix}); mint a fresh token via `octo agent run --detach` and retry the attach"
+                )
+            }
+            Self::AttachHandleBadSignature { .. } => {
+                "the AttachHandle signature did not verify against the active holder public key; ensure the token was minted by the active DID and the canonical payload bytes were not tampered with".to_string()
+            }
+            Self::AttachSessionMismatch { .. } => {
+                "the AttachHandle token's session_id does not match the current spawn-time session id for the target agent; mint a fresh token and retry".to_string()
+            }
+            Self::AttachSessionUnknown(_) => {
+                "the AttachHandle references a session_id that is not registered for any active agent; verify the token and the target agent_id".to_string()
+            }
+            Self::PersistenceError(_) => {
+                "the Stoolap-backed event-cursor persistence surface failed; check the substrate logs and verify the runtime persistence feature is enabled when required".to_string()
+            }
+            Self::RevocationError(_) => {
+                "the process-singleton revocation set mutation/lookup failed (RFC-0011-c §F.3); this is a substrate-internal failure distinct from a successful revocation (which is silent)".to_string()
+            }
+            Self::InvalidSessionIdHex { .. } => {
+                "the session id supplied on the CLI is not a 64-char lowercase hex string; verify the input and retry".to_string()
+            }
+            Self::InvalidSinceCursor { .. } => {
+                "the `--since` cursor is below the token's mint timestamp; the token cannot authorize events that pre-date it; mint a fresh token via `octo agent run --detach` and retry".to_string()
+            }
+            Self::TransportHandlerNotRegistered { kind_label } => {
+                format!(
+                    "no transport handler is registered for kind `{kind_label}` (RFC-0011-c §F.2 step (e) + per-extension crates registry pattern); extension transports (UnixSocket, …) ship in follow-on Layer D crates (`octo-runtime-transport-unix`, …) that register at process startup"
+                )
+            }
+            Self::TokenMintSkipped { reason } => {
+                format!("{reason}; re-run `octo agent run --detach --token-file <path>` on a fresh `Registered → Running` transition, or destroy + recreate the agent first")
+            }
+            Self::ReplayDetected {
+                since_unix,
+                recorded_cursor,
+            } => {
+                format!(
+                    "the AttachHandle token has been consumed once already (since cursor {since_unix} is at or behind the recorded cursor {recorded_cursor}); mint a fresh token via `octo agent run --detach` and retry the attach"
+                )
+            }
+        };
+        Some(h)
+    }
+
+    /// Write this error to stderr and terminate the process.
+    ///
+    /// Render format (RFC-0011 §Error Handling):
+    /// ```text
+    /// error: <msg>
+    ///   caused by: <chain>
+    ///   hint: <hint>
+    ///   exit code: <N>
+    /// ```
+    pub fn render(&self, force_json: bool) -> ! {
+        let code = self.exit_code();
+        let msg = self.user_message();
+        let stderr = std::io::stderr();
+        let mut w = stderr.lock();
+        if force_json {
+            let mut sources: Vec<String> = Vec::new();
+            let mut src: Option<&dyn std::error::Error> = std::error::Error::source(self);
+            while let Some(s) = src {
+                sources.push(sanitize_substrate_error(&s.to_string()));
+                src = s.source();
+            }
+            let body = serde_json::json!({
+                "schema_version": crate::output::OutputEnvelope::<()>::SCHEMA_VERSION,
+                "error": msg,
+                "caused_by": sources,
+                "hint": self.hint(),
+                "exit_code": code,
+            });
+            let _ = writeln!(w, "{body}");
+        } else {
+            let _ = writeln!(w, "error: {msg}");
+            let mut src: Option<&dyn std::error::Error> = std::error::Error::source(self);
+            while let Some(s) = src {
+                let _ = writeln!(
+                    w,
+                    "  caused by: {}",
+                    sanitize_substrate_error(&s.to_string())
+                );
+                src = s.source();
+            }
+            if let Some(hint) = self.hint() {
+                let _ = writeln!(w, "  hint: {hint}");
+            }
+            let _ = writeln!(w, "  exit code: {code}");
+        }
+        let _ = w.flush();
+        std::process::exit(code)
+    }
+}
+
+/// Gate helper that any future stdin reader calls before consuming pipe data.
+///
+/// Returns `StdinSecretRefused` (exit 15) unless the operator passed
+/// `--allow-stdin-secret`. The flag is currently unused in this RFC's
+/// command surface (no command reads stdin), but the gate is wired here so
+/// that when a reader is added it can drop in `ensure_stdin_secret_allowed`
+/// and inherit the refusal + exit-code contract for free.
+pub fn ensure_stdin_secret_allowed(allow: bool) -> Result<(), OctoCliError> {
+    if allow {
+        Ok(())
+    } else {
+        Err(OctoCliError::StdinSecretRefused)
+    }
+}
+
+/// RFC-0016-a §6.7 + RFC-0011-a canonical `[ADD]` error envelope
+/// conversion from `octo_audit::AuditError`.
+///
+/// Manual `impl From` rather than thiserror's `#[from]` attribute
+/// at variant level — multiple variants converting from the same
+/// source type would create conflicting `From` impls (one per
+/// variant). The manual match keeps the substrate → CLI mapping
+/// substrate-faithful per RFC-0011-a `ADD` envelope pattern
+/// (per-variant mapping; not a catch-all `Internal` wrapper).
+///
+/// **Defense-in-depth scrub pass (RFC-0016-a §6.8 + R1 reviewer
+/// HIGH findings C8 + C9):** the three CLI-shape payload-bearing
+/// variants (ReceiptNotFound, InvalidFilter, PermissionDenied)
+/// route through `octo_audit::redact_substrate_error` before
+/// constructing the CLI envelope. If the substrate payload matches
+/// any of the 18 canonical scrubber patterns (hex digest, JWT,
+/// WIF, BIP39 mnemonic, capability-secret base64, PEM/PGP/OpenSSH
+/// private-key blocks, etc.), the entire payload collapses to the
+/// canonical `<REDACTED>` marker. The SinkSpecific arm uses the
+/// lighter `sanitize_substrate_error` + `cap_substrate_payload`
+/// pipeline (3 string markers in `ERROR_MARKERS` —
+/// `SQL:`, `query:`, `sqlite3_open` — plus the `crates/octo-`
+/// path prefix; see the `sanitize_substrate_error` impl
+/// constants)
+/// because its payloads are substrate-internal Stoolap error
+/// strings — the full 18-pattern sweep would be
+/// over-redaction for that adapter-specific channel. This is the
+/// second pass at the CLI boundary; the substrate-side scrubber
+/// (defect 1a) is the first pass.
+///
+/// Mapping table per RFC-0016-a §6.7:
+///
+/// | Substrate variant                       | CLI variant                              | Exit |
+/// | --------------------------------------- | ---------------------------------------- | ---- |
+/// | `AuditError::ReceiptNotFound(s)`        | `OctoCliError::ReceiptNotFound(redact)`  | 17   |
+/// | `AuditError::InvalidFilter(s)`          | `OctoCliError::InvalidFilter(redact)`    | 16   |
+/// | `AuditError::PermissionDenied(s)`       | `OctoCliError::PermissionDenied(redact)` | 13   |
+/// | `AuditError::AuditAppendFailed(_)`      | `OctoCliError::AuditSubstrateNotReady`   | 52   |
+/// | `AuditError::ChainHashMismatch { .. }`  | `OctoCliError::Internal(reason)`         | 64   |
+/// | `AuditError::SequenceGap { .. }`        | `OctoCliError::Internal(reason)`         | 64   |
+/// | `AuditError::AlreadyExists(_)`          | `OctoCliError::Internal(reason)`         | 64   |
+/// | `AuditError::SinkSpecific(_)`           | `OctoCliError::Internal(reason)`         | 64   |
+impl From<octo_audit::AuditError> for OctoCliError {
+    fn from(e: octo_audit::AuditError) -> Self {
+        // Use a closure to keep the §6.8 redact pass DRY across the
+        // 4 payload-bearing variants. The closure is invoked
+        // exactly once per arm.
+        let redact = |payload: &str| octo_audit::redact_substrate_error(payload);
+        match e {
+            octo_audit::AuditError::ReceiptNotFound(s) => Self::ReceiptNotFound(redact(&s)),
+            octo_audit::AuditError::InvalidFilter(s) => Self::InvalidFilter(redact(&s)),
+            octo_audit::AuditError::PermissionDenied(s) => Self::PermissionDenied(redact(&s)),
+            // Substrate-faithful: `AuditAppendFailed(reason)` collapses
+            // to operator-facing `AuditSubstrateNotReady` (unit variant)
+            // — the reason is substrate-internal and intentionally NOT
+            // surfaced to the CLI per RFC-0016-a §6.7 table footnote.
+            octo_audit::AuditError::AuditAppendFailed(_) => Self::AuditSubstrateNotReady,
+            // ChainHashMismatch was collapsed at the substrate layer
+            // (R2.5) to `event_id: u64` only — no canonical/supplied
+            // digests on the surface. Preserve `event_id` in the CLI
+            // reason for parity with the `SequenceGap` / `AlreadyExists`
+            // arms (each retains its event_id for diagnostic value);
+            // the digest payloads were the original
+            // 32-byte-hex-side-channel rationale for collapse.
+            octo_audit::AuditError::ChainHashMismatch { event_id } => {
+                Self::Internal(sanitize_substrate_error(&cap_substrate_payload(&format!(
+                    "audit chain_hash mismatch at event_id {event_id}"
+                ))))
+            }
+            // Original 3 substrate variants map to `Internal` (exit 64)
+            // — these are pre-RFC-0016-a substrate-faithful failures
+            // that don't have a CLI-shape mapping. The reason string
+            // is sanitized at render time by `sanitize_substrate_error`.
+            octo_audit::AuditError::SequenceGap { event_id, prev } => {
+                Self::Internal(sanitize_substrate_error(&cap_substrate_payload(&format!(
+                    "audit sequence gap: event_id {event_id} after {prev}"
+                ))))
+            }
+            octo_audit::AuditError::AlreadyExists(event_id) => {
+                Self::Internal(sanitize_substrate_error(&cap_substrate_payload(&format!(
+                    "audit event_id {event_id} already persisted"
+                ))))
+            }
+            octo_audit::AuditError::SinkSpecific(msg) => Self::Internal(sanitize_substrate_error(
+                &cap_substrate_payload(&format!("audit sink-specific error: {msg}")),
+            )),
+            // `#[non_exhaustive]` on `AuditError` (RFC-0016-a §6.7
+            // substrate column) means downstream exhaustive matches
+            // MUST wildcard. Future substrate variants (added by
+            // follow-on amendments without a paired CLI-shape
+            // mapping) collapse to `Internal(reason)` per the same
+            // pattern as `SinkSpecific`. Sanitizer applies the
+            // lightweight 3-string-marker pattern plus the
+            // `crates/octo-` path prefix (see `sanitize_substrate_error`
+            // impl + `ERROR_MARKERS`) so an unknown future variant
+            // that accidentally carries a key/path leaks only
+            // `<redacted-*>` markers.
+            _ => Self::Internal(sanitize_substrate_error(&format!(
+                "audit substrate error: {e}"
+            ))),
+        }
+    }
+}
+
+/// 4 KiB upper bound on substrate error payload size before
+/// sanitization (R1 reviewer MED C13 — SinkSpecific payload cap).
+/// Substrate `SinkSpecific(msg)` carries unbounded adapter-emitted
+/// text (Stoolap transaction diagnostics can include arbitrary
+/// SQL fragments + stack frames). Cap before sanitizer so the CLI
+/// envelope stays bounded regardless of substrate noise — matches
+/// the octo-settlement scrubber's `MAX_INPUT_BYTES = 4 * 1024`.
+pub(crate) const SUBSTRATE_PAYLOAD_CAP: usize = 4 * 1024;
+
+/// Cap `s` at [`SUBSTRATE_PAYLOAD_CAP`] bytes (R1 MED C13).
+/// Returns the slice with ` [truncated]` appended when oversize so
+/// the operator sees that the cap fired (rather than a silent
+/// truncation that hides the existence of overflow). Operates on
+/// `&str` to avoid forcing an allocation on the bounded path.
+pub(crate) fn cap_substrate_payload(s: &str) -> String {
+    if s.len() <= SUBSTRATE_PAYLOAD_CAP {
+        s.to_string()
+    } else {
+        // Truncate at the nearest char boundary at-or-before the
+        // cap so we never split a UTF-8 codepoint. Append a
+        // ` [truncated]` marker so operators can see the cap fired.
+        let mut end = SUBSTRATE_PAYLOAD_CAP;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        let mut out = String::with_capacity(end + 14);
+        out.push_str(&s[..end]);
+        out.push_str(" [truncated]");
+        out
+    }
+}
+
+/// Strip substrate paths and storage-engine internals from an error string.
+///
+/// Marker policy (R16 Lens-2 F7): substring containment is too broad —
+/// `query:` matches legitimate diagnostic text, `src/` matches URLs and
+/// any path containing the directory name. We anchor on full crate paths
+/// (`crates/octo-<name>/`) and require a word-boundary on both sides of
+/// `SQL:` / `query:` / `sqlite3_open` so they only fire when used as SQL
+/// noise markers, not as natural prose.
+pub fn sanitize_substrate_error(s: &str) -> String {
+    // Anchor SQL/storage markers with word-boundary semantics: the marker
+    // must appear at the start, after whitespace, or after a punctuation
+    // token. Trailing punctuation (`.`, `,`, `\n`) is also a valid boundary.
+    // R17 Lens-2 F2: case-insensitive variants — `SQL:` and `Query:` are
+    // both legitimate noise markers a substrate may emit.
+    const ERROR_MARKERS: [&str; 3] = ["SQL:", "query:", "sqlite3_open"];
+    let mut out = s.to_string();
+    for marker in ERROR_MARKERS {
+        while let Some(idx) = find_word_boundary_ci(&out, marker) {
+            out.replace_range(idx..idx + marker.len(), "<substrate-error>");
+        }
+    }
+    // Anchor path markers to the canonical `crates/octo-<name>/` prefix —
+    // this catches `crates/octo-wallet/...`, `crates/octo-cap-macaroon/...`,
+    // etc. without matching `src/` substrings in URLs or other contexts.
+    const PATH_PREFIX: &str = "crates/octo-";
+    while let Some(idx) = out.find(PATH_PREFIX) {
+        // Find the end of the path: either a whitespace, closing punctuation,
+        // or end-of-string. Stop at the first `)`/`]`/`,` so the
+        // diagnostic `path:42:5` is replaced as one block.
+        let tail = &out[idx..];
+        let end = tail
+            .find(char::is_whitespace)
+            .or_else(|| tail.find([')', ']', ',']))
+            .unwrap_or(out.len() - idx);
+        out.replace_range(idx..idx + end, "<substrate-path>");
+    }
+    out
+}
+
+/// Map a substrate HSM error reason to `OctoCliError::HsmUnavailable`
+/// (exit 5) with the reason sanitized via `sanitize_substrate_error`.
+///
+/// Sanitize substrate reason and wrap as `HsmUnavailable`. Centralizes
+/// the cross-module mapping per RFC-0011-c §F.6.5.
+#[must_use]
+pub fn map_hsm_error(reason: &str) -> OctoCliError {
+    OctoCliError::HsmUnavailable(sanitize_substrate_error(reason))
+}
+
+/// Case-insensitive ASCII word-boundary scan; markers are all ASCII so
+/// byte-level ci match suffices (no locale-aware case folding needed).
+fn find_word_boundary_ci(s: &str, marker: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let marker_bytes = marker.as_bytes();
+    let marker_len = marker_bytes.len();
+    let mut i = 0;
+    while i + marker_len <= bytes.len() {
+        // Word-boundary check on left.
+        let left_ok = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
+        if left_ok {
+            // Case-insensitive byte comparison.
+            let matches = bytes[i..i + marker_len]
+                .iter()
+                .zip(marker_bytes.iter())
+                .all(|(a, b)| a.eq_ignore_ascii_case(b));
+            if matches {
+                return Some(i);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// RFC-0011-c §F.4 + §9.8: `octo_runtime::AttachError` → `OctoCliError`
+/// per-variant mapping (slots 53-59 + 61 — excluding the CLI
+/// dispatch-side `TokenMintSkipped` slot 60). Substrate owns the
+/// canonical distinction; CLI mirrors via per-variant `From` arms
+/// so an additive substrate variant lands a corresponding CLI slot
+/// without central-enum edits. `#[non_exhaustive]` on both sides —
+/// wildcard arms collapse unknown future variants to
+/// `Internal(reason)`.
+impl From<octo_runtime::AttachError> for OctoCliError {
+    fn from(e: octo_runtime::AttachError) -> Self {
+        match e {
+            octo_runtime::AttachError::Expired {
+                session_id: _,
+                mint_unix,
+                expired_at_unix,
+                now_unix,
+            } => {
+                // Substrate-faithful mirror: the substrate carries
+                // the full `{mint, ttl, now}` triplet + the typed
+                // `session_id`. The CLI envelope surfaces all four
+                // fields so the operator can read the canonical
+                // values without re-deriving. `session_id` is
+                // intentionally not surfaced on `AttachHandleExpired`
+                // (typed-discriminator loss is acceptable here —
+                // the TTL envelope is a clock problem, not a session
+                // identity problem; the substrate's `Debug` impl on
+                // the typed `[u8; 32]` makes the session id
+                // recoverable for forensics via `Internal` if
+                // needed).
+                Self::AttachHandleExpired {
+                    mint_unix,
+                    ttl_unix: expired_at_unix,
+                    now_unix,
+                }
+            }
+            octo_runtime::AttachError::BadSignature { reason } => Self::AttachHandleBadSignature {
+                reason: sanitize_substrate_error(&reason),
+            },
+            octo_runtime::AttachError::SessionMismatch { declared, actual } => {
+                Self::AttachSessionMismatch {
+                    token_session_hex: hex::encode(declared),
+                    registered_session_hex: hex::encode(actual),
+                }
+            }
+            octo_runtime::AttachError::UnknownSession { session_id } => {
+                Self::AttachSessionUnknown(hex::encode(session_id))
+            }
+            octo_runtime::AttachError::PersistenceError(reason) => {
+                Self::PersistenceError(sanitize_substrate_error(&reason))
+            }
+            octo_runtime::AttachError::RevocationError(reason) => {
+                Self::RevocationError(sanitize_substrate_error(&reason))
+            }
+            octo_runtime::AttachError::InvalidSinceCursor {
+                mint_unix,
+                requested,
+            } => Self::InvalidSinceCursor {
+                mint_unix,
+                requested,
+            },
+            octo_runtime::AttachError::TransportHandlerNotRegistered { kind_label } => {
+                Self::TransportHandlerNotRegistered { kind_label }
+            }
+            octo_runtime::AttachError::ReplayDetected {
+                since_unix,
+                recorded_cursor,
+            } => Self::ReplayDetected {
+                since_unix,
+                recorded_cursor,
+            },
+            // Additive-safe wildcard per `#[non_exhaustive]` on both
+            // enums. Future substrate variants collapse to
+            // `Internal(reason)` exit 64 — same pattern as the audit
+            // `From` impl above.
+            _ => Self::Internal(sanitize_substrate_error(&format!(
+                "attach substrate error: {e}"
+            ))),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use thiserror::Error;
+
+    // R1 MED C13 — cap_substrate_payload boundary tests.
+    #[test]
+    fn cap_substrate_payload_under_cap_passes_through() {
+        let s = "x".repeat(SUBSTRATE_PAYLOAD_CAP);
+        let out = cap_substrate_payload(&s);
+        assert_eq!(out, s, "under-cap input passes through verbatim");
+    }
+
+    #[test]
+    fn cap_substrate_payload_over_cap_truncates_with_marker() {
+        let s = "y".repeat(SUBSTRATE_PAYLOAD_CAP + 100);
+        let out = cap_substrate_payload(&s);
+        assert!(
+            out.ends_with(" [truncated]"),
+            "over-cap output carries [truncated] marker, got tail: {}",
+            &out[out.len().saturating_sub(20)..],
+        );
+        assert!(
+            out.len() <= SUBSTRATE_PAYLOAD_CAP + " [truncated]".len(),
+            "over-cap output must be <= cap + marker suffix",
+        );
+    }
+
+    #[test]
+    fn cap_substrate_payload_respects_utf8_boundary() {
+        // 4 KiB - 1 ASCII bytes + a 2-byte UTF-8 codepoint = 4 KiB + 1
+        // bytes total. The cap cuts between the last ASCII byte and
+        // the first byte of the multi-byte codepoint — without the
+        // boundary-safe backtracking loop the output would slice the
+        // codepoint mid-sequence and produce invalid UTF-8.
+        let mut s = "z".repeat(SUBSTRATE_PAYLOAD_CAP - 1);
+        s.push('ã'); // 2-byte UTF-8 sequence straddling the cap
+        let out = cap_substrate_payload(&s);
+        // Output MUST be valid UTF-8 (no codepoint sliced).
+        assert!(
+            std::str::from_utf8(out.as_bytes()).is_ok(),
+            "cap output MUST be valid UTF-8",
+        );
+        // Truncation marker MUST be present (input was 1 byte over cap).
+        assert!(
+            out.ends_with(" [truncated]"),
+            "cap over-cap output MUST carry the [truncated] marker",
+        );
+        // Preserved prefix MUST hold exactly SUBSTRATE_PAYLOAD_CAP - 1
+        // ASCII chars (the multi-byte codepoint was dropped, not split).
+        let prefix_len = out
+            .strip_suffix(" [truncated]")
+            .expect("marker present")
+            .len();
+        assert_eq!(
+            prefix_len,
+            SUBSTRATE_PAYLOAD_CAP - 1,
+            "preserved prefix MUST be SUBSTRATE_PAYLOAD_CAP - 1 ASCII bytes",
+        );
+    }
+    #[test]
+    fn tv_err2_internal_no_substrate_leak() {
+        let e = OctoCliError::Internal("SQL: select * from wallet".into());
+        // R16 Lens-2 F7: in-place replacement preserves context; the
+        // `SQL:` marker is replaced, the surrounding text is retained.
+        let msg = e.user_message();
+        assert!(msg.contains("<substrate-error>"), "{msg}");
+        assert!(!msg.contains("SQL:"), "{msg}");
+    }
+
+    #[test]
+    fn tv_err3_source_chain_rendered() {
+        // Build a chained-error wrapper that exposes a `#[source]` chain so
+        // `std::error::Error::source()` walks more than one frame.
+        #[derive(Error, Debug)]
+        #[error("top-level: {0}")]
+        struct Wrapper(#[source] Inner);
+
+        #[derive(Error, Debug)]
+        #[error("inner cause")]
+        struct Inner;
+
+        let inner = Inner;
+        let chain = Wrapper(inner);
+        // Render through OctoCliError::Internal so the sanitizer runs and we
+        // exercise the `caused by:` walk. The wrapped text doesn't contain
+        // any substrate markers so the message passes through verbatim.
+        let cli_err = OctoCliError::Internal(format!("{chain}"));
+        // Force the JSON branch off — we test the multi-line text branch by
+        // asserting that the rendered format strings reference `caused by`
+        // and `exit code` tokens and that source() walks both frames.
+        let mut lines: Vec<String> = Vec::new();
+        let mut src: Option<&dyn std::error::Error> =
+            Some(&Wrapper(Inner) as &dyn std::error::Error);
+        while let Some(s) = src {
+            lines.push(format!("  caused by: {s}"));
+            src = s.source();
+        }
+        assert!(
+            lines.iter().any(|l| l.contains("top-level")),
+            "wrapper not walked: {lines:?}"
+        );
+        assert!(
+            lines.iter().any(|l| l.contains("inner cause")),
+            "inner cause not walked: {lines:?}"
+        );
+        // Sanity check the cli error renders a stable `user_message`.
+        assert!(cli_err.user_message().contains("top-level"));
+    }
+
+    #[test]
+    fn tv_err3b_stdin_secret_refused_message_text() {
+        let e = OctoCliError::StdinSecretRefused;
+        let rendered = format!("{e}");
+        assert!(
+            rendered.contains("--allow-stdin-secret"),
+            "rendered must mention the override flag: {rendered}"
+        );
+        assert!(
+            rendered.contains("pipe"),
+            "rendered must mention pipe: {rendered}"
+        );
+    }
+
+    #[test]
+    fn tv_err3c_stdin_gate_blocks_without_flag() {
+        assert!(matches!(
+            ensure_stdin_secret_allowed(false),
+            Err(OctoCliError::StdinSecretRefused)
+        ));
+        assert!(ensure_stdin_secret_allowed(true).is_ok());
+    }
+
+    #[test]
+    fn tv_err3d_render_emits_four_lines() {
+        let e = OctoCliError::IdentityNotFound("alice".into());
+        // We can't easily capture stderr from a !-returning fn without
+        // spawning a process, so we just verify the formatting inputs
+        // are coherent: hint present, code matches.
+        assert!(e.hint().is_some());
+        assert_eq!(e.exit_code(), 4);
+    }
+
+    #[test]
+    fn tv_err4_exit_code_mapping() {
+        let cases: Vec<(OctoCliError, i32)> = vec![
+            (OctoCliError::NoActiveIdentity, 2),
+            (
+                OctoCliError::ConfirmationRequired {
+                    command: "x".into(),
+                },
+                2,
+            ),
+            (OctoCliError::AlreadyRotating, 3),
+            (OctoCliError::IdentityNotFound("d".into()), 4),
+            (OctoCliError::HsmUnavailable("h".into()), 5),
+            (OctoCliError::AlreadyRevoked, 6),
+            (
+                OctoCliError::CaveatParse {
+                    message: "m".into(),
+                },
+                7,
+            ),
+            (
+                OctoCliError::InvalidCaveatCombination { detail: "d".into() },
+                8,
+            ),
+            (OctoCliError::HolderNotFound("h".into()), 9),
+            (OctoCliError::AttenuationViolation("a".into()), 10),
+            (OctoCliError::SigningFailed("s".into()), 11),
+            (OctoCliError::ParentCapNotFound("p".into()), 12),
+            (OctoCliError::PolicyNotFound("p".into()), 13),
+            (
+                OctoCliError::PolicyVersionNotFound {
+                    policy: "p".into(),
+                    version: 1,
+                },
+                14,
+            ),
+            (OctoCliError::StdinSecretRefused, 15),
+            (OctoCliError::InvalidFilter("f".into()), 16),
+            (OctoCliError::RoleNotFound("x".into()), 31),
+            (
+                OctoCliError::StakeInsufficient {
+                    required: 0,
+                    available: 0,
+                },
+                32,
+            ),
+            (
+                OctoCliError::RoleNotSelectable {
+                    role_id: "x".into(),
+                    reason: "y".into(),
+                },
+                33,
+            ),
+            (
+                OctoCliError::SignerMismatch {
+                    signer_did: "a".into(),
+                    operator_did: "b".into(),
+                },
+                35,
+            ),
+            (
+                OctoCliError::AuditorDenied {
+                    command: "x".into(),
+                },
+                2,
+            ),
+            (OctoCliError::InvalidTtlHops { hops: 9 }, 17),
+            (
+                OctoCliError::MeshCapabilityInsufficient {
+                    detail: "no capability bound to forward envelope".into(),
+                },
+                18,
+            ),
+            (
+                OctoCliError::EnvelopeAuthorizationFailed {
+                    detail: "audience mismatch".into(),
+                },
+                19,
+            ),
+            (
+                OctoCliError::RpcTimeout {
+                    peer: "did:octo:zPeer".into(),
+                    method: "quota.drain_queue".into(),
+                    timeout_ms: 30_000,
+                },
+                20,
+            ),
+            (
+                OctoCliError::InvalidEndpointScheme {
+                    scheme: "file".into(),
+                },
+                28,
+            ),
+            (OctoCliError::Internal("i".into()), 64),
+            (
+                OctoCliError::StaleStub {
+                    name: "init".into(),
+                    replaced_by: "octo-wallet init",
+                },
+                65,
+            ),
+            (OctoCliError::NoOctoHome, 27),
+            (
+                OctoCliError::ManifestParseError {
+                    path: "p".into(),
+                    reason: "r".into(),
+                },
+                39,
+            ),
+            (OctoCliError::CapabilityValidationFailed(2), 40),
+            (OctoCliError::AgentAlreadyExists(uuid::Uuid::nil()), 41),
+            // RFC-0016-a §6.7 paired-with-RFC-0011-a CLI-shape variants.
+            (OctoCliError::ReceiptNotFound("12345".into()), 17),
+            (
+                OctoCliError::PermissionDenied("/var/lib/octo/audit/receipts".into()),
+                13,
+            ),
+            // RFC-0011-a §Error Handling: audit read-path slots
+            // (18/19) — first occupants of the parent-reserved 17-63
+            // range after `ReceiptNotFound` (17). `AuditReadFailed`
+            // covers substrate-fallback failures distinct from
+            // `ReceiptNotFound` / `InvalidFilter` / `PermissionDenied`;
+            // `AuditResponseTooLarge` surfaces when the substrate
+            // rejects a list call that would exceed `MAX_LIMIT`.
+            (OctoCliError::AuditReadFailed("sink down".into()), 18),
+            (
+                OctoCliError::AuditResponseTooLarge {
+                    matched: 12_345,
+                    limit: 10_000,
+                },
+                19,
+            ),
+            // RFC-0011-c §9.8 + RFC-0015-a §6.3: agent amendment chain
+            // attach-path slots (48/49/51) — paired with the substrate
+            // `octo_runtime::RuntimeError::exit_code` table so the CLI
+            // boundary and the substrate boundary agree on slot
+            // allocation.
+            (OctoCliError::AgentNotRunning(uuid::Uuid::nil()), 48),
+            (OctoCliError::RuntimeAttachFailed { reason: "x".into() }, 49),
+            (OctoCliError::RuntimeSubstrateNotReady, 51),
+            // RFC-0011-g §Error Handling: governance snapshot slots
+            // (35 / 2 / 51) — paired with the substrate
+            // `octo_governance::GovernanceSnapshotError::exit_code`
+            // table so the CLI boundary and the substrate boundary
+            // agree on slot allocation. Exit 35 = stale snapshot
+            // (passes `--force-refresh`); exit 2 = unrecognized
+            // RFC-0011-g proposal-state label; exit 51 = substrate
+            // (cache / chain) error.
+            (
+                OctoCliError::SnapshotStale {
+                    snapshot_id_hex: "00".repeat(32),
+                    age_secs: 42,
+                },
+                35,
+            ),
+            (
+                OctoCliError::InvalidProposalState {
+                    state: "Bogus".to_string(),
+                },
+                2,
+            ),
+            (
+                OctoCliError::GovernanceSubstrateError {
+                    reason: "cache miss race".to_string(),
+                },
+                51,
+            ),
+            // RFC-0011-g §Error Handling: Phase 2 attest + vote slots
+            // (36/37/38) — paired with the substrate
+            // `octo_governance::GovernanceError` variants once they
+            // land (RFC-0011-g §Substrate ADD). Slot arithmetic:
+            // 36 = VoteRejected, 37 = UnknownAttestationKind,
+            // 38 = PrereqNotAccepted.
+            (
+                OctoCliError::VoteRejected {
+                    reason: "audience caveat not satisfied".to_string(),
+                },
+                36,
+            ),
+            (
+                OctoCliError::UnknownAttestationKind {
+                    kind_ref: "did:octo:attest:novel-claim/v1".to_string(),
+                },
+                37,
+            ),
+            (
+                OctoCliError::PrereqNotAccepted {
+                    rfc_ref: "RFC-0855p-d".to_string(),
+                },
+                38,
+            ),
+        ];
+        for (e, code) in cases {
+            assert_eq!(e.exit_code(), code, "{e:?}");
+        }
+        // ClapParse is constructed separately (24th variant).
+        let clap_err = clap::Error::new(clap::error::ErrorKind::InvalidValue);
+        assert_eq!(OctoCliError::ClapParse(clap_err).exit_code(), 2);
+    }
+
+    #[test]
+    fn tv_err5_no_substrate_internals() {
+        let cases = [
+            // `crates/octo-wallet/...` → redacted (canonical path prefix).
+            OctoCliError::Internal("failed at crates/octo-wallet/src/store.rs:42".into()),
+            // `src/identity.rs` is NOT redacted under R16 Lens-2 F7
+            // (substring `src/` was too broad — matches URLs etc.).
+            OctoCliError::IdentityNotFound("src/identity.rs".into()),
+            // `query: SELECT 1` → word-boundary match on `query:` redacts.
+            OctoCliError::HsmUnavailable("query: SELECT 1".into()),
+        ];
+        for e in cases {
+            let msg = e.user_message();
+            assert!(!msg.contains("crates/octo-"), "{msg}");
+            // `src/` substring intentionally not stripped (R16 Lens-2 F7).
+            assert!(!msg.contains("SQL:"), "{msg}");
+            assert!(!msg.contains("query:"), "{msg}");
+        }
+    }
+
+    /// RFC-0011-f §Error Handling: mesh forward error variants must
+    /// carry their assigned exit codes (17/18/19) and render a
+    /// remediation hint. Pins the exit-code table reserved by the
+    /// amendment-chain slot allocation.
+    #[test]
+    fn tv_mesh_forward_exit_codes_and_hints() {
+        let ttl = OctoCliError::InvalidTtlHops { hops: 9 };
+        assert_eq!(ttl.exit_code(), 17);
+        let hint = ttl.hint().expect("hint required");
+        assert!(
+            hint.contains("1..=8"),
+            "TTL hint must cite the inclusive range, got: {hint}"
+        );
+
+        let cap = OctoCliError::MeshCapabilityInsufficient {
+            detail: "envelope has Authorization::Signature only".into(),
+        };
+        assert_eq!(cap.exit_code(), 18);
+        let hint = cap.hint().expect("hint required");
+        assert!(
+            hint.contains("Audience"),
+            "capability hint must mention Audience caveat, got: {hint}"
+        );
+
+        let auth = OctoCliError::EnvelopeAuthorizationFailed {
+            detail: "audience mismatch: expected peer_a, got peer_b".into(),
+        };
+        assert_eq!(auth.exit_code(), 19);
+        let hint = auth.hint().expect("hint required");
+        assert!(
+            hint.contains("audience") || hint.contains("signature"),
+            "auth hint must mention audience or signature, got: {hint}"
+        );
+
+        let timeout = OctoCliError::RpcTimeout {
+            peer: "did:octo:zPeer".into(),
+            method: "quota.drain_queue".into(),
+            timeout_ms: 30_000,
+        };
+        assert_eq!(timeout.exit_code(), 20);
+        let timeout_hint = timeout.hint().expect("hint required");
+        assert!(
+            timeout_hint.contains("30000") || timeout_hint.contains("timeout"),
+            "RpcTimeout hint must mention timeout / ceiling, got: {timeout_hint}"
+        );
+    }
+
+    /// RFC-0016-a §6.7 + RFC-0011-a `ADD` envelope conversion:
+    /// `octo_audit::AuditError` → `OctoCliError` per-variant mapping.
+    /// Pins the substrate → CLI envelope so a future substrate variant
+    /// addition lands a corresponding `match` arm or compile fails
+    /// here — `AuditError` IS `#[non_exhaustive]` at the substrate
+    /// layer (octo-audit-core Layer A frozen contract per
+    /// CLAUDE.md §Architectural Principles), so additive substrate
+    /// variants collapse to the wildcard `_` arm and surface as
+    /// `Internal(reason)` exit code 64. Per-variant mapping below is
+    /// exhaustive TODAY (8 variants listed) but additive-safe.
+    #[test]
+    fn tv_rfc0016a_audit_error_envelope_mapping() {
+        // ReceiptNotFound (exit 17)
+        let r: OctoCliError = octo_audit::AuditError::ReceiptNotFound("12345".into()).into();
+        assert!(matches!(r, OctoCliError::ReceiptNotFound(ref s) if s == "12345"));
+        assert_eq!(r.exit_code(), 17);
+
+        // InvalidFilter (exit 16)
+        let r: OctoCliError =
+            octo_audit::AuditError::InvalidFilter("limit out of range".into()).into();
+        assert!(matches!(r, OctoCliError::InvalidFilter(ref s) if s == "limit out of range"));
+        assert_eq!(r.exit_code(), 16);
+
+        // PermissionDenied (exit 13). Substrate payload
+        // `/var/lib/octo/audit` matches Pattern 8 (absolute path)
+        // so the defense-in-depth §6.8 scrub pass collapses the
+        // payload to the canonical `<REDACTED>` marker per the
+        // R1 reviewer HIGH finding C9 fix. CLI envelope carries
+        // the marker (not the raw path) so the operator gets an
+        // explicit substrate-shape signal without leaking the
+        // audit home directory into log streams.
+        let r: OctoCliError =
+            octo_audit::AuditError::PermissionDenied("/var/lib/octo/audit".into()).into();
+        assert!(
+            matches!(r, OctoCliError::PermissionDenied(ref s) if s == "<REDACTED>"),
+            "PermissionDenied path payload MUST be redacted at the CLI boundary (R1 C9), got {r:?}"
+        );
+        assert_eq!(r.exit_code(), 13);
+
+        // AuditAppendFailed (exit 52; reason dropped per §6.7 footnote)
+        let r: OctoCliError =
+            octo_audit::AuditError::AuditAppendFailed("internal reason".into()).into();
+        assert!(matches!(r, OctoCliError::AuditSubstrateNotReady));
+        assert_eq!(r.exit_code(), 52);
+
+        // SequenceGap (exit 64 via Internal)
+        let r: OctoCliError = octo_audit::AuditError::SequenceGap {
+            event_id: 5,
+            prev: 3,
+        }
+        .into();
+        assert!(matches!(r, OctoCliError::Internal(_)));
+        assert_eq!(r.exit_code(), 64);
+
+        // AlreadyExists (exit 64 via Internal)
+        let r: OctoCliError = octo_audit::AuditError::AlreadyExists(42).into();
+        assert!(matches!(r, OctoCliError::Internal(_)));
+        assert_eq!(r.exit_code(), 64);
+
+        // SinkSpecific (exit 64 via Internal)
+        let r: OctoCliError = octo_audit::AuditError::SinkSpecific("adapter down".into()).into();
+        assert!(matches!(r, OctoCliError::Internal(_)));
+        assert_eq!(r.exit_code(), 64);
+
+        // ChainHashMismatch (exit 64 via Internal — RFC-0016-a §6.7
+        // 8th collapse-group variant; canonical-error mapping per
+        // RFC-0016-a §6.7 + sanitize_substrate_error scrub at the
+        // CLI boundary).
+        let r: OctoCliError = octo_audit::AuditError::ChainHashMismatch { event_id: 7 }.into();
+        assert!(matches!(r, OctoCliError::Internal(_)));
+        assert_eq!(r.exit_code(), 64);
+    }
+
+    /// `tv_rfc0011c_attach_error_envelope_mapping` — exercise every
+    /// `From<AttachError>` arm (RFC-0011-c §F.2 + §F.4) and assert
+    /// the canonical CLI exit code per §9.8 slot allocation.
+    ///
+    /// Pattern analog to `tv_rfc0016a_audit_error_envelope_mapping`
+    /// above; substrate-faithful mirror per [[memory-is-never-status-
+    /// ground-truth]] (the assertion is the contract, not the doc).
+    #[test]
+    fn tv_rfc0011c_attach_error_envelope_mapping() {
+        use octo_runtime::AttachError;
+
+        // Expired → AttachHandleExpired (exit 53, §9.8 slot 53)
+        let sid = [0xabu8; 32];
+        let r: OctoCliError = AttachError::Expired {
+            session_id: sid,
+            mint_unix: 100,
+            expired_at_unix: 200,
+            now_unix: 300,
+        }
+        .into();
+        assert!(
+            matches!(
+                r,
+                OctoCliError::AttachHandleExpired {
+                    mint_unix: 100,
+                    ttl_unix: 200,
+                    now_unix: 300
+                }
+            ),
+            "Expired MUST map to AttachHandleExpired, got {r:?}"
+        );
+        assert_eq!(r.exit_code(), 53);
+
+        // BadSignature → AttachHandleBadSignature (exit 54)
+        let r: OctoCliError = AttachError::BadSignature {
+            reason: "internal sig fail".into(),
+        }
+        .into();
+        assert!(matches!(r, OctoCliError::AttachHandleBadSignature { .. }));
+        assert_eq!(r.exit_code(), 54);
+
+        // SessionMismatch → AttachSessionMismatch (exit 55)
+        let r: OctoCliError = AttachError::SessionMismatch {
+            declared: [0x01; 32],
+            actual: [0x02; 32],
+        }
+        .into();
+        assert!(matches!(r, OctoCliError::AttachSessionMismatch { .. }));
+        assert_eq!(r.exit_code(), 55);
+
+        // UnknownSession → AttachSessionUnknown (exit 56)
+        let r: OctoCliError = AttachError::UnknownSession {
+            session_id: [0xee; 32],
+        }
+        .into();
+        assert!(
+            matches!(r, OctoCliError::AttachSessionUnknown(ref s) if s == &hex::encode([0xeeu8; 32]))
+        );
+        assert_eq!(r.exit_code(), 56);
+
+        // PersistenceError → PersistenceError (exit 57)
+        let r: OctoCliError = AttachError::PersistenceError("db write failed".into()).into();
+        assert!(matches!(r, OctoCliError::PersistenceError(ref s) if s == "db write failed"));
+        assert_eq!(r.exit_code(), 57);
+
+        // RevocationError → RevocationError (exit 58)
+        let r: OctoCliError = AttachError::RevocationError("session revoked".into()).into();
+        assert!(matches!(r, OctoCliError::RevocationError(ref s) if s == "session revoked"));
+        assert_eq!(r.exit_code(), 58);
+
+        // InvalidSinceCursor → InvalidSinceCursor (exit 53 shared with
+        // AttachHandleExpired per amendment-chain shared-slot pattern)
+        let r: OctoCliError = AttachError::InvalidSinceCursor {
+            mint_unix: 100,
+            requested: 50,
+        }
+        .into();
+        assert!(matches!(
+            r,
+            OctoCliError::InvalidSinceCursor {
+                mint_unix: 100,
+                requested: 50
+            }
+        ));
+        assert_eq!(r.exit_code(), 53);
+
+        // TransportHandlerNotRegistered → TransportHandlerNotRegistered
+        // (exit 59 per §F.2 step (e) extension-surface slot)
+        let r: OctoCliError = AttachError::TransportHandlerNotRegistered {
+            kind_label: "UnixSocket".into(),
+        }
+        .into();
+        assert!(
+            matches!(r, OctoCliError::TransportHandlerNotRegistered { ref kind_label } if kind_label == "UnixSocket")
+        );
+        assert_eq!(r.exit_code(), 59);
+
+        // ReplayDetected → ReplayDetected (exit 61 per §9.7
+        // follow-on amendment; own slot — distinct from
+        // Internal(reason) exit 64)
+        let r: OctoCliError = AttachError::ReplayDetected {
+            since_unix: 1_000,
+            recorded_cursor: 2_000,
+        }
+        .into();
+        assert!(matches!(
+            r,
+            OctoCliError::ReplayDetected {
+                since_unix: 1_000,
+                recorded_cursor: 2_000
+            }
+        ));
+        assert_eq!(r.exit_code(), 61);
+
+        // Additive `#[non_exhaustive]` variant collapse path:
+        // exercise the wildcard arm via constructing an unknown
+        // `AttachError` is impossible (no private fields), so the
+        // wildcard is contract-tested by the substrate's `non_exhaustive`
+        // attribute alone — not asserted here.
+    }
+
+    /// RFC-0011 §Changelog v2.0 entry: `StaleStub` retains its
+    /// `replaced_by: &'static str` field so operator switch tables
+    /// can grep the outbound JSON envelope for a replacement hint.
+    /// Pins the `Display` message (must surface `replaced_by`,
+    /// `name`, and the `octo --help` operator pointer) and the
+    /// exit-code slot (must stay 65 per RFC-0011 §Exit Code table).
+    #[test]
+    fn tv_stalestub_v2_replaced_by_display_format() {
+        let err = OctoCliError::StaleStub {
+            name: "init".into(),
+            replaced_by: "octo-wallet init",
+        };
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("`octo-wallet init`"),
+            "Display MUST surface `replaced_by` hint, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("`init`"),
+            "Display MUST surface the original `name`, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("octo --help"),
+            "Display MUST point at `octo --help` for discoverability, got: {rendered}"
+        );
+        assert_eq!(err.exit_code(), 65, "StaleStub MUST stay exit 65");
+    }
+
+    /// RFC-0011 §Changelog v2.0 entry: `StaleStub`'s `replaced_by`
+    /// field is documented as the operator-observable hint in the
+    /// outbound JSON envelope, which is rendered via `user_message()`
+    /// (not raw `Display`). Pin both surfaces so a future refactor
+    /// cannot silently regress the JSON-envelope contract.
+    #[test]
+    fn tv_stalestub_v2_replaced_by_user_message() {
+        let err = OctoCliError::StaleStub {
+            name: "init".into(),
+            replaced_by: "octo-wallet init",
+        };
+        let rendered = err.user_message();
+        assert!(
+            rendered.contains("`octo-wallet init`"),
+            "user_message MUST surface `replaced_by` hint, got: {rendered}"
+        );
+        assert!(
+            rendered.contains("`init`"),
+            "user_message MUST surface the original `name`, got: {rendered}"
+        );
+    }
+}

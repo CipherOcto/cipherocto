@@ -194,7 +194,7 @@ pub trait PlatformAdapter: Send + Sync {
     ///
     /// Adapters that implement `CoordinatorAdmin` override this to:
     /// ```ignore
-    /// fn as_coordinator_admin(&self) -> Option<&dyn CoordinatorAdmin> {
+    /// fn as_coordinator_admin(&&self) -> Option<&&dyn CoordinatorAdmin> {
     ///     Some(self)
     /// }
     /// ```

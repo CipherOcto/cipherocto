@@ -106,7 +106,7 @@ fn open_store(path: Option<&PathBuf>) -> Result<StoolapSessionStore> {
 /// needs to avoid silent divergence.
 fn redact_token(token: &str) -> String {
     if token.len() > 8 {
-        // R6-M2: the previous shape was `&token[..8]`, which
+        // R6-M2: the previous shape was `&&token[..8]`, which
         // byte-slices. If byte 8 falls in the middle of a
         // multi-byte UTF-8 codepoint, the slice panics with
         // "byte index N is not a char boundary". The adapter
@@ -415,7 +415,7 @@ mod tests {
         //   bytes 12..=14: 用
         //   bytes 15..=16: 1, 2
         // Byte 8 is the LAST byte of the 2nd `用` (bytes 6..=8).
-        // A byte slice ending at 8 is `&v[..8]`, which is a
+        // A byte slice ending at 8 is `&&v[..8]`, which is a
         // char boundary (just after byte 7, end of char 2).
         // Hmm, the pre-fix code would NOT panic on this.
         // Let me construct a different example.
@@ -425,7 +425,7 @@ mod tests {
         //   bytes 4..=7:   😀
         //   bytes 8..=11:  a, b, c, d
         // Byte 8 is the start of `a` — a char boundary. So
-        // `&v[..8]` is `😀😀` (8 bytes = 2 chars), valid.
+        // `&&v[..8]` is `😀😀` (8 bytes = 2 chars), valid.
         // Need a string where byte 8 is INSIDE a multi-byte
         // char, not at its end.
         // Take `a😀😀abc` (1+4+4+3 = 12 bytes):
@@ -433,14 +433,14 @@ mod tests {
         //   bytes 1..=4:   😀
         //   bytes 5..=8:   😀
         //   bytes 9..=11:  a, b, c
-        // Byte 8 is the LAST byte of the 2nd `😀` — so `&v[..8]`
+        // Byte 8 is the LAST byte of the 2nd `😀` — so `&&v[..8]`
         // ends at byte 7, mid-codepoint of the 2nd emoji. PANICS.
         let v = "a😀😀abc"; // 12 bytes
                             // Just calling redact_token must not panic.
         let r = redact_token(v);
         // The fix walks back from byte 8 to the nearest char
         // boundary below 8. Char boundaries: 0, 1, 5, 9, 10, 11, 12.
-        // The largest one ≤ 8 is 5. So `&v[..5]` = "a😀" (5 bytes).
+        // The largest one ≤ 8 is 5. So `&&v[..5]` = "a😀" (5 bytes).
         assert_eq!(r, "a😀***", "got: {r}");
     }
 
@@ -470,7 +470,7 @@ mod tests {
         //   bytes 0..=6:  1, 2, 3, 4, 5, 6, 7
         //   bytes 7..=8:  Ж (Cyrillic capital Zhe, U+0416, 2 bytes)
         // Byte 8 is the SECOND byte of Ж — a char boundary, so
-        // `&v[..8]` ends after `1, 2, 3, 4, 5, 6, 7` (7 bytes) and
+        // `&&v[..8]` ends after `1, 2, 3, 4, 5, 6, 7` (7 bytes) and
         // is a valid boundary. Not a panic case.
         // The exact mid-codepoint case: I need a 2-byte char that
         // STARTS at byte 7 (so byte 8 is the second byte).
@@ -478,8 +478,8 @@ mod tests {
         //   = "1234567" + a 2-byte char
         //   = 7 + 2 = 9 bytes
         // The 2-byte char spans bytes 7..=8. Byte 7 is the first
-        // byte. So `&v[..7]` is fine (byte 7 is a char boundary
-        // — start of the 2-byte char). `&v[..8]` is mid-codepoint.
+        // byte. So `&&v[..7]` is fine (byte 7 is a char boundary
+        // — start of the 2-byte char). `&&v[..8]` is mid-codepoint.
         // That's the panic case.
         let v = "1234567Ж";
         let r = redact_token(v);

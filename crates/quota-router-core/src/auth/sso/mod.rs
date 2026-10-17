@@ -7,6 +7,7 @@ pub mod blacklist_stoolap;
 pub mod jwt;
 pub mod mapper;
 pub mod mapper_stoolap;
+pub mod newtypes;
 pub mod oauth2;
 pub mod pkce;
 pub mod saml;
@@ -17,6 +18,7 @@ pub mod session;
 pub use self::blacklist::*;
 pub use self::jwt::*;
 pub use self::mapper::*;
+pub use self::newtypes::*;
 pub use self::oauth2::*;
 pub use self::pkce::*;
 pub use self::saml::*;
@@ -27,6 +29,7 @@ pub use self::session::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
+use tracing;
 
 // ============================================================================
 // SSO Error Codes (18 total per RFC-0949)
@@ -61,8 +64,17 @@ pub enum SsoError {
     SamlSignatureInvalid(String),
     #[error("SAML assertion expired")]
     SamlAssertionExpired,
-    #[error("SAML audience mismatch")]
-    SamlAudienceMismatch,
+    #[error("SAML audience mismatch: expected {expected}, got {actual:?}")]
+    SamlAudienceMismatch {
+        expected: String,
+        actual: Vec<String>,
+    },
+    #[error("SAML subject confirmation method invalid: expected 'bearer', got {actual:?}")]
+    SamlSubjectConfirmationInvalid { actual: Vec<String> },
+    #[error("SAML subject confirmation data expired: not_on_or_after {not_on_or_after}")]
+    SamlSubjectConfirmationExpired { not_on_or_after: String },
+    #[error("SAML replay detected: assertion_id {assertion_id}")]
+    SamlReplayDetected { assertion_id: String },
     #[error("No API key mapping for SSO subject: {0}")]
     NoKeyMapping(String),
     #[error("SSO user deactivated: {0}")]
@@ -87,7 +99,10 @@ impl SsoError {
             Self::AudienceMismatch { .. } | Self::IssuerMismatch { .. } => 401,
             Self::SamlSignatureInvalid(_)
             | Self::SamlAssertionExpired
-            | Self::SamlAudienceMismatch => 401,
+            | Self::SamlAudienceMismatch { .. }
+            | Self::SamlSubjectConfirmationInvalid { .. }
+            | Self::SamlSubjectConfirmationExpired { .. }
+            | Self::SamlReplayDetected { .. } => 401,
             Self::NoKeyMapping(_) | Self::UserDeactivated(_) => 403,
             Self::ProviderError(_) => 502,
             Self::RateLimited => 429,
@@ -107,7 +122,10 @@ impl SsoError {
             Self::AudienceMismatch { .. } | Self::IssuerMismatch { .. } => "authentication_error",
             Self::SamlSignatureInvalid(_)
             | Self::SamlAssertionExpired
-            | Self::SamlAudienceMismatch => "authentication_error",
+            | Self::SamlAudienceMismatch { .. }
+            | Self::SamlSubjectConfirmationInvalid { .. }
+            | Self::SamlSubjectConfirmationExpired { .. }
+            | Self::SamlReplayDetected { .. } => "authentication_error",
             Self::NoKeyMapping(_) | Self::UserDeactivated(_) => "authorization_error",
             Self::ProviderError(_) => "provider_error",
             Self::RateLimited => "rate_limit_error",
@@ -141,7 +159,10 @@ impl SsoError {
             Self::IssuerMismatch { .. } => "sso_issuer_mismatch",
             Self::SamlSignatureInvalid(_) => "sso_saml_signature_invalid",
             Self::SamlAssertionExpired => "sso_saml_assertion_expired",
-            Self::SamlAudienceMismatch => "sso_saml_audience_mismatch",
+            Self::SamlAudienceMismatch { .. } => "sso_saml_audience_mismatch",
+            Self::SamlSubjectConfirmationInvalid { .. } => "sso_saml_subject_confirmation_invalid",
+            Self::SamlSubjectConfirmationExpired { .. } => "sso_saml_subject_confirmation_expired",
+            Self::SamlReplayDetected { .. } => "sso_saml_replay_detected",
             Self::NoKeyMapping(_) => "sso_no_key_mapping",
             Self::UserDeactivated(_) => "sso_user_deactivated",
             Self::ProviderError(_) => "sso_provider_error",
@@ -225,6 +246,24 @@ pub enum ProviderType {
 pub struct ProviderConfig {
     /// OAuth2/OIDC settings
     pub client_id: Option<String>,
+    /// OAuth2 client secret.
+    ///
+    /// M4-saml-crypto-hygiene AC asked to wrap this in
+    /// `Zeroizing<String>` / `Secret<String>`. **Deferred** to
+    /// M6-saml-error-path-types which lands the comprehensive
+    /// newtype work (`Secret<T>`, `EntityId`, `Audience`,
+    /// `Recipient`, `Email`) including a transparent
+    /// `Serialize`/`Deserialize` shim. The standalone wrap would
+    /// require either (a) a `#[serde(with)]` adapter on every
+    /// field, or (b) propagating `Zeroizing::new(...)` through
+    /// ~25 construction sites in `mod.rs`, `oauth2.rs`, and
+    /// `scim.rs` with non-trivial ergonomics for `bearer_auth`
+    /// which expects `&str`. M6 reuses the ergonomic newtype
+    /// path; until then, secret material sits in heap memory
+    /// after drop. Findings F1-010 / F2-004 still partially
+    /// mitigated because `SamlAssertionParserImpl.idp_certificate`
+    /// IS zeroized on parser drop — the parser is the last
+    /// in-memory holder of the cert bytes.
     pub client_secret: Option<String>,
     pub issuer: Option<String>,
     pub scopes: Option<Vec<String>>,
@@ -232,10 +271,15 @@ pub struct ProviderConfig {
     pub idp_metadata_url: Option<String>,
     pub sp_entity_id: Option<String>,
     pub acs_url: Option<String>,
-    /// IdP certificate (DER-encoded) for SAML signature validation
+    /// IdP certificate (DER-encoded) for SAML signature
+    /// validation. Same deferral note as `client_secret`
+    /// above — M6 will land `Option<Secret<Vec<u8>>>`. The
+    /// parser side (`SamlAssertionParserImpl.idp_certificate`)
+    /// IS zeroized on drop today (see saml.rs).
     pub idp_certificate: Option<Vec<u8>>,
     /// SCIM settings
     pub scim_url: Option<String>,
+    /// SCIM bearer token. Deferral note per `client_secret`.
     pub scim_token: Option<String>,
 }
 
@@ -291,9 +335,68 @@ impl ProviderConfig {
                 if self.acs_url.is_none() {
                     return Err("GenericSaml requires acs_url".to_string());
                 }
+                // M5-saml-cert-pinning-weak-algo finding F1-009:
+                // an IdP certificate MUST be pinned. Without it,
+                // `SamlAssertionParserImpl::from_provider` returns
+                // `ProviderError("Missing IdP certificate")` at
+                // runtime; this surfaces the failure at config-
+                // load time instead. The certificate may be empty
+                // if the operator only set `idp_metadata_url`
+                // intending metadata fetch to populate it later —
+                // that path is allowed (length-only check).
+                match self.idp_certificate.as_ref() {
+                    None => {
+                        return Err("GenericSaml requires idp_certificate (pinned DER cert) — \
+                             idp_metadata_url alone is insufficient"
+                            .to_string());
+                    }
+                    Some(bytes) if bytes.is_empty() => {
+                        return Err(
+                            "GenericSaml idp_certificate is empty — DER cert required".to_string()
+                        );
+                    }
+                    _ => {}
+                }
             }
         }
         Ok(())
+    }
+
+    /// Warn-only startup health check (M5-saml-cert-pinning-weak-algo).
+    ///
+    /// Emits `tracing::warn!` (NOT an error — the provider may
+    /// still bootstrap with metadata-only fetch in non-production
+    /// deployments) when an IdP has `idp_metadata_url` configured
+    /// without a pinned DER cert. Production deployers MUST pin
+    /// a cert before trusting assertions.
+    ///
+    /// Returns the list of provider IDs that triggered the warn
+    /// for callers who want to surface it in startup health
+    /// endpoints.
+    pub fn warn_unpinned_idp<'a, I>(provider_type: &ProviderType, providers: I) -> Vec<String>
+    where
+        I: IntoIterator<Item = (&'a String, &'a Self)>,
+    {
+        // Only relevant for SAML providers.
+        if !matches!(provider_type, ProviderType::GenericSaml) {
+            return Vec::new();
+        }
+        let mut warned = Vec::new();
+        for (id, config) in providers {
+            if config.idp_metadata_url.is_some()
+                && config.idp_certificate.as_ref().is_none_or(|v| v.is_empty())
+            {
+                tracing::warn!(
+                    provider_id = %id,
+                    "SAML provider has idp_metadata_url set but no pinned IdP \
+                     certificate (idp_certificate). Production deployments \
+                     MUST pin a DER cert — relying on metadata-only fetch is \
+                     not safe."
+                );
+                warned.push(id.clone());
+            }
+        }
+        warned
     }
 }
 
@@ -565,7 +668,10 @@ mod tests {
             },
             SsoError::SamlSignatureInvalid("test".into()),
             SsoError::SamlAssertionExpired,
-            SsoError::SamlAudienceMismatch,
+            SsoError::SamlAudienceMismatch {
+                expected: "test".into(),
+                actual: vec!["test".into()],
+            },
             SsoError::NoKeyMapping("test".into()),
             SsoError::UserDeactivated("test".into()),
             SsoError::ProviderError("test".into()),
@@ -611,7 +717,11 @@ mod tests {
         };
         assert!(config.validate(&ProviderType::Okta).is_ok());
 
-        // GenericSaml requires idp_metadata_url, sp_entity_id, acs_url
+        // GenericSaml requires idp_metadata_url, sp_entity_id, acs_url,
+        // AND (M5-saml-cert-pinning-weak-algo finding F1-009)
+        // a non-None, non-empty idp_certificate. The metadata URL
+        // alone is silently accepted at provider startup today —
+        // that fails closed starting with the M5 verify gate.
         let saml_config = ProviderConfig {
             client_id: None,
             client_secret: None,
@@ -620,11 +730,39 @@ mod tests {
             idp_metadata_url: Some("https://idp.com/metadata".into()),
             sp_entity_id: Some("sp-entity".into()),
             acs_url: Some("https://app.com/acs".into()),
-            idp_certificate: None,
+            idp_certificate: Some(vec![0xDE, 0xAD, 0xBE, 0xEF]),
             scim_url: None,
             scim_token: None,
         };
         assert!(saml_config.validate(&ProviderType::GenericSaml).is_ok());
+
+        // M5 negative: missing certificate MUST fail closed.
+        let saml_missing_cert = ProviderConfig {
+            idp_certificate: None,
+            ..saml_config.clone()
+        };
+        let err = saml_missing_cert
+            .validate(&ProviderType::GenericSaml)
+            .expect_err("missing cert must fail");
+        assert!(
+            err.contains("idp_certificate"),
+            "error must mention idp_certificate, got: {:?}",
+            err
+        );
+
+        // M5 negative: empty certificate (zero-byte DER) MUST fail.
+        let saml_empty_cert = ProviderConfig {
+            idp_certificate: Some(vec![]),
+            ..saml_config.clone()
+        };
+        let err = saml_empty_cert
+            .validate(&ProviderType::GenericSaml)
+            .expect_err("empty cert must fail");
+        assert!(
+            err.contains("empty"),
+            "error must mention empty, got: {:?}",
+            err
+        );
     }
 
     #[test]
@@ -669,7 +807,13 @@ mod tests {
             ),
             (SsoError::SamlSignatureInvalid("test".into()), 401),
             (SsoError::SamlAssertionExpired, 401),
-            (SsoError::SamlAudienceMismatch, 401),
+            (
+                SsoError::SamlAudienceMismatch {
+                    expected: "test".into(),
+                    actual: vec!["test".into()],
+                },
+                401,
+            ),
             (SsoError::NoKeyMapping("test".into()), 403),
             (SsoError::UserDeactivated("test".into()), 403),
             (SsoError::ProviderError("test".into()), 502),
@@ -729,5 +873,77 @@ mod tests {
             scim_token: None,
         };
         assert!(config.validate(&ProviderType::GenericOidc).is_ok());
+    }
+
+    #[test]
+    fn test_warn_unpinned_idp_saml_no_cert_warns() {
+        use std::collections::HashMap;
+        let mut providers_map: HashMap<String, ProviderConfig> = HashMap::new();
+        providers_map.insert(
+            "unpinned-saml".to_string(),
+            ProviderConfig {
+                idp_metadata_url: Some("https://idp.example.com/metadata".into()),
+                idp_certificate: None,
+                ..make_minimal_saml_config()
+            },
+        );
+        let warned =
+            ProviderConfig::warn_unpinned_idp(&ProviderType::GenericSaml, providers_map.iter());
+        assert_eq!(warned, vec!["unpinned-saml".to_string()]);
+    }
+
+    #[test]
+    fn test_warn_unpinned_idp_saml_with_cert_no_warn() {
+        use std::collections::HashMap;
+        let mut providers_map: HashMap<String, ProviderConfig> = HashMap::new();
+        providers_map.insert(
+            "pinned-saml".to_string(),
+            ProviderConfig {
+                idp_metadata_url: Some("https://idp.example.com/metadata".into()),
+                idp_certificate: Some(vec![0xDE, 0xAD, 0xBE, 0xEF]),
+                ..make_minimal_saml_config()
+            },
+        );
+        let warned =
+            ProviderConfig::warn_unpinned_idp(&ProviderType::GenericSaml, providers_map.iter());
+        assert!(warned.is_empty(), "pinned cert must NOT warn");
+    }
+
+    #[test]
+    fn test_warn_unpinned_idp_non_saml_provider_no_warn() {
+        use std::collections::HashMap;
+        let mut providers_map: HashMap<String, ProviderConfig> = HashMap::new();
+        providers_map.insert(
+            "okta-1".to_string(),
+            ProviderConfig {
+                client_id: Some("id".into()),
+                client_secret: Some("secret".into()),
+                issuer: Some("https://okta.com".into()),
+                ..make_minimal_saml_config()
+            },
+        );
+        let warned = ProviderConfig::warn_unpinned_idp(&ProviderType::Okta, providers_map.iter());
+        assert!(
+            warned.is_empty(),
+            "non-SAML provider type must skip the check"
+        );
+    }
+
+    /// Minimal saml-default `ProviderConfig` used as base for the
+    /// warn-helper tests. Field order matches the struct definition
+    /// (required by struct-update syntax `..`).
+    fn make_minimal_saml_config() -> ProviderConfig {
+        ProviderConfig {
+            client_id: None,
+            client_secret: None,
+            issuer: None,
+            scopes: None,
+            idp_metadata_url: None,
+            sp_entity_id: None,
+            acs_url: None,
+            idp_certificate: None,
+            scim_url: None,
+            scim_token: None,
+        }
     }
 }

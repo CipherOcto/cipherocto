@@ -30,6 +30,7 @@ This separation allows the core type infrastructure to proceed independently whi
 - RFC-0201 (Storage): Binary BLOB Type — Provides `DataType::Blob = 10` referenced in `from_u8()`
 
 **Does NOT depend on:**
+
 - RFC-0131, RFC-0132, RFC-0133, RFC-0134, RFC-0135 (conversions — separate RFC-0202-B)
 
 **Optional:**
@@ -38,12 +39,12 @@ This separation allows the core type infrastructure to proceed independently whi
 
 ## Design Goals
 
-| Goal | Target | Metric |
-|------|--------|--------|
-| G1 | BIGINT type in Stoolap | SQL keyword `BIGINT` parsed to `DataType::Bigint` |
-| G2 | DECIMAL type in Stoolap | SQL keyword `DECIMAL`/`NUMERIC` parsed to `DataType::Decimal` |
-| G3 | Canonical serialization | Wire format matches RFC-0110/RFC-0111 exactly |
-| G4 | VM arithmetic dispatch | BIGINT/DECIMAL ops execute via determin crate |
+| Goal | Target                  | Metric                                                        |
+| ---- | ----------------------- | ------------------------------------------------------------- |
+| G1   | BIGINT type in Stoolap  | SQL keyword `BIGINT` parsed to `DataType::Bigint`             |
+| G2   | DECIMAL type in Stoolap | SQL keyword `DECIMAL`/`NUMERIC` parsed to `DataType::Decimal` |
+| G3   | Canonical serialization | Wire format matches RFC-0110/RFC-0111 exactly                 |
+| G4   | VM arithmetic dispatch  | BIGINT/DECIMAL ops execute via determin crate                 |
 
 ---
 
@@ -324,7 +325,7 @@ impl Value {
 
 **Total size:** 24 bytes
 
-**Verification:** Matches `decimal_to_bytes()` in `determin/src/decimal.rs:240-246` — copies `mantissa.to_be_bytes()` into `bytes[0..16]`, leaves `bytes[16..23]` as zero padding, sets `bytes[23]=scale`. The `decimal_from_bytes()` at line 249 rejects any non-zero bytes in 16-22 as `DecimalError::NonCanonical`. Note: There is no version byte in this format — the format is implicitly version 1 (identified by the 24-byte length and scale bounds check).
+**Verification:** Matches `decimal_to_bytes()` in `determin/src/decimal.rs` — copies `mantissa.to_be_bytes()` into `bytes[0..16]`, leaves `bytes[16..23]` as zero padding, sets `bytes[23]=scale`. The `decimal_from_bytes()` rejects any non-zero bytes in 16-22 as `DecimalError::NonCanonical`. Note: There is no version byte in this format — the format is implicitly version 1 (identified by the 24-byte length and scale bounds check).
 
 ---
 
@@ -344,10 +345,10 @@ pub const NUMERIC_SPEC_VERSION: u32 = 2;
 
 **Behavior:**
 
-| Spec Version | `BIGINT` resolves to | `DECIMAL`/`NUMERIC` resolves to |
-|---|---|---|
-| 1 (pre-RFC) | `DataType::Integer` | `DataType::Float` |
-| 2+ (this RFC) | `DataType::Bigint` | `DataType::Decimal` |
+| Spec Version  | `BIGINT` resolves to | `DECIMAL`/`NUMERIC` resolves to |
+| ------------- | -------------------- | ------------------------------- |
+| 1 (pre-RFC)   | `DataType::Integer`  | `DataType::Float`               |
+| 2+ (this RFC) | `DataType::Bigint`   | `DataType::Decimal`             |
 
 **Recovery flow:**
 
@@ -385,29 +386,29 @@ pub const NUMERIC_SPEC_VERSION: u32 = 2;
 
 The persistence layer (`serialize_value`/`deserialize_value` in `persistence.rs`) uses separate wire tags from the in-memory DataType discriminants. Current tags:
 
-| Wire Tag | Type | Notes |
-|---|---|---|
-| 0 | Null | With optional DataType byte |
-| 1 | Boolean | |
-| 2 | Integer | 8-byte LE i64 |
-| 3 | Float | 8-byte LE f64 |
-| 4 | Text | len_u32_le + UTF-8 bytes |
-| 5 | Timestamp (legacy) | RFC3339 string |
-| 6 | JSON | len_u32_le + UTF-8 bytes |
-| 8 | Timestamp (binary) | secs_i64_le + nanos_u32_le |
-| 9 | Vector (old) | dim_u32_le + f32 LE bytes |
-| 10 | Vector (new) | dim_u32_le + f32 LE bytes |
-| 11 | Extension (generic) | dt_u8 + len_u32_le + bytes |
-| 12 | Blob | len_u32_be + raw bytes |
+| Wire Tag | Type                | Notes                       |
+| -------- | ------------------- | --------------------------- |
+| 0        | Null                | With optional DataType byte |
+| 1        | Boolean             |                             |
+| 2        | Integer             | 8-byte LE i64               |
+| 3        | Float               | 8-byte LE f64               |
+| 4        | Text                | len_u32_le + UTF-8 bytes    |
+| 5        | Timestamp (legacy)  | RFC3339 string              |
+| 6        | JSON                | len_u32_le + UTF-8 bytes    |
+| 8        | Timestamp (binary)  | secs_i64_le + nanos_u32_le  |
+| 9        | Vector (old)        | dim_u32_le + f32 LE bytes   |
+| 10       | Vector (new)        | dim_u32_le + f32 LE bytes   |
+| 11       | Extension (generic) | dt_u8 + len_u32_le + bytes  |
+| 12       | Blob                | len_u32_be + raw bytes      |
 
 **New wire tags for BIGINT and DECIMAL:**
 
-| Wire Tag | Type | Format |
-|---|---|---|
-| 13 | BIGINT | Raw `BigIntEncoding::to_bytes()` output (8-byte header + limb array) |
-| 14 | DECIMAL | Raw `decimal_to_bytes()` output (24-byte canonical format) |
+| Wire Tag | Type    | Format                                                               |
+| -------- | ------- | -------------------------------------------------------------------- |
+| 13       | BIGINT  | Raw `BigIntEncoding::to_bytes()` output (8-byte header + limb array) |
+| 14       | DECIMAL | Raw `decimal_to_bytes()` output (24-byte canonical format)           |
 
-**Persistence vs. index encoding distinction:** The wire formats in this section define the **persistence format** — how values are stored on disk and in the WAL. The **BTree index key encoding** (lexicographic format in §6.11) is a *separate* transformation applied at index build time, not a persistence wire format. A value is serialized using the persistence format, then if a BTree index is built on that column, the serialized bytes are transformed into lexicographic key format for index entries. This separation keeps the persistence format simple and canonical while allowing efficient index operations. No transformation between formats occurs during normal read/write paths — only at index creation time.
+**Persistence vs. index encoding distinction:** The wire formats in this section define the **persistence format** — how values are stored on disk and in the WAL. The **BTree index key encoding** (lexicographic format in §6.11) is a _separate_ transformation applied at index build time, not a persistence wire format. A value is serialized using the persistence format, then if a BTree index is built on that column, the serialized bytes are transformed into lexicographic key format for index entries. This separation keeps the persistence format simple and canonical while allowing efficient index operations. No transformation between formats occurs during normal read/write paths — only at index creation time.
 
 ```rust
 Value::Extension(data) => {
@@ -599,15 +600,15 @@ DECIMAL → FLOAT   (lossy, explicit CAST only)
 
 **Implicit coercion rules (in `coerce_to_type`):**
 
-| Source → Target | Method | Behavior |
-|---|---|---|
-| INTEGER → BIGINT | `BigInt::from(i64)` via `From<i64>` trait | Always valid |
-| INTEGER → DECIMAL | `Decimal::new(i128::from(i), 0)` | Always valid |
-| BIGINT → DECIMAL | `bigint_to_decimal_full()` (RFC-0133) | Scale=0, TRAP if overflow |
-| BIGINT → FLOAT | Blocked | Use explicit CAST |
-| DECIMAL → FLOAT | Blocked | Use explicit CAST |
-| BIGINT → INTEGER | `TryFrom<BigInt>` | TRAP if out of i64 range |
-| DECIMAL → INTEGER | Via BIGINT | TRAP if scale > 0 or out of range |
+| Source → Target   | Method                                    | Behavior                          |
+| ----------------- | ----------------------------------------- | --------------------------------- |
+| INTEGER → BIGINT  | `BigInt::from(i64)` via `From<i64>` trait | Always valid                      |
+| INTEGER → DECIMAL | `Decimal::new(i128::from(i), 0)`          | Always valid                      |
+| BIGINT → DECIMAL  | `bigint_to_decimal_full()` (RFC-0133)     | Scale=0, TRAP if overflow         |
+| BIGINT → FLOAT    | Blocked                                   | Use explicit CAST                 |
+| DECIMAL → FLOAT   | Blocked                                   | Use explicit CAST                 |
+| BIGINT → INTEGER  | `TryFrom<BigInt>`                         | TRAP if out of i64 range          |
+| DECIMAL → INTEGER | Via BIGINT                                | TRAP if scale > 0 or out of range |
 
 > **Note:** BIGINT↔DQA and DECIMAL↔DQA conversions are specified in RFC-0202-B.
 
@@ -664,6 +665,7 @@ DataType::Decimal => {
 This function parses a string literal into a `Decimal`. It is not provided by the determin crate — Stoolap must implement it.
 
 **Signature:**
+
 ```rust
 use octo_determin::{Decimal, DecimalError};
 
@@ -671,6 +673,7 @@ pub fn stoolap_parse_decimal(s: &str) -> Result<Decimal, DecimalError>
 ```
 
 **Input format:** Must match `^[+-]?[0-9]+(\.[0-9]+)?$`
+
 - Optional leading sign (`+` or `-`)
 - One or more decimal digits
 - Optional fractional part: `.` followed by one or more decimal digits
@@ -679,6 +682,7 @@ pub fn stoolap_parse_decimal(s: &str) -> Result<Decimal, DecimalError>
 - No empty string (after trimming)
 
 **Behavior:**
+
 1. Trim leading/trailing whitespace (if any)
 2. Strip leading sign: record sign, strip `+` or `-` from digits
 3. Split on `.` (if present): `(integer_part, fractional_part)`
@@ -690,15 +694,15 @@ pub fn stoolap_parse_decimal(s: &str) -> Result<Decimal, DecimalError>
 
 **Error cases:**
 
-| Input | Error |
-|-------|-------|
-| Empty string (after trim) | `DecimalError::ParseError` |
-| `"."`, `"1."`, `".5"` | `DecimalError::ParseError` |
-| `"1.2.3"` (multiple dots) | `DecimalError::ParseError` |
-| `"1e5"` (scientific notation) | `DecimalError::ParseError` |
-| `"abc"` (non-numeric) | `DecimalError::ParseError` |
-| Scale > 36 | `DecimalError::InvalidScale` |
-| Value out of ±(10^36−1) range | `DecimalError::Overflow` |
+| Input                         | Error                        |
+| ----------------------------- | ---------------------------- |
+| Empty string (after trim)     | `DecimalError::ParseError`   |
+| `"."`, `"1."`, `".5"`         | `DecimalError::ParseError`   |
+| `"1.2.3"` (multiple dots)     | `DecimalError::ParseError`   |
+| `"1e5"` (scientific notation) | `DecimalError::ParseError`   |
+| `"abc"` (non-numeric)         | `DecimalError::ParseError`   |
+| Scale > 36                    | `DecimalError::InvalidScale` |
+| Value out of ±(10^36−1) range | `DecimalError::Overflow`     |
 
 **Rounding note:** `stoolap_parse_decimal` does NOT round — it accepts or rejects. Rounding at INSERT time is handled separately in §6.9 via `decimal_round()`.
 
@@ -810,6 +814,7 @@ DataType::Bigint | DataType::Decimal => IndexType::BTree,
 ```
 
 BTree is selected for both types:
+
 - **BIGINT:** Variable-length (up to 520 bytes) — BTree provides range scans and handles variable keys
 - **DECIMAL:** Fixed 24 bytes — BTree provides range scans for scale-aware numeric ordering
 
@@ -989,33 +994,33 @@ Both RFC-0202-A and RFC-0202-B reference functions from the `determin` crate. Th
 
 **Status: RESOLVED** — All required functions were exported in commit `8cd4f89` (2026-04-10). The table below is retained for reference.
 
-| Function | Module | Status |
-|----------|--------|--------|
-| `decimal_cmp` | `decimal.rs` | ✅ Exported |
+| Function            | Module       | Status      |
+| ------------------- | ------------ | ----------- |
+| `decimal_cmp`       | `decimal.rs` | ✅ Exported |
 | `decimal_to_string` | `decimal.rs` | ✅ Exported |
-| `decimal_add` | `decimal.rs` | ✅ Exported |
-| `decimal_sub` | `decimal.rs` | ✅ Exported |
-| `decimal_mul` | `decimal.rs` | ✅ Exported |
-| `decimal_div` | `decimal.rs` | ✅ Exported |
-| `decimal_round` | `decimal.rs` | ✅ Exported |
-| `decimal_sqrt` | `decimal.rs` | ✅ Exported |
-| `bigint_shl` | `bigint.rs` | ✅ Exported |
-| `bigint_shr` | `bigint.rs` | ✅ Exported |
-| `decimal_to_dqa` | `decimal.rs` | RFC-0202-B |
-| `dqa_to_decimal` | `decimal.rs` | RFC-0202-B |
+| `decimal_add`       | `decimal.rs` | ✅ Exported |
+| `decimal_sub`       | `decimal.rs` | ✅ Exported |
+| `decimal_mul`       | `decimal.rs` | ✅ Exported |
+| `decimal_div`       | `decimal.rs` | ✅ Exported |
+| `decimal_round`     | `decimal.rs` | ✅ Exported |
+| `decimal_sqrt`      | `decimal.rs` | ✅ Exported |
+| `bigint_shl`        | `bigint.rs`  | ✅ Exported |
+| `bigint_shr`        | `bigint.rs`  | ✅ Exported |
+| `decimal_to_dqa`    | `decimal.rs` | RFC-0202-B  |
+| `dqa_to_decimal`    | `decimal.rs` | RFC-0202-B  |
 
 **Status: Already exported** — The following are confirmed in `pub use bigint::` or `pub use decimal::` in `lib.rs` and do NOT need changes to the determin crate:
 
-| Function | Module | Note |
-|----------|--------|------|
-| `BigIntError` | `bigint.rs` | Includes `OutOfRange` variant |
-| `BigInt` | `bigint.rs` | Full API including `serialize()`/`deserialize()` |
-| `bigint_mod` | `bigint.rs` | Already in `pub use bigint::` |
-| `decimal_from_bytes` | `decimal.rs` | Already exported |
-| `decimal_to_bytes` | `decimal.rs` | Already exported |
-| `Decimal` | `decimal.rs` | Full API including `new()`, `mantissa()`, `scale()` |
-| `DecimalError` | `decimal.rs` | Includes `ConversionLoss` variant |
-| `MAX_DECIMAL_OP_COST`, `MAX_DECIMAL_SCALE`, etc. | `decimal.rs` | Already exported |
+| Function                                         | Module       | Note                                                |
+| ------------------------------------------------ | ------------ | --------------------------------------------------- |
+| `BigIntError`                                    | `bigint.rs`  | Includes `OutOfRange` variant                       |
+| `BigInt`                                         | `bigint.rs`  | Full API including `serialize()`/`deserialize()`    |
+| `bigint_mod`                                     | `bigint.rs`  | Already in `pub use bigint::`                       |
+| `decimal_from_bytes`                             | `decimal.rs` | Already exported                                    |
+| `decimal_to_bytes`                               | `decimal.rs` | Already exported                                    |
+| `Decimal`                                        | `decimal.rs` | Full API including `new()`, `mantissa()`, `scale()` |
+| `DecimalError`                                   | `decimal.rs` | Includes `ConversionLoss` variant                   |
+| `MAX_DECIMAL_OP_COST`, `MAX_DECIMAL_SCALE`, etc. | `decimal.rs` | Already exported                                    |
 
 > **Note:** `BigIntEncoding` does not need a direct export — it is accessed via `BigInt::serialize()` which returns it by value.
 
@@ -1027,17 +1032,17 @@ All arithmetic operations use the determin crate implementations:
 
 > **Ownership note:** BigInt arithmetic functions take operands **by value** (`BigInt`). Stoolap's VM must clone values before passing them to these functions. Decimal arithmetic functions take **references** (`&Decimal`), so borrowing is sufficient. This asymmetry is inherent to the determin crate API.
 
-| Operation | BIGINT Function (takes ownership) | DECIMAL Function (takes &ref) |
-|-----------|----------------------------------|-------------------------------|
-| ADD | `bigint_add(a: BigInt, b: BigInt)` | `decimal_add(a: &Decimal, b: &Decimal)` |
-| SUB | `bigint_sub(a: BigInt, b: BigInt)` | `decimal_sub(a: &Decimal, b: &Decimal)` |
-| MUL | `bigint_mul(a: BigInt, b: BigInt)` | `decimal_mul(a: &Decimal, b: &Decimal)` |
-| DIV | `bigint_div(a: BigInt, b: BigInt)` | `decimal_div(a: &Decimal, b: &Decimal, _target_scale: u8)` — third parameter is ignored; pass `0` as placeholder |
-| MOD | `bigint_mod(a: BigInt, b: BigInt)` | N/A |
-| CMP | `a.compare(&b) → i32` (method) | `decimal_cmp(a: &Decimal, b: &Decimal) → i32` |
-| SQRT | N/A | `decimal_sqrt(a: &Decimal)` |
-| SHL | `bigint_shl(a: BigInt, shift: usize)` | N/A |
-| SHR | `bigint_shr(a: BigInt, shift: usize)` | N/A |
+| Operation | BIGINT Function (takes ownership)     | DECIMAL Function (takes &ref)                                                                                    |
+| --------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| ADD       | `bigint_add(a: BigInt, b: BigInt)`    | `decimal_add(a: &Decimal, b: &Decimal)`                                                                          |
+| SUB       | `bigint_sub(a: BigInt, b: BigInt)`    | `decimal_sub(a: &Decimal, b: &Decimal)`                                                                          |
+| MUL       | `bigint_mul(a: BigInt, b: BigInt)`    | `decimal_mul(a: &Decimal, b: &Decimal)`                                                                          |
+| DIV       | `bigint_div(a: BigInt, b: BigInt)`    | `decimal_div(a: &Decimal, b: &Decimal, _target_scale: u8)` — third parameter is ignored; pass `0` as placeholder |
+| MOD       | `bigint_mod(a: BigInt, b: BigInt)`    | N/A                                                                                                              |
+| CMP       | `a.compare(&b) → i32` (method)        | `decimal_cmp(a: &Decimal, b: &Decimal) → i32`                                                                    |
+| SQRT      | N/A                                   | `decimal_sqrt(a: &Decimal)`                                                                                      |
+| SHL       | `bigint_shl(a: BigInt, shift: usize)` | N/A                                                                                                              |
+| SHR       | `bigint_shr(a: BigInt, shift: usize)` | N/A                                                                                                              |
 
 ### 7a. Aggregate Operations
 
@@ -1045,34 +1050,34 @@ Aggregate functions operate over column values during query execution. They are 
 
 **BIGINT aggregates:**
 
-| Function | Input Type | Result Type | Overflow Behavior |
-|----------|-----------|-------------|------------------|
-| `COUNT(col)` | BIGINT | `INTEGER` | Never overflows |
-| `SUM(col)` | BIGINT | `BIGINT` | Returns `BigIntError::OutOfRange` when sum exceeds ±(2^4096 − 1) (max 64 limbs); operation TRAPs at bit_length > 4096 |
-| `MIN(col)` | BIGINT | `BIGINT` | Never overflows |
-| `MAX(col)` | BIGINT | `BIGINT` | Never overflows |
-| `AVG(col)` | BIGINT | `DECIMAL` | Returns `Error::NotSupported('AVG on BIGINT requires RFC-0202-B')` until RFC-0202-B is implemented; then returns `DecimalError::Overflow` if internal sum overflows |
+| Function     | Input Type | Result Type | Overflow Behavior                                                                                                                                                   |
+| ------------ | ---------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `COUNT(col)` | BIGINT     | `INTEGER`   | Never overflows                                                                                                                                                     |
+| `SUM(col)`   | BIGINT     | `BIGINT`    | Returns `BigIntError::OutOfRange` when sum exceeds ±(2^4096 − 1) (max 64 limbs); operation TRAPs at bit_length > 4096                                               |
+| `MIN(col)`   | BIGINT     | `BIGINT`    | Never overflows                                                                                                                                                     |
+| `MAX(col)`   | BIGINT     | `BIGINT`    | Never overflows                                                                                                                                                     |
+| `AVG(col)`   | BIGINT     | `DECIMAL`   | Returns `Error::NotSupported('AVG on BIGINT requires RFC-0202-B')` until RFC-0202-B is implemented; then returns `DecimalError::Overflow` if internal sum overflows |
 
 **DECIMAL aggregates:**
 
-| Function | Input Type | Result Type | Overflow Behavior |
-|----------|-----------|-------------|------------------|
-| `COUNT(col)` | DECIMAL | `INTEGER` | Never overflows |
-| `SUM(col)` | DECIMAL | `DECIMAL` | Returns `DecimalError::Overflow` if result exceeds ±(10^36 − 1) |
-| `MIN(col)` | DECIMAL | `DECIMAL` | Never overflows |
-| `MAX(col)` | DECIMAL | `DECIMAL` | Never overflows |
-| `AVG(col)` | DECIMAL | `DECIMAL` | Returns `DecimalError::Overflow` if sum overflows; result scale = `min(36, input_scale + 6)` (parallel to DIV formula); AVG never reduces scale below input_scale |
+| Function     | Input Type | Result Type | Overflow Behavior                                                                                                                                                 |
+| ------------ | ---------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `COUNT(col)` | DECIMAL    | `INTEGER`   | Never overflows                                                                                                                                                   |
+| `SUM(col)`   | DECIMAL    | `DECIMAL`   | Returns `DecimalError::Overflow` if result exceeds ±(10^36 − 1)                                                                                                   |
+| `MIN(col)`   | DECIMAL    | `DECIMAL`   | Never overflows                                                                                                                                                   |
+| `MAX(col)`   | DECIMAL    | `DECIMAL`   | Never overflows                                                                                                                                                   |
+| `AVG(col)`   | DECIMAL    | `DECIMAL`   | Returns `DecimalError::Overflow` if sum overflows; result scale = `min(36, input_scale + 6)` (parallel to DIV formula); AVG never reduces scale below input_scale |
 
 > **AVG result scale rationale:** For DECIMAL input with scale `s`, AVG divides the sum (which has scale `s`) by an integer row count `n`. The result scale must be at least `s` to avoid precision loss. Using `min(36, s + 6)` parallels the DIV formula — adding 6 digits of intermediate precision before rounding. This ensures AVG does not silently truncate precision (e.g., `AVG(DECIMAL '1.000000')` does not become `1.0000` but rather `1.000006` at most). For higher precision requirements, use explicit `SUM(col) / COUNT(col)` with a controlled target scale.
 
 **Aggregate gas (per row processed):**
 
-| Aggregate | BIGINT Gas | DECIMAL Gas |
-|-----------|-----------|-------------|
-| COUNT | 5 | 5 |
-| SUM | 10 + limbs | 10 + 2 × scale |
-| MIN/MAX | 5 + limbs | 5 + 2 × scale |
-| AVG | 15 + 2 × limbs | 15 + 3 × scale (input column scale, not result scale) |
+| Aggregate | BIGINT Gas     | DECIMAL Gas                                           |
+| --------- | -------------- | ----------------------------------------------------- |
+| COUNT     | 5              | 5                                                     |
+| SUM       | 10 + limbs     | 10 + 2 × scale                                        |
+| MIN/MAX   | 5 + limbs      | 5 + 2 × scale                                         |
+| AVG       | 15 + 2 × limbs | 15 + 3 × scale (input column scale, not result scale) |
 
 > **Streaming aggregation:** SUM processes rows incrementally. Gas is consumed per-row. For a 1000-row aggregate at 64 limbs: 74,000 gas. Use `SET gas_limit = N` to raise the per-query budget for large aggregates.
 >
@@ -1081,6 +1086,7 @@ Aggregate functions operate over column values during query execution. They are 
 > **Note on `decimal_div`:** The `_target_scale` parameter is completely ignored by the implementation (underscore prefix). The actual target scale is computed internally as `min(36, max(a.scale, b.scale) + 6)`. The VM must pass `0` as a placeholder value. This parameter is reserved for future explicit scale control.
 
 > **DECIMAL arithmetic result scales:**
+>
 > - **ADD/SUB:** After aligning scales, result scale = `max(scale_a, scale_b)`. Example: `1.2 + 0.1 = 1.3` (scale 1).
 > - **MUL:** Result scale = `scale_a + scale_b`. Example: `1.2 × 3.4 = 4.08` (scale 2). Note: trailing zeros are stripped by canonicalization (e.g., `1.20 × 3.40 = 4.080` → canonicalizes to `4.08` with scale 2).
 > - **DIV:** Result scale = `min(36, max(scale_a, scale_b) + 6)` — see division scale rationale above.
@@ -1096,22 +1102,22 @@ Gas costs are defined in the determin crate per RFC-0110 and RFC-0111:
 
 **BIGINT Gas (RFC-0110):**
 
-| Operation | Formula | Example (both operands = 64 limbs) |
-|-----------|---------|----------------------------------|
-| ADD/SUB | 10 + limbs | 74 |
-| MUL | 50 + 2 × 64 × 64 | 8,242 |
-| DIV/MOD | 50 + 3 × 64 × 64 | 12,338 |
-| CMP | 5 + limbs | 69 |
-| SHL/SHR | 10 + limbs | 74 |
+| Operation | Formula          | Example (both operands = 64 limbs) |
+| --------- | ---------------- | ---------------------------------- |
+| ADD/SUB   | 10 + limbs       | 74                                 |
+| MUL       | 50 + 2 × 64 × 64 | 8,242                              |
+| DIV/MOD   | 50 + 3 × 64 × 64 | 12,338                             |
+| CMP       | 5 + limbs        | 69                                 |
+| SHL/SHR   | 10 + limbs       | 74                                 |
 
 **DECIMAL Gas (RFC-0111):**
 
-| Operation | Formula | Max (scales=36) |
-|-----------|---------|------------------|
-| ADD/SUB | 10 + 2 × |scale_a - scale_b| | 82 |
-| MUL | 20 + 3 × scale_a × scale_b | 3,908 |
-| DIV | 50 + 3 × scale_a × scale_b | 3,938 | (gas based on **input** operand scales; internally computed target scale does not affect gas) |
-| SQRT | 100 + 5 × scale | 280 |
+| Operation | Formula                    | Max (scales=36)   |
+| --------- | -------------------------- | ----------------- |
+| ADD/SUB   | 10 + 2 ×                   | scale_a - scale_b |                                                                                               | 82  |
+| MUL       | 20 + 3 × scale_a × scale_b | 3,908             |
+| DIV       | 50 + 3 × scale_a × scale_b | 3,938             | (gas based on **input** operand scales; internally computed target scale does not affect gas) |
+| SQRT      | 100 + 5 × scale            | 280               |
 
 > **Future RFC compatibility:** If a future RFC enables explicit target scale for DECIMAL DIV (using the currently-ignored `_target_scale` parameter), the gas formula will be updated to `50 + 3 × scale_a × scale_b + f(target_scale)` where `f` accounts for the additional precision cost.
 
@@ -1119,14 +1125,14 @@ Gas costs are defined in the determin crate per RFC-0110 and RFC-0111:
 
 **Serialization/Deserialization Gas (for type conversions and persistence):**
 
-| Operation | Gas |
-|-----------|-----|
-| BIGINT serialization (`BigInt::serialize()`) | ~100 |
+| Operation                                        | Gas  |
+| ------------------------------------------------ | ---- |
+| BIGINT serialization (`BigInt::serialize()`)     | ~100 |
 | BIGINT deserialization (`BigInt::deserialize()`) | ~100 |
-| DECIMAL serialization (24-byte copy) | ~20 |
-| DECIMAL deserialization (24-byte parse) | ~20 |
-| INTEGER → BIGINT (`BigInt::from(i64)`) | ~50 |
-| BIGINT → INTEGER (`TryFrom<BigInt>`) | ~50 |
+| DECIMAL serialization (24-byte copy)             | ~20  |
+| DECIMAL deserialization (24-byte parse)          | ~20  |
+| INTEGER → BIGINT (`BigInt::from(i64)`)           | ~50  |
+| BIGINT → INTEGER (`TryFrom<BigInt>`)             | ~50  |
 
 > **Note:** These serialization/conversion gas costs are estimates and should be benchmarked before production deployment. They are not yet specified in RFC-0110 or RFC-0111 and will be formally added to RFC-0202-B.
 
@@ -1238,69 +1244,71 @@ DECIMAL test vectors are defined in RFC-0111 §Test Vectors (57 entries with Mer
 
 ### Additional Integration Tests
 
-| Test | SQL | Expected |
-|------|-----|----------|
-| BIGINT literal | `SELECT BIGINT '12345678901234567890'` | BigInt with correct limbs |
-| DECIMAL literal | `SELECT DECIMAL '123.45'` | Decimal { mantissa: 12345, scale: 2 } |
-| BIGINT add | `SELECT BIGINT '1' + BIGINT '2'` | BigInt '3' |
-| BIGINT sub | `SELECT BIGINT '100' - BIGINT '200'` | BigInt '-100' |
-| BIGINT mul | `SELECT BIGINT '123' * BIGINT '456'` | BigInt '56088' |
-| BIGINT div | `SELECT BIGINT '100' / BIGINT '7'` | BigInt '14' (truncating) |
-| BIGINT SHL | `SELECT BIGINT '1' << 3` | BigInt '8' |
-| BIGINT SHR | `SELECT BIGINT '8' >> 2` | BigInt '2' |
-| BIGINT SHL neg | `SELECT BIGINT '-16' << 4` | BigInt '-256' |
-| BIGINT SHR neg | `SELECT BIGINT '-256' >> 4` | BigInt '-16' |
-| BIGINT cmp neg | `SELECT BIGINT '-5' < BIGINT '5'` | true |
-| BIGINT cmp zero | `SELECT BIGINT '0' = BIGINT '-0'` | true (canonical) |
-| DECIMAL add | `SELECT DECIMAL '1.5' + DECIMAL '2.5'` | Decimal '4' (canonical: mantissa=4, scale=0) |
-| DECIMAL canonicalizes | `SELECT DECIMAL '1.50'` | Decimal { mantissa: 15, scale: 1 } (parser yields mantissa=150, scale=2; `Decimal::new(150, 2)` canonicalizes to {15, 1}); leading zeros in integer part are stripped by i128 parsing, so `DECIMAL '01.50'` is equivalent to `DECIMAL '1.50'` |
-| DECIMAL negative zero | `SELECT DECIMAL '-0.00'` | Decimal { mantissa: 0, scale: 0 } (canonicalizes to positive zero; `Decimal::new(0, s)` yields positive zero with scale 0 — the mantissa zero and scale 0 canonicalization overwrites any non-zero input scale; inserting `DECIMAL '-0.00'` into a `DECIMAL(10,2)` column yields `{0, 0}`, not `{0, 2}`) |
-| DECIMAL mul scales | `SELECT DECIMAL '1.2' * DECIMAL '3.4'` | Decimal '4.08' (scale=2) |
-| BIGINT overflow | `SELECT BIGINT '2' << 4096` | Error: overflow (4097 bits = 65 limbs > max 64 limbs) |
-| BIGINT 4096-bit | `SELECT BIGINT '2' << 4095` | Valid BigInt at 64 limbs |
-| DECIMAL scale overflow | `SELECT DECIMAL '1' / DECIMAL '3'` | `Decimal { mantissa: 333333, scale: 6 }` (scale = min(36, max(0,0)+6) = 6; mantissa = 1/3 × 10^6 rounded) |
-| NULL BIGINT | `INSERT INTO t (b) VALUES (NULL)` where b is BIGINT | Value::Null(DataType::Bigint) |
-| NULL DECIMAL | `INSERT INTO t (d) VALUES (NULL)` where d is DECIMAL | Value::Null(DataType::Decimal) |
-| BIGINT persistence | WAL round-trip: serialize → deserialize | Byte-identical BIGINT value |
-| DECIMAL persistence | WAL round-trip: serialize → deserialize | Byte-identical DECIMAL value |
-| BIGINT index scan | `SELECT * FROM t WHERE bigint_col > BIGINT '1000'` | BTree range scan |
-| DECIMAL index scan | `SELECT * FROM t WHERE dec_col < DECIMAL '99.99'` | BTree range scan |
-| Display BIGINT | `SELECT BIGINT '12345678901234567890'` | Prints '12345678901234567890' |
-| Display DECIMAL | `SELECT DECIMAL '123.45'` | Prints '123.45' |
-| DECIMAL(p,s) DDL | `CREATE TABLE t (d DECIMAL(10,2))` | SchemaColumn.decimal_scale=Some(2) |
-| BIGINT → INTEGER TRAP | `CAST(BIGINT '99999999999999999999' AS INTEGER)` | Error: BigIntError::OutOfRange |
-| DECIMAL → BIGINT TRAP | `CAST(DECIMAL '123.45' AS BIGINT)` | Error: ConversionLoss (scale > 0) |
-| INTEGER → BIGINT | `CAST(42 AS BIGINT)` | BigInt '42' |
-| INTEGER → DECIMAL | `CAST(42 AS DECIMAL)` | Decimal { mantissa: 42, scale: 0 } |
-| BIGINT vs Integer literal | `SELECT * FROM t WHERE bigint_col > 42` | BIGINT coerced to wider type, comparison succeeds |
-| DECIMAL vs Float literal | `SELECT * FROM t WHERE dec_col < 3.14` | Error: IncomparableTypes (DECIMAL vs Float not comparable) |
-| BIGINT vs DECIMAL | `SELECT * FROM t WHERE bigint_col = dec_col` | Error: IncomparableTypes (different numeric types) |
-| BIGINT vs DFP | `SELECT * FROM t WHERE bigint_col > dfp_col` | Error: IncomparableTypes with CAST suggestion |
-| DECIMAL sqrt | `SELECT SQRT(DECIMAL '2.00')` | `Decimal { mantissa: 141, scale: 2 }` (scale = ⌈(2+1)/2⌉ = 2; sqrt(2) = 1.41421356..., rounded to 2 decimals with RoundHalfEven = 1.41 → mantissa 141) |
-| DECIMAL sqrt scale | `SELECT SQRT(DECIMAL '0.000001')` | `Decimal { mantissa: 10, scale: 4 }` (scale = ⌈(6+1)/2⌉ = 4; sqrt(10^-6) = 10^-3 = 0.001 exactly, mantissa 10) |
+| Test                      | SQL                                                  | Expected                                                                                                                                                                                                                                                                                                 |
+| ------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| BIGINT literal            | `SELECT BIGINT '12345678901234567890'`               | BigInt with correct limbs                                                                                                                                                                                                                                                                                |
+| DECIMAL literal           | `SELECT DECIMAL '123.45'`                            | Decimal { mantissa: 12345, scale: 2 }                                                                                                                                                                                                                                                                    |
+| BIGINT add                | `SELECT BIGINT '1' + BIGINT '2'`                     | BigInt '3'                                                                                                                                                                                                                                                                                               |
+| BIGINT sub                | `SELECT BIGINT '100' - BIGINT '200'`                 | BigInt '-100'                                                                                                                                                                                                                                                                                            |
+| BIGINT mul                | `SELECT BIGINT '123' * BIGINT '456'`                 | BigInt '56088'                                                                                                                                                                                                                                                                                           |
+| BIGINT div                | `SELECT BIGINT '100' / BIGINT '7'`                   | BigInt '14' (truncating)                                                                                                                                                                                                                                                                                 |
+| BIGINT SHL                | `SELECT BIGINT '1' << 3`                             | BigInt '8'                                                                                                                                                                                                                                                                                               |
+| BIGINT SHR                | `SELECT BIGINT '8' >> 2`                             | BigInt '2'                                                                                                                                                                                                                                                                                               |
+| BIGINT SHL neg            | `SELECT BIGINT '-16' << 4`                           | BigInt '-256'                                                                                                                                                                                                                                                                                            |
+| BIGINT SHR neg            | `SELECT BIGINT '-256' >> 4`                          | BigInt '-16'                                                                                                                                                                                                                                                                                             |
+| BIGINT cmp neg            | `SELECT BIGINT '-5' < BIGINT '5'`                    | true                                                                                                                                                                                                                                                                                                     |
+| BIGINT cmp zero           | `SELECT BIGINT '0' = BIGINT '-0'`                    | true (canonical)                                                                                                                                                                                                                                                                                         |
+| DECIMAL add               | `SELECT DECIMAL '1.5' + DECIMAL '2.5'`               | Decimal '4' (canonical: mantissa=4, scale=0)                                                                                                                                                                                                                                                             |
+| DECIMAL canonicalizes     | `SELECT DECIMAL '1.50'`                              | Decimal { mantissa: 15, scale: 1 } (parser yields mantissa=150, scale=2; `Decimal::new(150, 2)` canonicalizes to {15, 1}); leading zeros in integer part are stripped by i128 parsing, so `DECIMAL '01.50'` is equivalent to `DECIMAL '1.50'`                                                            |
+| DECIMAL negative zero     | `SELECT DECIMAL '-0.00'`                             | Decimal { mantissa: 0, scale: 0 } (canonicalizes to positive zero; `Decimal::new(0, s)` yields positive zero with scale 0 — the mantissa zero and scale 0 canonicalization overwrites any non-zero input scale; inserting `DECIMAL '-0.00'` into a `DECIMAL(10,2)` column yields `{0, 0}`, not `{0, 2}`) |
+| DECIMAL mul scales        | `SELECT DECIMAL '1.2' * DECIMAL '3.4'`               | Decimal '4.08' (scale=2)                                                                                                                                                                                                                                                                                 |
+| BIGINT overflow           | `SELECT BIGINT '2' << 4096`                          | Error: overflow (4097 bits = 65 limbs > max 64 limbs)                                                                                                                                                                                                                                                    |
+| BIGINT 4096-bit           | `SELECT BIGINT '2' << 4095`                          | Valid BigInt at 64 limbs                                                                                                                                                                                                                                                                                 |
+| DECIMAL scale overflow    | `SELECT DECIMAL '1' / DECIMAL '3'`                   | `Decimal { mantissa: 333333, scale: 6 }` (scale = min(36, max(0,0)+6) = 6; mantissa = 1/3 × 10^6 rounded)                                                                                                                                                                                                |
+| NULL BIGINT               | `INSERT INTO t (b) VALUES (NULL)` where b is BIGINT  | Value::Null(DataType::Bigint)                                                                                                                                                                                                                                                                            |
+| NULL DECIMAL              | `INSERT INTO t (d) VALUES (NULL)` where d is DECIMAL | Value::Null(DataType::Decimal)                                                                                                                                                                                                                                                                           |
+| BIGINT persistence        | WAL round-trip: serialize → deserialize              | Byte-identical BIGINT value                                                                                                                                                                                                                                                                              |
+| DECIMAL persistence       | WAL round-trip: serialize → deserialize              | Byte-identical DECIMAL value                                                                                                                                                                                                                                                                             |
+| BIGINT index scan         | `SELECT * FROM t WHERE bigint_col > BIGINT '1000'`   | BTree range scan                                                                                                                                                                                                                                                                                         |
+| DECIMAL index scan        | `SELECT * FROM t WHERE dec_col < DECIMAL '99.99'`    | BTree range scan                                                                                                                                                                                                                                                                                         |
+| Display BIGINT            | `SELECT BIGINT '12345678901234567890'`               | Prints '12345678901234567890'                                                                                                                                                                                                                                                                            |
+| Display DECIMAL           | `SELECT DECIMAL '123.45'`                            | Prints '123.45'                                                                                                                                                                                                                                                                                          |
+| DECIMAL(p,s) DDL          | `CREATE TABLE t (d DECIMAL(10,2))`                   | SchemaColumn.decimal_scale=Some(2)                                                                                                                                                                                                                                                                       |
+| BIGINT → INTEGER TRAP     | `CAST(BIGINT '99999999999999999999' AS INTEGER)`     | Error: BigIntError::OutOfRange                                                                                                                                                                                                                                                                           |
+| DECIMAL → BIGINT TRAP     | `CAST(DECIMAL '123.45' AS BIGINT)`                   | Error: ConversionLoss (scale > 0)                                                                                                                                                                                                                                                                        |
+| INTEGER → BIGINT          | `CAST(42 AS BIGINT)`                                 | BigInt '42'                                                                                                                                                                                                                                                                                              |
+| INTEGER → DECIMAL         | `CAST(42 AS DECIMAL)`                                | Decimal { mantissa: 42, scale: 0 }                                                                                                                                                                                                                                                                       |
+| BIGINT vs Integer literal | `SELECT * FROM t WHERE bigint_col > 42`              | BIGINT coerced to wider type, comparison succeeds                                                                                                                                                                                                                                                        |
+| DECIMAL vs Float literal  | `SELECT * FROM t WHERE dec_col < 3.14`               | Error: IncomparableTypes (DECIMAL vs Float not comparable)                                                                                                                                                                                                                                               |
+| BIGINT vs DECIMAL         | `SELECT * FROM t WHERE bigint_col = dec_col`         | Error: IncomparableTypes (different numeric types)                                                                                                                                                                                                                                                       |
+| BIGINT vs DFP             | `SELECT * FROM t WHERE bigint_col > dfp_col`         | Error: IncomparableTypes with CAST suggestion                                                                                                                                                                                                                                                            |
+| DECIMAL sqrt              | `SELECT SQRT(DECIMAL '2.00')`                        | `Decimal { mantissa: 141, scale: 2 }` (scale = ⌈(2+1)/2⌉ = 2; sqrt(2) = 1.41421356..., rounded to 2 decimals with RoundHalfEven = 1.41 → mantissa 141)                                                                                                                                                   |
+| DECIMAL sqrt scale        | `SELECT SQRT(DECIMAL '0.000001')`                    | `Decimal { mantissa: 10, scale: 4 }` (scale = ⌈(6+1)/2⌉ = 4; sqrt(10^-6) = 10^-3 = 0.001 exactly, mantissa 10)                                                                                                                                                                                           |
 
 ### Wire Format Test Vectors
 
 **BIGINT Wire Format (RFC-0110 §Canonical Byte Format):**
+
 ```
 [version: 1][sign: 1][reserved: 2][num_limbs: 1][reserved: 3][limb0: 8][limb1: 8]...
 Total: 8 bytes header + 8 × num_limbs bytes
 ```
 
 **Persistence format:** `[tag: u8][BigIntEncoding / DecimalEncoding bytes]`
+
 - Tag 13 = BIGINT, Tag 14 = DECIMAL
 
-| Type | Input | Wire Bytes (hex) | Notes |
-|------|-------|-----------------|-------|
-| BIGINT '1' | BigInt(1) | `[13]01000000010000000100000000000000` | Tag 13 + 1 limb, positive |
-| BIGINT '-1' | BigInt(-1) | `[13]01FF0000010000000100000000000000` | Tag 13 + 1 limb, negative (sign=0xFF) |
-| BIGINT '0' | BigInt(0) | `[13]01000000010000000000000000000000` | Tag 13 + canonical zero |
-| BIGINT '2^64' | BigInt(2^64) | `[13]010000000200000000000000000000000100000000000000` | Tag 13 + 2 limbs |
-| DECIMAL '123.45' | `{mantissa: 12345, scale: 2}` | `[14]000000000000000000000000000030390000000000000002` | Tag 14 + 24-byte decimal |
-| DECIMAL '1' | `{mantissa: 1, scale: 0}` | `[14]000000000000000000000000000000010000000000000000` | Tag 14 + mantissa=1 |
-| DECIMAL '3' | `{mantissa: 3, scale: 0}` | `[14]000000000000000000000000000000030000000000000000` | Tag 14 + mantissa=3 |
-| DECIMAL '0' | `{mantissa: 0, scale: 0}` | `[14]000000000000000000000000000000000000000000000000` | Tag 14 + canonical zero |
-| DECIMAL '-12.3' | `{mantissa: -123, scale: 1}` | `[14]FFFFFFFFFFFFFFFFFFFFFFFFFFFFFF850000000000000001` | Tag 14 + negative mantissa |
+| Type             | Input                         | Wire Bytes (hex)                                       | Notes                                 |
+| ---------------- | ----------------------------- | ------------------------------------------------------ | ------------------------------------- |
+| BIGINT '1'       | BigInt(1)                     | `[13]01000000010000000100000000000000`                 | Tag 13 + 1 limb, positive             |
+| BIGINT '-1'      | BigInt(-1)                    | `[13]01FF0000010000000100000000000000`                 | Tag 13 + 1 limb, negative (sign=0xFF) |
+| BIGINT '0'       | BigInt(0)                     | `[13]01000000010000000000000000000000`                 | Tag 13 + canonical zero               |
+| BIGINT '2^64'    | BigInt(2^64)                  | `[13]010000000200000000000000000000000100000000000000` | Tag 13 + 2 limbs                      |
+| DECIMAL '123.45' | `{mantissa: 12345, scale: 2}` | `[14]000000000000000000000000000030390000000000000002` | Tag 14 + 24-byte decimal              |
+| DECIMAL '1'      | `{mantissa: 1, scale: 0}`     | `[14]000000000000000000000000000000010000000000000000` | Tag 14 + mantissa=1                   |
+| DECIMAL '3'      | `{mantissa: 3, scale: 0}`     | `[14]000000000000000000000000000000030000000000000000` | Tag 14 + mantissa=3                   |
+| DECIMAL '0'      | `{mantissa: 0, scale: 0}`     | `[14]000000000000000000000000000000000000000000000000` | Tag 14 + canonical zero               |
+| DECIMAL '-12.3'  | `{mantissa: -123, scale: 1}`  | `[14]FFFFFFFFFFFFFFFFFFFFFFFFFFFFFF850000000000000001` | Tag 14 + negative mantissa            |
 
 ---
 
@@ -1308,15 +1316,15 @@ Total: 8 bytes header + 8 × num_limbs bytes
 
 ### Stoolap
 
-| File | Change |
-|------|--------|
-| `src/core/types.rs` | Add `DataType::Bigint = 13`, `DataType::Decimal = 14`, update `is_numeric()`, `from_u8()`, `FromStr` (with version gating), `Display` |
-| `src/core/value.rs` | Add `Value::bigint()`, `Value::decimal()`, extractors, `from_typed()` (returns `Result<Value, Error>` for BIGINT/DECIMAL — callers must handle parse errors), `coerce_to_type()`, `cast_to_type()`, `Display`, `as_string()`, `as_int64()`, `as_float64()`, `compare_same_type()` |
-| `src/core/schema.rs` | Add `SchemaColumn.decimal_scale: Option<u8>`, `set_last_decimal_scale()` builder |
-| `src/storage/mvcc/persistence.rs` | Add `NUMERIC_SPEC_VERSION`, wire tags 13/14, header read/write, `from_str_versioned()` dispatcher |
-| `src/storage/mvcc/table.rs` | Add `auto_select_index_type()` cases for Bigint/Decimal |
-| `src/executor/expression/vm.rs` | Add BIGINT/DECIMAL operation dispatch, gas metering |
-| `src/executor/expression/ops.rs` | Add BIGINT/DECIMAL operators |
+| File                              | Change                                                                                                                                                                                                                                                                            |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/core/types.rs`               | Add `DataType::Bigint = 13`, `DataType::Decimal = 14`, update `is_numeric()`, `from_u8()`, `FromStr` (with version gating), `Display`                                                                                                                                             |
+| `src/core/value.rs`               | Add `Value::bigint()`, `Value::decimal()`, extractors, `from_typed()` (returns `Result<Value, Error>` for BIGINT/DECIMAL — callers must handle parse errors), `coerce_to_type()`, `cast_to_type()`, `Display`, `as_string()`, `as_int64()`, `as_float64()`, `compare_same_type()` |
+| `src/core/schema.rs`              | Add `SchemaColumn.decimal_scale: Option<u8>`, `set_last_decimal_scale()` builder                                                                                                                                                                                                  |
+| `src/storage/mvcc/persistence.rs` | Add `NUMERIC_SPEC_VERSION`, wire tags 13/14, header read/write, `from_str_versioned()` dispatcher                                                                                                                                                                                 |
+| `src/storage/mvcc/table.rs`       | Add `auto_select_index_type()` cases for Bigint/Decimal                                                                                                                                                                                                                           |
+| `src/executor/expression/vm.rs`   | Add BIGINT/DECIMAL operation dispatch, gas metering                                                                                                                                                                                                                               |
+| `src/executor/expression/ops.rs`  | Add BIGINT/DECIMAL operators                                                                                                                                                                                                                                                      |
 
 ---
 
@@ -1364,32 +1372,32 @@ Re-implementing the algorithms would introduce consensus risk. The determin crat
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.23 | 2026-04-11 | Round 12 review fixes: (1) DECIMAL wire format test vectors corrected to 24 bytes (removed extra byte from '123.45', '1', '3', '0', '-12.3' entries); (2) BIGINT lexicographic encoding corrected: format notation changed from `8 × (64 − N)` to `8 × (63 − N)`, yielding 513 bytes constant (not 521); added note distinguishing lexicographic key format from serialized persistence format. |
-| 1.22 | 2026-04-11 | Round 11 review fixes: (1) F1: DECIMAL(p,s) DDL test vector expected value updated to `SchemaColumn.decimal_scale=Some(2)` — consistent with field type `Option<u8>`; (2) F2: DECIMAL sqrt test vectors now include exact mantissa values (`Decimal { mantissa: 141, scale: 2 }` and `Decimal { mantissa: 10, scale: 4 }`) with RoundHalfEven noted. |
-| 1.21 | 2026-04-11 | Round 10 review fixes: (1) R1: Key Files table `schema.rs` row updated to `decimal_scale: Option<u8>` — matches §6.9 and Phase 1 checklist; (2) R2: Fixed `stoolap_parse_decimal` doc comment — `DecimalError::ConversionLoss` → `DecimalError::InvalidScale`; (3) R3: Added Phase 4 integration testing item to verify `BigInt::from_str("-0")` produces canonical zero. |
-| 1.20 | 2026-04-11 | Round 9 review fixes: (1) N1: `from_typed()` else arm for BIGINT/DECIMAL returns `Ok(Value::Null(data_type))` — type mismatches produce NULL, not errors; parse failures for String input return errors; (2) N2: DECIMAL(p,s) parsing table uses `Some(0)`, `Some(2)` consistently with `decimal_scale: Option<u8>`; Phase 1 checklist updated; (3) N3: Added wildcard arms with `debug_assert!` to `Ord::cmp` inner matches (§6.11), consistent with §6.6; (4) N4: Wire bytes added for DECIMAL '1' and DECIMAL '3'; (5) N5: Added zero canonicalization note in §6.9 — `Decimal::new(0, s)` always yields `{0, 0}`; (6) N6: Added `from_typed()` return type note to Key Files table. |
-| 1.19 | 2026-04-11 | Round 8 fixes: C1 zero limb explicit; C2 from_typed error not NULL; C3 i128 overflow DecimalError::Overflow; H1 precision deviation documented; H2 debug_assert Ord fallback; H3 gas benchmarking task; H4 wildcard arms; M1 AVG scale min(36,s+6); M2 Display limitation; M3 coercion scope clarified; M4 decimal_scale Option<u8>; M5 from_str comment; L1 exact DIV test; L2 Ord divergence note; L3 is_orderable task; L4 Decimal::new(0,s) canonicalization |
-| 1.18 | 2026-04-11 | Round 7 review: zero byte 0 description corrected — zero has `byte 0 = 0x81` (1 limb \| 0x80), same as BIGINT '1'; zero sorts before '1' via limb data tiebreak; added zero to encoding examples. |
-| 1.17 | 2026-04-11 | Round 6 review fixes: (1) CRITICAL: BIGINT lexicographic encoding fixed — sign bit now encoded in byte 0 via `num_limbs | 0x80` (positive) / `0x80 - num_limbs` (negative), fixing wrong sort order for mixed-sign comparisons; (2) BIGINT SUM overflow corrected: `DecimalError::Overflow` → `BigIntError::OutOfRange`; (3) BIGINT AVG deferred: returns `Error::NotSupported` until RFC-0202-B implements internal BIGINT→DECIMAL conversion; (4) WAL corrupt segment handling: skip segment entirely on partial write/checksum failure; (5) DECIMAL AVG gas clarified: input column scale not result scale; (6) DECIMAL INSERT scale: fewer places stored as-is (no padding); (7) BIGINT deserialize comment clarified: caller must slice input; (8) Future RFC DIV gas compatibility note added. |
-| 1.16 | 2026-04-11 | Round 5 review follow-up: (1) WAL atomicity text made recovery replay assumption explicit; (2) Phase 2 lexicographic encoding task marked **blocking for production deployment**; (3) DECIMAL DIV gas note clarified: gas based on input operand scales, not internally computed target scale; (4) BIGINT→DECIMAL coercion error corrected: `Error::UnsupportedCoercion` → `Error::NotSupported` (verified in stoolap error.rs). |
-| 1.15 | 2026-04-10 | Round 5 review fixes: (1) CRITICAL: Added persistence vs. index encoding distinction paragraph — clarifies §5 wire format (raw 24-byte) and §6.11 lexicographic encoding (transformed) serve different purposes; (2) CRITICAL: Added WAL atomicity note to §4a — header upgrade and DDL commit are in same WAL transaction, no crash recovery gap; (3) HIGH: Clarified storage overhead (521 bytes serialized) is distinct from in-memory CompactArc overhead; (4) MAJOR: Added limb count/scale extraction note for gas — num_limbs from BigIntEncoding header, scale from byte 23; (5) MODERATE: Added NULL three-valued logic specifics — NULL comparison, IS NULL, ORDER BY NULL, GROUP BY NULL. |
-| 1.14 | 2026-04-10 | Round 4 review fixes: (1) CRITICAL: Fixed DECIMAL lexicographic zero encoding description — zero sorts between negatives and positives, not below all negatives; confirmed canonicalization of negative zero; (2) CRITICAL: BIGINT lexicographic encoding changed to length-prefix format with 64-limb fixed-width padding — specifies comparison algorithm for variable-length keys; (3) BIGINT SUM overflow boundary corrected from ±(2^4095) to ±(2^4096 − 1) matching MAX_BIGINT_BITS=4096; (4) Added Phase 2 task for lexicographic key encoding implementation and REINDEX; (5) Added DECIMAL SQRT test vectors with result scale verification; (6) EXP removal (v1.12) is documented in v1.12 changelog entry. |
-| 1.13 | 2026-04-10 | Round 3 review follow-up fixes: (1) Wire format test vectors updated to show full persistence bytes `[tag][payload]`; (2) Added DECIMAL lexicographic encoding sign-transformation spec with zero-handling and migration note; (3) Added pre-flight bounds check note to gas model; (4) Added cross-type comparison test vectors (BIGINT vs Integer, DECIMAL vs Float, BIGINT vs DECIMAL, BIGINT vs DFP). |
-| 1.12 | 2026-04-10 | Moved aggregate functions (SUM, AVG, COUNT, MIN, MAX) from Future Work to §7a (Aggregate Operations). Added result types for BIGINT/DECIMAL aggregates, overflow behavior, and per-row gas formulas. Removed duplicate aggregate gas discussion from §8. Updated Future Work to remove resolved items. |
-| 1.11 | 2026-04-10 | Adversarial review round 10 (second pass): CRITICAL FIXES: (1) Added BIGINT EXP operation to §7 with gas formula; fixed test vectors to use `EXP` not `^`; (2) Changed BIGINT→DECIMAL coercion to return error not NULL (silent failure blocked); (3) Added header version upgrade requirement before DDL with new type keywords (schema consistency); (4) §6.15 exports now resolved (commit 8cd4f89); DECIMALERROR::ParseError gap resolved. MAJOR: (5) Added division scale `+6` rationale; (6) Changed Ord perf from "acceptable" to "required before production" with lexicographic encoding; (7) Improved DFP/Quant error message to suggest explicit CAST; (8) Added serialization/conversion gas estimates; (9) Changed Error::Internal to Error::DataCorruption for corrupted values. MINOR: (10) Documented SQL dialect deviation for bare dot decimal input; (11) Added RFC-0201 as explicit dependency (Blob type); (12) Added CompactArc documentation; (13) Added wire tag ordering debug assertion recommendation. |
-| 1.10 | 2026-03-31 | Adversarial review round 9: M1 (§6.8a: added `stoolap_parse_decimal` function specification), M2 (§6.8a: scientific notation rejection rationale), M3 (§2: added `decimal_cmp` to import list), M4 (§Future Work: removed duplicate per-query gas budget), L1 (§9: BIGINT overflow test vector corrected), L2 (§9: added SHL/SHR test vectors), L3 (§9: leading zeros clarification). |
-| 1.9 | 2026-03-31 | Adversarial review round 8: H1 (§6.6, §6.11: compare wildcard → explicit 1), H2 (§7: `decimal_div` param `_unused_target_scale` → `_target_scale`), H3 (§8: gas table header clarified), M4 (§1: parser integration note), M5 (§4a: WAL header coupling note). |
-| 1.8 | 2026-03-31 | Adversarial review round 7: C3 (NUMERIC_SPEC_VERSION wire format), C4 (§6.15 verified), H1 (DECIMAL wire format corrected), H2 (gas formulas verified), M1 (§6.12 cross-type comparison), M2 (§6.9 INSERT scale), M5 (§1 FromStr distinction), M3 (§6.3 NULL display), M4 (§9 wire test vectors), L2 (RFC-0130 reference removed). |
-| 1.7 | 2026-03-31 | Adversarial review round 6: R6-1 (§6.13 `bi.to_i64()` → `i64::try_from(bi).ok()`), R6-2 (§6.15 + §9 `TryFromBigIntError` → `BigIntError::OutOfRange`), R6-3 (§6.15 `BigIntEncoding` removed from export list), R6-5 (§6.15 `bigint_shl`/`bigint_shr` "partially exported" → "not exported at all"). |
-| 1.6 | 2026-03-30 | Adversarial review round 5: C-7 (SchemaBuilder consuming builder pattern — §6.9), C-8 (public API exports are compile-blocking prerequisites — §6.15), C-9 (decimal_div third param unused, pass 0 — §7), H-7 (DECIMAL/NUMERIC removal from Float match arm — §1), H-9 (bigint_to_decimal(i128) scope clarification — §6.7), M-9 (stoolap_parse_decimal edge cases — §6.8), M-10 (DECIMAL→f64 precision loss note — §6.13), M-11 (BTree lexicographic encoding recommendation — §6.11), M-12 (DFP/Quant cross-type panic filed as follow-up — §6.12), M-13 (DECIMAL '1.50' test vector clarification — §9), L-7 (discriminant 11 comment clarity — §1), L-8 (DIV/MOD gas formula fix 12,338 — §8). |
-| 1.5 | 2026-03-30 | Adversarial review round 4: H2 (as_string() for BIGINT/DECIMAL — §6.4), M4 (SchemaColumn builder method — §6.9), M5 (test vector: DECIMAL '1.50' canonicalizes, not rejected), L4 (as_int64/as_float64 extension — §6.13), L5 (compare_same_type unwrap→ok_or — §6.6), L6 (PartialEq consistency note — §6.14), X-3 (public API export requirements — §6.15). Renumbered §6.4–§6.15. |
-| 1.4 | 2026-03-30 | Adversarial review round 3: C1 (Ord numeric dispatch for BIGINT/DECIMAL), C2 (cross-type comparison — coerce to wider type), H1 (BIGINT deserialization — read header for exact length), M1 (from_str_versioned starts_with for parameterized types), M2 (test vector 4.0→4 canonical), M3 (per-block→per-query gas), L1 (FromStr import), L2 (rounded spec), L3 (coercion dependency note). New §6.10 Ord, §6.11 Cross-Type Comparison. |
-| 1.3 | 2026-03-30 | Adversarial review round 2: C1-C6 (i32→Ordering conversion, stoolap_parse_decimal, decimal_to_string, BigInt::from, formula-based gas), H1-H5 (ownership annotations, Result wrapping, into_coerce note, serialization order), M1-M8 (imports, test vectors, extraction consistency, wire format notes, dead parameter, gas metering, aggregate gas) |
-| 1.2 | 2026-03-30 | Adversarial review fixes: C1 rebuttal (wire format verified correct), C2 fix (free function API), C3 fix (NUMERIC_SPEC_VERSION migration gate), C4 fix (DataType comment). Added: persistence wire format (§5), type system integration (§6 — is_numeric, orderable, Display, NULL, compare, coercion, from_typed, SchemaColumn, index selection), gas metering (§8), expanded test vectors (27 entries), storage overhead note, SQL literal syntax, Mermaid diagram |
-| 1.1 | 2026-03-29 | Fix wire tag conflicts: Bigint=13, Decimal=14 (avoid conflicts with Vector=10, Extension=11, Blob=12) |
-| 1.0 | 2026-03-28 | Initial draft — core types only, conversions separated to RFC-0202-B |
+| Version | Date       | Changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1.23    | 2026-04-11 | Round 12 review fixes: (1) DECIMAL wire format test vectors corrected to 24 bytes (removed extra byte from '123.45', '1', '3', '0', '-12.3' entries); (2) BIGINT lexicographic encoding corrected: format notation changed from `8 × (64 − N)` to `8 × (63 − N)`, yielding 513 bytes constant (not 521); added note distinguishing lexicographic key format from serialized persistence format.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 1.22    | 2026-04-11 | Round 11 review fixes: (1) F1: DECIMAL(p,s) DDL test vector expected value updated to `SchemaColumn.decimal_scale=Some(2)` — consistent with field type `Option<u8>`; (2) F2: DECIMAL sqrt test vectors now include exact mantissa values (`Decimal { mantissa: 141, scale: 2 }` and `Decimal { mantissa: 10, scale: 4 }`) with RoundHalfEven noted.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 1.21    | 2026-04-11 | Round 10 review fixes: (1) R1: Key Files table `schema.rs` row updated to `decimal_scale: Option<u8>` — matches §6.9 and Phase 1 checklist; (2) R2: Fixed `stoolap_parse_decimal` doc comment — `DecimalError::ConversionLoss` → `DecimalError::InvalidScale`; (3) R3: Added Phase 4 integration testing item to verify `BigInt::from_str("-0")` produces canonical zero.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 1.20    | 2026-04-11 | Round 9 review fixes: (1) N1: `from_typed()` else arm for BIGINT/DECIMAL returns `Ok(Value::Null(data_type))` — type mismatches produce NULL, not errors; parse failures for String input return errors; (2) N2: DECIMAL(p,s) parsing table uses `Some(0)`, `Some(2)` consistently with `decimal_scale: Option<u8>`; Phase 1 checklist updated; (3) N3: Added wildcard arms with `debug_assert!` to `Ord::cmp` inner matches (§6.11), consistent with §6.6; (4) N4: Wire bytes added for DECIMAL '1' and DECIMAL '3'; (5) N5: Added zero canonicalization note in §6.9 — `Decimal::new(0, s)` always yields `{0, 0}`; (6) N6: Added `from_typed()` return type note to Key Files table.                                                                                                                                                                                                                                                                                                                                           |
+| 1.19    | 2026-04-11 | Round 8 fixes: C1 zero limb explicit; C2 from_typed error not NULL; C3 i128 overflow DecimalError::Overflow; H1 precision deviation documented; H2 debug_assert Ord fallback; H3 gas benchmarking task; H4 wildcard arms; M1 AVG scale min(36,s+6); M2 Display limitation; M3 coercion scope clarified; M4 decimal_scale Option<u8>; M5 from_str comment; L1 exact DIV test; L2 Ord divergence note; L3 is_orderable task; L4 Decimal::new(0,s) canonicalization                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 1.18    | 2026-04-11 | Round 7 review: zero byte 0 description corrected — zero has `byte 0 = 0x81` (1 limb \| 0x80), same as BIGINT '1'; zero sorts before '1' via limb data tiebreak; added zero to encoding examples.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 1.17    | 2026-04-11 | Round 6 review fixes: (1) CRITICAL: BIGINT lexicographic encoding fixed — sign bit now encoded in byte 0 via `num_limbs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | 0x80`(positive) /`0x80 - num_limbs`(negative), fixing wrong sort order for mixed-sign comparisons; (2) BIGINT SUM overflow corrected:`DecimalError::Overflow`→`BigIntError::OutOfRange`; (3) BIGINT AVG deferred: returns `Error::NotSupported` until RFC-0202-B implements internal BIGINT→DECIMAL conversion; (4) WAL corrupt segment handling: skip segment entirely on partial write/checksum failure; (5) DECIMAL AVG gas clarified: input column scale not result scale; (6) DECIMAL INSERT scale: fewer places stored as-is (no padding); (7) BIGINT deserialize comment clarified: caller must slice input; (8) Future RFC DIV gas compatibility note added. |
+| 1.16    | 2026-04-11 | Round 5 review follow-up: (1) WAL atomicity text made recovery replay assumption explicit; (2) Phase 2 lexicographic encoding task marked **blocking for production deployment**; (3) DECIMAL DIV gas note clarified: gas based on input operand scales, not internally computed target scale; (4) BIGINT→DECIMAL coercion error corrected: `Error::UnsupportedCoercion` → `Error::NotSupported` (verified in stoolap error.rs).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 1.15    | 2026-04-10 | Round 5 review fixes: (1) CRITICAL: Added persistence vs. index encoding distinction paragraph — clarifies §5 wire format (raw 24-byte) and §6.11 lexicographic encoding (transformed) serve different purposes; (2) CRITICAL: Added WAL atomicity note to §4a — header upgrade and DDL commit are in same WAL transaction, no crash recovery gap; (3) HIGH: Clarified storage overhead (521 bytes serialized) is distinct from in-memory CompactArc overhead; (4) MAJOR: Added limb count/scale extraction note for gas — num_limbs from BigIntEncoding header, scale from byte 23; (5) MODERATE: Added NULL three-valued logic specifics — NULL comparison, IS NULL, ORDER BY NULL, GROUP BY NULL.                                                                                                                                                                                                                                                                                                                              |
+| 1.14    | 2026-04-10 | Round 4 review fixes: (1) CRITICAL: Fixed DECIMAL lexicographic zero encoding description — zero sorts between negatives and positives, not below all negatives; confirmed canonicalization of negative zero; (2) CRITICAL: BIGINT lexicographic encoding changed to length-prefix format with 64-limb fixed-width padding — specifies comparison algorithm for variable-length keys; (3) BIGINT SUM overflow boundary corrected from ±(2^4095) to ±(2^4096 − 1) matching MAX_BIGINT_BITS=4096; (4) Added Phase 2 task for lexicographic key encoding implementation and REINDEX; (5) Added DECIMAL SQRT test vectors with result scale verification; (6) EXP removal (v1.12) is documented in v1.12 changelog entry.                                                                                                                                                                                                                                                                                                             |
+| 1.13    | 2026-04-10 | Round 3 review follow-up fixes: (1) Wire format test vectors updated to show full persistence bytes `[tag][payload]`; (2) Added DECIMAL lexicographic encoding sign-transformation spec with zero-handling and migration note; (3) Added pre-flight bounds check note to gas model; (4) Added cross-type comparison test vectors (BIGINT vs Integer, DECIMAL vs Float, BIGINT vs DECIMAL, BIGINT vs DFP).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 1.12    | 2026-04-10 | Moved aggregate functions (SUM, AVG, COUNT, MIN, MAX) from Future Work to §7a (Aggregate Operations). Added result types for BIGINT/DECIMAL aggregates, overflow behavior, and per-row gas formulas. Removed duplicate aggregate gas discussion from §8. Updated Future Work to remove resolved items.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 1.11    | 2026-04-10 | Adversarial review round 10 (second pass): CRITICAL FIXES: (1) Added BIGINT EXP operation to §7 with gas formula; fixed test vectors to use `EXP` not `^`; (2) Changed BIGINT→DECIMAL coercion to return error not NULL (silent failure blocked); (3) Added header version upgrade requirement before DDL with new type keywords (schema consistency); (4) §6.15 exports now resolved (commit 8cd4f89); DECIMALERROR::ParseError gap resolved. MAJOR: (5) Added division scale `+6` rationale; (6) Changed Ord perf from "acceptable" to "required before production" with lexicographic encoding; (7) Improved DFP/Quant error message to suggest explicit CAST; (8) Added serialization/conversion gas estimates; (9) Changed Error::Internal to Error::DataCorruption for corrupted values. MINOR: (10) Documented SQL dialect deviation for bare dot decimal input; (11) Added RFC-0201 as explicit dependency (Blob type); (12) Added CompactArc documentation; (13) Added wire tag ordering debug assertion recommendation. |
+| 1.10    | 2026-03-31 | Adversarial review round 9: M1 (§6.8a: added `stoolap_parse_decimal` function specification), M2 (§6.8a: scientific notation rejection rationale), M3 (§2: added `decimal_cmp` to import list), M4 (§Future Work: removed duplicate per-query gas budget), L1 (§9: BIGINT overflow test vector corrected), L2 (§9: added SHL/SHR test vectors), L3 (§9: leading zeros clarification).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 1.9     | 2026-03-31 | Adversarial review round 8: H1 (§6.6, §6.11: compare wildcard → explicit 1), H2 (§7: `decimal_div` param `_unused_target_scale` → `_target_scale`), H3 (§8: gas table header clarified), M4 (§1: parser integration note), M5 (§4a: WAL header coupling note).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 1.8     | 2026-03-31 | Adversarial review round 7: C3 (NUMERIC_SPEC_VERSION wire format), C4 (§6.15 verified), H1 (DECIMAL wire format corrected), H2 (gas formulas verified), M1 (§6.12 cross-type comparison), M2 (§6.9 INSERT scale), M5 (§1 FromStr distinction), M3 (§6.3 NULL display), M4 (§9 wire test vectors), L2 (RFC-0130 reference removed).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 1.7     | 2026-03-31 | Adversarial review round 6: R6-1 (§6.13 `bi.to_i64()` → `i64::try_from(bi).ok()`), R6-2 (§6.15 + §9 `TryFromBigIntError` → `BigIntError::OutOfRange`), R6-3 (§6.15 `BigIntEncoding` removed from export list), R6-5 (§6.15 `bigint_shl`/`bigint_shr` "partially exported" → "not exported at all").                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 1.6     | 2026-03-30 | Adversarial review round 5: C-7 (SchemaBuilder consuming builder pattern — §6.9), C-8 (public API exports are compile-blocking prerequisites — §6.15), C-9 (decimal_div third param unused, pass 0 — §7), H-7 (DECIMAL/NUMERIC removal from Float match arm — §1), H-9 (bigint_to_decimal(i128) scope clarification — §6.7), M-9 (stoolap_parse_decimal edge cases — §6.8), M-10 (DECIMAL→f64 precision loss note — §6.13), M-11 (BTree lexicographic encoding recommendation — §6.11), M-12 (DFP/Quant cross-type panic filed as follow-up — §6.12), M-13 (DECIMAL '1.50' test vector clarification — §9), L-7 (discriminant 11 comment clarity — §1), L-8 (DIV/MOD gas formula fix 12,338 — §8).                                                                                                                                                                                                                                                                                                                                |
+| 1.5     | 2026-03-30 | Adversarial review round 4: H2 (as_string() for BIGINT/DECIMAL — §6.4), M4 (SchemaColumn builder method — §6.9), M5 (test vector: DECIMAL '1.50' canonicalizes, not rejected), L4 (as_int64/as_float64 extension — §6.13), L5 (compare_same_type unwrap→ok_or — §6.6), L6 (PartialEq consistency note — §6.14), X-3 (public API export requirements — §6.15). Renumbered §6.4–§6.15.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 1.4     | 2026-03-30 | Adversarial review round 3: C1 (Ord numeric dispatch for BIGINT/DECIMAL), C2 (cross-type comparison — coerce to wider type), H1 (BIGINT deserialization — read header for exact length), M1 (from_str_versioned starts_with for parameterized types), M2 (test vector 4.0→4 canonical), M3 (per-block→per-query gas), L1 (FromStr import), L2 (rounded spec), L3 (coercion dependency note). New §6.10 Ord, §6.11 Cross-Type Comparison.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 1.3     | 2026-03-30 | Adversarial review round 2: C1-C6 (i32→Ordering conversion, stoolap_parse_decimal, decimal_to_string, BigInt::from, formula-based gas), H1-H5 (ownership annotations, Result wrapping, into_coerce note, serialization order), M1-M8 (imports, test vectors, extraction consistency, wire format notes, dead parameter, gas metering, aggregate gas)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 1.2     | 2026-03-30 | Adversarial review fixes: C1 rebuttal (wire format verified correct), C2 fix (free function API), C3 fix (NUMERIC_SPEC_VERSION migration gate), C4 fix (DataType comment). Added: persistence wire format (§5), type system integration (§6 — is_numeric, orderable, Display, NULL, compare, coercion, from_typed, SchemaColumn, index selection), gas metering (§8), expanded test vectors (27 entries), storage overhead note, SQL literal syntax, Mermaid diagram                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 1.1     | 2026-03-29 | Fix wire tag conflicts: Bigint=13, Decimal=14 (avoid conflicts with Vector=10, Extension=11, Blob=12)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 1.0     | 2026-03-28 | Initial draft — core types only, conversions separated to RFC-0202-B                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 ---
 

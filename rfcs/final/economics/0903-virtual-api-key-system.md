@@ -73,7 +73,7 @@ The enhanced quota router must support multiple users with:
 Reference LiteLLM's key management (`litellm/proxy/_types.py`):
 
 - **Key Types:** `LiteLLMKeyType` enum - LLM_API, MANAGEMENT, READ_ONLY, DEFAULT
-- **Key hashing:** Uses SHA-256 (`hash_token()` in `_types.py:211-217`)
+- **Key hashing:** Uses SHA-256 (`hash_token()` in `_types.py`)
 - **GenerateKeyRequest:** key, key_type, auto_rotate, rotation_interval, organization_id, project_id, budget, rpm/tpm limits
 - **GenerateKeyResponse:** key, expires, user_id, token_id, organization_id
 - **Rate limits:** `rpm_limit`, `tpm_limit` fields directly on keys
@@ -472,6 +472,7 @@ ALTER DATABASE quota_router SET DEFAULT_TRANSACTION_ISOLATION TO 'SERIALIZABLE';
 ```
 
 **Canonical Approach:** Use the ledger-based `record_spend()` function from the Ledger-Based Architecture section. It uses:
+
 - `FOR UPDATE` row locking to prevent race conditions
 - `SUM(cost_amount) FROM spend_ledger` for deterministic accounting
 - No mutable `current_spend` counter
@@ -1375,6 +1376,7 @@ Two routers processing the same request MUST produce identical token counts, oth
 **The token drift problem:**
 
 Different routers may measure tokens differently due to:
+
 - Tokenizer version differences
 - Whitespace normalization differences
 - Streaming chunk boundary differences
@@ -1583,6 +1585,7 @@ request_id UNIQUE constraint ensures duplicate requests cannot double-charge.
 ```
 
 This is already enforced by:
+
 ```sql
 -- Scoped per key_id for multi-tenant safety
 request_id TEXT NOT NULL,
@@ -1773,6 +1776,7 @@ derive balances
 ```
 
 This eliminates:
+
 - Multiple counters to maintain
 - Reconciliation complexity
 - Possible drift between counters and events
@@ -2015,6 +2019,7 @@ Result: correct (no overspend)
 Note: Ordering by `created_at` (chronology) then `event_id` (tiebreaker) ensures deterministic replay. `event_id` alone is not chronological (SHA256 ordering is arbitrary).
 
 This is extremely useful for:
+
 - Audits
 - Dispute resolution
 - Fraud detection
@@ -2282,9 +2287,9 @@ pub fn check_team_key_limit(db: &Database, team_id: &Uuid) -> Result<(), KeyErro
 - **v35 (2026-04-29):** **CRITICAL CONSTRAINT: Rust-owns-all-heavy-lifting.** Added top-level architectural constraint establishing all heavy lifting (routing, caching, telemetry, concurrency, state management) in Rust core. Each language binding is thin marshaling only.
 
 - **v34 (2026-04-24):** Fix Critical compilation bug — replace `uuid_to_blob_16(&id)` with `id.to_vec()` for `tokenizer_id` field in all INSERT calls:
-  - `record_spend()` at line 1657 — was `uuid_to_blob_16(&id)` expecting `Uuid`, now `id.to_vec()` for `[u8; 16]`
-  - `record_spend_with_team()` at line 1875 — same fix
-  - `record_spend_with_event()` at line 1966 — same fix (deprecated but still present)
+  - `record_spend()` — was `uuid_to_blob_16(&id)` expecting `Uuid`, now `id.to_vec()` for `[u8; 16]`
+  - `record_spend_with_team()` — same fix
+  - `record_spend_with_event()` — same fix (deprecated but still present)
   - `[u8; 16].to_vec()` copies raw bytes into `Vec<u8>` for `BYTEA(16)` / `BLOB(16)` storage
 
 - **v33 (2026-04-24):** Correct tokenizer_id type — revert from `Option<Uuid>` to `Option<[u8; 16]>` per RFC-0909 and RFC-0903-B1:
@@ -2305,14 +2310,14 @@ pub fn check_team_key_limit(db: &Database, team_id: &Uuid) -> Result<(), KeyErro
   - `encode_request_id()` return type changed from `Vec<u8>` → `[u8; 32]` to match RFC-0903-B1
   - Added `KeyError::OctoWNotEnabled` variant (referenced in RFC-0904 F3 but missing from enum)
   - Added `hex_to_blob_32()` and `encode_request_id()` helper functions (RFC-0903-B1 §event_id, §request_id)
-  - Also fixed deprecated `record_spend_with_event()` at line 1642-1645
+  - Also fixed deprecated `record_spend_with_event()`
 
 - **v30 (2026-04-20):** Fix C2 — SpendEvent.team_id type mismatch with RFC-0909
   - Changed `team_id: Option<String>` → `team_id: Option<Uuid>` in SpendEvent struct
   - Changed `team_id: &str` → `team_id: &Uuid` in `record_spend_with_team()` function signature
   - Updated all params![] bindings to use `uuid_to_blob_16()` / `uuid_to_blob_32()` helper functions for BLOB storage
   - Changed `tokenizer_version` → `tokenizer_id` in INSERT statements (FK to tokenizers table per RFC-0903-B1)
-  - Added `uuid_to_blob_16()` and `uuid_to_blob_32()` helper functions at line 952
+  - Added `uuid_to_blob_16()` and `uuid_to_blob_32()` helper functions
   - This aligns RFC-0903 Final with RFC-0909's `Option<uuid::Uuid>` type, fixing the type mismatch found in adversarial review
 
 - **v29 (2026-03-13):** Stoolap compatibility
@@ -2373,7 +2378,7 @@ pub fn check_team_key_limit(db: &Database, team_id: &Uuid) -> Result<(), KeyErro
   - Fixed rotate_key to call Utc::now() once and reuse timestamp
 
 - **v22 (2026-03-13):** Ledger consistency fixes
-  - Removed `current_spend` from DDL (lines 96-127) - derived from ledger
+  - Removed `current_spend` from DDL - derived from ledger
   - Added DERIVED CACHE comments to ApiKey and Team structs
   - Fixed KeyError enum: changed i64 to u64, added TeamKeyLimitExceeded variant
   - Removed dead code after `unimplemented!()` in cleanup_stale_buckets

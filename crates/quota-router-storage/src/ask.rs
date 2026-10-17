@@ -1,0 +1,2161 @@
+//! Ask + PricingAxis + AskId types (RFC-0959 §Data Structures).
+//!
+//! Ask = a node's published pricing offer. `AskId = BLAKE3(canonical_ser(asker_did || model || axes_hash || nonce))`.
+//! PricingAxis registry holds per-axis rate tables keyed by model.
+
+use std::collections::HashMap;
+
+use ed25519_dalek::{Signer, SigningKey};
+pub use octo_determin::Dqa;
+use octo_determin::DqaError;
+use serde::{Deserialize, Serialize};
+
+// `pub use octo_determin::Dqa;` (mission 0862-c9 RETIRED —
+// `MicroOctoW` alias killed project-wide). `Dqa` is now imported
+// under its canonical name directly from the Layer A substrate;
+// no local `pub type Dqa = ...;` re-alias exists. The `pub`
+// re-export preserves ergonomic access via `crate::ask::Dqa`
+// for in-crate consumers (the original pre-retirement path was
+// `crate::ask::MicroOCTO_W`).
+
+/// Display-unit OCTO-W (RFC-0959 §Data Structures type-distinct newtype).
+///
+/// NOT a type alias — this is a distinct newtype to prevent silent unit-conversion
+/// bugs (R1 critical fix; type aliases permitted silently otherwise).
+/// `to_micro()` / `from_micro()` enforce the conversion at the ingress boundary.
+///
+/// S4 codemod: backing field is `Dqa` (deterministic-floating-point). `Serialize`
+/// / `Deserialize` are manual impls via `DqaEncoding` 16-byte BE wire format
+/// (per `crate::dqa_serde`).
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct OCTO_WAmount(pub Dqa);
+
+/// On-wire micro-OCTO-W newtype. Pairs with [`OCTO_WAmount`] for type-safe display ↔ wire.
+#[allow(non_camel_case_types)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DqaNewtype(pub Dqa);
+
+impl OCTO_WAmount {
+    /// 1 OCTO-W = 1_000_000 micro-OCTO-W. Scale 0 (integer wire form).
+    pub const MICRO_PER_OCTOW: Dqa = Dqa {
+        value: 1_000_000,
+        scale: 0,
+    };
+
+    /// Convert display-unit OCTO-W to on-wire micro-OCTO-W.
+    /// Multiply by `MICRO_PER_OCTOW` (scale 0 × scale 0 = scale 0).
+    #[must_use]
+    pub fn to_micro(self) -> Dqa {
+        self.0
+            .multiply(Self::MICRO_PER_OCTOW)
+            .expect("non-overflow")
+    }
+
+    /// Construct from on-wire micro-OCTO-W. Returns `None` if not aligned.
+    #[must_use]
+    pub fn from_micro(micro: Dqa) -> Option<Self> {
+        // Aligned iff `micro / MICRO_PER_OCTOW` has no remainder.
+        let ratio = micro.divide(Self::MICRO_PER_OCTOW).ok()?;
+        let back = ratio.multiply(Self::MICRO_PER_OCTOW).ok()?;
+        if back == micro {
+            Some(Self(ratio))
+        } else {
+            None
+        }
+    }
+}
+
+/// Manual `Serialize` impl for `OCTO_WAmount` via `DqaEncoding` (16-byte BE).
+impl Serialize for OCTO_WAmount {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let bytes = crate::dqa_serde::dqa_to_bytes(&self.0);
+        s.serialize_bytes(&bytes)
+    }
+}
+
+impl<'de> Deserialize<'de> for OCTO_WAmount {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let bytes: Vec<u8> = serde::Deserialize::deserialize(d)?;
+        crate::dqa_serde::dqa_from_bytes(&bytes)
+            .map(Self)
+            .map_err(|e| Error::custom(format!("OCTO_WAmount decode: {e:?}")))
+    }
+}
+
+impl Serialize for DqaNewtype {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let bytes = crate::dqa_serde::dqa_to_bytes(&self.0);
+        s.serialize_bytes(&bytes)
+    }
+}
+
+impl<'de> Deserialize<'de> for DqaNewtype {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let bytes: Vec<u8> = serde::Deserialize::deserialize(d)?;
+        crate::dqa_serde::dqa_from_bytes(&bytes)
+            .map(Self)
+            .map_err(|e| Error::custom(format!("DqaNewtype decode: {e:?}")))
+    }
+}
+
+/// Helper: construct a `Dqa` from a `u128` literal at scale 0 (integer-valued).
+/// Panics on overflow (i64 max ~9.2e18; values above must construct explicitly).
+#[inline]
+#[must_use]
+pub const fn dqa_int(value: i64) -> Dqa {
+    Dqa { value, scale: 0 }
+}
+
+/// Free trait helper: arithmetic on `Dqa` returns `Result`; this crate prefers
+/// the `expect` form for known-bounded supply-side calculations.
+///
+/// The bounds are NOT known. `cost_for` multiplies caller-supplied units by
+/// a caller-supplied rate, and `settlement_cost` sums one such product per
+/// consumed axis, so a legitimate set of large rates overflows `i64` and
+/// this aborts the process. Measured: two axes at 9e18 each panic here,
+/// where `compute_cost` on the same `Ask` returns
+/// `SettlementError::Overflow` naming the axis and partial sum.
+///
+/// Every marketplace pricing surface uses `settlement_cost`, which has no
+/// error path. See mission
+/// `settlement-cost-panics-where-compute-cost-errors`.
+#[inline]
+pub fn dqa_add(a: Dqa, b: Dqa) -> Dqa {
+    octo_determin::dqa_add(a, b).expect("Dqa addition overflow")
+}
+
+/// Sibling of [`dqa_add`], with the same unbounded-input problem: callers
+/// in this crate multiply caller-supplied quantities, and `cost_for` aborts
+/// through this when a listing carries a very large rate. See mission
+/// `settlement-cost-panics-where-compute-cost-errors`.
+#[inline]
+pub fn dqa_mul(a: Dqa, b: Dqa) -> Dqa {
+    octo_determin::dqa_mul(a, b).expect("Dqa multiplication overflow")
+}
+
+#[inline]
+pub fn dqa_cmp(a: Dqa, b: Dqa) -> i8 {
+    octo_determin::dqa_cmp(a, b)
+}
+
+#[inline]
+#[allow(clippy::double_must_use)]
+pub fn dqa_try_add(a: Dqa, b: Dqa) -> Result<Dqa, DqaError> {
+    octo_determin::dqa_add(a, b)
+}
+
+/// Token counter per axis (RFC-0959 §Data Structures).
+/// `u32` cap = 4.29B tokens — sufficient for any single-axis quota.
+pub type TokenCount = u32;
+
+/// Ed25519 signature bytes (RFC 8032 standard, 64 bytes).
+/// `AskSigned.signature` stores as `Vec<u8>` for serde compatibility; use
+/// `AskSigned::signature_fixed()` to obtain the fixed-size form.
+pub type Ed25519Signature = [u8; 64];
+
+/// Ed25519 verifying key bytes (32 bytes; RFC-0009 §Identity Key Format).
+pub type Ed25519PublicKey = [u8; 32];
+
+/// Provider model reference (RFC-0959 §Data Structures).
+///
+/// `{namespace, family, version?}` matches RFC-0959 §Data Structures verbatim.
+/// The wire format (slash-joined string) is the canonical on-the-wire form;
+/// callers convert via `ModelRef::parse` / `Display` at the boundary. The
+/// `asks.model` DB column stores the wire form (String); `From<&&str>` /
+/// `From<String>` produce the structured form for in-memory use.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub struct ModelRef {
+    /// Provider namespace (e.g., `"openai"`, `"anthropic"`, `"custom"`).
+    pub namespace: String,
+    /// Model family (e.g., `"gpt-4"`, `"claude-3"`).
+    pub family: String,
+    /// Optional version pin (e.g., `"0613"`, `"opus-2026"`).
+    /// `None` matches any version.
+    pub version: Option<String>,
+}
+
+impl ModelRef {
+    /// Construct a new ModelRef.
+    /// # Errors
+    /// Returns `ModelRefError::EmptyNamespace` / `EmptyFamily` if invalid.
+    pub fn new(
+        namespace: impl Into<String>,
+        family: impl Into<String>,
+        version: Option<String>,
+    ) -> Result<Self, ModelRefError> {
+        let namespace = namespace.into();
+        let family = family.into();
+        if namespace.is_empty() {
+            return Err(ModelRefError::EmptyNamespace);
+        }
+        if family.is_empty() {
+            return Err(ModelRefError::EmptyFamily);
+        }
+        Ok(Self {
+            namespace,
+            family,
+            version,
+        })
+    }
+
+    /// Parse from the wire string `"namespace/family/version"` or `"namespace/family"`.
+    /// Whitespace-only segments are rejected.
+    /// # Errors
+    /// Returns `ModelRefError::Parse` on malformed input.
+    pub fn parse(s: &str) -> Result<Self, ModelRefError> {
+        let parts: Vec<&str> = s.splitn(3, '/').collect();
+        match parts.len() {
+            2 => {
+                let namespace = parts[0].trim();
+                let family = parts[1].trim();
+                if namespace.is_empty() {
+                    return Err(ModelRefError::Parse(
+                        "namespace is empty (expected `namespace/family[/version]`)".to_owned(),
+                    ));
+                }
+                if family.is_empty() {
+                    return Err(ModelRefError::Parse(
+                        "family is empty (expected `namespace/family[/version]`)".to_owned(),
+                    ));
+                }
+                Ok(Self {
+                    namespace: namespace.to_owned(),
+                    family: family.to_owned(),
+                    version: None,
+                })
+            }
+            3 => {
+                let namespace = parts[0].trim();
+                let family = parts[1].trim();
+                let version = parts[2].trim();
+                if namespace.is_empty() {
+                    return Err(ModelRefError::Parse("namespace is empty".to_owned()));
+                }
+                if family.is_empty() {
+                    return Err(ModelRefError::Parse("family is empty".to_owned()));
+                }
+                if version.is_empty() {
+                    return Err(ModelRefError::Parse("version is empty".to_owned()));
+                }
+                Ok(Self {
+                    namespace: namespace.to_owned(),
+                    family: family.to_owned(),
+                    version: Some(version.to_owned()),
+                })
+            }
+            _ => Err(ModelRefError::Parse(format!(
+                "expected `namespace/family[/version]`, got `{s}`"
+            ))),
+        }
+    }
+
+    /// Render to the wire form `"namespace/family/version"` or `"namespace/family"`.
+    #[must_use]
+    pub fn to_wire(&self) -> String {
+        match &self.version {
+            Some(v) => format!("{}/{}/{}", self.namespace, self.family, v),
+            None => format!("{}/{}", self.namespace, self.family),
+        }
+    }
+
+    /// Lenient parse: returns a placeholder (`namespace="", family=""`) when
+    /// input is empty / malformed. Used at DB-read boundaries where the
+    /// persisted string may predate ModelRef partitioning.
+    #[must_use]
+    pub fn parse_lenient(s: &str) -> Self {
+        Self::parse(s).unwrap_or_else(|_| Self {
+            namespace: String::new(),
+            family: s.to_owned(),
+            version: None,
+        })
+    }
+}
+
+impl std::fmt::Display for ModelRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.to_wire())
+    }
+}
+
+impl std::str::FromStr for ModelRef {
+    type Err = ModelRefError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s)
+    }
+}
+
+impl From<&str> for ModelRef {
+    fn from(s: &str) -> Self {
+        Self::parse_lenient(s)
+    }
+}
+
+impl From<String> for ModelRef {
+    fn from(s: String) -> Self {
+        Self::parse_lenient(&s)
+    }
+}
+
+/// ModelRef construction / parse errors.
+#[derive(Debug, thiserror::Error)]
+pub enum ModelRefError {
+    #[error("model namespace is empty")]
+    EmptyNamespace,
+    #[error("model family is empty")]
+    EmptyFamily,
+    #[error("invalid model reference: {0}")]
+    Parse(String),
+}
+
+/// NodeType taxonomy (RFC-0009 §Node + RFC-0959 §Data Structures).
+///
+/// Mirrors `octo_wallet::node::NodeType` wire format (kebab-case JSON,
+/// `wholesale` / `self-host` / `hybrid` CLI strings) so the two crates
+/// stay in sync at the wire boundary. Defined locally here to avoid pulling
+/// `octo-wallet` (HSM/MPC/keystore) into the storage crate — the
+/// `octo-wallet::node::NodeType` re-export remains the canonical version
+/// for the wallet crate itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NodeType {
+    /// Routes calls to external opaque providers. Cannot mint ZK-bearing
+    /// capabilities per RFC-0958 §Adversary A3.
+    Wholesale,
+    /// Runs inference inside the CipherOcto protocol boundary.
+    /// Mints ZK-bearing capabilities by default per RFC-0958 §NodeType Gating.
+    #[serde(rename = "self-host")]
+    SelfHost,
+    /// Operates both wholesale-routed and self-hosted inference.
+    /// ZK mint requires explicit `mint_with_zk()` API call.
+    Hybrid,
+}
+
+impl NodeType {
+    /// CLI string accepted by `octo-wallet init --node-type <X>`.
+    #[must_use]
+    pub fn as_cli_str(&self) -> &'static str {
+        match self {
+            Self::Wholesale => "wholesale",
+            Self::SelfHost => "self-host",
+            Self::Hybrid => "hybrid",
+        }
+    }
+
+    /// Returns true iff this NodeType permits minting ZK-bearing capabilities.
+    /// Wholesale always returns false; SelfHost and Hybrid return true.
+    #[must_use]
+    pub const fn permits_zk_mint(&self) -> bool {
+        matches!(self, Self::SelfHost | Self::Hybrid)
+    }
+}
+
+impl std::fmt::Display for NodeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_cli_str())
+    }
+}
+
+impl std::str::FromStr for NodeType {
+    type Err = NodeTypeParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "wholesale" => Ok(Self::Wholesale),
+            "self-host" | "self_host" | "selfhost" => Ok(Self::SelfHost),
+            "hybrid" => Ok(Self::Hybrid),
+            _ => Err(NodeTypeParseError(s.to_owned())),
+        }
+    }
+}
+
+/// Error returned when parsing a `NodeType` from CLI / config fails.
+#[derive(Debug, thiserror::Error)]
+#[error("unknown NodeType `{0}`; expected one of: wholesale, self-host, hybrid")]
+pub struct NodeTypeParseError(pub String);
+
+/// Asker (publisher) DID.
+pub type AskerDid = String;
+
+/// Ask identifier (BLAKE3 32-byte content hash).
+pub type AskId = [u8; 32];
+
+/// Pricing axis identifier (e.g., "input_tokens_per_1k", "output_tokens_per_1k", "cached_input_tokens_per_1k").
+pub type AxisId = String;
+
+/// Pricing axis — semantically meaningful unit of consumption.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PricingAxis {
+    /// Stable axis identifier (RFC-0959 §Data Structures).
+    pub id: AxisId,
+    /// Human-readable name.
+    pub name: String,
+    /// Default rate (micro-OCTO-W per 1000 units) when no per-model override exists.
+    #[serde(with = "crate::dqa_serde::field")]
+    pub default_rate_per_1k: Dqa,
+}
+
+impl PricingAxis {
+    /// Built-in axes per RFC-0959 §3.3 default registry.
+    #[must_use]
+    pub fn standard_axes() -> Vec<Self> {
+        vec![
+            Self {
+                id: "input_tokens_per_1k".to_owned(),
+                name: "Input tokens per 1K".to_owned(),
+                default_rate_per_1k: Dqa::new(30_000, 0).expect("non-overflow"), // 0.03 OCTO-W
+            },
+            Self {
+                id: "output_tokens_per_1k".to_owned(),
+                name: "Output tokens per 1K".to_owned(),
+                default_rate_per_1k: Dqa::new(60_000, 0).expect("non-overflow"), // 0.06 OCTO-W
+            },
+            Self {
+                id: "cached_input_tokens_per_1k".to_owned(),
+                name: "Cached input tokens per 1K".to_owned(),
+                default_rate_per_1k: Dqa::new(3_000, 0).expect("non-overflow"), // 0.003 OCTO-W
+            },
+        ]
+    }
+
+    /// Look up axis by id (linear scan; small N).
+    #[must_use]
+    pub fn find_by_id<'a>(axes: &'a [Self], id: &str) -> Option<&'a Self> {
+        axes.iter().find(|a| a.id == id)
+    }
+}
+
+/// Per-axis rate override for a specific model.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AxisRate {
+    pub axis: AxisId,
+    #[serde(with = "crate::dqa_serde::field")]
+    pub rate_per_1k: Dqa,
+}
+
+/// Per-model rate table.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ModelRateTable {
+    /// Model this table applies to (e.g., "openai/gpt-4").
+    pub model: ModelRef,
+    /// Per-axis rates; falls back to `PricingAxis::default_rate_per_1k` if axis missing.
+    ///
+    /// That fallback is a deviation from RFC-0959, which requires an
+    /// unpriced consumed axis to be `UnknownAxis`. See [`compute_cost`].
+    pub rates: Vec<AxisRate>,
+}
+
+impl ModelRateTable {
+    /// Returns the first axis rate with a negative `rate_per_1k`, if any.
+    ///
+    /// A negative rate is never legitimate: it would credit the buyer
+    /// instead of charging them, and it wins every "cheapest" comparison
+    /// and every budget-ceiling filter by construction. Nothing else in
+    /// the pricing path rejects one — `cost_for` and `settlement_cost`
+    /// faithfully propagate the sign.
+    ///
+    /// Enforced at the storage boundary in `TryFrom<AskRow> for Ask`, and
+    /// separately by `Marketplace::put` on the in-memory path. See mission
+    /// `the-marketplace-facade-has-no-production-caller`.
+    #[must_use]
+    pub fn first_negative_rate(&self) -> Option<&AxisRate> {
+        self.rates.iter().find(|r| r.rate_per_1k.value < 0)
+    }
+
+    /// Compute cost for a (model, axis_id, units) tuple. Returns `None` if model unknown.
+    ///
+    /// # Panics
+    ///
+    /// Aborts if `blocks * rate_per_1k` exceeds `i64::MAX`. `rate_per_1k` is
+    /// caller-supplied and unbounded, and this function returns `Option<Dqa>`
+    /// — where `None` means "unknown model" — so an overflow has no
+    /// representable outcome. Measured: a rate of `i64::MAX` consumed at
+    /// 1,000,000 units panics on the `multiply` below.
+    ///
+    /// The `i64::try_from(blocks)` expect two lines down is *not* reachable:
+    /// `blocks` is at most `u64::MAX / 1000`, far inside `i64`. It is left
+    /// as-is only because the two expects read identically.
+    ///
+    /// See mission `settlement-cost-panics-where-compute-cost-errors`.
+    #[must_use]
+    pub fn cost_for(&self, axis_id: &str, units: u64, axes: &[PricingAxis]) -> Option<Dqa> {
+        let rate = self
+            .rates
+            .iter()
+            .find(|r| r.axis == axis_id)
+            .map(|r| r.rate_per_1k)
+            .or_else(|| PricingAxis::find_by_id(axes, axis_id).map(|a| a.default_rate_per_1k))?;
+        // cost = ceil(units / 1000) * rate_per_1k
+        let blocks = units.div_ceil(1000);
+        let blocks_dqa = Dqa::new(i64::try_from(blocks).expect("units"), 0).expect("non-overflow");
+        let cost = blocks_dqa.multiply(rate).expect("non-overflow");
+        Some(cost)
+    }
+}
+
+/// Published Ask (per-node pricing offer) per RFC-0959.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Ask {
+    /// Asker (publisher) DID.
+    pub asker_did: AskerDid,
+    /// Model this Ask covers.
+    pub model: ModelRef,
+    /// Per-model rate table (axes + rates).
+    pub rates: ModelRateTable,
+    /// Nonce (random per mint; ensures AskId uniqueness).
+    pub nonce: [u8; 16],
+    /// Unix timestamp at which this Ask expires (inclusive).
+    pub expires_at_unix: u64,
+}
+
+impl Ask {
+    /// Construct a validated `Ask`. Rejects empty asker_did / model / all-zero nonce.
+    /// # Errors
+    /// Returns `AskError::EmptyAskerDid` / `EmptyModel` / `EmptyNonce`.
+    pub fn new(
+        asker_did: impl Into<String>,
+        model: impl Into<ModelRef>,
+        rates: ModelRateTable,
+        nonce: [u8; 16],
+        expires_at_unix: u64,
+    ) -> Result<Self, AskError> {
+        let asker_did = asker_did.into();
+        let model: ModelRef = model.into();
+        if asker_did.is_empty() {
+            return Err(AskError::EmptyAskerDid);
+        }
+        if model.family.is_empty() {
+            return Err(AskError::EmptyModel);
+        }
+        if nonce == [0u8; 16] {
+            return Err(AskError::EmptyNonce);
+        }
+        Ok(Self {
+            asker_did,
+            model,
+            rates,
+            nonce,
+            expires_at_unix,
+        })
+    }
+
+    /// Compute the content-addressable AskId.
+    /// `AskId = BLAKE3(canonical_ser(asker_did || model || axes_hash || nonce))`
+    /// where `axes_hash = BLAKE3(canonical_ser(rates.rates))`.
+    #[must_use]
+    pub fn id(&self) -> AskId {
+        let rates_canonical = serde_json::to_vec(&self.rates).expect("serializable");
+        let axes_hash = blake3::hash(&rates_canonical);
+        let model_wire = self.model.to_wire();
+        let mut msg =
+            Vec::with_capacity(self.asker_did.len() + model_wire.len() + 32 + self.nonce.len());
+        msg.extend_from_slice(self.asker_did.as_bytes());
+        msg.extend_from_slice(model_wire.as_bytes());
+        msg.extend_from_slice(axes_hash.as_bytes());
+        msg.extend_from_slice(&self.nonce);
+        *blake3::hash(&msg).as_bytes()
+    }
+
+    /// Axes-hash (intermediate; exposed for tests).
+    #[must_use]
+    pub fn axes_hash(&self) -> [u8; 32] {
+        let rates_canonical = serde_json::to_vec(&self.rates).expect("serializable");
+        *blake3::hash(&rates_canonical).as_bytes()
+    }
+}
+
+/// Ask construction errors.
+#[derive(Debug, thiserror::Error)]
+pub enum AskError {
+    #[error("asker_did is empty")]
+    EmptyAskerDid,
+    #[error("model is empty")]
+    EmptyModel,
+    #[error("nonce is all-zeros (use a real CSPRNG-generated 16-byte nonce)")]
+    EmptyNonce,
+    #[error("jurisdiction is empty (use [\"*\"] for global)")]
+    EmptyJurisdiction,
+    #[error("asker identity seed is all-zeros")]
+    EmptyIdentitySeed,
+}
+
+/// Unsigned Ask payload (RFC-0959 §Data Structures).
+///
+/// This is the canonical content that gets signed. `AskId` and the signature
+/// are derived FROM this payload; neither is part of the canonical signed
+/// surface (non-circular derivation per R1 fix).
+///
+/// The `nonce` field is 16 bytes (RFC-0959 fix; the AskId re-derivation uses
+/// the nonce as a uniqueness salt so two identical offers produce distinct
+/// AskIds, which matters for rate-table updates where the asker publishes
+/// a new nonce to invalidate prior AskIds).
+///
+/// `node_type` is the asker's declared deployment mode. Two corrections to
+/// what this field was previously documented as doing:
+///
+/// - **It does not gate capability minting.** This doc previously said it
+///   "gates downstream capability-class minting per RFC-0958 §NodeType
+///   Gating Matrix". RFC-0009 v1.2 withdrew that: mint authority keys on the
+///   in-boundary inference attestation payload kind, "not on a role name",
+///   and RFC-0959 IA-7 reclassifies `Ask.node_type` as a derived projection
+///   and expressly *not* an authorization input. The capability registry's
+///   Wholesale/ZKBearing check is keyed on a caller-supplied `node_did` in
+///   local state, never sourced from an Ask.
+/// - **It cannot inform index decisions.** This doc previously said it
+///   "informs the marketplace index's jurisdiction/routing decisions". The
+///   index holds `Ask`, which has no `node_type` field and no `jurisdiction`
+///   field; both are dropped at the mint boundary.
+///
+/// RFC-0959 IA-7 also states `node_type` "remains unchanged as persisted
+/// storage layout", but it appears in no migration in the tree and in neither
+/// `Ask` nor `AskRow`. See mission
+/// `rfc-0959-defines-one-ask-and-the-code-has-two-with-different-fields`,
+/// which enumerates the three declared fields lost between this type and
+/// `Ask`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AskUnsignedPayload {
+    /// Asker (publisher) DID (RFC-0009 §Identity Key Format).
+    pub asker_did: AskerDid,
+    /// NodeType of the asker (mirrored locally from
+    /// `octo_wallet::node::NodeType` to avoid the wallet dep). The RFC-0009
+    /// §Node taxonomy this cited was removed 2026-10-07 and its role
+    /// projection moved to RFC-0871; see the type-level note on this field's
+    /// actual role.
+    pub node_type: NodeType,
+    /// Model reference — uses `ModelRef` struct form `{namespace, family,
+    /// version?}` per RFC-0959 §Data Structures. Stored as the wire string
+    /// (`"namespace/family/version"`) for persistence compat with the `asks`
+    /// table schema (RFC-0959 §Implementation Phases).
+    pub model: ModelRef,
+    /// Per-model rate table.
+    pub rates: ModelRateTable,
+    /// TTL in Unix seconds (inclusive). After this, the Ask is invalid.
+    pub ttl_unix: u64,
+    /// Jurisdiction tag(s). Empty list rejected by `AskUnsignedPayload::new`.
+    pub jurisdiction: Vec<String>,
+    /// Unix timestamp at which the payload was assembled (for replay-window defenses).
+    pub published_at_unix: u64,
+    /// Nonce for content-addressable AskId uniqueness (16 bytes; CSPRNG-generated).
+    pub nonce: [u8; 16],
+}
+
+impl AskUnsignedPayload {
+    /// Construct a validated payload. Rejects empty asker_did / model / jurisdiction
+    /// / all-zero nonce.
+    /// # Errors
+    /// Returns `AskError::EmptyAskerDid` / `EmptyModel` / `EmptyJurisdiction` /
+    /// `EmptyNonce`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        asker_did: impl Into<String>,
+        node_type: NodeType,
+        model: impl Into<ModelRef>,
+        rates: ModelRateTable,
+        ttl_unix: u64,
+        jurisdiction: Vec<String>,
+        published_at_unix: u64,
+        nonce: [u8; 16],
+    ) -> Result<Self, AskError> {
+        let asker_did = asker_did.into();
+        let model: ModelRef = model.into();
+        if asker_did.is_empty() {
+            return Err(AskError::EmptyAskerDid);
+        }
+        if model.family.is_empty() {
+            return Err(AskError::EmptyModel);
+        }
+        if jurisdiction.is_empty() {
+            return Err(AskError::EmptyJurisdiction);
+        }
+        if nonce == [0u8; 16] {
+            return Err(AskError::EmptyNonce);
+        }
+        Ok(Self {
+            asker_did,
+            node_type,
+            model,
+            rates,
+            ttl_unix,
+            jurisdiction,
+            published_at_unix,
+            nonce,
+        })
+    }
+
+    /// Compute the content-addressable AskId (RFC-0959 §Algorithms).
+    /// `AskId = BLAKE3(canonical_ser(self))`.
+    /// Non-circular: `ask_id` and `signature` are NOT part of the canonical payload.
+    #[must_use]
+    pub fn ask_id(&self) -> AskId {
+        let canonical = serde_json::to_vec(self).expect("serializable");
+        *blake3::hash(&canonical).as_bytes()
+    }
+}
+
+/// Cryptographically-attested Ask (RFC-0959 §Data Structures).
+///
+/// `AskSigned { ask_id, payload, signature }` is the wire/transport form. The
+/// signature is Ed25519 over `canonical_ser(payload)`. `verify()` recomputes
+/// `ask_id` from the payload and verifies both the AskId re-derivation and
+/// the Ed25519 signature against the embedded `asker_did` (which must be
+/// resolvable to a known Ed25519 public key — see RFC-0009 §DID Resolution).
+///
+/// The `signature` field is stored as `Vec<u8>` to satisfy serde's default
+/// impl (stable Rust has no `Deserialize` for `[u8; 64]` without the
+/// `serde_with` feature). Use `signature_fixed()` to obtain the 64-byte form.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AskSigned {
+    /// `BLAKE3(canonical_ser(payload))`. Must equal `payload.ask_id()`.
+    pub ask_id: AskId,
+    /// The unsigned payload.
+    pub payload: AskUnsignedPayload,
+    /// Ed25519 signature over `canonical_ser(payload)`.
+    pub signature: Vec<u8>,
+}
+
+impl AskSigned {
+    /// Sign a payload with the asker's 32-byte Ed25519 seed (RFC-0959 §Algorithms).
+    ///
+    /// `ask_id` is derived from the payload; the signature is over
+    /// `canonical_ser(payload)`. The seed is consumed via `SigningKey::from_bytes`
+    /// (NOT zeroized here — the caller owns seed material).
+    /// # Errors
+    /// Returns `AskSignedError::EmptyIdentitySeed` if the seed is all-zeros.
+    /// Returns `AskSignedError::CanonicalSer` if `serde_json` serialization fails.
+    pub fn sign(
+        payload: AskUnsignedPayload,
+        identity_seed: &[u8; 32],
+    ) -> Result<Self, AskSignedError> {
+        if identity_seed == &[0u8; 32] {
+            return Err(AskSignedError::EmptyIdentitySeed);
+        }
+        let canonical = serde_json::to_vec(&payload).map_err(AskSignedError::CanonicalSer)?;
+        let ask_id = *blake3::hash(&canonical).as_bytes();
+        let signing = SigningKey::from_bytes(identity_seed);
+        let signature = signing.sign(&canonical);
+        Ok(Self {
+            ask_id,
+            payload,
+            signature: signature.to_bytes().to_vec(),
+        })
+    }
+
+    /// Verify both AskId re-derivation AND Ed25519 signature (RFC-0959 §Algorithms).
+    ///
+    /// `asker_public_key` is the 32-byte Ed25519 verifying key derived from the
+    /// asker's DID per RFC-0009 §Identity Key Format.
+    ///
+    /// # This does NOT prove who published the Ask
+    ///
+    /// It proves that the holder of `asker_public_key` signed this payload. It
+    /// never checks that `payload.asker_did` belongs to that key, so an Ask
+    /// signed by A while naming B verifies against A's key and is rejected
+    /// against B's. `asker_did` is signed-over but still attacker-chosen data.
+    ///
+    /// Measured: a payload carrying `did_for(bob_seed)` signed with
+    /// `alice_seed` yields `Ok(())` against Alice's key and
+    /// `Err(AskSignatureInvalid)` against Bob's.
+    ///
+    /// This contradicts RFC-0959 §Roles ("`seller_signature ≡ Asker
+    /// signature`"), which asserts exactly the identity binding not enforced
+    /// here. The binding is also not expressible in the argument list, and
+    /// the authoritative DID derivation is specified inconsistently across
+    /// RFC-0009 (multibase-z) and RFC-0968 §6 (base32-`b`), so the fix is an
+    /// RFC-owner decision rather than a local one. See mission
+    /// `a-signed-ask-does-not-prove-who-published-it`.
+    ///
+    /// Callers verifying a received Ask must therefore establish the
+    /// publisher's identity by some means *outside* this function.
+    ///
+    /// # Errors
+    /// Returns `AskSignedError::AskIdMismatch` if `ask_id != payload.ask_id()`.
+    /// Returns `AskSignedError::SignatureLengthInvalid` if signature is not 64 bytes.
+    /// Returns `AskSignedError::AskSignatureInvalid` if Ed25519 verify fails.
+    pub fn verify(
+        &self,
+        algorithm_id: &octo_ident::AlgorithmId,
+        asker_public_key: &[u8],
+    ) -> Result<(), AskSignedError> {
+        // 1. Re-derive AskId from payload; must equal embedded ask_id.
+        let derived = self.payload.ask_id();
+        if derived != self.ask_id {
+            return Err(AskSignedError::AskIdMismatch {
+                expected: self.ask_id,
+                actual: derived,
+            });
+        }
+        // 2. Verify Ed25519 signature over canonical_ser(payload).
+        let canonical = serde_json::to_vec(&self.payload).map_err(AskSignedError::CanonicalSer)?;
+        // NO 64-byte pre-filter: an earlier version coerced the signature to
+        // a fixed array before verifying, which would refuse every algorithm
+        // whose signatures are not 64 bytes and report it as an invalid
+        // signature — indistinguishable from a genuinely bad one. The
+        // registered algorithm reports its own length error.
+        octo_algo_ed25519::verify_dispatch(
+            algorithm_id,
+            asker_public_key,
+            &canonical,
+            &self.signature,
+        )
+        .map_err(|_| AskSignedError::AskSignatureInvalid)
+    }
+
+    /// Return the signature as a fixed 64-byte array. Panics if stored signature
+    /// is the wrong length (should never happen after `sign()`).
+    #[must_use]
+    pub fn signature_fixed(&self) -> [u8; 64] {
+        self.signature
+            .as_slice()
+            .try_into()
+            .expect("AskSigned signature is always 64 bytes after sign()")
+    }
+
+    /// Convenience: compute the asker's Ed25519 public key from a seed (for tests + CLI flows).
+    #[must_use]
+    pub fn public_key_from_seed(seed: &[u8; 32]) -> Ed25519PublicKey {
+        SigningKey::from_bytes(seed).verifying_key().to_bytes()
+    }
+}
+
+/// AskSigned construction / verification errors.
+#[derive(Debug, thiserror::Error)]
+pub enum AskSignedError {
+    #[error("asker identity seed is all-zeros")]
+    EmptyIdentitySeed,
+    #[error("canonical serialization failed: {0}")]
+    CanonicalSer(serde_json::Error),
+    #[error("ask_id mismatch: expected {expected:?}, derived {actual:?}")]
+    AskIdMismatch { expected: AskId, actual: AskId },
+    #[error("signature length invalid (must be 64 bytes)")]
+    SignatureLengthInvalid,
+    #[error("invalid Ed25519 public key bytes")]
+    InvalidPublicKey,
+    #[error("Ed25519 signature verification failed (tampered payload or wrong key)")]
+    AskSignatureInvalid,
+}
+
+#[cfg(test)]
+mod ask_signed_tests {
+    /// The algorithm these fixtures sign under. Centralised so a second
+    /// algorithm is one edit rather than a hunt through the test bodies.
+    fn ed25519_id() -> octo_ident::AlgorithmId {
+        octo_algo_ed25519::ed25519_algorithm_id()
+    }
+    use super::*;
+    use crate::ask::{AxisRate, ModelRateTable};
+
+    fn sample_payload() -> AskUnsignedPayload {
+        let rates = ModelRateTable {
+            model: ModelRef::from("openai/gpt-4"),
+            rates: vec![AxisRate {
+                axis: "input_tokens_per_1k".to_owned(),
+                rate_per_1k: Dqa::new(30_000, 0).expect("non-overflow"),
+            }],
+        };
+        AskUnsignedPayload {
+            asker_did: "did:octo:asker1".to_owned(),
+            node_type: NodeType::SelfHost,
+            model: ModelRef::from("openai/gpt-4"),
+            rates,
+            ttl_unix: 1_900_000_000,
+            jurisdiction: vec!["US".to_owned(), "EU".to_owned()],
+            published_at_unix: 1_700_000_000,
+            nonce: [0x42; 16],
+        }
+    }
+
+    #[test]
+    fn sign_then_verify_roundtrip() {
+        let payload = sample_payload();
+        let seed = [0xABu8; 32];
+        let pk = AskSigned::public_key_from_seed(&seed);
+        let signed = AskSigned::sign(payload.clone(), &seed).expect("sign");
+        assert_eq!(signed.ask_id, payload.ask_id());
+        assert_eq!(signed.payload, payload);
+        signed.verify(&ed25519_id(), &pk).expect("verify");
+    }
+
+    #[test]
+    fn ask_id_non_circular() {
+        // ask_id MUST equal BLAKE3(canonical_ser(payload)) and NOT depend on signature.
+        let payload = sample_payload();
+        let seed = [0xCDu8; 32];
+        let s1 = AskSigned::sign(payload.clone(), &seed).unwrap();
+        let s2 = AskSigned::sign(payload.clone(), &seed).unwrap();
+        assert_eq!(s1.ask_id, s2.ask_id, "ask_id deterministic across re-sign");
+        assert_eq!(s1.ask_id, payload.ask_id());
+    }
+
+    #[test]
+    fn tampered_payload_breaks_verify() {
+        let payload = sample_payload();
+        let seed = [0xEFu8; 32];
+        let pk = AskSigned::public_key_from_seed(&seed);
+        let mut signed = AskSigned::sign(payload, &seed).unwrap();
+        // Flip one byte in the rate table — payload && ask_id diverge.
+        signed.payload.rates.rates[0].rate_per_1k = Dqa::new(999, 0).expect("non-overflow");
+        let err = signed.verify(&ed25519_id(), &pk).unwrap_err();
+        // Either AskIdMismatch (preferred) or AskSignatureInvalid — both are
+        // acceptable defenses against tampering.
+        assert!(
+            matches!(
+                err,
+                AskSignedError::AskIdMismatch { .. } | AskSignedError::AskSignatureInvalid
+            ),
+            "expected AskIdMismatch or AskSignatureInvalid, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn tampered_ask_id_breaks_verify() {
+        let payload = sample_payload();
+        let seed = [0x77u8; 32];
+        let pk = AskSigned::public_key_from_seed(&seed);
+        let mut signed = AskSigned::sign(payload, &seed).unwrap();
+        signed.ask_id[0] ^= 0xFF;
+        let err = signed.verify(&ed25519_id(), &pk).unwrap_err();
+        assert!(
+            matches!(err, AskSignedError::AskIdMismatch { .. }),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn wrong_public_key_rejects_signature() {
+        let payload = sample_payload();
+        let seed = [0x11u8; 32];
+        let signed = AskSigned::sign(payload, &seed).unwrap();
+        let wrong_pk = AskSigned::public_key_from_seed(&[0x22u8; 32]);
+        let err = signed.verify(&ed25519_id(), &wrong_pk).unwrap_err();
+        assert!(
+            matches!(err, AskSignedError::AskSignatureInvalid),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn empty_seed_rejected() {
+        let payload = sample_payload();
+        let err = AskSigned::sign(payload, &[0u8; 32]).unwrap_err();
+        assert!(matches!(err, AskSignedError::EmptyIdentitySeed));
+    }
+
+    /// The vector that tells dispatch apart from a hardcoded Ed25519 verifier.
+    ///
+    /// Every other vector in this module is blind to that difference. They all
+    /// reach `verify` through `ed25519_id()`, every fixture key is 32 bytes,
+    /// and a verifier that ignored its `algorithm_id` argument and inlined a
+    /// `VerifyingKey` would pass every one of them.
+    ///
+    /// A stark-schnorr key is 33 bytes and its signature is over a digest that
+    /// embeds those same 33 bytes, so neither the key nor the signed message
+    /// can be quietly reinterpreted as Ed25519. Acceptance here came from the
+    /// algorithm, not from a length that happened to line up.
+    ///
+    /// It could not have existed before this arc: the key parameter was
+    /// `&Ed25519PublicKey`, a type alias for `[u8; 32]`, so a 33-byte key was
+    /// a compile error at the call rather than a runtime verdict.
+    ///
+    /// The signed form is built directly rather than through `AskSigned::sign`
+    /// because signing genuinely cannot dispatch: `SignatureAlgorithm` has no
+    /// `sign`, only `verify`, so `sign` is per-crate by construction. That is
+    /// a property of the trait, not an oversight here — but it does mean this
+    /// vector covers the verify path only, and says so.
+    #[test]
+    fn an_ask_signed_by_a_non_ed25519_algorithm_verifies() {
+        use octo_algo_stark_schnorr::{public_key, sign, Felt};
+
+        octo_algo_ed25519::install().expect("install ed25519");
+        octo_algo_stark_schnorr::install().expect("install stark-schnorr");
+
+        let secret = Felt::from_hex_unchecked("0x5a1b2c3d4e5f60718293a4b5c6d7e8f9");
+        let nonce = Felt::from_hex_unchecked("0x2468ace013579bdf");
+        let wire = public_key(&secret).expect("derives a public key").to_wire();
+        assert_eq!(
+            wire.len(),
+            33,
+            "a stark-schnorr key is 33 bytes, Ed25519 is 32 — this is what makes \
+             the two algorithms distinguishable at this site"
+        );
+
+        let payload = sample_payload();
+        let canonical = serde_json::to_vec(&payload).expect("canonical");
+        let signature = sign(&secret, &canonical, &nonce).expect("sign").to_wire();
+        assert_eq!(signature.len(), 64, "stark-schnorr signatures are 64 bytes");
+
+        // Built by hand for the reason in the doc comment. `ask_id` and
+        // `signature` are not part of the canonical payload, so this is the
+        // same value `sign` would have produced for an Ed25519 signature of
+        // the same payload.
+        let signed = AskSigned {
+            ask_id: *blake3::hash(&canonical).as_bytes(),
+            payload,
+            signature: signature.to_vec(),
+        };
+
+        assert!(
+            signed
+                .verify(
+                    &octo_algo_stark_schnorr::stark_schnorr_algorithm_id(),
+                    &wire
+                )
+                .is_ok(),
+            "a genuine stark-schnorr signature must not be refused by the \
+             dispatched path"
+        );
+
+        // And it must not be accepted under a different algorithm. Ed25519
+        // refuses a 33-byte key on length, so this pins that the caller-supplied
+        // id is load-bearing rather than decorative.
+        assert!(
+            signed.verify(&ed25519_id(), &wire).is_err(),
+            "the same key and signature must not verify under ed25519"
+        );
+    }
+
+    #[test]
+    fn empty_jurisdiction_rejected() {
+        let mut payload = sample_payload();
+        payload.jurisdiction.clear();
+        let err = AskUnsignedPayload::new(
+            payload.asker_did.clone(),
+            payload.node_type,
+            payload.model.clone(),
+            payload.rates.clone(),
+            payload.ttl_unix,
+            payload.jurisdiction.clone(),
+            payload.published_at_unix,
+            payload.nonce,
+        );
+        assert!(matches!(err, Err(AskError::EmptyJurisdiction)));
+    }
+
+    #[test]
+    fn octow_amount_distinct_newtype() {
+        // R1 critical fix: OCTO_WAmount must be a distinct newtype, NOT a type alias.
+        // We verify the type system catches silent unit-conversion: `let _: u128 = x.0` is fine,
+        // but `let _: u128 = x` is a compile error (intentional, prevents accidental ops).
+        let one_octow = OCTO_WAmount(Dqa::new(1, 0).expect("non-overflow"));
+        let zero_octow = OCTO_WAmount(Dqa::new(0, 0).expect("non-overflow"));
+        let one_micro = zero_octow.to_micro();
+        assert_eq!(
+            one_octow.to_micro(),
+            Dqa::new(1_000_000, 0).expect("non-overflow")
+        );
+        assert_eq!(one_micro, Dqa::new(0, 0).expect("non-overflow"));
+        let back = OCTO_WAmount::from_micro(Dqa::new(1_000_000, 0).expect("non-overflow")).unwrap();
+        assert_eq!(back, OCTO_WAmount(Dqa::new(1, 0).expect("non-overflow")));
+        assert!(
+            OCTO_WAmount::from_micro(Dqa::new(1_000_001, 0).expect("non-overflow")).is_none(),
+            "non-aligned must reject"
+        );
+    }
+}
+
+/// Per-axis consumption tuple: `(axis_id, units_consumed)`.
+pub type AxisConsumption = (AxisId, u64);
+
+/// Compute settlement cost for an `Ask` given per-axis consumption.
+///
+/// # Panics
+///
+/// Aborts if the per-axis costs sum past `i64::MAX`. This function returns
+/// a bare `Dqa`, so a caller cannot handle that case — unlike
+/// [`compute_cost`], which returns `SettlementError::Overflow` naming the
+/// offending axis. Nothing bounds the rates: a listing may carry any
+/// `i64` value, and this is the function every marketplace pricing surface
+/// uses. See mission `settlement-cost-panics-where-compute-cost-errors`.
+#[must_use]
+pub fn settlement_cost(ask: &Ask, consumed: &[AxisConsumption], axes: &[PricingAxis]) -> Dqa {
+    let mut total: Dqa = Dqa::new(0, 0).expect("zero");
+    for (axis_id, units) in consumed {
+        if let Some(c) = ask.rates.cost_for(axis_id, *units, axes) {
+            total = dqa_add(total, c);
+        }
+    }
+    total
+}
+
+/// PricingAxis registry (default 3 axes + custom additions).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PricingAxisRegistry {
+    pub axes: Vec<PricingAxis>,
+}
+
+impl Default for PricingAxisRegistry {
+    fn default() -> Self {
+        Self {
+            axes: PricingAxis::standard_axes(),
+        }
+    }
+}
+
+impl PricingAxisRegistry {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn get(&self, id: &str) -> Option<&PricingAxis> {
+        PricingAxis::find_by_id(&self.axes, id)
+    }
+
+    /// Register a new axis. Returns Err on duplicate id.
+    /// # Errors
+    /// Returns `AxisRegistryError::Duplicate` if axis id already registered.
+    pub fn register(&mut self, axis: PricingAxis) -> Result<(), AxisRegistryError> {
+        if self.get(&axis.id).is_some() {
+            return Err(AxisRegistryError::Duplicate(axis.id));
+        }
+        self.axes.push(axis);
+        Ok(())
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AxisRegistryError {
+    #[error("axis `{0}` already registered")]
+    Duplicate(String),
+}
+
+/// Cache classification by cache_key_hash (RFC-0959 §Data Structures).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CacheClassification {
+    /// BLAKE3 hash of the request body.
+    pub cache_key_hash: [u8; 32],
+    /// True if this is a cache hit (provider returned cached response).
+    pub is_hit: bool,
+    /// Time-to-live of this cache entry (seconds).
+    pub ttl_secs: u32,
+}
+
+/// Compute cache_key_hash for a request body.
+#[must_use]
+pub fn cache_key_hash(body: &[u8]) -> [u8; 32] {
+    *blake3::hash(body).as_bytes()
+}
+
+/// Cache policy attached to capability caveats.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "policy")]
+pub enum CachePolicy {
+    #[serde(rename = "off")]
+    Off,
+    #[serde(rename = "opt-in")]
+    OptIn { cache_key_hash: Option<[u8; 32]> },
+    #[serde(rename = "always")]
+    Always { ttl_secs: u32 },
+}
+
+impl CachePolicy {
+    /// Whether this policy permits caching a response with `cache_key_hash`.
+    #[must_use]
+    pub fn permits(&self, hash: &[u8; 32]) -> bool {
+        match self {
+            Self::Off => false,
+            Self::Always { .. } => true,
+            Self::OptIn { cache_key_hash } => cache_key_hash.as_ref() == Some(hash),
+        }
+    }
+}
+
+/// Settlement envelope (RFC-0959 canonical wire).
+///
+/// v2.0 adds `cost_vault_id: Option<[u8; 32]>` + `chain_id: Option<[u8; 32]>`
+/// fields per review §20.7 (cross-chain settlement reject).
+///
+/// **Correction (2026-10-12).** This doc previously described a two-function
+/// arrangement that does not exist. It claimed the v2 preimage was "computed by
+/// `compute_settlement_hash_v2`", and that v1.0 `compute_settlement_hash` was
+/// "preserved verbatim as a deprecated alias for backward-compat with pre-v2.0
+/// settlement events in the `settlement_events` table".
+///
+/// Measured: there is **one** function — [`SettlementEnvelope::compute_settlement_hash`] —
+/// it computes the **v2** preimage, it is not deprecated, and no v1.0
+/// compatibility path exists anywhere in the workspace. The method's own doc,
+/// ~60 lines below, has always said this correctly; the two contradicted each
+/// other and this half was the wrong one.
+///
+/// The v2.0 canonical preimage that the single function hashes is exactly:
+/// ```text
+/// model_wire
+/// || serde_json::to_vec(axes_consumed)
+/// || ask_id (32 bytes)
+/// || nonce (32 bytes)
+/// || timestamp_unix.to_le_bytes() (8 bytes)
+/// || cost_vault_id_opt_prefix (1 byte: 0x00 = None, 0x01 = Some)
+/// || [if Some] cost_vault_id (32 bytes)
+/// || chain_id_opt_prefix (1 byte: 0x00 = None, 0x01 = Some)
+/// || [if Some] chain_id (32 bytes)
+/// ```
+///
+/// The replay property this doc was reaching for **does** hold: because only the
+/// v2 preimage is ever computed, a v1.0 hash does not verify under it, so
+/// pre-v2.0 hashes cannot be replayed as v2.0. That is intentional and is
+/// documented on the method.
+///
+/// There is no *reverse* compatibility — a pre-v2.0 settlement event already in
+/// `settlement_events` cannot be re-verified through this path. That is
+/// consistent rather than a gap: `settlement_event_repo` treats
+/// `cost_vault_id` / `chain_id` as nullable columns added by v016 with
+/// "pre-v2.0 settlements leave them NULL", so stored v1.0 rows are historical
+/// records for audit, and verification runs against newly-arrived envelopes
+/// (`ConsumedReceiptRepository::verify_and_insert`), not against rows read back
+/// out of the table.
+///
+/// # The preimage above does not include `cost`
+///
+/// `cost` is a field on this struct and is **not** bound into the hash.
+/// RFC-0959 §Settlement hash requires it, as an R3 fix whose stated purpose
+/// was that tampering with the amount breaks the hash.
+///
+/// This struct also carries no signature field, so this hash is its only
+/// integrity mechanism. Measured: multiplying `cost` by 1000 while keeping
+/// the original `settlement_hash` passes both [`Self::verify`] and
+/// `ConsumedReceiptRepository::verify_and_insert`.
+///
+/// Do not treat a verified envelope as evidence of the amount charged. See
+/// mission `settlement-hash-does-not-bind-the-cost`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettlementEnvelope {
+    /// Settlement hash (BLAKE3 32 bytes).
+    pub settlement_hash: [u8; 32],
+    /// Asker DID.
+    pub asker_did: AskerDid,
+    /// Holder DID.
+    pub holder_did: String,
+    /// Resolved Ask model.
+    pub model: ModelRef,
+    /// Per-axis consumption at settlement time.
+    pub axes_consumed: Vec<AxisConsumption>,
+    /// AskId.
+    pub ask_id: AskId,
+    /// Replay-defense nonce.
+    pub nonce: [u8; 32],
+    /// Settlement timestamp (Unix seconds).
+    pub timestamp_unix: u64,
+    /// Cost in micro-OCTO-W.
+    #[serde(with = "crate::dqa_serde::field")]
+    pub cost: Dqa,
+    /// Vault row the settlement draws against (RFC-0959 §Wire
+    /// Format + review §20.7). `None` for pre-v2.0 settlements (no
+    /// cross-chain reject enforced). When `Some`, a settlement-time
+    /// verifier is supposed to find a vault row at this id (via
+    /// `VaultLookup`) and require that row's `chain_id` to match
+    /// `chain_id` below.
+    ///
+    /// **That verifier is not wired.** See
+    /// [`crate::settlement_verify::verify_settlement_chain_match`] — it
+    /// implements the check correctly and has no production caller, so
+    /// neither requirement above is enforced today. Measured: an
+    /// envelope naming a nonexistent vault passes `settle-replay` with
+    /// `verify: OK`. See mission
+    /// `the-cross-chain-settlement-reject-is-never-called`.
+    pub cost_vault_id: Option<[u8; 32]>,
+    /// Chain scope of this settlement (RFC-0959 §Wire Format +
+    /// RFC-0010 §ChainId 32-byte addendum). `None` for pre-v2.0
+    /// settlements; `Some` carries
+    /// `BLAKE3("cipherocto/chain/v1/" || chain_string)`.
+    ///
+    /// Unenforced for the same reason as `cost_vault_id` above: nothing
+    /// on the live path compares it against a vault row.
+    pub chain_id: Option<[u8; 32]>,
+}
+
+impl SettlementEnvelope {
+    /// Compute settlement hash from canonical fields (v2.0 preimage).
+    ///
+    /// v2.0 prepends the v1.0 preimage with the new
+    /// `cost_vault_id` + `chain_id` Option-encoded bytes (1-byte
+    /// presence tag + 32 bytes if Some). This breaks v1.0 hash
+    /// replay — intentional (the v2.0 fields carry new attestation
+    /// semantics).
+    #[must_use]
+    pub fn compute_settlement_hash(&self) -> [u8; 32] {
+        let model_wire = self.model.to_wire();
+        let mut msg = Vec::with_capacity(
+            model_wire.len() + 32 + 32 + self.axes_consumed.len() * 32 + 32 + 70,
+        );
+        msg.extend_from_slice(model_wire.as_bytes());
+        let axes_canonical = serde_json::to_vec(&self.axes_consumed).expect("serializable");
+        msg.extend_from_slice(&axes_canonical);
+        msg.extend_from_slice(&self.ask_id);
+        msg.extend_from_slice(&self.nonce);
+        msg.extend_from_slice(&self.timestamp_unix.to_le_bytes());
+        // v2.0 Option<[u8; 32]> canonical encoding: 1-byte presence
+        // tag (0x00 = None, 0x01 = Some) + 32 bytes if Some.
+        match &self.cost_vault_id {
+            None => msg.push(0x00),
+            Some(bytes) => {
+                msg.push(0x01);
+                msg.extend_from_slice(bytes);
+            }
+        }
+        match &self.chain_id {
+            None => msg.push(0x00),
+            Some(bytes) => {
+                msg.push(0x01);
+                msg.extend_from_slice(bytes);
+            }
+        }
+        *blake3::hash(&msg).as_bytes()
+    }
+
+    /// Verify self-consistent settlement hash + replay-defense index.
+    /// # Errors
+    /// Returns `SettlementError::HashMismatch` if embedded hash != computed.
+    /// Returns `SettlementError::AlreadyConsumed` if `nonce` already in `consumed_index`.
+    pub fn verify(&self, consumed_index: &mut ConsumedReceiptIndex) -> Result<(), SettlementError> {
+        let computed = self.compute_settlement_hash();
+        if computed != self.settlement_hash {
+            return Err(SettlementError::HashMismatch);
+        }
+        if consumed_index.contains(&self.nonce) {
+            return Err(SettlementError::AlreadyConsumed);
+        }
+        consumed_index.insert(self.nonce);
+        Ok(())
+    }
+}
+
+/// Replay-defense index (in-memory; production backed by stoolap).
+#[derive(Debug, Default)]
+pub struct ConsumedReceiptIndex {
+    seen: HashMap<[u8; 32], ()>,
+}
+
+impl ConsumedReceiptIndex {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn contains(&self, nonce: &[u8; 32]) -> bool {
+        self.seen.contains_key(nonce)
+    }
+
+    pub fn insert(&mut self, nonce: [u8; 32]) {
+        self.seen.insert(nonce, ());
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.seen.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.seen.is_empty()
+    }
+}
+
+/// Settlement errors.
+#[derive(Debug, thiserror::Error)]
+pub enum SettlementError {
+    #[error("settlement hash mismatch (envelope tampered or canonicalization drift)")]
+    HashMismatch,
+    #[error("nonce already consumed (replay attempt)")]
+    AlreadyConsumed,
+    #[error("axes_consumed exceeds ask max_total (anti-fraud)")]
+    AxesExceededMaxTotal,
+    #[error("unknown axis `{0}` referenced in settlement (not in registry)")]
+    UnknownAxis(String),
+    #[error("ask expired at {ttl_unix} (now={now})")]
+    AskExpired {
+        ask_id: AskId,
+        ttl_unix: u64,
+        now: u64,
+    },
+    #[error("ask {ask_id:?} not found in marketplace index")]
+    AskNotFound { ask_id: AskId },
+    #[error("jurisdiction mismatch: declared {declared:?}, actual {actual:?}")]
+    JurisdictionMismatch {
+        declared: Vec<String>,
+        actual: Vec<String>,
+    },
+    #[error("cached axis consumed but cache_key_hash not provided (RFC-0959 §Data Structures)")]
+    CacheStrategyRequired,
+    #[error("overflow in compute_cost for axis `{axis_id}` (partial sum = {partial_sum:?})")]
+    Overflow { axis_id: String, partial_sum: Dqa },
+    #[error("ask signature invalid (tampered payload or wrong key)")]
+    AskSignatureInvalid,
+    #[error("canonical_ser error: {0}")]
+    CanonicalSer(#[from] serde_json::Error),
+    /// v2.0 settlement envelope missing required `cost_vault_id` field
+    /// (RFC-0959 §Wire Format + review §20.7). Cross-chain
+    /// settlement reject cannot proceed without a vault row key.
+    #[error("settlement envelope missing required `cost_vault_id` field (RFC-0959 §Wire Format)")]
+    CostVaultIdMissing,
+    /// v2.0 settlement envelope's `chain_id` does not match the
+    /// `chain_id` of the vault row at `cost_vault_id` (RFC-0959
+    /// §Cross-Chain Settlement Reject + review §20.7).
+    #[error(
+        "cross-chain settlement reject: vault {vault_id:?} belongs to chain {vault_chain_id:?}, \
+        envelope carries chain {envelope_chain_id:?}"
+    )]
+    ChainMismatch {
+        /// Vault row id (32 bytes).
+        vault_id: [u8; 32],
+        /// Vault row's `chain_id` (32 bytes).
+        vault_chain_id: [u8; 32],
+        /// Settlement envelope's `chain_id` (32 bytes).
+        envelope_chain_id: [u8; 32],
+    },
+}
+
+// ============================================================================
+// RFC-0959 §Algorithms Settlement Surface (session 2)
+// ============================================================================
+
+/// Per-axis consumption at settlement time (RFC-0959 §Data Structures).
+///
+/// `axes` is a `BTreeMap` (NOT `HashMap`) for deterministic ordering — the
+/// `canonical_ser` derivation must produce identical bytes across two
+/// independent nodes replaying the same event set (RFC-0909 §Determinism
+/// Requirements).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AxesConsumed {
+    /// Axis ID → units consumed (BTreeMap for canonical ordering).
+    pub axes: std::collections::BTreeMap<String, TokenCount>,
+    /// BLAKE3 hash of the prompt tokens (RFC-0959 §Data Structures).
+    /// Required iff any cached axis (e.g., `cached_input_tokens_per_1k`)
+    /// appears in `axes`. None for fully non-cache settlements.
+    pub cache_key_hash: Option<[u8; 32]>,
+}
+
+impl AxesConsumed {
+    /// Construct an `AxesConsumed` with no cache classification.
+    #[must_use]
+    pub fn new(axes: std::collections::BTreeMap<String, TokenCount>) -> Self {
+        Self {
+            axes,
+            cache_key_hash: None,
+        }
+    }
+
+    /// Attach a `cache_key_hash` (used when any cached axis is consumed).
+    #[must_use]
+    pub fn with_cache_key_hash(mut self, hash: [u8; 32]) -> Self {
+        self.cache_key_hash = Some(hash);
+        self
+    }
+
+    /// Returns true iff this settlement consumes any axis whose ID contains
+    /// "cached" (heuristic for the `cached_input_tokens_per_1k` axis family).
+    #[must_use]
+    pub fn requires_cache_strategy(&self) -> bool {
+        self.axes.keys().any(|id| id.contains("cached"))
+    }
+}
+
+/// Settlement event (RFC-0959 §Data Structures).
+///
+/// The canonical wire form for a settled invocation. Settlement hash is
+/// computed externally via [`compute_settlement_hash`] and not stored in
+/// this struct (RFC-0959 §Data Structures fix: separation of content from
+/// attestation).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettlementEvent {
+    /// BLAKE3 hash of the capability root (RFC-0957 §Algorithms `cap_root_hash`).
+    pub cap_root_hash: [u8; 32],
+    /// Content-addressable AskId.
+    pub ask_id: AskId,
+    /// BLAKE3 hash of the invocation (RFC-0959 §Data Structures `invocation_hash`).
+    pub invocation_hash: [u8; 32],
+    /// Per-axis consumption.
+    pub axes_consumed: AxesConsumed,
+    /// Computed cost in micro-OCTO-W (integer-only, no float).
+    #[serde(with = "crate::dqa_serde::field")]
+    pub cost: Dqa,
+    /// Unix timestamp of settlement.
+    pub settled_at_unix: u64,
+}
+
+/// Router-signed receipt wrapping a [`SettlementEvent`] (RFC-0959 §Algorithms).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettlementReceipt {
+    /// The event being attested.
+    pub event: SettlementEvent,
+    /// Ed25519 signature over `canonical_ser((event || nonce || settled_at_unix))`.
+    /// Stored as `Vec<u8>` for serde compatibility; length MUST be 64.
+    pub router_signature: Vec<u8>,
+    /// 16-byte nonce derived from `csprng.next_u64().to_le_bytes() ++ wall_clock_now.to_le_bytes()`.
+    pub nonce: [u8; 16],
+}
+
+/// Domain separator for settlement hash (RFC-0959 §Algorithms).
+///
+/// MUST stay stable across versions. To bump the hash surface, change to
+/// `"cipherocto/settlement/v2\n"` and accept a cross-impl hash migration.
+pub const SETTLEMENT_HASH_DOMAIN: &[u8] = b"cipherocto/settlement/v1\n";
+
+/// Compute the RFC-0959 §Settlement hash.
+///
+/// `settlement_hash = BLAKE3(DOMAIN || cap_root_hash || ask_id || invocation_hash || canonical_ser(axes_consumed))`
+///
+/// # Deviation from RFC-0959
+///
+/// The RFC's preimage has five fields plus the version tag, and the
+/// fifth is `cost` (`event.cost.0.to_le_bytes()`), added as an R3 fix
+/// whose stated purpose was that tampering with the amount breaks the
+/// hash. This function omits it, so two events differing only in `cost`
+/// hash identically.
+///
+/// Not an exploitable hole here: [`verify_settlement_receipt`] also
+/// checks the router Ed25519 signature over the full serialized event,
+/// which does cover `cost`. It is a conformance deviation, and it is why
+/// this function must not be treated as the settlement integrity
+/// boundary on its own.
+///
+/// A second live surface, [`SettlementEnvelope::compute_settlement_hash`],
+/// uses an entirely different preimage, omits `cost` too, and carries no
+/// signature at all. See mission `settlement-hash-does-not-bind-the-cost`.
+///
+/// `Result` return propagates `serde_json::Error` from `canonical_ser`
+/// (RFC-0959 §Data Structures R1 fix: previously infallible `expect()`).
+/// # Errors
+/// Returns `serde_json::Error` if `canonical_ser` fails (should never happen
+/// for `AxesConsumed` since the field types are all serde-friendly).
+pub fn compute_settlement_hash(event: &SettlementEvent) -> Result<[u8; 32], serde_json::Error> {
+    let axes_canonical = serde_json::to_vec(&event.axes_consumed)?;
+    let mut msg =
+        Vec::with_capacity(SETTLEMENT_HASH_DOMAIN.len() + 32 + 32 + 32 + axes_canonical.len());
+    msg.extend_from_slice(SETTLEMENT_HASH_DOMAIN);
+    msg.extend_from_slice(&event.cap_root_hash);
+    msg.extend_from_slice(&event.ask_id);
+    msg.extend_from_slice(&event.invocation_hash);
+    msg.extend_from_slice(&axes_canonical);
+    Ok(*blake3::hash(&msg).as_bytes())
+}
+
+/// Compute settlement cost (RFC-0959 §Compute cost).
+///
+/// `cost = Σ ceil(tokens/1000) * rate[axis]` (u128 throughout, integer-only).
+/// Rejects cached axes without `cache_key_hash` per RFC-0959
+/// §Data Structures.
+///
+/// # Deviation from RFC-0959
+///
+/// The RFC resolves a consumed axis against the Ask's own signed rate
+/// table (`AskUnsignedPayload.axes`) and returns `UnknownAxis` when the
+/// Ask does not price it — fail-closed, per RFC-0959 Appendix C.
+///
+/// This function delegates to [`ModelRateTable::cost_for`], which falls
+/// back to the registry default when the Ask's table misses. So
+/// `UnknownAxis` fires only when the axis is in neither the Ask's rate
+/// table nor the registry, and an Ask that under-specifies its rates is
+/// charged at defaults instead of failing.
+///
+/// That fallback is the subject of a deferred RFC-owner decision, not an
+/// oversight. See missions
+/// `marketplace-advertised-price-ignores-default-rate-fallback` and
+/// `ask-axis-ids-are-never-validated-against-the-axis-registry`.
+///
+/// # Errors
+/// Returns `SettlementError::UnknownAxis` if an axis ID is in neither the
+/// Ask's rate table nor `registry`.
+/// Returns `SettlementError::CacheStrategyRequired` if a cached axis is
+/// consumed without `cache_key_hash`.
+/// Returns `SettlementError::Overflow` if the running sum overflows `u128`.
+pub fn compute_cost(
+    ask: &Ask,
+    axes_consumed: &AxesConsumed,
+    registry: &[PricingAxis],
+) -> Result<Dqa, SettlementError> {
+    if axes_consumed.requires_cache_strategy() && axes_consumed.cache_key_hash.is_none() {
+        return Err(SettlementError::CacheStrategyRequired);
+    }
+    let mut total: Dqa = Dqa::new(0, 0).expect("zero");
+    for (axis_id, &units) in &axes_consumed.axes {
+        let rate = ask
+            .rates
+            .cost_for(axis_id, u64::from(units), registry)
+            .ok_or_else(|| SettlementError::UnknownAxis(axis_id.clone()))?;
+        total = octo_determin::dqa_add(total, rate).map_err(|_| SettlementError::Overflow {
+            axis_id: axis_id.clone(),
+            partial_sum: total,
+        })?;
+    }
+    Ok(total)
+}
+
+/// Sign a [`SettlementEvent`] with the router's 32-byte Ed25519 seed,
+/// producing a [`SettlementReceipt`] (RFC-0959 §Algorithms).
+///
+/// Signature input: `canonical_ser((event || nonce || settled_at_unix))`.
+/// `nonce` is 16 bytes; the caller supplies it (typically
+/// `csprng.next_u64().to_le_bytes() ++ wall_clock_now.to_le_bytes()`).
+/// # Errors
+/// Returns `AskSignedError::EmptyIdentitySeed` if the seed is all-zeros.
+/// Returns `AskSignedError::CanonicalSer` if `serde_json` fails.
+pub fn sign_settlement_receipt(
+    event: SettlementEvent,
+    router_seed: &[u8; 32],
+    nonce: [u8; 16],
+) -> Result<SettlementReceipt, AskSignedError> {
+    if router_seed == &[0u8; 32] {
+        return Err(AskSignedError::EmptyIdentitySeed);
+    }
+    // RFC-0959 §Algorithms signature input = canonical_ser((event || nonce || settled_at_unix)).
+    // We approximate "canonical_ser((event || nonce || settled_at_unix))" as
+    // `serde_json::to_vec(event) ++ nonce ++ settled_at_unix.to_le_bytes()`.
+    // A borsh-encoded form would be wire-equivalent under the canonical_ser
+    // contract (deterministic JSON), so this is sufficient for the in-process
+    // round-trip. The full borsh migration is out of scope here.
+    let event_canonical = serde_json::to_vec(&event).map_err(AskSignedError::CanonicalSer)?;
+    let mut msg = Vec::with_capacity(event_canonical.len() + nonce.len() + 8);
+    msg.extend_from_slice(&event_canonical);
+    msg.extend_from_slice(&nonce);
+    msg.extend_from_slice(&event.settled_at_unix.to_le_bytes());
+    let signing = SigningKey::from_bytes(router_seed);
+    let signature = signing.sign(&msg);
+    Ok(SettlementReceipt {
+        event,
+        router_signature: signature.to_bytes().to_vec(),
+        nonce,
+    })
+}
+
+/// Verify a [`SettlementReceipt`] (RFC-0959 §Algorithms).
+///
+/// Recomputes the signature input and verifies the router's Ed25519 signature.
+/// Also re-derives and compares the embedded settlement hash if present.
+/// # Errors
+/// Returns `SettlementError::HashMismatch` if the embedded settlement hash
+/// doesn't match `compute_settlement_hash(event)`.
+/// Returns `SettlementError::AskSignatureInvalid` if router signature verify fails.
+/// Returns `SettlementError::CanonicalSer` if `serde_json` fails.
+pub fn verify_settlement_receipt(
+    algorithm_id: &octo_ident::AlgorithmId,
+    receipt: &SettlementReceipt,
+    router_public_key: &[u8],
+    expected_settlement_hash: &[u8; 32],
+) -> Result<(), SettlementError> {
+    let computed = compute_settlement_hash(&receipt.event)?;
+    if &computed != expected_settlement_hash {
+        return Err(SettlementError::HashMismatch);
+    }
+    let event_canonical = serde_json::to_vec(&receipt.event)?;
+    let mut msg = Vec::with_capacity(event_canonical.len() + receipt.nonce.len() + 8);
+    msg.extend_from_slice(&event_canonical);
+    msg.extend_from_slice(&receipt.nonce);
+    msg.extend_from_slice(&receipt.event.settled_at_unix.to_le_bytes());
+    octo_algo_ed25519::verify_dispatch(
+        algorithm_id,
+        router_public_key,
+        &msg,
+        &receipt.router_signature,
+    )
+    .map_err(|_| SettlementError::AskSignatureInvalid)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_ask() -> Ask {
+        Ask {
+            asker_did: "did:octo:asker1".to_owned(),
+            model: ModelRef::from("openai/gpt-4"),
+            rates: ModelRateTable {
+                model: ModelRef::from("openai/gpt-4"),
+                rates: vec![
+                    AxisRate {
+                        axis: "input_tokens_per_1k".to_owned(),
+                        rate_per_1k: Dqa::new(30_000, 0).expect("non-overflow"),
+                    },
+                    AxisRate {
+                        axis: "output_tokens_per_1k".to_owned(),
+                        rate_per_1k: Dqa::new(60_000, 0).expect("non-overflow"),
+                    },
+                ],
+            },
+            nonce: [0x42; 16],
+            expires_at_unix: 1_900_000_000,
+        }
+    }
+
+    #[test]
+    fn ask_id_deterministic() {
+        let a = sample_ask();
+        let b = sample_ask();
+        assert_eq!(a.id(), b.id());
+    }
+
+    #[test]
+    fn ask_id_changes_with_nonce() {
+        let a = sample_ask();
+        let mut b = sample_ask();
+        b.nonce[0] = 0x99;
+        assert_ne!(a.id(), b.id());
+        // Touch a so it's "used"
+        let _ = a.id();
+    }
+
+    #[test]
+    fn settlement_cost_basic() {
+        let ask = sample_ask();
+        let axes = PricingAxis::standard_axes();
+        let consumed = vec![
+            ("input_tokens_per_1k".to_owned(), 1000),
+            ("output_tokens_per_1k".to_owned(), 500),
+        ];
+        let cost = settlement_cost(&ask, &consumed, &axes);
+        // 1 * 30_000 + 1 * 60_000 = 90_000 (500 rounds up to 1 block)
+        assert_eq!(cost, Dqa::new(90_000, 0).expect("non-overflow"));
+    }
+
+    #[test]
+    fn cache_policy_opt_in_only_specific_hash() {
+        let h = [0xab; 32];
+        let p = CachePolicy::OptIn {
+            cache_key_hash: Some(h),
+        };
+        assert!(p.permits(&h));
+        let mut other = h;
+        other[0] = 0xff;
+        assert!(!p.permits(&other));
+        let p_off = CachePolicy::OptIn {
+            cache_key_hash: None,
+        };
+        assert!(!p_off.permits(&h));
+    }
+
+    #[test]
+    fn cache_policy_always_permits() {
+        let p = CachePolicy::Always { ttl_secs: 60 };
+        assert!(p.permits(&[0u8; 32]));
+    }
+
+    #[test]
+    fn settlement_hash_stable() {
+        let env = SettlementEnvelope {
+            settlement_hash: [0u8; 32],
+            asker_did: octo_ident::test_helpers::sample_did(82).to_owned(),
+            holder_did: octo_ident::test_helpers::sample_did(175).to_owned(),
+            model: ModelRef::from("openai/gpt-4"),
+            axes_consumed: vec![("input_tokens_per_1k".to_owned(), 100)],
+            ask_id: [1u8; 32],
+            nonce: [2u8; 32],
+            timestamp_unix: 1_700_000_000,
+            cost: Dqa::new(30_000, 0).expect("non-overflow"),
+            cost_vault_id: None,
+            chain_id: None,
+        };
+        let h = env.compute_settlement_hash();
+        let h2 = env.compute_settlement_hash();
+        assert_eq!(h, h2);
+    }
+
+    #[test]
+    fn settlement_verify_rejects_hash_mismatch() {
+        let mut env = SettlementEnvelope {
+            settlement_hash: [0xab; 32],
+            asker_did: octo_ident::test_helpers::sample_did(82).to_owned(),
+            holder_did: octo_ident::test_helpers::sample_did(175).to_owned(),
+            model: ModelRef::from("openai/gpt-4"),
+            axes_consumed: vec![("input_tokens_per_1k".to_owned(), 100)],
+            ask_id: [1u8; 32],
+            nonce: [2u8; 32],
+            timestamp_unix: 1_700_000_000,
+            cost: Dqa::new(30_000, 0).expect("non-overflow"),
+            cost_vault_id: None,
+            chain_id: None,
+        };
+        let mut idx = ConsumedReceiptIndex::new();
+        // Verify self-consistent first.
+        env.settlement_hash = env.compute_settlement_hash();
+        env.verify(&mut idx).unwrap();
+        // Tamper with axes_consumed (affects settlement_hash).
+        env.axes_consumed[0].1 = 999;
+        let err = env.verify(&mut idx).unwrap_err();
+        assert!(matches!(err, SettlementError::HashMismatch));
+    }
+
+    #[test]
+    fn settlement_replay_defense() {
+        let mut env = SettlementEnvelope {
+            settlement_hash: [0u8; 32],
+            asker_did: octo_ident::test_helpers::sample_did(82).to_owned(),
+            holder_did: octo_ident::test_helpers::sample_did(175).to_owned(),
+            model: ModelRef::from("openai/gpt-4"),
+            axes_consumed: vec![("input_tokens_per_1k".to_owned(), 100)],
+            ask_id: [1u8; 32],
+            nonce: [2u8; 32],
+            timestamp_unix: 1_700_000_000,
+            cost: Dqa::new(30_000, 0).expect("non-overflow"),
+            cost_vault_id: None,
+            chain_id: None,
+        };
+        env.settlement_hash = env.compute_settlement_hash();
+        let mut idx = ConsumedReceiptIndex::new();
+        env.verify(&mut idx).unwrap();
+        let err = env.verify(&mut idx).unwrap_err();
+        assert!(matches!(err, SettlementError::AlreadyConsumed));
+        assert_eq!(idx.len(), 1);
+    }
+
+    #[test]
+    fn axis_registry_register_and_get() {
+        let mut reg = PricingAxisRegistry::new();
+        assert_eq!(reg.axes.len(), 3);
+        assert!(reg.get("input_tokens_per_1k").is_some());
+        let err = reg.register(PricingAxis {
+            id: "input_tokens_per_1k".to_owned(),
+            name: "dup".to_owned(),
+            default_rate_per_1k: Dqa::new(0, 0).expect("zero"),
+        });
+        assert!(matches!(err, Err(AxisRegistryError::Duplicate(_))));
+    }
+
+    #[test]
+    fn axes_consumed_sorted_in_settlement_hash() {
+        // Same axes in different order → same hash (axes_consumed serialized as JSON Vec;
+        // order matters in serde_json::to_vec). Documented limitation: consumers
+        // should sort before constructing envelope.
+        let mut env1 = SettlementEnvelope {
+            settlement_hash: [0u8; 32],
+            asker_did: "a".to_owned(),
+            holder_did: "h".to_owned(),
+            model: ModelRef::from("m"),
+            axes_consumed: vec![("a_per_1k".to_owned(), 1), ("b_per_1k".to_owned(), 2)],
+            ask_id: [0u8; 32],
+            nonce: [0u8; 32],
+            timestamp_unix: 0,
+            cost: Dqa::new(0, 0).expect("zero"),
+            cost_vault_id: None,
+            chain_id: None,
+        };
+        let mut env2 = env1.clone();
+        env2.axes_consumed = vec![("b_per_1k".to_owned(), 2), ("a_per_1k".to_owned(), 1)];
+        env1.settlement_hash = env1.compute_settlement_hash();
+        env2.settlement_hash = env2.compute_settlement_hash();
+        // Different order → different hash (current contract).
+        assert_ne!(env1.settlement_hash, env2.settlement_hash);
+    }
+}
+
+#[cfg(test)]
+mod settlement_engine_tests {
+    /// The algorithm these fixtures sign under — see the same helper in
+    /// `ask_signed_tests`.
+    fn ed25519_id() -> octo_ident::AlgorithmId {
+        octo_algo_ed25519::ed25519_algorithm_id()
+    }
+    use super::*;
+
+    fn sample_event() -> SettlementEvent {
+        SettlementEvent {
+            cap_root_hash: [0x01; 32],
+            ask_id: [0x02; 32],
+            invocation_hash: [0x03; 32],
+            axes_consumed: AxesConsumed::new({
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("input_tokens_per_1k".to_owned(), 1000);
+                m.insert("output_tokens_per_1k".to_owned(), 500);
+                m
+            }),
+            cost: Dqa::new(90_000, 0).expect("non-overflow"),
+            settled_at_unix: 1_700_000_000,
+        }
+    }
+
+    #[test]
+    fn settlement_hash_deterministic() {
+        // Same event → same hash (across calls; across two recomputations).
+        let e = sample_event();
+        let h1 = compute_settlement_hash(&e).unwrap();
+        let h2 = compute_settlement_hash(&e).unwrap();
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn settlement_hash_byte_equivalent_across_replay() {
+        // Two independent "nodes" replaying the same event set produce identical hash.
+        let e1 = sample_event();
+        let e2 = sample_event();
+        assert_eq!(
+            compute_settlement_hash(&e1).unwrap(),
+            compute_settlement_hash(&e2).unwrap(),
+        );
+    }
+
+    #[test]
+    fn settlement_hash_domain_separator_present() {
+        // Bumping the domain separator MUST change the hash (RFC-0959 §Algorithms
+        // version migration contract).
+        let e = sample_event();
+        let with_domain = compute_settlement_hash(&e).unwrap();
+        // Recompute with zero domain (simulates "forgot to prepend").
+        let axes_canonical = serde_json::to_vec(&e.axes_consumed).unwrap();
+        let mut msg = Vec::new();
+        msg.extend_from_slice(&e.cap_root_hash);
+        msg.extend_from_slice(&e.ask_id);
+        msg.extend_from_slice(&e.invocation_hash);
+        msg.extend_from_slice(&axes_canonical);
+        let without_domain = *blake3::hash(&msg).as_bytes();
+        assert_ne!(with_domain, without_domain);
+    }
+
+    #[test]
+    fn settlement_hash_changes_when_axes_change() {
+        let mut e = sample_event();
+        let h1 = compute_settlement_hash(&e).unwrap();
+        e.axes_consumed
+            .axes
+            .insert("cached_input_tokens_per_1k".to_owned(), 100);
+        let h2 = compute_settlement_hash(&e).unwrap();
+        assert_ne!(h1, h2, "axes change must change hash");
+    }
+
+    #[test]
+    fn cached_axis_requires_cache_key_hash() {
+        let ask = Ask::new(
+            octo_ident::test_helpers::sample_did(82),
+            "openai/gpt-4",
+            ModelRateTable {
+                model: ModelRef::from("openai/gpt-4"),
+                rates: vec![AxisRate {
+                    axis: "cached_input_tokens_per_1k".to_owned(),
+                    rate_per_1k: Dqa::new(3_000, 0).expect("non-overflow"),
+                }],
+            },
+            [0x42; 16],
+            1_900_000_000,
+        )
+        .unwrap();
+        let axes = PricingAxis::standard_axes();
+        let consumed = AxesConsumed::new({
+            let mut m = std::collections::BTreeMap::new();
+            m.insert("cached_input_tokens_per_1k".to_owned(), 100);
+            m
+        });
+        // No cache_key_hash → CacheStrategyRequired.
+        let err = compute_cost(&ask, &consumed, &axes).unwrap_err();
+        assert!(matches!(err, SettlementError::CacheStrategyRequired));
+        // With cache_key_hash → succeeds.
+        let consumed_ok = consumed.with_cache_key_hash([0xAA; 32]);
+        let cost = compute_cost(&ask, &consumed_ok, &axes).unwrap();
+        // 100 tokens = ceil(100/1000) = 1 block * 3000 = 3000.
+        assert_eq!(cost, Dqa::new(3_000, 0).expect("non-overflow"));
+    }
+
+    #[test]
+    fn compute_cost_unknown_axis_rejected() {
+        let ask = Ask::new(
+            octo_ident::test_helpers::sample_did(82),
+            "openai/gpt-4",
+            ModelRateTable::default(),
+            [0x42; 16],
+            1_900_000_000,
+        )
+        .unwrap();
+        let axes = PricingAxis::standard_axes();
+        let consumed = AxesConsumed::new({
+            let mut m = std::collections::BTreeMap::new();
+            m.insert("nonexistent_axis".to_owned(), 100);
+            m
+        });
+        let err = compute_cost(&ask, &consumed, &axes).unwrap_err();
+        assert!(matches!(err, SettlementError::UnknownAxis(ref s) if s == "nonexistent_axis"));
+    }
+
+    #[test]
+    fn compute_cost_overflow_detected() {
+        // Force overflow: a single axis with u128::MAX worth of rate + huge units.
+        // We can't directly set u128::MAX rate via standard axes, so we use a
+        // synthetic Ask with an extreme rate.
+        let ask = Ask::new(
+            octo_ident::test_helpers::sample_did(82),
+            "openai/gpt-4",
+            ModelRateTable {
+                model: ModelRef::from("openai/gpt-4"),
+                rates: vec![AxisRate {
+                    axis: "input_tokens_per_1k".to_owned(),
+                    rate_per_1k: Dqa::new(i64::MAX, 0).expect("non-overflow"),
+                }],
+            },
+            [0x42; 16],
+            1_900_000_000,
+        )
+        .unwrap();
+        let axes = PricingAxis::standard_axes();
+        let consumed = AxesConsumed::new({
+            let mut m = std::collections::BTreeMap::new();
+            m.insert("input_tokens_per_1k".to_owned(), 100);
+            m
+        });
+        // First block of 100 tokens: 1 * u128::MAX = u128::MAX. Second call
+        // would overflow. Use 2 axes to trigger.
+        let mut consumed2 = consumed.clone();
+        consumed2
+            .axes
+            .insert("output_tokens_per_1k".to_owned(), 100);
+        // Add output rate to push sum over u128::MAX.
+        // Hmm — our ask only has input rate. Output falls back to default 60_000.
+        // u128::MAX + 60_000 overflows.
+        let err = compute_cost(&ask, &consumed2, &axes).unwrap_err();
+        assert!(matches!(err, SettlementError::Overflow { .. }));
+    }
+
+    #[test]
+    fn receipt_sign_verify_roundtrip() {
+        let event = sample_event();
+        let seed = [0xCDu8; 32];
+        let pk = AskSigned::public_key_from_seed(&seed);
+        let nonce = [0xEEu8; 16];
+        let receipt = sign_settlement_receipt(event.clone(), &seed, nonce).unwrap();
+        let expected_hash = compute_settlement_hash(&event).unwrap();
+        verify_settlement_receipt(&ed25519_id(), &receipt, &pk, &expected_hash).expect("verify");
+    }
+
+    /// The settlement-receipt counterpart of
+    /// `an_ask_signed_by_a_non_ed25519_algorithm_verifies`.
+    ///
+    /// This is the second of the two sites the alias check found, and it was
+    /// hidden the same way: it dispatched on `algorithm_id` while taking the
+    /// router key through a type alias for a 32-byte array. Nothing about the
+    /// dispatch argument could reach a 33-byte key, so the parameter was
+    /// load-bearing in name only.
+    ///
+    /// The signature input is `canonical_ser(event) ++ nonce ++
+    /// settled_at_unix`, computed identically on both sides. That is what makes
+    /// this a real second-algorithm vector rather than a length check: a
+    /// stark-schnorr signature over those bytes can only verify because the
+    /// message the verifier rebuilt is byte-identical to the one that was
+    /// signed.
+    ///
+    /// The receipt is built directly because `sign_settlement_receipt` is
+    /// Ed25519-only by the same trait constraint as `AskSigned::sign`.
+    #[test]
+    fn a_settlement_receipt_signed_by_a_non_ed25519_algorithm_verifies() {
+        use octo_algo_stark_schnorr::{public_key, sign, Felt};
+
+        octo_algo_ed25519::install().expect("install ed25519");
+        octo_algo_stark_schnorr::install().expect("install stark-schnorr");
+
+        let secret = Felt::from_hex_unchecked("0x3c4d5e6f708192a3b4c5d6e7f8091a2b");
+        let nonce_felt = Felt::from_hex_unchecked("0x0f1e2d3c4b5a6978");
+        let wire = public_key(&secret).expect("derives a public key").to_wire();
+        assert_eq!(wire.len(), 33, "a stark-schnorr key is 33 bytes");
+
+        let event = sample_event();
+        let nonce = [0xEEu8; 16];
+        let expected_hash = compute_settlement_hash(&event).unwrap();
+
+        // Byte-for-byte the same reconstruction `verify_settlement_receipt`
+        // performs. If the two ever diverge, this vector fails rather than
+        // silently testing a different message than production verifies.
+        let event_canonical = serde_json::to_vec(&event).unwrap();
+        let mut msg = Vec::with_capacity(event_canonical.len() + nonce.len() + 8);
+        msg.extend_from_slice(&event_canonical);
+        msg.extend_from_slice(&nonce);
+        msg.extend_from_slice(&event.settled_at_unix.to_le_bytes());
+
+        let signature = sign(&secret, &msg, &nonce_felt).expect("sign").to_wire();
+        let receipt = SettlementReceipt {
+            event,
+            router_signature: signature.to_vec(),
+            nonce,
+        };
+
+        assert!(
+            verify_settlement_receipt(
+                &octo_algo_stark_schnorr::stark_schnorr_algorithm_id(),
+                &receipt,
+                &wire,
+                &expected_hash,
+            )
+            .is_ok(),
+            "a genuine stark-schnorr receipt must not be refused by the \
+             dispatched path"
+        );
+
+        assert!(
+            verify_settlement_receipt(&ed25519_id(), &receipt, &wire, &expected_hash).is_err(),
+            "the same key and receipt must not verify under ed25519"
+        );
+    }
+
+    #[test]
+    fn receipt_wrong_hash_rejected() {
+        let event = sample_event();
+        let seed = [0xCDu8; 32];
+        let pk = AskSigned::public_key_from_seed(&seed);
+        let receipt = sign_settlement_receipt(event, &seed, [0xEE; 16]).unwrap();
+        let wrong_hash = [0xFFu8; 32];
+        let err = verify_settlement_receipt(&ed25519_id(), &receipt, &pk, &wrong_hash).unwrap_err();
+        assert!(matches!(err, SettlementError::HashMismatch));
+    }
+
+    #[test]
+    fn receipt_wrong_public_key_rejected() {
+        let event = sample_event();
+        let seed = [0xCDu8; 32];
+        let receipt = sign_settlement_receipt(event, &seed, [0xEE; 16]).unwrap();
+        let expected_hash = compute_settlement_hash(&receipt.event).unwrap();
+        let wrong_pk = AskSigned::public_key_from_seed(&[0x99u8; 32]);
+        let err = verify_settlement_receipt(&ed25519_id(), &receipt, &wrong_pk, &expected_hash)
+            .unwrap_err();
+        assert!(matches!(err, SettlementError::AskSignatureInvalid));
+    }
+
+    #[test]
+    fn receipt_tampered_event_rejected() {
+        let event = sample_event();
+        let seed = [0xCDu8; 32];
+        let pk = AskSigned::public_key_from_seed(&seed);
+        let mut receipt = sign_settlement_receipt(event, &seed, [0xEE; 16]).unwrap();
+        receipt.event.cost = dqa_add(receipt.event.cost, Dqa::new(1, 0).expect("non-overflow")); // tamper
+        let expected_hash = compute_settlement_hash(&receipt.event).unwrap();
+        let err =
+            verify_settlement_receipt(&ed25519_id(), &receipt, &pk, &expected_hash).unwrap_err();
+        assert!(matches!(err, SettlementError::AskSignatureInvalid));
+    }
+
+    #[test]
+    fn empty_router_seed_rejected() {
+        let event = sample_event();
+        let err = sign_settlement_receipt(event, &[0u8; 32], [0xEE; 16]).unwrap_err();
+        assert!(matches!(err, AskSignedError::EmptyIdentitySeed));
+    }
+
+    #[test]
+    fn settlement_hash_property_10k_replays() {
+        // 10K random (cap_root_hash, ask_id, invocation_hash, axes) tuples,
+        // recomputed twice → identical 32-byte hash. (Property-test surrogate
+        // without pulling in `proptest` crate; deterministic seeded RNG.)
+        use std::collections::BTreeMap;
+        let mut rng_state: u64 = 0xDEAD_BEEF_CAFE_BABE;
+        let mut next = || {
+            rng_state ^= rng_state << 13;
+            rng_state ^= rng_state >> 7;
+            rng_state ^= rng_state << 17;
+            rng_state
+        };
+        for _ in 0..10_000 {
+            let mut axes = BTreeMap::new();
+            axes.insert("input_tokens_per_1k".to_owned(), (next() as u32) % 10_000);
+            axes.insert("output_tokens_per_1k".to_owned(), (next() as u32) % 5_000);
+            let event = SettlementEvent {
+                cap_root_hash: next().to_le_bytes().repeat(4)[..32]
+                    .try_into()
+                    .unwrap_or([0u8; 32]),
+                ask_id: next().to_le_bytes().repeat(4)[..32]
+                    .try_into()
+                    .unwrap_or([0u8; 32]),
+                invocation_hash: next().to_le_bytes().repeat(4)[..32]
+                    .try_into()
+                    .unwrap_or([0u8; 32]),
+                axes_consumed: AxesConsumed::new(axes),
+                cost: Dqa::new(i64::try_from(next()).unwrap_or(i64::MAX), 0).expect("non-overflow"),
+                settled_at_unix: next(),
+            };
+            let h1 = compute_settlement_hash(&event).unwrap();
+            let h2 = compute_settlement_hash(&event).unwrap();
+            assert_eq!(h1, h2, "determinism violated for event {event:?}");
+        }
+    }
+}

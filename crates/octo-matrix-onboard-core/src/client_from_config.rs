@@ -103,7 +103,7 @@ impl OnboardConfig {
     /// R1-L6: `user_id` is validated via `OwnedUserId::try_from`
     /// (the Matrix MXID grammar is well-defined; an invalid one
     /// would surface as a server-side error). `device_id` uses the
-    /// infallible `From<&str>` because ruma's
+    /// infallible `From<&&str>` because ruma's
     /// `OwnedDeviceId::validate` is a no-op (device IDs are opaque
     /// per the Matrix spec — any string is valid). The asymmetry
     /// is intentional; we surface it here so future readers don't

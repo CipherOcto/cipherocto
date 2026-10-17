@@ -275,8 +275,24 @@ impl DcOrchestrator {
     // unbind_all
     // -------------------------------------------------------------------------
 
+    /// Minimum number of distinct witness ACKs required to advance from
+    /// `UnboundAllPending` to `UnboundAllDone`. Per RFC-0850p-f v0.3 §F-1
+    /// (Quorum Semantics): 1 ACK is chosen — decommission is a defensive
+    /// action; false-negatives are more harmful than false-positives.
+    pub const UNBIND_ALL_MIN_ACKS: u32 = 1;
+
+    /// Default timeout (epochs) for an in-flight `UnboundAllPending` to
+    /// transition to `UnboundQuarantined` if no quorum reached.
+    pub const UNBIND_ALL_TIMEOUT_EPOCHS: u64 = 100;
+
     /// Build an `UnbindAllEnvelope` requesting all members to leave the
     /// group.
+    ///
+    /// `original_nonce`: `None` for a fresh decommission ceremony;
+    /// `Some(orig)` for a re-decommission (a node that missed the original
+    /// `UnbindAllEnvelope` is being re-broadcast; the original nonce is
+    /// carried so witnesses can dedup their prior ACKs). See
+    /// RFC-0850p-f v0.3 §F-5 (Re-decommission).
     #[allow(clippy::too_many_arguments)] // Arguments map 1:1 to envelope fields.
     pub fn build_unbind_all(
         &mut self,
@@ -287,14 +303,16 @@ impl DcOrchestrator {
         reason: UnbindReason,
         current_epoch: u64,
         coordinator_term_id: u64,
+        original_nonce: Option<[u8; 32]>,
     ) -> UnbindAllEnvelope {
+        let nonce = original_nonce.unwrap_or_else(|| self.fresh_nonce());
         let mut env = UnbindAllEnvelope {
             domain_id,
             group_jid,
             platform,
             reason,
             binding_hash,
-            nonce: self.fresh_nonce(),
+            nonce,
             current_epoch,
             coordinator_term_id,
             unbind_hash: [0u8; 32],
@@ -329,14 +347,6 @@ impl DcOrchestrator {
         witness_assertion: &WitnessAssertion,
         current_epoch: u64,
     ) -> Result<ThirdPartyBindResult, BindingError> {
-        // Verify the witness assertion signature. We need the witness's
-        // public key; derive it from `witness_id` if it's stored as the
-        // raw 32-byte form, otherwise reject.
-        let witness_pubkey = ed25519_dalek::VerifyingKey::from_bytes(&witness_assertion.witness_id)
-            .map_err(|e| BindingError::InvalidAssertion {
-                reason: format!("witness_id is not a valid ed25519 public key: {e}"),
-            })?;
-
         // The assertion must be fresh: the witness_epoch should be
         // within `witness_assertion_max_age_epochs` of `current_epoch`.
         const WITNESS_ASSERTION_MAX_AGE_EPOCHS: u64 = 50;
@@ -351,8 +361,21 @@ impl DcOrchestrator {
             });
         }
 
+        // The witness key travels on the wire as `witness_assertion.witness_id`.
+        // Nothing decodes it into a key type here, and that is the point:
+        // `verify` takes raw bytes, so the algorithm argument is what selects
+        // the verifier. Building a `VerifyingKey` at this call site would fix
+        // Ed25519 in the type one frame before dispatch got a vote.
+        //
+        // The envelope carries no algorithm to read, so Ed25519 is named
+        // explicitly and the assumption is stated rather than implicit. A
+        // malformed `witness_id` still fails, now inside `verify_dispatch` as
+        // an invalid key rather than as a distinct parse error. Same reject.
         witness_assertion
-            .verify(&witness_pubkey)
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &witness_assertion.witness_id,
+            )
             .map_err(|e| BindingError::InvalidAssertion {
                 reason: format!("assertion signature did not verify: {e}"),
             })?;
@@ -457,7 +480,7 @@ impl DcOrchestrator {
     /// Build a `UnbindAllAckEnvelope` acknowledging a DC's UNBIND_ALL.
     ///
     /// R17 R1-HIGH-4 fix: previously the nonce was hardcoded to `[0u8; 32]`
-    /// (trivially replayable). The method now takes `&mut self` so the
+    /// (trivially replayable). The method now takes `&&mut self` so the
     /// orchestrator's nonce generator can produce a fresh nonce.
     pub fn build_unbind_all_ack(
         &mut self,
@@ -588,7 +611,12 @@ mod tests {
                 5,
             )
             .unwrap();
-        assert!(env.verify(&orch.dc_key.verifying_key()).is_ok());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &orch.dc_key.verifying_key().to_bytes()
+            )
+            .is_ok());
     }
 
     #[test]
@@ -666,7 +694,12 @@ mod tests {
             [3u8; 32],
             100,
         );
-        assert!(inv.verify(&orch.dc_key.verifying_key()).is_ok());
+        assert!(inv
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &orch.dc_key.verifying_key().to_bytes()
+            )
+            .is_ok());
     }
 
     #[test]
@@ -680,8 +713,40 @@ mod tests {
             UnbindReason::Scheduled,
             100,
             1,
+            None, // fresh decommission
         );
-        assert!(env.verify(&orch.dc_key.verifying_key()).is_ok());
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &orch.dc_key.verifying_key().to_bytes()
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn unbind_all_re_decommission_carries_original_nonce() {
+        // RFC-0850p-f v0.3 §F-5: a node that missed the original UNBIND_ALL
+        // receives a follow-up carrying the original nonce. Verify the
+        // envelope's nonce matches the original.
+        let mut orch = test_orchestrator();
+        let original_nonce = [7u8; 32];
+        let env = orch.build_unbind_all(
+            [1u8; 32],
+            "g1@g.us".into(),
+            "whatsapp".into(),
+            [4u8; 32],
+            UnbindReason::Scheduled,
+            100,
+            1,
+            Some(original_nonce),
+        );
+        assert_eq!(env.nonce, original_nonce);
+        assert!(env
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &orch.dc_key.verifying_key().to_bytes()
+            )
+            .is_ok());
     }
 
     #[test]
@@ -689,7 +754,12 @@ mod tests {
         let mut orch = test_orchestrator();
         let wkey = SigningKey::from_bytes(&[2u8; 32]);
         let ack = orch.build_unbind_all_ack(&wkey, [5u8; 32], [1u8; 32], 101);
-        assert!(ack.verify(&wkey.verifying_key()).is_ok());
+        assert!(ack
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &wkey.verifying_key().to_bytes()
+            )
+            .is_ok());
     }
 
     #[test]
@@ -734,7 +804,13 @@ mod tests {
             )
             .expect("third-party bind should succeed");
         // Envelope signed by DC.
-        assert!(result.envelope.verify(&orch.dc_key.verifying_key()).is_ok());
+        assert!(result
+            .envelope
+            .verify(
+                &octo_algo_ed25519::ed25519_algorithm_id(),
+                &orch.dc_key.verifying_key().to_bytes()
+            )
+            .is_ok());
         // witness_seal ties the bind to the assertion.
         let mut seal_buf = Vec::with_capacity(64);
         seal_buf.extend_from_slice(&result.envelope.bind_hash);
